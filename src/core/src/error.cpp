@@ -21,6 +21,7 @@ std::string_view to_string(ErrorCode code) noexcept {
     case ErrorCode::Timeout: return "timeout";
     case ErrorCode::VersionMismatch: return "version_mismatch";
     case ErrorCode::Internal: return "internal";
+    case ErrorCode::SourceChanged: return "source_changed";
     }
     return "unknown";
 }

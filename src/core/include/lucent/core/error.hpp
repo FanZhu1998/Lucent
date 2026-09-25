@@ -37,6 +37,7 @@ enum class ErrorCode : std::uint16_t {
     Timeout = 13,          // operation exceeded its deadline
     VersionMismatch = 14,  // schema, protocol or asset version is incompatible
     Internal = 15,         // invariant violation; indicates a Lucent defect
+    SourceChanged = 16,    // source file changed while it was being read; re-import it
 };
 
 // Stable lowercase identifier for logs and reports, e.g. "not_found".
