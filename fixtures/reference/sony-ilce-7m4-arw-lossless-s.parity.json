@@ -1,0 +1,63 @@
+{
+  "schema": "lucent.probe-report",
+  "schema_version": 1,
+  "fixture_id": "sony-ilce-7m4-arw-lossless-s",
+  "file_name": "ILCE-7M4_DSC06676_FullFrame-LossLess-Compressed-Small.ARW",
+  "file_size": 22933504,
+  "file_sha256": "cbbd0930c7d8706dff84c68a2004454266e6fd0d8354f5f76a106b5d776e0223",
+  "generator": {
+    "name": "rawpy-reference",
+    "rawpy": "0.27.1",
+    "libraw": [0, 22, 1],
+    "flags": {
+      "DNGLOSSYCODEC": true,
+      "DNGDEFLATECODEC": true,
+      "OPENMP": true,
+      "LCMS": true,
+      "REDCINECODEC": true,
+      "RAWSPEED": false,
+      "DEMOSAIC_PACK_GPL2": false,
+      "DEMOSAIC_PACK_GPL3": false,
+      "X3FTOOLS": true,
+      "6BY9RPI": true
+    },
+    "numpy": "2.5.3",
+    "python": "3.12.10"
+  },
+  "options": {
+    "shot_select": 0,
+    "decode": true
+  },
+  "status": "ok",
+  "parity": {
+    "raw_width": 3584,
+    "raw_height": 2560,
+    "width": 3516,
+    "height": 2344,
+    "top_margin": 0,
+    "left_margin": 0,
+    "iwidth": 3516,
+    "iheight": 2344,
+    "flip": 0,
+    "num_colors": 3,
+    "color_desc": "RGBG",
+    "raw_pattern": null,
+    "black_level_per_channel": [1024, 1024, 1024, 1024],
+    "white_level": 17536,
+    "camera_white_level_per_channel": [15360, 15360, 15360, 15360],
+    "camera_whitebalance": [2423.0, 1024.0, 1800.0, 1024.0],
+    "daylight_whitebalance": [2.4478163719177246, 0.9319279193878174, 1.2933659553527832, 0.0],
+    "rgb_xyz_matrix": [
+      [0.7459999918937683, -0.23649999499320984, -0.058800000697374344],
+      [-0.5687000155448914, 1.3442000150680542, 0.24740000069141388],
+      [-0.06239999830722809, 0.11559999734163284, 0.6583999991416931],
+      [0.0, 0.0, 0.0]
+    ],
+    "color_matrix": [
+      [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0]
+    ],
+    "raw_type": "stack"
+  }
+}
