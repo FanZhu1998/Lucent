@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.28)
 
+# vcpkg builds some Qt sources below paths longer than MAX_PATH (260) when buildtrees live inside
+# the vcpkg checkout. tools/dev-env.ps1 sets LUCENT_VCPKG_BUILDTREES to a short root; it must be
+# applied before project(), where the vcpkg toolchain runs the manifest install.
+if(DEFINED ENV{LUCENT_VCPKG_BUILDTREES} AND NOT VCPKG_INSTALL_OPTIONS)
+    file(TO_CMAKE_PATH "$ENV{LUCENT_VCPKG_BUILDTREES}" _lucent_buildtrees)
+    set(VCPKG_INSTALL_OPTIONS "--x-buildtrees-root=${_lucent_buildtrees}" CACHE STRING
+        "Extra arguments for the vcpkg manifest install (set by Lucent)")
+endif()
+
 project(Lucent
     VERSION 0.1.0
     DESCRIPTION "Offline, camera-independent RAW photo development"

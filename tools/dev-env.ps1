@@ -11,6 +11,8 @@
       LUCENT_DEV_ROOT     root of developer tools   (default: %USERPROFILE%\dev)
       LUCENT_VCPKG_ROOT   pinned vcpkg checkout     (default: $LUCENT_DEV_ROOT\vcpkg)
       LUCENT_TOOLS_VENV   Python venv with cmake    (default: $LUCENT_DEV_ROOT\toolsenv)
+      LUCENT_VCPKG_BUILDTREES  short vcpkg buildtrees root (default: $LUCENT_DEV_ROOT\vb);
+                          keeps Qt source-build paths under MAX_PATH when LongPathsEnabled=0
 
     A generic VCPKG_ROOT is deliberately ignored: the Visual Studio developer shell sets it
     to the vcpkg copy bundled with Visual Studio, whose helper scripts differ from the pinned
@@ -55,6 +57,7 @@ if (-not (Test-Path (Join-Path $env:VCPKG_ROOT 'vcpkg.exe'))) {
     throw "vcpkg not found at $env:VCPKG_ROOT. Run tools\bootstrap-dev.ps1 first."
 }
 
+if (-not $env:LUCENT_VCPKG_BUILDTREES) { $env:LUCENT_VCPKG_BUILDTREES = Join-Path $devRoot 'vb' }
 $env:VCPKG_DISABLE_METRICS = '1'
 $env:LUCENT_DEV_ENV_LOADED = '1'
 
