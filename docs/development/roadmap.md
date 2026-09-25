@@ -8,9 +8,9 @@ installer come before sophisticated learned editing.
 | # | Increment | Blueprint milestone | Main deliverables | Status |
 |---|---|---|---|---|
 | W0 | Toolchain | 1 | MSVC Build Tools, CMake, Ninja, Python, vcpkg, Qt (vcpkg source build), repository scaffolding | Done |
-| W1 | Foundation and RAW probe | 1–2 | `core`, `image`, `raw` modules; LibRaw adapter (probe/decode); DNG tag inspection; `lucent-probe`; CC0 fixture manifest and downloader; rawpy reference-parity script; ADRs | In progress |
+| W1 | Foundation and RAW probe | 1–2 | `core`, `image`, `raw` modules; LibRaw adapter (probe/decode); DNG tag inspection; `lucent-probe`; CC0 fixture manifest and downloader; rawpy reference-parity script; ADRs | Done (428 tests; 34/34 fixtures match rawpy parity) |
 | W2 | First render path | 2 | `engine`: sensor normalisation, Bayer/X-Trans/linear routes, white balance, camera→XYZ→Rec.2020, orientation; `export`: JPEG + 16-bit TIFF with embedded ICC (Little CMS), write verification | Planned |
-| W3 | Application shell | 2 | Qt Quick `Lucent.exe` (WIN32), Library/Edit/Exports views, native file/folder pickers, background render of a preview | Planned |
+| W3 | Application shell | 2 | Qt Quick `Lucent.exe` (WIN32), Library/Edit/Exports views, native file/folder pickers, background render of a preview. First confirm the `dev` preset restores Qt from the binary cache (the warm-up build ran in a second vcpkg root and may not share ABI hashes; a one-time ~1 h Qt build is the fallback) | Planned |
 | W4 | Catalog and import | 2 | SQLite catalog with migrations, import-in-place/copy, source identity (SHA-256), relinking, recursion guards, contact sheet with support status | Planned |
 | W5 | Installer slice | 2 | windeployqt deployment, Inno Setup per-user installer, VC++ runtime handling, clean-machine offline test | Planned |
 | W6 | Recipes and editor | 3 | Immutable recipes, operation versions, preview generations, undo/redo, exposure/WB/tone/colour controls, guided-filter local tone | Planned |

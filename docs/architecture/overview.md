@@ -42,7 +42,7 @@ processing worker) and developer tools such as `lucent-probe.exe`.
 - CMake presets (`CMakePresets.json`): `dev-core` (no Qt), `dev` (full app), `release`.
 - vcpkg manifest mode (`vcpkg.json`) pinned by `vcpkg-configuration.json` to a single registry
   baseline. The overlay triplet `x64-windows-lucent` builds shared, release-only libraries with
-  the dynamic CRT. See `docs/adr/0002-build-and-dependencies.md`.
+  the dynamic CRT. See `docs/adr/0002-build-and-dependency-management.md`.
 - `tools/dev-env.ps1` enters the MSVC environment; `tools/build.ps1` configures, builds and tests.
 
 ## Pixel and colour conventions (summary)
