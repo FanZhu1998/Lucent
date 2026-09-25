@@ -1,0 +1,67 @@
+{
+  "schema": "lucent.probe-report",
+  "schema_version": 1,
+  "fixture_id": "hasselblad-x1d-ii-50c-3fr",
+  "file_name": "MKW_20200429_0004569.3FR",
+  "file_size": 108399104,
+  "file_sha256": "809d498263d6f07cbaa4b9a5be97933057b4ab21e7243bb7afbe3862f3b48b47",
+  "generator": {
+    "name": "rawpy-reference",
+    "rawpy": "0.27.1",
+    "libraw": [0, 22, 1],
+    "flags": {
+      "DNGLOSSYCODEC": true,
+      "DNGDEFLATECODEC": true,
+      "OPENMP": true,
+      "LCMS": true,
+      "REDCINECODEC": true,
+      "RAWSPEED": false,
+      "DEMOSAIC_PACK_GPL2": false,
+      "DEMOSAIC_PACK_GPL3": false,
+      "X3FTOOLS": true,
+      "6BY9RPI": true
+    },
+    "numpy": "2.5.3",
+    "python": "3.12.10"
+  },
+  "options": {
+    "shot_select": 0,
+    "decode": true
+  },
+  "status": "ok",
+  "parity": {
+    "raw_width": 8384,
+    "raw_height": 6304,
+    "width": 8278,
+    "height": 6208,
+    "top_margin": 96,
+    "left_margin": 48,
+    "iwidth": 8278,
+    "iheight": 6208,
+    "flip": 0,
+    "num_colors": 3,
+    "color_desc": "RGBG",
+    "raw_pattern": [
+      [0, 1],
+      [3, 2]
+    ],
+    "black_level_per_channel": [256, 256, 256, 256],
+    "white_level": 65535,
+    "camera_white_level_per_channel": null,
+    "camera_whitebalance": [2.571044921875, 1.0, 1.500244140625, 0.0],
+    "daylight_whitebalance": [1.8791279792785645, 0.7340126633644104, 0.8541091084480286, 0.0],
+    "rgb_xyz_matrix": [
+      [1.0887000560760498, -0.6151999831199646, 0.10339999943971634],
+      [-0.3564000129699707, 1.2411999702453613, 0.42239999771118164],
+      [0.006300000008195639, 0.06260000169277191, 1.0123000144958496],
+      [0.0, 0.0, 0.0]
+    ],
+    "color_matrix": [
+      [1.6466823816299438, 0.46766868233680725, -1.1143510341644287, 0.0],
+      [-0.24476249516010284, 1.7799917459487915, -0.5352292656898499, 0.0],
+      [-0.01796981878578663, -0.3255960941314697, 1.3435659408569336, 0.0]
+    ],
+    "raw_type": "flat",
+    "raw_data_sha256": "37648f0db48db59d02be67eab6c14f81093105b8696b99faa6544c40fe7f63a7"
+  }
+}

@@ -1,0 +1,15 @@
+# Lucent research reference environment (developer-only; never shipped).
+# Exact pins with SHA-256 hashes for CPython 3.12 on Windows x64, the documented reference
+# platform (research/README.md). pip runs in --require-hashes mode because hashes are present.
+#
+# rawpy 0.27.1 bundles LibRaw 0.22.1 (rawpy.libraw_version); see research/README.md for how
+# that relates to the LibRaw 0.22.2 that Lucent builds through vcpkg.
+#
+# To move a pin: change the version, then replace each hash with the win_amd64 cp312 wheel's
+# sha256 from https://pypi.org/pypi/<package>/<version>/json, recreate research/.venv, re-run
+# the research tests and regenerate fixtures/reference/*.parity.json.
+
+rawpy==0.27.1 \
+    --hash=sha256:e9d9c83cd0422e84b2052a02eb9d612839ac68dfae4d6d3751740e08024599b1
+numpy==2.5.3 \
+    --hash=sha256:0a59a421a32580a009e8a1751345bf829631b990dc1794b80514ab722b435def

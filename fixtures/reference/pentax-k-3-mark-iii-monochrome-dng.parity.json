@@ -1,0 +1,66 @@
+{
+  "schema": "lucent.probe-report",
+  "schema_version": 1,
+  "fixture_id": "pentax-k-3-mark-iii-monochrome-dng",
+  "file_name": "K3III.DNG",
+  "file_size": 37669430,
+  "file_sha256": "1afc1071451a3a3737c29ae319e1411551b6893d0e6a34db29903318266b0066",
+  "generator": {
+    "name": "rawpy-reference",
+    "rawpy": "0.27.1",
+    "libraw": [0, 22, 1],
+    "flags": {
+      "DNGLOSSYCODEC": true,
+      "DNGDEFLATECODEC": true,
+      "OPENMP": true,
+      "LCMS": true,
+      "REDCINECODEC": true,
+      "RAWSPEED": false,
+      "DEMOSAIC_PACK_GPL2": false,
+      "DEMOSAIC_PACK_GPL3": false,
+      "X3FTOOLS": true,
+      "6BY9RPI": true
+    },
+    "numpy": "2.5.3",
+    "python": "3.12.10"
+  },
+  "options": {
+    "shot_select": 0,
+    "decode": true
+  },
+  "status": "ok",
+  "parity": {
+    "raw_width": 6304,
+    "raw_height": 4224,
+    "width": 6224,
+    "height": 4160,
+    "top_margin": 34,
+    "left_margin": 26,
+    "iwidth": 6224,
+    "iheight": 4160,
+    "flip": 0,
+    "num_colors": 1,
+    "color_desc": "GMCY",
+    "raw_pattern": [
+      [6]
+    ],
+    "black_level_per_channel": [64, 64, 64, 64],
+    "white_level": 16378,
+    "camera_white_level_per_channel": null,
+    "camera_whitebalance": [0.0, 1.0, 0.0, 0.0],
+    "daylight_whitebalance": [2.623405933380127, 1.0, 1.0, 0.0],
+    "rgb_xyz_matrix": [
+      [0.9251000285148621, -0.3817000091075897, -0.10689999908208847],
+      [-0.4627000093460083, 1.266700029373169, 0.2175000011920929],
+      [-0.07980000227689743, 0.16599999368190765, 0.5633000135421753],
+      [0.0, 0.0, 0.0]
+    ],
+    "color_matrix": [
+      [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0]
+    ],
+    "raw_type": "flat",
+    "raw_data_sha256": "32885422276864cc157b67bca091b7d996ce690fb7358b5c407a448e07cce081"
+  }
+}

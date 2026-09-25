@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "lucent",
+  "version-semver": "0.1.0",
+  "description": "Lucent: offline, camera-independent RAW photo development for Windows.",
+  "homepage": "https://github.com/FanZhu1998/Lucent",
+  "license": "MIT",
+  "supports": "windows & x64",
+  "dependencies": [
+    { "name": "libraw", "features": [ "dng-lossy" ] },
+    "lcms",
+    "libjpeg-turbo",
+    { "name": "tiff", "default-features": false, "features": [ "zip" ] },
+    "sqlite3",
+    "nlohmann-json",
+    "tl-expected",
+    "zlib"
+  ],
+  "features": {
+    "tests": {
+      "description": "Unit and integration tests.",
+      "dependencies": [ "gtest" ]
+    },
+    "ui": {
+      "description": "Qt Quick desktop application (Lucent.exe).",
+      "dependencies": [
+        {
+          "name": "qtbase",
+          "default-features": false,
+          "features": [ "concurrent", "doubleconversion", "freetype", "gui", "harfbuzz", "jpeg", "network", "opengl", "pcre2", "png", "testlib", "thread", "windeployqt" ]
+        },
+        "qtdeclarative",
+        "qtshadertools",
+        "qtsvg"
+      ]
+    }
+  }
+}

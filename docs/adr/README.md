@@ -1,0 +1,29 @@
+# Architecture Decision Records
+
+This directory records Lucent's architecturally significant decisions: why the code is built the
+way it is and which alternatives were rejected. The process is described in
+[ADR 0001](0001-record-architecture-decisions.md). New records start from
+[template.md](template.md).
+
+The product blueprint (`../blueprint/lucent-desktop-raw-processing-blueprint.md`) remains the
+product authority. The current module structure is described in
+[`../architecture/overview.md`](../architecture/overview.md) and the coding rules in
+[`../development/conventions.md`](../development/conventions.md).
+
+## Index
+
+| ADR | Title | Status | Date | Workflow |
+|---|---|---|---|---|
+| [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted | 2026-09-24 | W1 |
+| [0002](0002-build-and-dependency-management.md) | Build system and dependency management | Accepted | 2026-09-24 | W0, recorded in W1 |
+| [0003](0003-linking-and-licensing.md) | Linking model and third-party licensing | Accepted | 2026-09-24 | W1 |
+| [0004](0004-error-handling.md) | Error handling with `lucent::Expected` | Accepted | 2026-09-24 | W1 |
+| [0005](0005-raw-decoder-boundary.md) | RAW decoder boundary and decoded-RAW data contract | Being written in W1 by the `raw` module author | — | W1 |
+
+## Conventions
+
+- File names are `NNNN-short-kebab-title.md`. Numbers are sequential and never reused.
+- Status is one of `Proposed`, `Accepted`, `Superseded by ADR NNNN`, `Deprecated` or `Rejected`.
+- An accepted decision is not rewritten. A new ADR supersedes it, and the old one gets a status
+  update and a link to its successor.
+- Add every new ADR to the index above in the same change that introduces it.

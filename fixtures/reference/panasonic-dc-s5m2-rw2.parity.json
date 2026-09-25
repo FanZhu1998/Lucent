@@ -1,0 +1,67 @@
+{
+  "schema": "lucent.probe-report",
+  "schema_version": 1,
+  "fixture_id": "panasonic-dc-s5m2-rw2",
+  "file_name": "P1126458_mechanical.RW2",
+  "file_size": 37309952,
+  "file_sha256": "53a171521a7f9af6910b4ab61c5a4a42de0cceb24166e15b07eee1e00675028f",
+  "generator": {
+    "name": "rawpy-reference",
+    "rawpy": "0.27.1",
+    "libraw": [0, 22, 1],
+    "flags": {
+      "DNGLOSSYCODEC": true,
+      "DNGDEFLATECODEC": true,
+      "OPENMP": true,
+      "LCMS": true,
+      "REDCINECODEC": true,
+      "RAWSPEED": false,
+      "DEMOSAIC_PACK_GPL2": false,
+      "DEMOSAIC_PACK_GPL3": false,
+      "X3FTOOLS": true,
+      "6BY9RPI": true
+    },
+    "numpy": "2.5.3",
+    "python": "3.12.10"
+  },
+  "options": {
+    "shot_select": 0,
+    "decode": true
+  },
+  "status": "ok",
+  "parity": {
+    "raw_width": 6008,
+    "raw_height": 4008,
+    "width": 6008,
+    "height": 4008,
+    "top_margin": 0,
+    "left_margin": 0,
+    "iwidth": 6008,
+    "iheight": 4008,
+    "flip": 0,
+    "num_colors": 3,
+    "color_desc": "RGBG",
+    "raw_pattern": [
+      [0, 1],
+      [3, 2]
+    ],
+    "black_level_per_channel": [512, 512, 512, 512],
+    "white_level": 16319,
+    "camera_white_level_per_channel": [16319, 16319, 16319, 16319],
+    "camera_whitebalance": [526.0, 256.0, 426.0, 0.0],
+    "daylight_whitebalance": [2.110198736190796, 0.9395422339439392, 1.356971025466919, 0.0],
+    "rgb_xyz_matrix": [
+      [1.0307999849319458, -0.4205999970436096, -0.07829999923706055],
+      [-0.40880000591278076, 1.2101999521255493, 0.22290000319480896],
+      [-0.012500000186264515, 0.10509999841451645, 0.5911999940872192],
+      [0.0, 0.0, 0.0]
+    ],
+    "color_matrix": [
+      [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0]
+    ],
+    "raw_type": "flat",
+    "raw_data_sha256": "6ca284cd9f495292cdbe66755f910ae0ec39dab9de1d17937b0c0e8a4d40223f"
+  }
+}

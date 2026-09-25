@@ -1,0 +1,27 @@
+# Normalise line endings in the repository; check out with the platform default.
+* text=auto
+
+# Windows scripts must keep CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts must keep LF.
+*.sh text eol=lf
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.tif binary
+*.tiff binary
+*.icc binary
+*.icm binary
+*.dng binary
+*.cr2 binary
+*.cr3 binary
+*.arw binary
+*.nef binary
+*.raf binary
+*.onnx binary
+*.7z binary
+*.zip binary
