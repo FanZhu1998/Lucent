@@ -292,6 +292,12 @@ double SensorLevels::black_level_at(std::size_t channel_index, std::int64_t vx,
         const std::int64_t c = ((vx % cols) + cols) % cols;
         value += black_pattern[static_cast<std::size_t>(r * cols + c)];
     }
+    if (vx >= 0 && static_cast<std::uint64_t>(vx) < column_black_delta.size()) {
+        value += column_black_delta[static_cast<std::size_t>(vx)];
+    }
+    if (vy >= 0 && static_cast<std::uint64_t>(vy) < row_black_delta.size()) {
+        value += row_black_delta[static_cast<std::size_t>(vy)];
+    }
     return value;
 }
 
@@ -299,6 +305,12 @@ double SensorLevels::max_black_level() const noexcept {
     double value = black + *std::max_element(channel_black.begin(), channel_black.end());
     if (!black_pattern.empty()) {
         value += *std::max_element(black_pattern.begin(), black_pattern.end());
+    }
+    if (!column_black_delta.empty()) {
+        value += *std::max_element(column_black_delta.begin(), column_black_delta.end());
+    }
+    if (!row_black_delta.empty()) {
+        value += *std::max_element(row_black_delta.begin(), row_black_delta.end());
     }
     return value;
 }
@@ -477,11 +489,23 @@ Status check_consistency(const DecodedRaw& decoded) {
     if (!finite(lv.black) || !finite(lv.white) ||
         !std::all_of(lv.channel_black.begin(), lv.channel_black.end(), finite) ||
         !std::all_of(lv.black_pattern.begin(), lv.black_pattern.end(), finite) ||
-        !std::all_of(lv.linear_max.begin(), lv.linear_max.end(), finite)) {
+        !std::all_of(lv.linear_max.begin(), lv.linear_max.end(), finite) ||
+        !std::all_of(lv.column_black_delta.begin(), lv.column_black_delta.end(), finite) ||
+        !std::all_of(lv.row_black_delta.begin(), lv.row_black_delta.end(), finite)) {
         return contract_violation("levels must be finite");
     }
     if (lv.black_pattern.size() != std::size_t{lv.pattern_rows} * std::size_t{lv.pattern_cols}) {
         return contract_violation("black pattern size does not match its dimensions");
+    }
+    if (!lv.column_black_delta.empty() &&
+        lv.column_black_delta.size() != static_cast<std::size_t>(geo.visible_area.width)) {
+        return contract_violation(std::format("{} column black deltas for a visible area {} columns wide",
+                                              lv.column_black_delta.size(), geo.visible_area.width));
+    }
+    if (!lv.row_black_delta.empty() &&
+        lv.row_black_delta.size() != static_cast<std::size_t>(geo.visible_area.height)) {
+        return contract_violation(std::format("{} row black deltas for a visible area {} rows high",
+                                              lv.row_black_delta.size(), geo.visible_area.height));
     }
     const double max_black = lv.max_black_level();
     if (!(lv.white > max_black)) {

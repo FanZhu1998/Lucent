@@ -67,7 +67,11 @@ namespace lucent::raw {
 //   1.1: DataCompression gains provenance and basis and is filled for every container; subimage
 //        roles (SubimageRole); view layout (ProjectionInfo); NoiseProfile source IFD;
 //        Provenance::LucentRule; interpretation issue kinds 9-13.
-inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 1};
+//   1.2: SensorLevels gains per-column and per-row black deltas (column_black_delta,
+//        row_black_delta, delta_provenance), filled from DNG BlackLevelDeltaH/V. When they are
+//        filled, `black` no longer contains the decoder's folded mean of the deltas, and
+//        UnrepresentedBlackLevelCorrection is raised only when the deltas cannot be carried.
+inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 2};
 
 // ---------------------------------------------------------------------------------------------
 // Enumerations (persisted values; append only)
@@ -194,8 +198,10 @@ enum class InterpretationIssueKind : std::uint8_t {
     SubimageRoleUnknown = 11,
     // Unstitched multi-lens source (ViewLayout other than SingleView) -> RequiresUnsupportedOperation
     MultiViewSource = 12,
-    // Black-level corrections the file provides that SensorLevels cannot carry (DNG
-    // BlackLevelDeltaH/V) -> RequiresUnsupportedOperation
+    // Black-level corrections the file provides that SensorLevels cannot carry: DNG
+    // BlackLevelDeltaH/V that do not cover the visible area, or whose mean the decoder folded
+    // into its common black level in a way Lucent cannot undo exactly (see SensorLevels)
+    // -> RequiresUnsupportedOperation
     UnrepresentedBlackLevelCorrection = 13,
 };
 
@@ -326,13 +332,24 @@ struct RepresentationInfo {
 // Black and white levels in stored-sample units. The black level of a site is
 //     black + channel_black[channel index of the site]
 //           + black_pattern[(vy % pattern_rows) * pattern_cols + (vx % pattern_cols)]
+//           + column_black_delta[vx] + row_black_delta[vy]
 // where (vx, vy) are VISIBLE-AREA coordinates (raw-frame coordinates minus the visible-area
-// origin) and the pattern term is 0 when pattern_rows or pattern_cols is 0 (black_level_at()).
+// origin); the pattern term is 0 when pattern_rows or pattern_cols is 0, and a delta term is 0
+// when its vector is empty (black_level_at()). This is the DNG definition (DNG 1.7.1.0
+// chapter 5, "Black Subtraction": BlackLevel + BlackLevelDeltaH + BlackLevelDeltaV) with the
+// decoder's channel and pattern terms.
 // Values are those after MetadataStage (see RawMetadata::stage): several decoders measure black
 // from masked pixels while unpacking, so only AfterUnpack values are final.
-// Per-row and per-column black corrections (DNG BlackLevelDeltaV/H) cannot be expressed here:
-// LibRaw folds their mean into `black`. A DNG with non-zero deltas therefore carries an
-// UnrepresentedBlackLevelCorrection issue, and its raw IFD (DngMetadata) holds the tag values.
+//
+// Per-column and per-row deltas (DNG BlackLevelDeltaH / BlackLevelDeltaV) are read by Lucent's
+// DNG inspector from the decoded raw IFD. The tags are indexed from the DNG ActiveArea origin;
+// here they are re-indexed to the visible area (LibRaw can start the visible area one row or
+// column inside an ActiveArea with an odd margin). LibRaw adds the rounded mean of each delta
+// tag to its common black level; when the deltas are filled, that amount has been removed from
+// `black` again, so each correction is counted exactly once. When the deltas cannot be carried
+// (they do not cover the visible area, or the decoder's folding cannot be undone exactly), the
+// vectors stay empty, `black` keeps the decoder's value, the metadata carries an
+// UnrepresentedBlackLevelCorrection issue, and DngMetadata::raw_ifd still holds the tag values.
 struct SensorLevels {
     Provenance provenance = Provenance::Decoder;
     double black = 0.0;
@@ -341,16 +358,35 @@ struct SensorLevels {
     std::uint32_t pattern_cols = 0;
     std::vector<double> black_pattern;  // pattern_rows * pattern_cols values, row-major
     double white = 0.0;                 // saturation / maximum level of the stored data
-    // Per-channel linearity limit read from the file (0 when not provided).
+    // The decoder's per-channel "linear maximum" (LibRaw color.linear_max; 0 when it has none).
+    // Informational only: it is not necessarily read from the file. LibRaw 0.22 fills it from
+    // the Canon SpecularWhiteLevel, Sony and Olympus maker-note levels, Panasonic LinearityLimit
+    // tags (lowered by 64 when they equal 16383), an approximation from the DNG
+    // LinearResponseLimit, and for Nikon files without one it invents maximum / 1.07. LibRaw's
+    // own processing never uses it. Real data can lie between it and `white`, so it is not a
+    // saturation level (the engine saturates at `white`).
     std::array<double, 4> linear_max{};
+    // Per-column black correction, indexed by visible-area column: empty (no correction) or
+    // exactly visible_area.width values.
+    std::vector<double> column_black_delta;
+    // Per-row black correction, indexed by visible-area row: empty (no correction) or exactly
+    // visible_area.height values.
+    std::vector<double> row_black_delta;
+    // Source of the two delta vectors (DngTag for DNG BlackLevelDeltaH/V); meaningful only when
+    // one of them is non-empty.
+    Provenance delta_provenance = Provenance::DngTag;
 
-    // Total black level at channel `channel_index` (0..3) and visible-area position (vx, vy);
-    // negative positions are wrapped into the pattern. Precondition: channel_index < 4.
+    // Total black level at channel `channel_index` (0..3) and visible-area position (vx, vy).
+    // Negative positions are wrapped into the pattern; a delta term applies only at positions
+    // inside its vector (masked margins outside the visible area have no delta).
+    // Precondition: channel_index < 4.
     [[nodiscard]] double black_level_at(std::size_t channel_index, std::int64_t vx,
                                         std::int64_t vy) const noexcept;
 
     // Upper bound of the black level of any site: black + the largest channel_black + the largest
-    // black_pattern value. Decoded data always has white above it (check_consistency).
+    // black_pattern value + the largest column delta + the largest row delta (each delta term
+    // counted only when its vector is non-empty). Decoded data always has white above it
+    // (check_consistency).
     [[nodiscard]] double max_black_level() const noexcept;
 };
 
@@ -598,7 +634,8 @@ struct PixelsShape {
 // representation; the buffer matches the geometry (raw_width x raw_height), channel count and
 // sample encoding; the visible area lies inside the frame; a mosaic has a non-empty CFA equal to
 // the metadata's, whose colours all appear in channel_colors; levels are finite with black below
-// white; the contract version is readable. Fails with ErrorCode::Internal ("raw.contract") and a
+// white; black deltas are empty or match the visible area's width / height; the contract version
+// is readable. Fails with ErrorCode::Internal ("raw.contract") and a
 // message naming the first violation. Adapters call it before returning; tests use it too.
 [[nodiscard]] Status check_consistency(const DecodedRaw& decoded);
 

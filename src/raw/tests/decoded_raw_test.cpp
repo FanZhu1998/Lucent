@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -72,9 +73,10 @@ TEST(DecodedRawContract, PersistedEnumValuesNeverChange) {
     EXPECT_EQ(static_cast<int>(InterpretationIssueKind::UnrepresentedBlackLevelCorrection), 13);
     EXPECT_EQ(static_cast<int>(Lossiness::Unknown), 0);
     EXPECT_EQ(static_cast<int>(Lossiness::Lossy), 2);
-    // 1.1 added fields (subimage role, projection, compression provenance): a minor change.
+    // 1.1 added fields (subimage role, projection, compression provenance) and 1.2 the black
+    // deltas: minor changes.
     EXPECT_EQ(kDecodedRawContractVersion.major, 1u);
-    EXPECT_EQ(kDecodedRawContractVersion.minor, 1u);
+    EXPECT_EQ(kDecodedRawContractVersion.minor, 2u);
 }
 
 TEST(DecodedRawContract, DefaultsSayNothingIsKnown) {
@@ -138,6 +140,31 @@ TEST(SensorLevels, BlackLevelCombinesCommonChannelAndPattern) {
     // The upper bound over all sites: common + largest channel part + largest pattern value.
     EXPECT_DOUBLE_EQ(levels.max_black_level(), 100.0 + 4.0 + 60.0);
     EXPECT_DOUBLE_EQ(flat.max_black_level(), 65.0);
+}
+
+TEST(SensorLevels, RowAndColumnDeltasAddAtVisiblePositionsOnly) {
+    SensorLevels levels;
+    levels.black = 100.0;
+    levels.channel_black = {1.0, 2.0, 0.0, 0.0};
+    levels.pattern_rows = 1;
+    levels.pattern_cols = 2;
+    levels.black_pattern = {0.0, 10.0};
+    levels.column_black_delta = {0.5, -1.0, 3.0};
+    levels.row_black_delta = {-0.25, 2.0};
+    // DNG: BlackLevel + BlackLevelDeltaH[col] + BlackLevelDeltaV[row], plus the channel term.
+    EXPECT_DOUBLE_EQ(levels.black_level_at(0, 0, 0), 100.0 + 1.0 + 0.0 + 0.5 - 0.25);
+    EXPECT_DOUBLE_EQ(levels.black_level_at(1, 1, 1), 100.0 + 2.0 + 10.0 - 1.0 + 2.0);
+    EXPECT_DOUBLE_EQ(levels.black_level_at(0, 2, 1), 100.0 + 1.0 + 0.0 + 3.0 + 2.0);
+    // Outside the vectors (masked margins) no delta applies, but the pattern still wraps.
+    EXPECT_DOUBLE_EQ(levels.black_level_at(0, -1, 5), 100.0 + 1.0 + 10.0);
+    EXPECT_DOUBLE_EQ(levels.black_level_at(0, 3, -1), 100.0 + 1.0 + 10.0);
+    // The upper bound adds the largest delta of each kind.
+    EXPECT_DOUBLE_EQ(levels.max_black_level(), 100.0 + 2.0 + 10.0 + 3.0 + 2.0);
+    // All-negative deltas lower the bound.
+    levels.column_black_delta = {-1.0, -2.0, -3.0};
+    levels.row_black_delta.clear();
+    EXPECT_DOUBLE_EQ(levels.max_black_level(), 100.0 + 2.0 + 10.0 - 1.0);
+    EXPECT_EQ(SensorLevels{}.delta_provenance, Provenance::DngTag);
 }
 
 TEST(Interpretation, StatusIsTheWorstIssue) {
@@ -282,6 +309,19 @@ TEST(DecodedRawContract, ViolationsAreReported) {
         d.metadata.levels.pattern_cols = 2;
         d.metadata.levels.black_pattern = {1, 2, 3};
         expect_violation(d, "pattern size");
+    }
+    {
+        DecodedRaw d = make_mosaic();
+        d.metadata.levels.column_black_delta = std::vector<double>(5, 1.0);  // visible area is 6 wide
+        expect_violation(d, "column black deltas");
+        d.metadata.levels.column_black_delta = std::vector<double>(6, 1.0);
+        EXPECT_TRUE(check_consistency(d)) << check_consistency(d).error().describe();
+        d.metadata.levels.row_black_delta = std::vector<double>(6, 1.0);  // visible area is 4 high
+        expect_violation(d, "row black deltas");
+        d.metadata.levels.row_black_delta = {1.0, 1.0, std::numeric_limits<double>::quiet_NaN(), 1.0};
+        expect_violation(d, "finite");
+        d.metadata.levels.row_black_delta = {0.0, 0.0, 4100.0, 0.0};  // black above white on row 2
+        expect_violation(d, "white level");
     }
     {
         DecodedRaw d = make_mosaic();

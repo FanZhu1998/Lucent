@@ -544,25 +544,8 @@ void apply_dng(const ExtractionContext& context, std::string_view unpacker, RawM
         m.noise = std::move(noise);
     }
 
-    // BlackLevelDeltaH/V are part of the black level (DNG 1.7.1.0 chapter 5), but SensorLevels
-    // has no per-row or per-column term and LibRaw adds their rounded mean to its common black.
-    std::string deltas;
-    const auto describe_deltas = [&deltas](std::string_view tag, const std::vector<double>& values) {
-        if (std::none_of(values.begin(), values.end(), [](double v) { return v != 0.0; })) {
-            return;  // absent or all zero: nothing is lost
-        }
-        const auto [low, high] = value_range(values);
-        deltas += std::format("{}{} ({} values, {} to {})", deltas.empty() ? "" : " and ", tag, values.size(),
-                              low, high);
-    };
-    describe_deltas("BlackLevelDeltaH", ifd.black_level_delta_h);
-    describe_deltas("BlackLevelDeltaV", ifd.black_level_delta_v);
-    if (!deltas.empty()) {
-        add_issue(m.interpretation, InterpretationIssueKind::UnrepresentedBlackLevelCorrection,
-                  std::format("DNG raw IFD {} has {}; the contract cannot represent per-column or per-row "
-                              "black levels, and the decoder folded their mean into the common black level",
-                              ifd.path, deltas));
-    }
+    // BlackLevelDeltaH/V are carried by SensorLevels once the levels are known
+    // (apply_black_level_deltas, called from extract_metadata).
     if (ifd.linearization_table) {
         m.prior_processing.push_back(PriorProcessingStep{
             PriorProcessingKind::LinearizationApplied,
@@ -576,6 +559,132 @@ void apply_dng(const ExtractionContext& context, std::string_view unpacker, RawM
                                                          "own sRGB-like curve when there are none"});
     }
     m.dng = std::move(dng);
+}
+
+bool has_nonzero(const std::vector<double>& values) noexcept {
+    return std::any_of(values.begin(), values.end(), [](double v) { return v != 0.0; });
+}
+
+// The amount LibRaw 0.22.2 adds to its common black level for one BlackLevelDeltaH/V tag of n > 0
+// values (src/metadata/tiff.cpp:1338-1348):
+//     for (num = i = 0; i < len && i < 65536; i++) num += getreal(type);
+//     black += unsigned(num / len + 0.5);
+// The inspector converts each value exactly as getreal() does (numerator / denominator in
+// double), so the sum below is bit-identical. std::nullopt when the unsigned conversion is not
+// defined (an argument at or below -1, or beyond 32 bits), i.e. when LibRaw's result depends on
+// the compiler.
+std::optional<double> libraw_folded_delta(const std::vector<double>& values) noexcept {
+    if (values.empty()) {
+        return 0.0;
+    }
+    double sum = 0.0;
+    const std::size_t counted = std::min<std::size_t>(values.size(), 65536);
+    for (std::size_t i = 0; i < counted; ++i) {
+        sum += values[i];
+    }
+    const double argument = sum / static_cast<double>(values.size()) + 0.5;
+    if (!(argument > -1.0) || !(argument < 4294967296.0)) {
+        return std::nullopt;
+    }
+    return std::trunc(argument);
+}
+
+// LibRaw's common black level of an integer DNG raw IFD before the deltas are added, from the
+// BlackLevel tag (src/metadata/tiff.cpp, case 0xc61a): a single value with SamplesPerPixel 1 and
+// no repeat pattern becomes unsigned(float(value)); every other form (a pattern, or per-sample
+// values) goes to LibRaw's per-channel or pattern terms and leaves the common level at 0.
+double libraw_dng_common_black(const TiffIfdSummary& ifd) noexcept {
+    const std::uint32_t samples = ifd.samples_per_pixel.value_or(1);
+    const std::uint32_t cells =
+        ifd.black_level_repeat_dim
+            ? std::uint32_t{(*ifd.black_level_repeat_dim)[0]} * std::uint32_t{(*ifd.black_level_repeat_dim)[1]}
+            : 1;
+    if (samples == 1 && cells < 2 && ifd.black_level.size() == 1) {
+        const float value = static_cast<float>(ifd.black_level[0]);
+        return value > 0.0f ? std::trunc(static_cast<double>(value)) : 0.0;
+    }
+    return 0.0;
+}
+
+// Carries the raw IFD's BlackLevelDeltaH/V in `levels` (see SensorLevels), re-indexed from the
+// DNG ActiveArea origin to the visible area. For levels taken from LibRaw (Provenance::Decoder),
+// LibRaw's folded delta means are removed from `black` again after checking that LibRaw's common
+// black level is exactly the BlackLevel tag plus those means. Anything that prevents an exact
+// representation leaves `levels` unchanged and records UnrepresentedBlackLevelCorrection.
+void apply_black_level_deltas(const TiffIfdSummary& ifd, const image::PixelRect& visible, SensorLevels& levels,
+                              Interpretation& interpretation) {
+    const std::vector<double>& delta_h = ifd.black_level_delta_h;
+    const std::vector<double>& delta_v = ifd.black_level_delta_v;
+    const bool use_h = has_nonzero(delta_h);
+    const bool use_v = has_nonzero(delta_v);
+    if (!use_h && !use_v) {
+        return;  // absent or all zero: nothing to carry, and LibRaw folded nothing
+    }
+    std::string deltas;
+    const auto describe = [&deltas](std::string_view tag, const std::vector<double>& values) {
+        const auto [low, high] = value_range(values);
+        deltas += std::format("{}{} ({} values, {} to {})", deltas.empty() ? "" : " and ", tag, values.size(),
+                              low, high);
+    };
+    if (use_h) {
+        describe("BlackLevelDeltaH", delta_h);
+    }
+    if (use_v) {
+        describe("BlackLevelDeltaV", delta_v);
+    }
+    const auto unrepresented = [&](std::string_view reason) {
+        add_issue(interpretation, InterpretationIssueKind::UnrepresentedBlackLevelCorrection,
+                  std::format("DNG raw IFD {} has {}, but {}; {}", ifd.path, deltas, reason,
+                              levels.provenance == Provenance::Decoder
+                                  ? "the decoder's common black level includes their rounded mean instead"
+                                  : "the levels do not include them"));
+    };
+
+    // The tags are indexed from the ActiveArea origin (the image origin without ActiveArea).
+    const std::int64_t offset_x =
+        std::int64_t{visible.x} - (ifd.active_area ? std::int64_t{ifd.active_area->left} : 0);
+    const std::int64_t offset_y =
+        std::int64_t{visible.y} - (ifd.active_area ? std::int64_t{ifd.active_area->top} : 0);
+    if (use_h && (offset_x < 0 || offset_x + visible.width > static_cast<std::int64_t>(delta_h.size()))) {
+        unrepresented(std::format("the visible area (columns {} to {}) is not inside the {} columns they cover",
+                                  offset_x, offset_x + visible.width - 1, delta_h.size()));
+        return;
+    }
+    if (use_v && (offset_y < 0 || offset_y + visible.height > static_cast<std::int64_t>(delta_v.size()))) {
+        unrepresented(std::format("the visible area (rows {} to {}) is not inside the {} rows they cover",
+                                  offset_y, offset_y + visible.height - 1, delta_v.size()));
+        return;
+    }
+
+    double black = levels.black;
+    if (levels.provenance == Provenance::Decoder) {
+        const std::optional<double> folded_h = libraw_folded_delta(delta_h);
+        const std::optional<double> folded_v = libraw_folded_delta(delta_v);
+        if (!folded_h || !folded_v) {
+            unrepresented(
+                "a delta mean is -1.5 or less (or beyond 32 bits), where LibRaw's unsigned conversion of it is "
+                "undefined and what it added to its black level is unknown");
+            return;
+        }
+        const double common = libraw_dng_common_black(ifd);
+        if (levels.black != common + *folded_h + *folded_v) {
+            unrepresented(std::format("the decoder's common black level {} is not the BlackLevel term {} plus the "
+                                      "folded delta means {} and {}",
+                                      levels.black, common, *folded_h, *folded_v));
+            return;
+        }
+        black = common;
+    }
+    levels.black = black;
+    if (use_h) {
+        const auto first = delta_h.begin() + static_cast<std::ptrdiff_t>(offset_x);
+        levels.column_black_delta.assign(first, first + visible.width);
+    }
+    if (use_v) {
+        const auto first = delta_v.begin() + static_cast<std::ptrdiff_t>(offset_y);
+        levels.row_black_delta.assign(first, first + visible.height);
+    }
+    levels.delta_provenance = Provenance::DngTag;
 }
 
 // The compression facts LibRaw holds after open_datastream(). The Fujifilm lossless flag and the
@@ -1163,6 +1272,9 @@ Expected<RawMetadata> extract_metadata(LibRaw& raw, const ExtractionContext& con
         m.levels = std::move(*levels);
     } else {
         m.levels = levels_from_libraw(color);
+    }
+    if (m.dng) {
+        apply_black_level_deltas(m.dng->raw_ifd, m.geometry.visible_area, m.levels, m.interpretation);
     }
     m.color = color_from_libraw(color);
 
