@@ -2,8 +2,8 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent is in its first development increment
-> (W1, foundation and RAW probe). There is **no application, installer or user-facing feature
+> **Status: pre-alpha, under active development.** Lucent has completed its second development
+> increment (W2, first render path). There is **no application, installer or user-facing feature
 > yet**, and no camera model is verified as supported. The next section describes the product
 > Lucent is being built to become, from its blueprint, not what it can do today.
 
@@ -43,15 +43,18 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | Increment | Scope | Status |
 |---|---|---|
 | W0 | Toolchain and repository scaffolding | Done |
-| W1 | `core`, `image` and `raw` modules, LibRaw probe adapter, `lucent-probe` developer tool, camera fixture manifest and downloader, rawpy reference-parity script, ADRs | **In progress** |
-| W2–W12 | Render path, application shell, catalog, installer, editor, batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
+| W1 | `core`, `image` and `raw` modules, LibRaw probe adapter, `lucent-probe` developer tool, camera fixture manifest and downloader, rawpy reference-parity script, ADRs | Done |
+| W2 | `engine` render path (sensor normalisation, white balance, demosaicing, camera colour, Rec.2020 working space, provisional display rendering, orientation), `export` (verified JPEG / 16-bit TIFF with ICC profiles), `lucent-render` developer tool, rawpy render gates | Done |
+| W3–W12 | Application shell, catalog, installer, editor, batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
 
-W1 has no graphical interface. Its output is libraries, tests and a developer command-line tool.
+There is no graphical interface yet. The output so far is libraries, tests and two developer
+command-line tools (`lucent-probe`, `lucent-render`).
 
 ## Repository layout
 
 ```text
 apps/lucent-probe/   Developer CLI that prints RAW decoder probe results as JSON (W1)
+apps/lucent-render/  Developer CLI that renders a RAW file and exports JPEG / 16-bit TIFF (W2)
 cmake/               CMake helpers and the x64-windows-lucent vcpkg overlay triplet
 docs/adr/            Architecture decision records
 docs/architecture/   Module layering and dependency rules
@@ -63,12 +66,14 @@ research/            Python research environment (rawpy reference decoding); dev
 src/core/            lucent_core: error model, hashing, files, text, logging, cancellation, versioning
 src/image/           lucent_image: pixel containers, CFA descriptors, colour-encoding contracts
 src/raw/             lucent_raw: RawDecoder interface, decoded-RAW data contract, LibRaw adapter
+src/engine/          lucent_engine: the render path from decoded RAW to display-referred Rec.2020
+src/export/          lucent_export: output profiles, JPEG/TIFF encoding, verified no-clobber export
 tests/               Cross-module integration tests (unit tests live in src/<module>/tests/)
 tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.ps1
 ```
 
 Modules are layered: a module may depend only on lower layers. `core` is the lowest, then `image`,
-then `raw`, with the planned modules above them. See
+then `raw`, `engine` and `export`, with the planned modules above them. See
 [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Developer quick start
