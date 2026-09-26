@@ -606,26 +606,45 @@ TEST_F(LibRawAdapter, NoiseProfileComesFromTheRawIfdElseIfdZero) {
     }
 }
 
-TEST_F(LibRawAdapter, BlackLevelDeltasTheContractCannotCarryBlockVerification) {
-    // Review finding NUME-6: LibRaw folds BlackLevelDeltaH/V into the common black level.
+TEST_F(LibRawAdapter, BlackLevelDeltasAreCarriedPerColumnAndRow) {
+    // Review finding NUME-6 (W1) and contract 1.2: BlackLevelDeltaH/V are part of the black level
+    // (DNG 1.7.1.0 chapter 5); LibRaw only folds their rounded mean into its common black level.
     SyntheticDngSpec spec;
     spec.black_level_delta_h.assign(64, {0, 1});
     spec.black_level_delta_h[10] = {6, 1};
     spec.black_level_delta_v.assign(48, {-1, 2});
     {
+        // Means 6/64 and -0.5 round to 0, so LibRaw's common black stays at BlackLevel 256.
         const DecodedRaw decoded = decode_ok(write_dng(spec, L"deltas.dng"));
         const RawMetadata& m = decoded.metadata;
         ASSERT_TRUE(m.dng);
         EXPECT_EQ(m.dng->raw_ifd.black_level_delta_h.size(), 64u);
         EXPECT_DOUBLE_EQ(m.dng->raw_ifd.black_level_delta_h[10], 6.0);
         EXPECT_EQ(m.dng->raw_ifd.black_level_delta_v, std::vector<double>(48, -0.5));
-        EXPECT_EQ(m.interpretation.status, InterpretationStatus::RequiresUnsupportedOperation);
-        ASSERT_EQ(m.interpretation.issues.size(), 1u);
-        EXPECT_EQ(m.interpretation.issues[0].kind,
-                  InterpretationIssueKind::UnrepresentedBlackLevelCorrection);
-        EXPECT_NE(m.interpretation.issues[0].message.find("BlackLevelDeltaH (64 values, 0 to 6)"),
-                  std::string::npos)
-            << m.interpretation.issues[0].message;
+        EXPECT_EQ(m.interpretation.status, InterpretationStatus::Complete);
+        EXPECT_TRUE(m.interpretation.issues.empty());
+        EXPECT_DOUBLE_EQ(m.levels.black, 256.0);
+        EXPECT_EQ(m.levels.delta_provenance, Provenance::DngTag);
+        ASSERT_EQ(m.levels.column_black_delta.size(), 64u);
+        EXPECT_EQ(m.levels.row_black_delta, std::vector<double>(48, -0.5));
+        EXPECT_DOUBLE_EQ(m.levels.black_level_at(0, 10, 7), 256.0 + 6.0 - 0.5);
+        EXPECT_DOUBLE_EQ(m.levels.black_level_at(0, 11, 7), 256.0 - 0.5);
+        EXPECT_DOUBLE_EQ(m.levels.max_black_level(), 256.0 + 6.0 - 0.5);
+        // The probe carries the same values.
+        const ProbeResult probe = probe_ok(write_dng(spec, L"deltas-probe.dng"));
+        EXPECT_EQ(probe.metadata.levels.column_black_delta, m.levels.column_black_delta);
+        EXPECT_EQ(probe.metadata.levels.row_black_delta, m.levels.row_black_delta);
+    }
+    {
+        // Means 3 and 2.25: LibRaw adds unsigned(3.5) = 3 and unsigned(2.75) = 2 to its black of
+        // 256; Lucent removes them again so that each delta is counted once.
+        spec.black_level_delta_h.assign(64, {3, 1});
+        spec.black_level_delta_v.assign(48, {9, 4});
+        const DecodedRaw decoded = decode_ok(write_dng(spec, L"folded-deltas.dng"));
+        const RawMetadata& m = decoded.metadata;
+        EXPECT_EQ(m.interpretation.status, InterpretationStatus::Complete);
+        EXPECT_DOUBLE_EQ(m.levels.black, 256.0);
+        EXPECT_DOUBLE_EQ(m.levels.black_level_at(0, 0, 0), 256.0 + 3.0 + 2.25);
     }
     {
         // All-zero deltas change nothing.
@@ -633,6 +652,9 @@ TEST_F(LibRawAdapter, BlackLevelDeltasTheContractCannotCarryBlockVerification) {
         spec.black_level_delta_v.assign(48, {0, 1});
         const DecodedRaw decoded = decode_ok(write_dng(spec, L"zero-deltas.dng"));
         EXPECT_EQ(decoded.metadata.interpretation.status, InterpretationStatus::Complete);
+        EXPECT_TRUE(decoded.metadata.levels.column_black_delta.empty());
+        EXPECT_TRUE(decoded.metadata.levels.row_black_delta.empty());
+        EXPECT_DOUBLE_EQ(decoded.metadata.levels.black, 256.0);
     }
     {
         // A count that does not match the active area is malformed.
@@ -640,6 +662,64 @@ TEST_F(LibRawAdapter, BlackLevelDeltasTheContractCannotCarryBlockVerification) {
         const ProbeResult probe = probe_ok(write_dng(spec, L"bad-deltas.dng"));
         EXPECT_EQ(probe.metadata.interpretation.status, InterpretationStatus::Ambiguous);
     }
+}
+
+TEST_F(LibRawAdapter, BlackLevelDeltasAreReindexedToTheVisibleArea) {
+    // ActiveArea (5, 3)-(61, 45): LibRaw's visible area starts at (6, 4), one column and one row
+    // inside the ActiveArea whose origin the deltas are indexed from.
+    SyntheticDngSpec spec;
+    spec.active_area = std::array<std::uint32_t, 4>{3, 5, 45, 61};
+    for (std::int32_t i = 0; i < 56; ++i) {
+        spec.black_level_delta_h.push_back({i, 1});
+    }
+    for (std::int32_t i = 0; i < 42; ++i) {
+        spec.black_level_delta_v.push_back({i, 4});
+    }
+    const DecodedRaw decoded = decode_ok(write_dng(spec, L"active-deltas.dng"));
+    const RawMetadata& m = decoded.metadata;
+    ASSERT_EQ(m.geometry.visible_area, (image::PixelRect{6, 4, 55, 41}));
+    EXPECT_EQ(m.interpretation.status, InterpretationStatus::Complete);
+    ASSERT_EQ(m.levels.column_black_delta.size(), 55u);
+    ASSERT_EQ(m.levels.row_black_delta.size(), 41u);
+    EXPECT_DOUBLE_EQ(m.levels.column_black_delta.front(), 1.0);  // ActiveArea column 1
+    EXPECT_DOUBLE_EQ(m.levels.column_black_delta.back(), 55.0);
+    EXPECT_DOUBLE_EQ(m.levels.row_black_delta.front(), 0.25);  // ActiveArea row 1
+    EXPECT_DOUBLE_EQ(m.levels.row_black_delta.back(), 41.0 / 4.0);
+    // LibRaw folded unsigned(27.5 + 0.5) = 28 and unsigned(5.125 + 0.5) = 5 into its black level;
+    // both are removed again.
+    EXPECT_DOUBLE_EQ(m.levels.black, 256.0);
+    EXPECT_DOUBLE_EQ(m.levels.black_level_at(0, 0, 0), 256.0 + 1.0 + 0.25);
+}
+
+TEST_F(LibRawAdapter, BlackLevelDeltasLibRawCannotFoldExactlyStayUnrepresented) {
+    // A mean of -2 makes LibRaw convert -1.5 to unsigned, which C++ leaves undefined; Lucent
+    // cannot know what the decoder added, so it keeps the decoder's black and flags the file.
+    SyntheticDngSpec spec;
+    spec.black_level_delta_v.assign(48, {-2, 1});
+    const DecodedRaw decoded = decode_ok(write_dng(spec, L"negative-deltas.dng"));
+    const RawMetadata& m = decoded.metadata;
+    EXPECT_EQ(m.interpretation.status, InterpretationStatus::RequiresUnsupportedOperation);
+    ASSERT_EQ(m.interpretation.issues.size(), 1u);
+    EXPECT_EQ(m.interpretation.issues[0].kind, InterpretationIssueKind::UnrepresentedBlackLevelCorrection);
+    EXPECT_NE(m.interpretation.issues[0].message.find("BlackLevelDeltaV (48 values, -2 to -2)"),
+              std::string::npos)
+        << m.interpretation.issues[0].message;
+    EXPECT_TRUE(m.levels.row_black_delta.empty());
+    EXPECT_TRUE(m.levels.column_black_delta.empty());
+}
+
+TEST_F(LibRawAdapter, FloatingPointDngDeltasComeStraightFromTheTags) {
+    // Float data takes every level from the DNG tags, so there is no folded mean to remove.
+    SyntheticDngSpec spec;
+    spec.float_samples = true;
+    spec.black_level_delta_h.assign(64, {1, 100});
+    const DecodedRaw decoded = decode_ok(write_dng(spec, L"float-deltas.dng"));
+    const RawMetadata& m = decoded.metadata;
+    EXPECT_EQ(m.levels.provenance, Provenance::DngTag);
+    EXPECT_EQ(m.interpretation.status, InterpretationStatus::Complete);
+    EXPECT_DOUBLE_EQ(m.levels.black, 0.0);
+    EXPECT_EQ(m.levels.column_black_delta, std::vector<double>(64, 0.01));
+    EXPECT_DOUBLE_EQ(m.levels.black_level_at(0, 3, 3), 0.01);
 }
 
 TEST_F(LibRawAdapter, DualFisheye360SourceIsNeverACompletePlanarImage) {

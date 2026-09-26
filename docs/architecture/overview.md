@@ -15,8 +15,8 @@ workflows (see `docs/development/roadmap.md`).
 | core | `lucent_core` | Error model, hashing, file access, text conversion, logging, cancellation, versioning | tl-expected, Win32 | W1 |
 | image | `lucent_image` | Pixel containers, CFA descriptors, colour-encoding contracts, colour math | — | W1 |
 | raw | `lucent_raw` | `RawDecoder` interface, decoded-RAW data contract, decoder registry, LibRaw adapter, DNG tag inspection | LibRaw (private) | W1 |
-| engine | `lucent_engine` | Typed render graph, operation semantics, sensor normalisation, demosaicing routes, colour pipeline | Little CMS (private) | Planned |
-| export | `lucent_export` | JPEG/TIFF encoding, ICC embedding, metadata, verification, durable publication | libjpeg-turbo, libtiff, Little CMS (private) | Planned |
+| engine | `lucent_engine` | Sensor normalisation, white balance, demosaicing routes, camera colour, working space, provisional display rendering, orientation (W2, ADR 0006); typed render graph and operation semantics (W6) | — | W2 |
+| export | `lucent_export` | Output profiles, JPEG/TIFF encoding, ICC embedding, verification, no-clobber publication (W2); metadata (later) | libjpeg-turbo, libtiff, Little CMS (private) | W2 |
 | catalog | `lucent_catalog` | SQLite catalog, migrations, source identity, recipes, job journal | SQLite (private) | Planned |
 | analysis | `lucent_analysis` | Metrics, deterministic proposals, optimiser, optional learned inference | ONNX Runtime (private, later) | Planned |
 | assets | `lucent_assets` | Versioned camera/lens profiles, models, manifests, licences | — | Planned |
@@ -25,7 +25,7 @@ workflows (see `docs/development/roadmap.md`).
 | ui | `Lucent.exe` | Qt Quick Library / Edit / Exports views | Qt Quick | Planned |
 
 Executables live in `apps/`: `Lucent.exe` (GUI, WIN32 subsystem), `lucent-worker.exe` (isolated
-processing worker) and developer tools such as `lucent-probe.exe`.
+processing worker) and developer tools such as `lucent-probe.exe` and `lucent-render.exe`.
 
 ## Dependency rules
 

@@ -285,7 +285,12 @@ TEST(FixtureReferences, CoverTheManifestExactly) {
         expected.insert(fixture.id + ".parity.json");
         EXPECT_TRUE(std::filesystem::exists(reference_file(fixture))) << "no reference for " << fixture.id;
     }
+    // Subdirectories hold other reference kinds (reference/demosaic: Malvar-He-Cutler crops of
+    // research/tools/demosaic_reference.py); only the parity files map one-to-one to the manifest.
     for (const auto& entry : std::filesystem::directory_iterator(fixture_root() / "reference")) {
+        if (entry.is_directory()) {
+            continue;
+        }
         EXPECT_TRUE(expected.contains(entry.path().filename().string()))
             << "reference without a manifest entry: " << entry.path().filename().string();
     }

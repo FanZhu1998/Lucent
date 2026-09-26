@@ -50,9 +50,12 @@ endif()
 add_subdirectory(src/core)
 add_subdirectory(src/image)
 add_subdirectory(src/raw)
+add_subdirectory(src/engine)
+add_subdirectory(src/export)
 
 if(LUCENT_BUILD_TOOLS)
     add_subdirectory(apps/lucent-probe)
+    add_subdirectory(apps/lucent-render)
 endif()
 
 if(LUCENT_BUILD_TESTS)
