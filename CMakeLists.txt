@@ -52,10 +52,15 @@ add_subdirectory(src/image)
 add_subdirectory(src/raw)
 add_subdirectory(src/engine)
 add_subdirectory(src/export)
+add_subdirectory(src/application)
 
 if(LUCENT_BUILD_TOOLS)
     add_subdirectory(apps/lucent-probe)
     add_subdirectory(apps/lucent-render)
+endif()
+
+if(LUCENT_BUILD_UI)
+    add_subdirectory(apps/lucent)
 endif()
 
 if(LUCENT_BUILD_TESTS)

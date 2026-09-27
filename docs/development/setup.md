@@ -8,7 +8,8 @@ The reasoning behind these choices is in
 **Contents:** [Reference versions](#reference-versions) ·
 [Quick path](#quick-path-bootstrap-script) · [Manual setup](#manual-setup-step-by-step) ·
 [Environment](#how-the-build-environment-is-loaded) · [Presets](#presets-and-vcpkg-features) ·
-[Build and test](#build-and-test) · [Fixtures](#test-fixtures) ·
+[Build and test](#build-and-test) · [Running Lucent.exe](#running-lucentexe-from-a-build-tree) ·
+[Fixtures](#test-fixtures) ·
 [Research environment](#research-environment) · [Qt and UI builds](#qt-and-ui-builds) ·
 [Troubleshooting](#troubleshooting)
 
@@ -210,7 +211,7 @@ validated yet; `tools\build.ps1` is the supported path.
 | Preset | Build type | vcpkg features | Qt needed | Use |
 |---|---|---|---|---|
 | `dev-core` | RelWithDebInfo | `tests` | No | Everyday development of the libraries, `lucent-probe` and tests. **Required to pass for every increment.** |
-| `dev` | RelWithDebInfo | `tests;ui` | Yes | Full application once the Qt Quick UI exists (W3) |
+| `dev` | RelWithDebInfo | `tests;ui` | Yes | Full application: `Lucent.exe` (Qt Quick UI, W3) and its tests. Must also pass from W3 on. |
 | `release` | Release | `tests;ui` | Yes | Packaging builds |
 
 - Engine dependencies (LibRaw, Little CMS, libjpeg-turbo, libtiff, SQLite, nlohmann-json,
@@ -260,6 +261,51 @@ All executables and the DLLs they need are placed in `<build dir>\bin`. From a w
 Warnings are errors (`/W4 /WX`). Fix the warning in Lucent code. Do not disable warnings globally
 or edit `cmake\LucentCompilerOptions.cmake` to silence them.
 
+## Running Lucent.exe from a build tree
+
+`tools\build.ps1 -Preset dev` builds `<build dir>\bin\Lucent.exe`. The build also runs the
+`lucent_ui_runtime` target, which copies the vcpkg runtime DLLs into `bin` and writes `bin\qt.conf`
+pointing Qt at the plugins and QML imports under `<build dir>\vcpkg_installed`. The program then
+starts by double-click or from any shell, without `dev-env.ps1`. This `qt.conf` is for build trees
+only: the installer deploys Qt with windeployqt (W5) and never ships it.
+
+```powershell
+.\build\dev\bin\Lucent.exe                                # empty library
+.\build\dev\bin\Lucent.exe D:\Photos\IMG_0001.CR3 D:\Card   # positional paths are added, like drag and drop
+```
+
+`Lucent.exe` is a WIN32 program without a console. Its own progress lines (`lucent: ...`) reach a
+terminal only when stderr is redirected. Set `QT_FORCE_STDERR_LOGGING=1` to get Qt's and QML's
+warnings there as well:
+
+```powershell
+$env:QT_FORCE_STDERR_LOGGING = '1'
+.\build\dev\bin\Lucent.exe --import fixtures\cache\canon-eos-r5-cr3-raw --open-first --measure 2> lucent.log
+```
+
+**Developer-only options** exist for verifying a build without clicking through the window. They
+are not part of the user interface, may change without notice, and are documented in
+`apps\lucent\src\developer_automation.hpp` and by `Lucent.exe --help`:
+
+| Option | Effect |
+|---|---|
+| `--import <path>` (repeatable), `--include-subfolders` | Add photos or folders when the window opens |
+| `--open-first`, `--view <library\|edit\|exports>`, `--zoom <fit\|100>` | Open the first photo in Edit, show a view, zoom to 100 % |
+| `--export-all <folder>`, `--export-format <jpeg\|tiff16>`, `--export-color-space <srgb\|display-p3>`, `--export-quality <1..100>` | Export every photo once the import has finished |
+| `--show-export-dialog` | Open the Export dialog (with `--open-first`) |
+| `--measure` | Report start-up time, first visible thumbnail, preview latency and UI-thread responsiveness on stderr |
+| `--screenshot <file.png>`, `--quit-after-screenshot`, `--settle-timeout <ms>` | Save the window once no work is pending and two rendered frames agree, then exit (0 saved, 1 save failed, 3 not settled) |
+
+For example, screenshots of the three views on the smoke fixtures (after
+`tools\fetch-fixtures.ps1 -Tier smoke`):
+
+```powershell
+$bin = '.\build\dev\bin\Lucent.exe'
+& $bin --import fixtures\cache --include-subfolders --view library --screenshot shots\library.png --quit-after-screenshot
+& $bin --import fixtures\cache --include-subfolders --open-first --screenshot shots\edit.png --quit-after-screenshot
+& $bin --import fixtures\cache --include-subfolders --export-all $env:TEMP\lucent-out --view exports --screenshot shots\exports.png --quit-after-screenshot
+```
+
 ## Test fixtures
 
 Unit tests use synthetic data and always run. Tests that need real camera files look for them under
@@ -288,7 +334,10 @@ the tools venv that holds CMake.
 
 ## Qt and UI builds
 
-Nothing in W1 needs Qt; use the `dev-core` preset.
+The libraries, `lucent-probe` and `lucent-render` need no Qt: use the `dev-core` preset. `Lucent.exe`
+and its UI tests need the `dev` preset. On a machine whose binary cache holds Qt (the reference
+machine's does), the first `dev` configure restores it in about a minute; otherwise Qt is built
+from source as described below.
 
 - **Qt 6.11.1 is built from source through vcpkg** by the `ui` manifest feature. The sources are
   pinned by SHA-512 in the port files, and `qtbase` is built with its default features disabled and

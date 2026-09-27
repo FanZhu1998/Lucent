@@ -2,10 +2,13 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its second development
-> increment (W2, first render path). There is **no application, installer or user-facing feature
-> yet**, and no camera model is verified as supported. The next section describes the product
-> Lucent is being built to become, from its blueprint, not what it can do today.
+> **Status: pre-alpha, under active development.** Lucent has completed its third development
+> increment (W3, application shell), pending its merge: a Qt Quick `Lucent.exe` that adds RAW
+> files, browses them with labelled camera previews and support states, shows Lucent's
+> provisional render, and exports JPEG or 16-bit TIFF. It runs only from a source build. There is
+> **no installer, no editing control and no saved library yet**, and no camera model is verified
+> as supported. The next section describes the product Lucent is being built to become, from its
+> blueprint, not what it can do today.
 
 ## What Lucent is meant to be
 
@@ -45,14 +48,19 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W0 | Toolchain and repository scaffolding | Done |
 | W1 | `core`, `image` and `raw` modules, LibRaw probe adapter, `lucent-probe` developer tool, camera fixture manifest and downloader, rawpy reference-parity script, ADRs | Done |
 | W2 | `engine` render path (sensor normalisation, white balance, demosaicing, camera colour, Rec.2020 working space, provisional display rendering, orientation), `export` (verified JPEG / 16-bit TIFF with ICC profiles), `lucent-render` developer tool, rawpy render gates | Done |
-| W3–W12 | Application shell, catalog, installer, editor, batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
+| W3 | Qt Quick `Lucent.exe` (Library / Edit / Exports), `application` services (import, session library, background previews and camera previews, export), UI adapters (ADR 0007) | Done, pending merge |
+| W4–W12 | Catalog, installer, editor, batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
 
-There is no graphical interface yet. The output so far is libraries, tests and two developer
-command-line tools (`lucent-probe`, `lucent-render`).
+`Lucent.exe` is built with the `dev` preset and run from the build tree
+([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library lasts for
+the session only (the catalog is W4's), photos are shown with a provisional neutral rendering and
+default settings (editing is W6's), and there is no installer (W5). The developer command-line
+tools `lucent-probe` and `lucent-render` remain.
 
 ## Repository layout
 
 ```text
+apps/lucent/         Lucent.exe: the Qt Quick shell, its view models and the adapters to the application services (W3)
 apps/lucent-probe/   Developer CLI that prints RAW decoder probe results as JSON (W1)
 apps/lucent-render/  Developer CLI that renders a RAW file and exports JPEG / 16-bit TIFF (W2)
 cmake/               CMake helpers and the x64-windows-lucent vcpkg overlay triplet
@@ -68,12 +76,14 @@ src/image/           lucent_image: pixel containers, CFA descriptors, colour-enc
 src/raw/             lucent_raw: RawDecoder interface, decoded-RAW data contract, LibRaw adapter
 src/engine/          lucent_engine: the render path from decoded RAW to display-referred Rec.2020
 src/export/          lucent_export: output profiles, JPEG/TIFF encoding, verified no-clobber export
+src/application/     lucent_application: import, session library, task executor, preview and export services (no Qt)
 tests/               Cross-module integration tests (unit tests live in src/<module>/tests/)
 tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.ps1
 ```
 
 Modules are layered: a module may depend only on lower layers. `core` is the lowest, then `image`,
-then `raw`, `engine` and `export`, with the planned modules above them. See
+then `raw`, `engine` and `export`; `application` sits above them (the planned `catalog`,
+`analysis`, `assets` and `workers` modules will sit in between), with the user interface on top. See
 [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Developer quick start

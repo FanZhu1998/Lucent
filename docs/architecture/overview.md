@@ -21,8 +21,8 @@ workflows (see `docs/development/roadmap.md`).
 | analysis | `lucent_analysis` | Metrics, deterministic proposals, optimiser, optional learned inference | ONNX Runtime (private, later) | Planned |
 | assets | `lucent_assets` | Versioned camera/lens profiles, models, manifests, licences | — | Planned |
 | workers | `lucent_workers` | Worker process lifecycle, protocol, memory admission, job isolation | Qt Core (later) | Planned |
-| application | `lucent_application` | Import/export use cases, command history, recipe revisions | Qt Core | Planned |
-| ui | `Lucent.exe` | Qt Quick Library / Edit / Exports views | Qt Quick | Planned |
+| application | `lucent_application` | Import (discovery, exclusions, refresh of changed files), session library, task executor with memory admission, preview and camera-preview service, single-item export (W3, ADR 0007); command history and recipe revisions (W6) | — (no Qt) | W3 |
+| ui | `Lucent.exe`, `lucent_ui_adapters` | Qt Quick Library / Edit / Exports views, view models, UI-side service interfaces, and the adapters that bind them to `lucent_application` (ADR 0007) | Qt Quick | W3 |
 
 Executables live in `apps/`: `Lucent.exe` (GUI, WIN32 subsystem), `lucent-worker.exe` (isolated
 processing worker) and developer tools such as `lucent-probe.exe` and `lucent-render.exe`.
@@ -34,8 +34,12 @@ processing worker) and developer tools such as `lucent-probe.exe` and `lucent-re
   never leave `lucent_raw`; SQLite never leaves `lucent_catalog`; Qt never appears below
   `workers`.
 - `engine` depends on the decoded-RAW *data contract* from `raw`, not on any decoder adapter.
+- `application` is pure C++: no Qt, so workers and command-line tools can use the same services.
+  Its callbacks run on its own executor threads; the UI adapters (`apps/lucent/src/adapters`)
+  post them to the UI thread.
 - The UI never decodes or renders on its thread; it talks to application services, which
-  dispatch work to workers.
+  dispatch work to background threads: in W3 an in-process executor (ADR 0007), from W7 isolated
+  worker processes behind the same service interfaces.
 
 ## Build and dependency management
 
