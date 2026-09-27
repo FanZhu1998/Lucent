@@ -32,6 +32,16 @@ enum class SyntheticKind {
     Mono,       // LinearRaw, 1 sample per pixel (monochrome sensor)
 };
 
+// A JPEG stream to embed as a preview IFD (see SyntheticDngSpec::jpeg_previews). The declared
+// ImageWidth / ImageLength need not match the stream (tests use that to check that the stream's
+// own frame header is authoritative).
+struct SyntheticJpegPreview {
+    std::vector<std::byte> bytes;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t components = 3;
+};
+
 struct SyntheticDngSpec {
     std::uint32_t width = 64;  // LibRaw rejects images smaller than 22 x 22
     std::uint32_t height = 48;
@@ -59,6 +69,10 @@ struct SyntheticDngSpec {
     // NoiseProfile (DOUBLE pairs) in the raw IFD and in IFD 0; empty omits the tag.
     std::vector<double> raw_noise_profile;
     std::vector<double> ifd0_noise_profile;
+    // Embedded JPEG previews, each written as a further SubIFD of IFD 0 (after any raw SubIFD) in
+    // this order: NewSubFileType 1, Compression 7, YCbCr (or BlackIsZero for 1 component), one
+    // strip holding the stream. Used by the embedded-preview tests.
+    std::vector<SyntheticJpegPreview> jpeg_previews;
 };
 
 // Stored value of sample (x, y, channel) of raw image `image`: varied, within 12 bits, never 0.
@@ -229,15 +243,35 @@ inline std::vector<std::byte> build_synthetic_dng(const SyntheticDngSpec& spec) 
         ifd0.sub_ifds = {second};
     }
 
+    for (const SyntheticJpegPreview& jpeg : spec.jpeg_previews) {
+        Ifd preview;
+        const std::uint64_t components = jpeg.components;
+        preview.entries = {
+            long_entry(t::kNewSubFileType, {1}),
+            long_entry(t::kImageWidth, {jpeg.width}),
+            long_entry(t::kImageLength, {jpeg.height}),
+            short_entry(t::kBitsPerSample, std::vector<std::uint64_t>(components, 8)),
+            short_entry(t::kCompression, {7}),
+            short_entry(t::kPhotometricInterpretation, {components == 3 ? 6u : 1u}),
+            long_entry(t::kStripOffsets, {0}),  // patched below
+            short_entry(t::kSamplesPerPixel, {components}),
+            long_entry(t::kRowsPerStrip, {jpeg.height}),
+            long_entry(t::kStripByteCounts, {jpeg.bytes.size()}),
+            short_entry(t::kPlanarConfiguration, {1}),
+            undefined_entry(kPixelDataTag, jpeg.bytes),
+        };
+        ifd0.sub_ifds.push_back(std::move(preview));
+    }
+
     Document doc;
     doc.endian = spec.endian;
     doc.chain = {ifd0};
     Built built = build(doc);
     // StripOffsets holds one LONG, stored inline in its entry.
     built.put(built.value("ifd0", t::kStripOffsets), built.value("ifd0", kPixelDataTag), 4);
-    if (!ifd0.sub_ifds.empty()) {
-        built.put(built.value("ifd0.subifd0", t::kStripOffsets), built.value("ifd0.subifd0", kPixelDataTag),
-                  4);
+    for (std::size_t i = 0; i < ifd0.sub_ifds.size(); ++i) {
+        const std::string path = "ifd0.subifd" + std::to_string(i);
+        built.put(built.value(path, t::kStripOffsets), built.value(path, kPixelDataTag), 4);
     }
     return std::move(built.bytes);
 }

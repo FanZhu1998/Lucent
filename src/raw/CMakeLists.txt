@@ -47,6 +47,12 @@ set(LUCENT_RAW_SOURCES
     src/container_extent.hpp
     src/tiff_extent.cpp
     src/tiff_extent.hpp
+
+    # Embedded camera previews (LibRaw thumbnail list; never unpacks the RAW data).
+    include/lucent/raw/embedded_preview.hpp
+    src/jpeg_header.cpp
+    src/jpeg_header.hpp
+    src/libraw_preview.cpp
 )
 
 lucent_add_library(raw
@@ -97,6 +103,9 @@ lucent_add_test(lucent_raw_decoder_tests
         tests/libraw_metadata_test.cpp
         tests/libraw_decoder_test.cpp
         tests/libraw_fixture_test.cpp
+        tests/test_jpegs.hpp
+        tests/jpeg_header_test.cpp
+        tests/embedded_preview_test.cpp
     DEPS
         Lucent::raw
         libraw::raw_r
