@@ -1,0 +1,103 @@
+// Command-line parsing of Lucent.exe (developer_automation.hpp).
+
+#include <gtest/gtest.h>
+
+#include "developer_automation.hpp"
+
+namespace lucent::ui {
+namespace {
+
+CommandLine parse(QStringList arguments) {
+    arguments.prepend(QStringLiteral("Lucent.exe"));
+    return parse_command_line(arguments);
+}
+
+TEST(CommandLine, RunsWithDefaultsWithoutArguments) {
+    const CommandLine command_line = parse({});
+    EXPECT_EQ(command_line.action, CommandLine::Action::Run);
+    EXPECT_TRUE(command_line.options.imports.isEmpty());
+    EXPECT_FALSE(command_line.options.open_first);
+    EXPECT_FALSE(command_line.options.view.has_value());
+    EXPECT_TRUE(command_line.options.screenshot_path.isEmpty());
+    EXPECT_EQ(command_line.options.settle_timeout_ms, 60000);
+}
+
+TEST(CommandLine, ParsesEveryDeveloperOption) {
+    const CommandLine command_line =
+        parse({"--import", "a", "--import", "b", "--include-subfolders", "--open-first", "--view", "Edit",
+               "--export-all", "out", "--screenshot", "shot.PNG", "--quit-after-screenshot", "--settle-timeout",
+               "5000", "c.cr3"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    const DeveloperOptions& options = command_line.options;
+    EXPECT_EQ(options.imports, (QStringList{"a", "b", "c.cr3"}));
+    EXPECT_TRUE(options.include_subfolders);
+    EXPECT_TRUE(options.open_first);
+    EXPECT_EQ(options.view, AppController::Edit);
+    EXPECT_EQ(options.export_folder, QStringLiteral("out"));
+    EXPECT_EQ(options.screenshot_path, QStringLiteral("shot.PNG"));
+    EXPECT_TRUE(options.quit_after_screenshot);
+    EXPECT_EQ(options.settle_timeout_ms, 5000);
+}
+
+TEST(CommandLine, ParsesExportZoomAndMeasureOptions) {
+    const CommandLine defaults = parse({});
+    EXPECT_EQ(defaults.options.export_options, ExportOptions{});
+    EXPECT_FALSE(defaults.options.zoom_full.has_value());
+    EXPECT_FALSE(defaults.options.measure);
+
+    const CommandLine command_line = parse({"--export-format", "TIFF16", "--export-color-space", "display-p3",
+                                            "--export-quality", "80", "--zoom", "100", "--measure", "--open-first",
+                                            "--show-export-dialog"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    const DeveloperOptions& options = command_line.options;
+    EXPECT_EQ(options.export_options.format, ExportFileFormat::Tiff16);
+    EXPECT_EQ(options.export_options.color_space, ExportColorSpace::DisplayP3);
+    EXPECT_EQ(options.export_options.jpeg_quality, 80);
+    EXPECT_EQ(options.zoom_full, true);
+    EXPECT_TRUE(options.measure);
+    EXPECT_TRUE(options.show_export_dialog);
+    EXPECT_EQ(parse({"--zoom", "fit"}).options.zoom_full, false);
+    EXPECT_EQ(parse({"--export-format", "jpeg"}).options.export_options.format, ExportFileFormat::Jpeg);
+}
+
+TEST(CommandLine, AcceptsEveryViewName) {
+    EXPECT_EQ(parse({"--view", "library"}).options.view, AppController::Library);
+    EXPECT_EQ(parse({"--view", "exports"}).options.view, AppController::Exports);
+}
+
+TEST(CommandLine, RejectsInvalidValues) {
+    const QList<QStringList> invalid{
+        {"--view", "grid"},
+        {"--screenshot", "shot.jpg"},
+        {"--quit-after-screenshot"},
+        {"--settle-timeout", "0"},
+        {"--settle-timeout", "soon"},
+        {"--export-all", " "},
+        {"--no-such-option"},
+        {"--view"},
+        {"--export-format", "png"},
+        {"--export-color-space", "adobe"},
+        {"--export-quality", "0"},
+        {"--export-quality", "101"},
+        {"--zoom", "200"},
+        {"--show-export-dialog"},
+    };
+    for (const QStringList& arguments : invalid) {
+        const CommandLine command_line = parse(arguments);
+        EXPECT_EQ(command_line.action, CommandLine::Action::Error) << arguments.join(' ').toStdString();
+        EXPECT_FALSE(command_line.message.isEmpty());
+    }
+}
+
+TEST(CommandLine, HelpAndVersion) {
+    const CommandLine help = parse({"--help"});
+    EXPECT_EQ(help.action, CommandLine::Action::ShowHelp);
+    EXPECT_TRUE(help.message.contains(QStringLiteral("--screenshot")));
+    EXPECT_TRUE(help.message.contains(QStringLiteral("developers")));
+    const CommandLine version = parse({"--version"});
+    EXPECT_EQ(version.action, CommandLine::Action::ShowVersion);
+    EXPECT_TRUE(version.message.startsWith(QStringLiteral("Lucent ")));
+}
+
+}  // namespace
+}  // namespace lucent::ui
