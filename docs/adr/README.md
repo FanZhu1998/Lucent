@@ -18,8 +18,9 @@ product authority. The current module structure is described in
 | [0002](0002-build-and-dependency-management.md) | Build system and dependency management | Accepted | 2026-09-24 | W0, recorded in W1 |
 | [0003](0003-linking-and-licensing.md) | Linking model and third-party licensing | Accepted | 2026-09-24 | W1 |
 | [0004](0004-error-handling.md) | Error handling with `lucent::Expected` | Accepted | 2026-09-24 | W1 |
-| [0005](0005-raw-decoder-boundary.md) | RAW decoder boundary and decoded-RAW data contract | Being written in W1 by the `raw` module author | — | W1 |
+| [0005](0005-raw-decoder-boundary.md) | RAW decoder boundary and decoded-RAW data contract | Accepted | 2026-09-25 | W1 |
 | [0006](0006-render-pipeline.md) | First render path: stage order, colour contracts and provisional display rendering | Accepted | 2026-09-26 | W2 |
+| [0007](0007-application-shell.md) | Application shell: UI adapters over in-process application services | Accepted | 2026-09-27 | W3 |
 
 ## Conventions
 
