@@ -9,7 +9,7 @@ The reasoning behind these choices is in
 [Quick path](#quick-path-bootstrap-script) · [Manual setup](#manual-setup-step-by-step) ·
 [Environment](#how-the-build-environment-is-loaded) · [Presets](#presets-and-vcpkg-features) ·
 [Build and test](#build-and-test) · [Running Lucent.exe](#running-lucentexe-from-a-build-tree) ·
-[Fixtures](#test-fixtures) ·
+[Packaging](#packaging-the-installer) · [Fixtures](#test-fixtures) ·
 [Research environment](#research-environment) · [Qt and UI builds](#qt-and-ui-builds) ·
 [Troubleshooting](#troubleshooting)
 
@@ -305,6 +305,100 @@ $bin = '.\build\dev\bin\Lucent.exe'
 & $bin --import fixtures\cache --include-subfolders --open-first --screenshot shots\edit.png --quit-after-screenshot
 & $bin --import fixtures\cache --include-subfolders --export-all $env:TEMP\lucent-out --view exports --screenshot shots\exports.png --quit-after-screenshot
 ```
+
+## Packaging the installer
+
+`tools\package.ps1` builds `Lucent-Setup-<version>-x64.exe`, the per-user installer
+([ADR 0009](../adr/0009-windows-packaging.md)). It needs, besides the build prerequisites:
+
+- **Inno Setup 6.3 or later.** `ISCC.exe` is taken from `-Iscc` or `LUCENT_ISCC` (either must be
+  valid; there is no fallback), else found on `PATH`, in the uninstall registry ("Inno Setup 6" /
+  "Inno Setup version 6.x", its `InstallLocation`), or as `Inno Setup 6` under Program Files or
+  `%LOCALAPPDATA%\Programs`. A compiler outside those standard folders causes a warning; the
+  manifest records the compiler's path, version and SHA-256. The reference machine has 6.7.3 (a
+  portable copy registered by another project), whose compiler reports "Non-commercial use only";
+  Inno Setup's commercial terms are reviewed before a public release.
+- **Microsoft's `vc_redist.x64.exe`**, taken from the Visual Studio installation that
+  `dev-env.ps1` enters (`VCToolsRedistDir`; on the reference machine 14.44.35211). Override with
+  `-VCRedist` or the CMake cache variable `LUCENT_VC_REDIST`. It must carry Microsoft's valid
+  Authenticode signature.
+- **The source archives of libjpeg-turbo and PCRE2** in vcpkg's downloads folder
+  (`%VCPKG_ROOT%\downloads`, or `VCPKG_DOWNLOADS`): two licence texts the ports do not install are
+  taken from them. They are there when the ports were built on the machine, not after a pure
+  binary-cache restore; then run `vcpkg install --only-downloads` for those ports.
+- **Optional: spdx-tools** (`pip install spdx-tools`) to validate the SBOM. `pyspdxtools.exe` is
+  found through `-SpdxValidator`, `LUCENT_PYSPDXTOOLS` or `PATH`; without it only the built-in
+  structural check runs.
+
+```powershell
+# Build the release preset (Lucent.exe only), lay out, audit, license and compile the installer
+powershell -NoProfile -File tools\package.ps1
+
+# From scratch, with the full test suite first
+powershell -NoProfile -File tools\package.ps1 -Fresh -RunTests -Jobs 4
+
+# Package the existing build tree; stop before Inno Setup (the manifest then records no installer)
+powershell -NoProfile -File tools\package.ps1 -SkipBuild -StageOnly
+```
+
+| Step | What happens | Output (in `<build dir>\package` unless `-OutputDir`) |
+|---|---|---|
+| Build | `tools\build.ps1 -Preset release` in the same PowerShell process (target `Lucent`; everything and the tests with `-RunTests`). Then the installer, checksum, manifest and SBOM copy of an earlier run of the same version are deleted | `build\release` |
+| Lay out | `cmake --install --component Lucent`: `windeployqt`, unused Qt Quick styles removed, `qt.conf`, the DLL closure from vcpkg (`cmake/LucentPackaging.cmake`) | `stage\`, `install.log`, `<build dir>\packaging\windeployqt.log` |
+| Audit | Every import resolves to the folder, Windows or the Visual C++ runtime, and every root DLL is imported; the required Qt plugins and every QML module Lucent uses (with the plugin DLL its `qmldir` names) are present; every file is Lucent's or unmodified from a vcpkg port; one GUI executable, x64 only. Errors stop the run | `audit.txt`, `audit.json` |
+| Smoke run | The staged `Lucent.exe` starts with `PATH` reduced to Windows' folders and a temporary `--data-root`, saves a screenshot and must exit with 0, without Qt or QML loading errors and without changing the folder | `smoke\` |
+| Sign | Only with `LUCENT_SIGN_CERT_SHA1` and `LUCENT_SIGN_TIMESTAMP_URL` set (see below) | |
+| Licences | `stage\licenses\`: copyright files of the shipped ports, missing licence texts, Qt's LGPL-3.0 and GPL-3.0, `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` (with the third-party code inside Qt from Qt's own SBOMs, and the libraries linked statically into `Lucent.exe`), `Lucent.spdx.json` (SPDX 2.3, checked structurally and by `pyspdxtools` when available); `stage\Lucent-files.txt`, the installed-file list that the next version's upgrade uses | `Lucent-Setup-<version>-x64.spdx.json` |
+| Installer | `installer\lucent.iss` with the version from CMake | `Lucent-Setup-<version>-x64.exe`, `.exe.sha256`, `iscc.log` |
+| Manifest | Version, git commit, toolchain, audit summary, SBOM summary, the RAW extensions of "Open with Lucent", every installed file with its SHA-256, the installer's size and SHA-256 (none with `-StageOnly`) | `Lucent-Setup-<version>-x64.manifest.json` |
+
+The script prints the installer's path, size and SHA-256. On the reference machine the 0.1.0 package
+takes about a minute after the build and produces a 38.4 MiB installer (about 40.3 MB; 24.4 MiB of
+it the redistributable) for a 55.2 MiB, 305-file installation. It also prints a reminder that the
+installer is not for public distribution until W12 settles how the LGPL libraries' source is
+provided (ADR 0009, decision 10).
+
+**Licence decisions** that cannot be derived from the build (LGPL and FreeType elections, credit
+lines, missing texts, reviewed static libraries, ports that must never ship) are in
+`installer\license-policy.json`. Each entry
+names the port version it was reviewed for; when a dependency upgrade ships another version,
+packaging stops until the entry and the [licence ledger](../legal/third-party-notices.md) are
+reviewed.
+
+**Signing** is off by default, and packages built so far are unsigned. To sign `Lucent.exe`, Setup
+and the uninstaller with a code-signing certificate from the current user's certificate store:
+
+```powershell
+$env:LUCENT_SIGN_CERT_SHA1 = '<certificate thumbprint>'
+$env:LUCENT_SIGN_TIMESTAMP_URL = '<RFC 3161 timestamp URL of the certificate issuer>'
+# optional: $env:LUCENT_SIGNTOOL = '<path to signtool.exe>' (default: signtool.exe from the Windows SDK)
+powershell -NoProfile -File tools\package.ps1
+```
+
+**Testing the installer.** `installer\tests\Test-InstalledPackage.ps1` needs no developer tools. It
+refuses to run when Lucent is already installed for the user, installs silently into a temporary
+folder (with the Desktop shortcut and "Open with Lucent" tasks), checks the files against the
+manifest and `Lucent-files.txt`, checks that what Windows opens each RAW type with is unchanged
+(`AssocQueryString`), runs the installed `Lucent.exe` with `PATH` reduced to Windows' folders and a
+temporary `--data-root`, records the modules it loads, upgrades in place while Lucent runs (with
+stale listed files, which must go, and another program's files, which must stay), uninstalls and
+checks that no file, shortcut or registry entry is left while the data root remains.
+`-RuntimeOutcomes` also checks Setup's handling of the runtime installer's results through a test
+hook that runs nothing (honoured only where the runtime is already installed):
+
+```powershell
+$pkg = 'build\release\package'
+powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
+    -Installer "$pkg\Lucent-Setup-0.1.0-x64.exe" -Manifest "$pkg\Lucent-Setup-0.1.0-x64.manifest.json" `
+    -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3 -RuntimeOutcomes
+```
+
+The clean-machine gate (a Windows 10/11 machine or Windows Sandbox without developer tools or the
+Visual C++ runtime, offline) runs the same script and is still pending (ADR 0009, decision 11).
+
+Useful Setup options for silent installs: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<folder>"
+/TASKS="desktopicon,openwith" /LOG="<file>"`; the uninstaller is `<folder>\unins000.exe` with
+`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 
 ## Test fixtures
 
