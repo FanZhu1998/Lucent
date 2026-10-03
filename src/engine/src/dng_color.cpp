@@ -17,41 +17,15 @@
 #include <lucent/engine/camera_color.hpp>
 #include <lucent/image/color_math.hpp>
 
+#include "robertson_table.hpp"
+
 namespace lucent::engine {
 
 namespace {
 
 constexpr const char* kWhereDng = "engine.color.dng";
 
-// One isotemperature line of Robertson's table: reciprocal temperature (mired), CIE 1960 (u, v)
-// of the Planckian locus and the slope t of the isotemperature line.
-struct RobertsonLine {
-    double mired;
-    double u;
-    double v;
-    double t;
-};
-
-// Wyszecki & Stiles, Color Science, 2nd ed., table 1(3.11). The 325-mired entry uses
-// u = 0.24792 (the value in Robertson's paper and the DNG SDK), not the misprint 0.24702.
-constexpr std::array<RobertsonLine, 31> kRobertson = {{
-    {0.0, 0.18006, 0.26352, -0.24341},   {10.0, 0.18066, 0.26589, -0.25479},
-    {20.0, 0.18133, 0.26846, -0.26876},  {30.0, 0.18208, 0.27119, -0.28539},
-    {40.0, 0.18293, 0.27407, -0.30470},  {50.0, 0.18388, 0.27709, -0.32675},
-    {60.0, 0.18494, 0.28021, -0.35156},  {70.0, 0.18611, 0.28342, -0.37915},
-    {80.0, 0.18740, 0.28668, -0.40955},  {90.0, 0.18880, 0.28997, -0.44278},
-    {100.0, 0.19032, 0.29326, -0.47888}, {125.0, 0.19462, 0.30141, -0.58204},
-    {150.0, 0.19962, 0.30921, -0.70471}, {175.0, 0.20525, 0.31647, -0.84901},
-    {200.0, 0.21142, 0.32312, -1.0182},  {225.0, 0.21807, 0.32909, -1.2168},
-    {250.0, 0.22511, 0.33439, -1.4512},  {275.0, 0.23247, 0.33904, -1.7298},
-    {300.0, 0.24010, 0.34308, -2.0637},  {325.0, 0.24792, 0.34655, -2.4681},
-    {350.0, 0.25591, 0.34951, -2.9641},  {375.0, 0.26400, 0.35200, -3.5814},
-    {400.0, 0.27218, 0.35407, -4.3633},  {425.0, 0.28039, 0.35577, -5.3762},
-    {450.0, 0.28863, 0.35714, -6.7262},  {475.0, 0.29685, 0.35823, -8.5955},
-    {500.0, 0.30505, 0.35907, -11.324},  {525.0, 0.31320, 0.35968, -15.628},
-    {550.0, 0.32129, 0.36011, -23.325},  {575.0, 0.32931, 0.36038, -40.770},
-    {600.0, 0.33724, 0.36051, -116.45},
-}};
+using detail::kRobertson;
 
 constexpr std::uint32_t kMaxNeutralPasses = 30;
 constexpr double kNeutralTolerance = 1e-7;  // |dx| + |dy|, as the SDK
@@ -164,6 +138,57 @@ Expected<AtWhite> find_xyz_to_camera(const Calibrations& cal, image::Chromaticit
     return r;
 }
 
+// Validates a profile's matrices and builds its calibrations as the dng_color_spec constructor
+// does (ColorMatrix1 presence is checked by the callers).
+Expected<Calibrations> make_calibrations(const DngProfile& profile) {
+    if (!finite(profile.analog_balance) || !(profile.analog_balance[0] > 0.0) ||
+        !(profile.analog_balance[1] > 0.0) || !(profile.analog_balance[2] > 0.0)) {
+        return fail(ErrorCode::Corrupt, "AnalogBalance must be finite and positive", kWhereDng);
+    }
+    for (std::size_t i = 0; i < 2; ++i) {
+        for (const auto* m :
+             {&profile.color_matrix[i], &profile.camera_calibration[i], &profile.forward_matrix[i]}) {
+            if (*m && !image::is_finite(**m)) {
+                return fail(ErrorCode::Corrupt,
+                            std::format("calibration {} has a non-finite matrix entry", i + 1), kWhereDng);
+            }
+        }
+    }
+    const image::Matrix3d ab = image::Matrix3d::diagonal(profile.analog_balance);
+    Calibrations cal;
+    cal.temperature = {calibration_illuminant_temperature(profile.illuminants[0]),
+                       calibration_illuminant_temperature(profile.illuminants[1])};
+    for (std::size_t i = 0; i < 2; ++i) {
+        cal.calibration[i] = profile.camera_calibration[i].value_or(image::Matrix3d::identity());
+        if (profile.forward_matrix[i]) {
+            auto fm = normalize_forward_matrix(*profile.forward_matrix[i], i);
+            if (!fm) {
+                return Unexpected(std::move(fm.error()));
+            }
+            cal.forward[i] = *fm;
+        }
+    }
+    cal.color[0] = ab * cal.calibration[0] * *profile.color_matrix[0];
+    if (!profile.color_matrix[1] || cal.temperature[0] <= 0.0 || cal.temperature[1] <= 0.0 ||
+        cal.temperature[0] == cal.temperature[1]) {
+        cal.temperature = {5000.0, 5000.0};
+        cal.color[1] = cal.color[0];
+        cal.forward[1] = cal.forward[0];
+        cal.calibration[1] = cal.calibration[0];
+        cal.interpolated = false;
+    } else {
+        cal.color[1] = ab * cal.calibration[1] * *profile.color_matrix[1];
+        cal.interpolated = true;
+    }
+    if (cal.temperature[0] > cal.temperature[1]) {
+        std::swap(cal.temperature[0], cal.temperature[1]);
+        std::swap(cal.color[0], cal.color[1]);
+        std::swap(cal.forward[0], cal.forward[1]);
+        std::swap(cal.calibration[0], cal.calibration[1]);
+    }
+    return cal;
+}
+
 Expected<image::Chromaticity> xyz_to_xy_checked(const image::Vec3d& xyz, const char* what) {
     const double sum = xyz[0] + xyz[1] + xyz[2];
     if (!finite(xyz) || !(sum > 0.0) || !(xyz[1] > 0.0)) {
@@ -266,19 +291,12 @@ Expected<DngCalibrationRecord> evaluate_dng_profile(const DngProfile& profile,
                                 camera_neutral[1], camera_neutral[2]),
                     kWhereDng);
     }
-    if (!finite(profile.analog_balance) || !(profile.analog_balance[0] > 0.0) ||
-        !(profile.analog_balance[1] > 0.0) || !(profile.analog_balance[2] > 0.0)) {
-        return fail(ErrorCode::Corrupt, "AnalogBalance must be finite and positive", kWhereDng);
+    auto calibrations = make_calibrations(profile);
+    if (!calibrations) {
+        return Unexpected(std::move(calibrations.error()));
     }
-    for (std::size_t i = 0; i < 2; ++i) {
-        for (const auto* m :
-             {&profile.color_matrix[i], &profile.camera_calibration[i], &profile.forward_matrix[i]}) {
-            if (*m && !image::is_finite(**m)) {
-                return fail(ErrorCode::Corrupt,
-                            std::format("calibration {} has a non-finite matrix entry", i + 1), kWhereDng);
-            }
-        }
-    }
+    const Calibrations& cal = *calibrations;
+    const image::Matrix3d ab = image::Matrix3d::diagonal(profile.analog_balance);
 
     DngCalibrationRecord record;
     record.illuminants = profile.illuminants;
@@ -287,39 +305,6 @@ Expected<DngCalibrationRecord> evaluate_dng_profile(const DngProfile& profile,
     record.analog_balance = profile.analog_balance[0] != 1.0 || profile.analog_balance[1] != 1.0 ||
                             profile.analog_balance[2] != 1.0;
 
-    // ---- dng_color_spec constructor ---------------------------------------------------------
-    const image::Matrix3d ab = image::Matrix3d::diagonal(profile.analog_balance);
-    Calibrations cal;
-    cal.temperature = {calibration_illuminant_temperature(profile.illuminants[0]),
-                       calibration_illuminant_temperature(profile.illuminants[1])};
-    for (std::size_t i = 0; i < 2; ++i) {
-        cal.calibration[i] = profile.camera_calibration[i].value_or(image::Matrix3d::identity());
-        if (profile.forward_matrix[i]) {
-            auto fm = normalize_forward_matrix(*profile.forward_matrix[i], i);
-            if (!fm) {
-                return Unexpected(std::move(fm.error()));
-            }
-            cal.forward[i] = *fm;
-        }
-    }
-    cal.color[0] = ab * cal.calibration[0] * *profile.color_matrix[0];
-    if (!profile.color_matrix[1] || cal.temperature[0] <= 0.0 || cal.temperature[1] <= 0.0 ||
-        cal.temperature[0] == cal.temperature[1]) {
-        cal.temperature = {5000.0, 5000.0};
-        cal.color[1] = cal.color[0];
-        cal.forward[1] = cal.forward[0];
-        cal.calibration[1] = cal.calibration[0];
-        cal.interpolated = false;
-    } else {
-        cal.color[1] = ab * cal.calibration[1] * *profile.color_matrix[1];
-        cal.interpolated = true;
-    }
-    if (cal.temperature[0] > cal.temperature[1]) {
-        std::swap(cal.temperature[0], cal.temperature[1]);
-        std::swap(cal.color[0], cal.color[1]);
-        std::swap(cal.forward[0], cal.forward[1]);
-        std::swap(cal.calibration[0], cal.calibration[1]);
-    }
     record.temperatures = cal.temperature;
     record.interpolated = cal.interpolated;
 
@@ -418,6 +403,40 @@ Expected<DngCalibrationRecord> evaluate_dng_profile(const DngProfile& profile,
         return fail(ErrorCode::Corrupt, "the camera-to-XYZ matrix is not finite", kWhereDng);
     }
     return record;
+}
+
+Expected<image::Vec3d> dng_camera_neutral(const DngProfile& profile, image::Chromaticity white) {
+    if (!profile.color_matrix[0]) {
+        return fail(ErrorCode::InvalidArgument, "a DNG profile needs ColorMatrix1", kWhereDng);
+    }
+    if (!std::isfinite(white.x) || !std::isfinite(white.y) || !(white.y > 0.0) || !(white.x > 0.0)) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("white chromaticity ({}, {}) is not a valid chromaticity", white.x, white.y),
+                    kWhereDng);
+    }
+    auto calibrations = make_calibrations(profile);
+    if (!calibrations) {
+        return Unexpected(std::move(calibrations.error()));
+    }
+    // dng_color_spec::SetWhiteXY: camera white = XYZtoCamera(white) * XYZ(white), scaled to a
+    // maximum of 1 and pinned to [0.001, 1].
+    auto at = find_xyz_to_camera(*calibrations, white);
+    if (!at) {
+        return Unexpected(std::move(at.error()));
+    }
+    const image::Vec3d camera = at->xyz_to_camera * xy_to_xyz(white);
+    const double max_entry = std::max({camera[0], camera[1], camera[2]});
+    if (!finite(camera) || !(max_entry > 0.0)) {
+        return fail(ErrorCode::Corrupt,
+                    std::format("the calibration maps the white ({}, {}) to camera values ({}, {}, {})", white.x,
+                                white.y, camera[0], camera[1], camera[2]),
+                    kWhereDng);
+    }
+    image::Vec3d neutral;
+    for (std::size_t c = 0; c < 3; ++c) {
+        neutral[c] = std::clamp(camera[c] / max_entry, kMinNeutral, 1.0);
+    }
+    return neutral;
 }
 
 }  // namespace lucent::engine

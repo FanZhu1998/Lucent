@@ -34,8 +34,26 @@ set(LUCENT_ENGINE_SOURCES
     src/display_rendering.cpp
     include/lucent/engine/orientation.hpp
     src/orientation.cpp
+    src/render_warnings.hpp
     include/lucent/engine/render.hpp
     src/render.cpp
+
+    # Develop pipeline (W6): DevelopSettings v1, white-balance model, guided filter, develop
+    # operations, interactive stage one / stage two and the export render.
+    src/robertson_table.hpp
+    src/scratch_pool.hpp
+    src/octave_lut.hpp
+    include/lucent/engine/develop_settings.hpp
+    src/develop_settings.cpp
+    include/lucent/engine/white_balance_model.hpp
+    src/white_balance_model.cpp
+    include/lucent/engine/guided_filter.hpp
+    src/guided_filter.cpp
+    include/lucent/engine/develop_operations.hpp
+    src/tone_curves.cpp
+    src/develop_operations.cpp
+    include/lucent/engine/develop.hpp
+    src/develop.cpp
 )
 
 lucent_add_library(engine
@@ -62,6 +80,14 @@ set(LUCENT_ENGINE_TEST_SOURCES
     tests/display_rendering_test.cpp
     tests/orientation_test.cpp
     tests/render_test.cpp
+    # Develop pipeline (W6).
+    tests/develop_test_support.hpp
+    tests/develop_settings_test.cpp
+    tests/white_balance_model_test.cpp
+    tests/guided_filter_test.cpp
+    tests/tone_curves_test.cpp
+    tests/develop_operations_test.cpp
+    tests/develop_test.cpp
 )
 
 lucent_add_test(lucent_engine_tests
@@ -80,10 +106,16 @@ if(LUCENT_BUILD_TESTS)
     find_package(nlohmann_json CONFIG REQUIRED)
 endif()
 
+# The guided-filter parity cases read the committed OpenCV references in
+# src/engine/tests/data/guided_filter (tests/tools/guided_filter_reference.py) and always run;
+# the develop fixture cases skip when fixtures/cache is absent.
 set(LUCENT_ENGINE_FIXTURE_TEST_SOURCES
     tests/sensor_test_support.hpp
+    tests/develop_test_support.hpp
     tests/demosaic_reference_test.cpp
     tests/demosaic_fixture_test.cpp
+    tests/guided_filter_reference_test.cpp
+    tests/develop_fixture_test.cpp
 )
 
 lucent_add_test(lucent_engine_fixture_tests

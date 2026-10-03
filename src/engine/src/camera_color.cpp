@@ -213,6 +213,25 @@ image::ColorEncoding xyz_encoding(image::WhitePoint white) noexcept {
     return e;
 }
 
+Expected<DngProfile> dng_profile_from_metadata(const raw::RawMetadata& metadata, std::vector<std::string>* notes) {
+    if (!metadata.dng || !metadata.dng->info.color.color_matrix[0]) {
+        return fail(ErrorCode::Unsupported, "the file has no DNG camera profile (ColorMatrix1)", kWhereCalibration);
+    }
+    const raw::DngMetadata& dng = *metadata.dng;
+    const std::uint32_t planes = dng.info.color_planes.value_or(3);
+    if (planes != 3) {
+        return fail(ErrorCode::Unsupported,
+                    std::format("the DNG profile has {} colour planes; only 3 are supported", planes),
+                    kWhereCalibration);
+    }
+    auto plane = dng_planes(dng);
+    if (!plane) {
+        return Unexpected(std::move(plane.error()));
+    }
+    std::vector<std::string> ignored;
+    return dng_profile(dng, *plane, notes != nullptr ? *notes : ignored);
+}
+
 Expected<CameraColorRecord> resolve_camera_color(const raw::RawMetadata& metadata,
                                                  const WhiteBalanceRecord& white_balance) {
     CameraColorRecord record;
