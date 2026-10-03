@@ -1,4 +1,5 @@
-// JPEG encoder (to memory) and verification reader on libjpeg-turbo's libjpeg API.
+// JPEG encoder (to memory), verification reader and in-memory decoder (thumbnails) on
+// libjpeg-turbo's libjpeg API.
 //
 // Error model: libjpeg reports fatal errors through error_exit, which must not return. We
 // longjmp back to a setjmp in run_compress / run_decompress_*. Those functions, and everything
@@ -136,6 +137,22 @@ struct DecompressJob {
     std::size_t row_samples;
     std::size_t row_stride;  // samples between rows in `samples`; 0 reuses one row buffer
 };
+
+// Decoding a stream held in memory (decode_jpeg_stream): header, then start with a DCT scale,
+// then the rows.
+struct MemoryDecompressJob {
+    jpeg_decompress_struct cinfo;
+    ErrorManager err;
+    const unsigned char* data;
+    unsigned long data_size;
+    unsigned int scale_denom;
+    const core::CancellationToken* cancel;
+    bool cancelled;
+    JOCTET* icc;  // malloc'ed by jpeg_read_icc_profile; the caller frees it
+    unsigned int icc_size;
+    std::uint8_t* samples;
+    std::size_t row_stride;
+};
 #pragma warning(pop)  // C4324
 
 #pragma warning(push)
@@ -168,7 +185,9 @@ bool run_compress(CompressJob* job) {
     job->cinfo.comp_info[0].h_samp_factor = luma_samp;
     job->cinfo.comp_info[0].v_samp_factor = luma_samp;
     jpeg_start_compress(&job->cinfo, TRUE);
-    jpeg_write_icc_profile(&job->cinfo, job->icc, job->icc_size);
+    if (job->icc != nullptr && job->icc_size > 0) {
+        jpeg_write_icc_profile(&job->cinfo, job->icc, job->icc_size);
+    }
     while (job->cinfo.next_scanline < job->cinfo.image_height) {
         if (job->cinfo.next_scanline % static_cast<JDIMENSION>(kCodecCancelRows) == 0 &&
             job->cancel->is_cancelled()) {
@@ -210,6 +229,44 @@ bool run_decompress_header(DecompressJob* job) {
     return true;
 }
 
+// Header and ICC profile of a stream in memory. On success the decompressor stays alive for
+// run_memory_start() or abort; on failure it is destroyed and the profile freed.
+bool run_memory_header(MemoryDecompressJob* job) {
+    job->cinfo.err = &job->err.pub;
+    install_error_manager(&job->err);
+    if (setjmp(job->err.jump) != 0) {
+        jpeg_destroy_decompress(&job->cinfo);
+        std::free(job->icc);
+        job->icc = nullptr;
+        job->icc_size = 0;
+        return false;
+    }
+    jpeg_create_decompress(&job->cinfo);
+    jpeg_mem_src(&job->cinfo, job->data, job->data_size);
+    jpeg_save_markers(&job->cinfo, JPEG_APP0 + 2, 0xFFFF);
+    jpeg_read_header(&job->cinfo, TRUE);
+    if (!jpeg_read_icc_profile(&job->cinfo, &job->icc, &job->icc_size)) {
+        job->icc = nullptr;
+        job->icc_size = 0;
+    }
+    return true;
+}
+
+// Starts decompression to RGB at the job's DCT scale. On failure the decompressor is destroyed
+// (the profile stays for the caller to free).
+bool run_memory_start(MemoryDecompressJob* job) {
+    if (setjmp(job->err.jump) != 0) {
+        jpeg_destroy_decompress(&job->cinfo);
+        return false;
+    }
+    job->cinfo.out_color_space = JCS_RGB;
+    job->cinfo.scale_num = 1;
+    job->cinfo.scale_denom = job->scale_denom;
+    job->cinfo.dct_method = JDCT_ISLOW;
+    jpeg_start_decompress(&job->cinfo);
+    return true;
+}
+
 // Phase 2: all scanlines into job->samples, then finish and destroy.
 bool run_decompress_body(DecompressJob* job) {
     if (setjmp(job->err.jump) != 0) {
@@ -231,9 +288,31 @@ bool run_decompress_body(DecompressJob* job) {
     return true;
 }
 
+// All scanlines of a stream in memory into job->samples, then finish and destroy.
+bool run_memory_rows(MemoryDecompressJob* job) {
+    if (setjmp(job->err.jump) != 0) {
+        jpeg_destroy_decompress(&job->cinfo);
+        return false;
+    }
+    while (job->cinfo.output_scanline < job->cinfo.output_height) {
+        if (job->cinfo.output_scanline % static_cast<JDIMENSION>(kCodecCancelRows) == 0 &&
+            job->cancel->is_cancelled()) {
+            job->cancelled = true;
+            jpeg_destroy_decompress(&job->cinfo);
+            return false;
+        }
+        JSAMPROW row = job->samples + job->row_stride * job->cinfo.output_scanline;
+        jpeg_read_scanlines(&job->cinfo, &row, 1);
+    }
+    jpeg_finish_decompress(&job->cinfo);
+    jpeg_destroy_decompress(&job->cinfo);
+    return true;
+}
+
 #pragma warning(pop)
 
-void abort_decompress(DecompressJob* job) noexcept {
+template <class Job>
+void abort_decompress(Job* job) noexcept {
     jpeg_destroy_decompress(&job->cinfo);  // releases everything; cannot fail
 }
 
@@ -374,6 +453,115 @@ Expected<DecodedFile> read_jpeg(const std::filesystem::path& path, const core::C
     }
     decoded.warnings = static_cast<std::int32_t>(job->err.pub.num_warnings);
     decoded.first_warning = job->err.warning;
+    return decoded;
+}
+
+namespace {
+
+// A heap job over `jpeg` with its header read, or the error (Corrupt / InvalidArgument).
+Expected<std::unique_ptr<MemoryDecompressJob>> open_memory_job(std::span<const std::uint8_t> jpeg,
+                                                               const core::CancellationToken& cancel,
+                                                               const char* where) {
+    if (jpeg.empty() || jpeg.size() > std::numeric_limits<unsigned long>::max()) {
+        return fail(ErrorCode::InvalidArgument, "the JPEG stream is empty or too large", where);
+    }
+    auto job = std::make_unique<MemoryDecompressJob>();
+    std::memset(job.get(), 0, sizeof(MemoryDecompressJob));
+    job->data = jpeg.data();
+    job->data_size = static_cast<unsigned long>(jpeg.size());
+    job->cancel = &cancel;
+    job->scale_denom = 1;
+    if (!run_memory_header(job.get())) {
+        return fail(ErrorCode::Corrupt, std::string("the JPEG stream does not decode: ") + job->err.message,
+                    where, job->err.code);
+    }
+    return job;
+}
+
+}  // namespace
+
+Expected<std::pair<std::int32_t, std::int32_t>> read_jpeg_stream_size(std::span<const std::uint8_t> jpeg) {
+    constexpr const char* kWhere = "export.jpeg.decode";
+    try {
+        const core::CancellationToken never;
+        auto job = open_memory_job(jpeg, never, kWhere);
+        if (!job) {
+            return Unexpected(std::move(job.error()));
+        }
+        std::free((*job)->icc);
+        const auto width =
+            static_cast<std::int32_t>(std::min<JDIMENSION>((*job)->cinfo.image_width, INT32_MAX));
+        const auto height =
+            static_cast<std::int32_t>(std::min<JDIMENSION>((*job)->cinfo.image_height, INT32_MAX));
+        abort_decompress(job->get());
+        return std::pair{width, height};
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the JPEG decoder", kWhere);
+    }
+}
+
+Expected<DecodedJpegStream> decode_jpeg_stream(std::span<const std::uint8_t> jpeg, std::int32_t scale_denom,
+                                               const core::CancellationToken& cancel) {
+    constexpr const char* kWhere = "export.jpeg.decode";
+    if (scale_denom != 1 && scale_denom != 2 && scale_denom != 4 && scale_denom != 8) {
+        return fail(ErrorCode::InvalidArgument, "the DCT scale must be 1/1, 1/2, 1/4 or 1/8", kWhere);
+    }
+    if (auto status = cancel.check(kWhere); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    std::unique_ptr<MemoryDecompressJob> job;
+    try {
+        auto opened = open_memory_job(jpeg, cancel, kWhere);
+        if (!opened) {
+            return Unexpected(std::move(opened.error()));
+        }
+        job = std::move(*opened);
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the JPEG decoder", kWhere);
+    }
+    // From here on the profile belongs to this function.
+    std::unique_ptr<JOCTET, BufferFree> icc(job->icc);
+    job->icc = nullptr;
+    const J_COLOR_SPACE space = job->cinfo.jpeg_color_space;
+    if (space != JCS_GRAYSCALE && space != JCS_RGB && space != JCS_YCbCr) {
+        abort_decompress(job.get());
+        return fail(ErrorCode::Unsupported, "the JPEG stream is not gray, RGB or YCbCr (CMYK?)", kWhere);
+    }
+    if (job->cinfo.image_width > static_cast<JDIMENSION>(kJpegMaxDimension) ||
+        job->cinfo.image_height > static_cast<JDIMENSION>(kJpegMaxDimension)) {
+        abort_decompress(job.get());
+        return fail(ErrorCode::LimitExceeded, "the JPEG stream is larger than the JPEG limits", kWhere);
+    }
+    job->scale_denom = static_cast<unsigned int>(scale_denom);
+    if (!run_memory_start(job.get())) {
+        return fail(ErrorCode::Corrupt, std::string("the JPEG stream does not decode: ") + job->err.message,
+                    kWhere, job->err.code);
+    }
+    DecodedJpegStream decoded;
+    try {
+        if (icc) {
+            decoded.icc.assign(icc.get(), icc.get() + job->icc_size);
+        }
+        decoded.width = static_cast<std::int32_t>(job->cinfo.output_width);
+        decoded.height = static_cast<std::int32_t>(job->cinfo.output_height);
+        if (job->cinfo.output_components != 3) {
+            abort_decompress(job.get());
+            return fail(ErrorCode::Internal, "libjpeg did not produce RGB", kWhere);
+        }
+        job->row_stride = static_cast<std::size_t>(job->cinfo.output_width) * 3;
+        decoded.rgb.resize(job->row_stride * job->cinfo.output_height);
+        job->samples = decoded.rgb.data();
+    } catch (const std::bad_alloc&) {
+        abort_decompress(job.get());
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the decoded JPEG", kWhere);
+    }
+    if (!run_memory_rows(job.get())) {
+        if (job->cancelled) {
+            return Unexpected(cancel.check(kWhere).error());
+        }
+        return fail(ErrorCode::Corrupt, std::string("the JPEG stream does not decode: ") + job->err.message,
+                    kWhere, job->err.code);
+    }
     return decoded;
 }
 

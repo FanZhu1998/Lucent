@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <lucent/core/cancellation.hpp>
@@ -72,9 +73,10 @@ struct DecodedFile {
 };
 
 // Encodes an 8-bit OutputImage as a complete JPEG stream in memory, with the ICC profile in APP2
-// markers (optimised Huffman tables, islow DCT, 4:4:4 from kJpegFullChromaMinQuality). Errors
-// (export.jpeg.encode): InvalidArgument for a 16-bit image, LimitExceeded above
-// kJpegMaxDimension, OutOfMemory, Internal for other libjpeg errors, Cancelled.
+// markers (none when `icc` is empty), optimised Huffman tables, islow DCT, 4:4:4 from
+// kJpegFullChromaMinQuality. Errors (export.jpeg.encode): InvalidArgument for a 16-bit image,
+// LimitExceeded above kJpegMaxDimension, OutOfMemory, Internal for other libjpeg errors,
+// Cancelled.
 [[nodiscard]] Expected<std::vector<std::uint8_t>> encode_jpeg(const OutputImage& image, const JpegSettings& settings,
                                                               std::span<const std::uint8_t> icc,
                                                               const core::CancellationToken& cancel = {});
@@ -102,6 +104,28 @@ struct DecodedFile {
 [[nodiscard]] Expected<DecodedFile> read_tiff(const std::filesystem::path& path,
                                               const core::CancellationToken& cancel = {},
                                               const OutputImage* expected = nullptr);
+
+// A JPEG stream in memory, decoded to 8-bit interleaved RGB (gray and YCbCr are converted by
+// libjpeg; other colour spaces are refused).
+struct DecodedJpegStream {
+    std::int32_t width = 0;  // after DCT scaling
+    std::int32_t height = 0;
+    std::vector<std::uint8_t> rgb;  // width * height * 3
+    std::vector<std::uint8_t> icc;  // embedded profile, empty when absent
+};
+
+// Size of the image in a JPEG stream (header only). Corrupt when libjpeg cannot read the header.
+[[nodiscard]] Expected<std::pair<std::int32_t, std::int32_t>> read_jpeg_stream_size(
+    std::span<const std::uint8_t> jpeg);
+
+// Decodes a JPEG stream at the DCT scale 1 / scale_denom (1, 2, 4 or 8: libjpeg reduces while it
+// decodes, much faster than decoding at full size). Errors (export.jpeg.decode): InvalidArgument
+// for another scale; Corrupt when libjpeg reports an error; Unsupported for colour spaces other
+// than gray, RGB and YCbCr (CMYK, YCCK); LimitExceeded above kJpegMaxDimension; OutOfMemory;
+// Cancelled.
+[[nodiscard]] Expected<DecodedJpegStream> decode_jpeg_stream(std::span<const std::uint8_t> jpeg,
+                                                             std::int32_t scale_denom,
+                                                             const core::CancellationToken& cancel = {});
 
 // "libjpeg-turbo 3.2.0" / "libtiff 4.7.2" (versions of the headers built against).
 [[nodiscard]] std::string jpeg_library_version();

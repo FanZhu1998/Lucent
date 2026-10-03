@@ -19,6 +19,7 @@ lucent_add_library(export
         include/lucent/export/encode.hpp
         include/lucent/export/export.hpp
         include/lucent/export/output_profile.hpp
+        include/lucent/export/thumbnail.hpp
         src/codecs.hpp
         src/encode.cpp
         src/export.cpp
@@ -31,6 +32,7 @@ lucent_add_library(export
         src/lcms_support.cpp
         src/lcms_support.hpp
         src/output_profile.cpp
+        src/thumbnail.cpp
         src/tiff_codec.cpp
     PUBLIC_DEPS
         Lucent::core
@@ -50,6 +52,7 @@ lucent_add_test(lucent_export_tests
         tests/encode_tests.cpp
         tests/export_tests.cpp
         tests/output_profile_tests.cpp
+        tests/thumbnail_tests.cpp
     DEPS
         Lucent::export
         lcms2::lcms2
