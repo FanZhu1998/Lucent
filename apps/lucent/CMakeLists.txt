@@ -183,3 +183,14 @@ add_dependencies(Lucent lucent_ui_runtime)
 if(LUCENT_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
+
+# --- Installation (W5, docs/adr/0009-windows-packaging.md) ----------------------------------------
+#
+# `cmake --install <build dir> --prefix <folder> --component Lucent` lays out Lucent.exe with the Qt
+# runtime (windeployqt), every other runtime DLL and an installed-layout qt.conf
+# (cmake/LucentPackaging.cmake). tools/package.ps1 audits that folder and builds the installer. The
+# build-tree qt.conf above is never installed, and the tests have no install rules.
+
+lucent_install_application(Lucent
+    QML_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+    COMPONENT Lucent)
