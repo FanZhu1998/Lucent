@@ -2,8 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-27 (revised the same day after the W3 review: executor lanes, serial exports,
-  embedded-preview selection, import rules, labelling of camera and incomplete renders)
-- **Workflow:** W3 (Application shell)
+  embedded-preview selection, import rules, labelling of camera and incomplete renders); amended
+  2026-10-03 for the W6 editor (decisions 3, 4, 5 and 10 amended, decision 13 added)
+- **Workflow:** W3 (Application shell); W6 (Recipes and editor), phase 3
 
 ## Context
 
@@ -81,7 +82,10 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
    and Lucent thumbnails on the Interactive lane, and
    camera-JPEG decoding and 8-bit-to-`QImage` conversion on the image source's own two
    conversion threads. Qt Quick's image-loader thread only queues requests and, as before,
-   scales a result down when it exceeds the requested box.
+   scales a result down when it exceeds the requested box. *W6:* the edit adapter
+   (`AppEditService`) runs recipe commands (catalog writes, file probes, session open and close)
+   in call order on its own command thread and converts edit-session frames on its own conversion
+   thread; the UI thread only stores the converted frame and publishes its URL (decision 13).
 
 4. **Generations and staleness.** Two levels, both required:
    - *Shell generations.* Every image URL carries item id and generation
@@ -95,6 +99,20 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
      unless the render is incomplete (decision 6). The preview generation is the recipe revision
      (1 until W6) and is passed to the preview service as the settings revision; W6 must fold
      recipe and geometry revisions into it.
+     *W6 amendment.* Thumbnails of generation 2+ are Lucent's render of the item's current recipe
+     (`PreviewService::request_rendered_thumbnail`, cached in memory and on disk by the settings'
+     identity, ADR 0010 decision 9), and the image source's own thumbnail cache is keyed by that
+     identity too, so an old recipe's thumbnail is never served for a new one. When an item's
+     committed recipe changes (an edit, undo or redo, a paste) the library adapter moves its
+     thumbnail to a new generation and sets its `edited` flag ("Edited" badge on the card, a dot
+     in the filmstrip); at start-up the items of the catalog that have revisions are looked up in
+     the background so edited photos show their edits from the beginning of a session. Opening a
+     photo no longer replaces its camera-preview thumbnail: the Edit view shows edit-session frames
+     (decision 13), not a PreviewService render, and a proxy frame is not the thumbnail's
+     definition (ADR 0010); an unedited photo keeps its labelled camera preview until W7's batch
+     renders it, an edited one gets Lucent's render of its recipe. The edit-session frames have
+     their own staleness rule: every frame is a new URL (`image://frame/<item>/<sequence>`) and
+     sequences only increase.
    - *Changed files.* When a file changes on disk after import, renders and exports fail with
      SourceChanged ("Add it again to update it"). Importing it again refreshes the item in
      place (`Library::refresh`, `LibraryChangeKind::Refreshed`): the preview service and the
@@ -114,6 +132,12 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
    size, a larger box or no box is Full. After the first render the rendered size replaces the
    probe's. The Edit view asks for Fit first and Full at 100 %. Renders of thumbnails for photos
    without a camera preview run one at a time and only while no Edit preview is outstanding.
+   *W6:* the Edit view's image is the edit session's frame: the 2048-pixel proxy in Fit (shown
+   scaled by the GPU), and at 100 % a quick proxy frame (upscaled) followed by the
+   full-resolution Final frame; 30 seconds after the view leaves 100 % the session's
+   full-resolution stage one is released. Thumbnail renders also wait until interactive editing
+   has not waited for a render for 1.5 s (`Backend::interactive()`), so a full-resolution
+   thumbnail render never competes with a white-balance refine or the next drag.
 
 6. **Support states.** `app::SupportStatus` maps Supported → "Compatible, unverified",
    Limited → Limited, Unsupported → Unsupported. Nothing is Verified before W10's qualification
@@ -158,7 +182,11 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
     `developer_automation.hpp` and `--help`, not part of the user interface): `--import`,
     `--include-subfolders`, `--open-first`, `--view`, `--export-all`, `--export-format`,
     `--export-color-space`, `--export-quality`, `--zoom`, `--show-export-dialog`, `--measure`,
-    `--screenshot`, `--quit-after-screenshot` and `--settle-timeout`. Screenshots wait for idle
+    `--screenshot`, `--quit-after-screenshot` and `--settle-timeout` (W6 adds `--set
+    <control>=<value>`, `--drag <control>`, `--drag-steps`, `--compare <before|split>` and
+    `--clipping`: edits made once the photo's first frame is shown, a synthetic 60 Hz mouse drag
+    of a slider with its frame latencies and UI-thread gaps, and the comparison and overlay for a
+    screenshot). Screenshots wait for idle
     services and two identical rendered frames. `--measure` reports start-up time, the first
     visible thumbnail, preview latency (visible, and the services' render and request-to-pixels
     times) and UI-thread responsiveness as gaps between ticks of a 5 ms timer, with window grabs
@@ -194,6 +222,67 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
     originals or into a parent folder never hides them. Exported JPEG and TIFF files are ignored
     by extension in folder scans.
 
+13. **Editing (W6, phase 3; ADR 0010).** The Edit view edits the photo it shows through a
+    fourth UI-side service, `EditService` (`services/edit_service.hpp`), bound to `RecipeService`
+    and `DevelopPreviewService` by `AppEditService`; the view model is `EditSession`
+    (`models/edit_session.hpp`, `AppController.edit`), which follows the photo while the Edit view
+    shows it (a session is opened for it and closed when the view or the photo changes).
+    - *Controls.* White balance (temperature and tint when the camera's calibration defines a
+      colour temperature, `WhiteBalanceModel::kelvin_available()`; otherwise the camera's own
+      red-blue and green-magenta balance relative to as shot, with an explanation, and nothing for
+      monochrome files), exposure, contrast, highlights, shadows, saturation and vibrance. Each has
+      a slider (temperature on a reciprocal scale), a numeric field, reset (button, double-click,
+      Home), arrow-key steps (Shift: coarse) and a lock toggle (`set_lock`, a revision), with
+      accessible names and values. Moving a white-balance slider from "as shot" starts a custom
+      balance from the as-shot values.
+    - *Gestures.* A drag is transient positions (`set_transient`, unsettled requests: Quick
+      frames only) and one `commit` on release; a held arrow key is the same, committed on key
+      release or after 600 ms without a key; a typed value, a reset or a curve point removal is one
+      `apply`. So every gesture is exactly one revision. Positions are coalesced twice: on the
+      edit adapter's command thread (a newer position replaces a waiting one) and in the develop
+      service (latest wins). The local values are not overwritten by an older call's answer while
+      a newer call is outstanding (states carry the call's token).
+    - *Tone curve.* `ToneCurvePlot` draws the curve as the renderer evaluates it
+      (`EditService::sample_tone_curve`, the engine's monotone cubic) over the frame's luma
+      histogram placed at the lightness of each code value; points keep x strictly increasing
+      (0.01 apart) and y non-decreasing; the end points move but are not removed.
+    - *Frames.* Quick frames are shown while settings change, then the Final frame; the previous
+      frame stays on screen while the next one loads. The as-shot render for before/after (\ key;
+      a split view with a draggable divider) comes from the same session (an unsettled as-shot
+      request made once the current settings are rendered), and the clipping overlay (J key) is
+      the frame's clipping mask (red: a channel at 255; blue: a channel at 0), with the histogram's
+      clipped shares counted from the same mask. The histogram follows the newest frame.
+    - *History.* Every revision, newest first, with its origin, changed controls and time; a click
+      selects it (`select_revision`), Undo/Redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and buttons),
+      and Reset to as shot (a recorded revision). An item whose recipe this Lucent cannot read
+      shows a read-only banner with the reason and no rendered image; its edit controls, copy and
+      paste are disabled, while undo, redo, selecting and reset stay available unless the whole
+      library is read-only.
+    - *Copy and paste.* Ctrl+Shift+C opens a category dialog (white balance, exposure, tone,
+      colour, highlights and shadows); Ctrl+Shift+V pastes into the photo. The result message
+      (panel and status line) lists the categories pasted and, with the reason, anything not
+      pasted: a camera-specific balance is never pasted to another camera model, a Kelvin balance
+      never to a camera without a colour-temperature calibration. Auto is present but disabled
+      until W8.
+    - *Responsiveness.* Measured on the reference laptop with the 45 MP Canon EOS R5 fixture,
+      Lucent.exe `--measure` with a synthetic 60 Hz mouse drag of 60 moves over a third of the
+      slider (`--drag`), three runs each, 2026-10-03:
+
+      | What | Result |
+      |---|---|
+      | Exposure drag: slider position to its frame on screen | median 66 to 68 ms, 90th percentile 72 to 77 ms, max 98 to 107 ms; 20 to 22 frames in the 1 s drag |
+      | of which the develop service (request to frame ready) | median 56 to 59 ms |
+      | Shadows drag (guided-filter local tone) | median 104 to 105 ms, 90th percentile 109 to 112 ms, max 138 to 142 ms; 12 to 13 frames |
+      | Final frame after the release | 117 to 196 ms |
+      | UI thread during the drags (5 ms timer, press to final frame) | largest gap 6 to 10 ms; none over 50 ms |
+      | One-step edit (typed exposure or contrast) to its final frame on screen | 44 to 59 ms |
+      | White balance 5200 K: quick frame / refined final frame | 44 ms / 1.07 to 1.18 s |
+      | Opening the photo in Edit: first frame on screen | 0.81 to 1.06 s |
+      | 100 %: full-resolution final frame on screen after the zoom | 1.75 s |
+
+      The UI side (command thread, conversion, posting, image provider) adds about 8 to 10 ms
+      to the develop service's latency.
+
 ## Consequences
 
 - The shell is testable end to end offscreen against the real services with synthetic DNGs
@@ -214,6 +303,14 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
 - W6 must fold recipe and geometry revisions into the preview generation and decide whether the
   Edit view keeps the previous revision visible while the next one renders. W7 replaces the
   in-process renderer with worker processes. Display-profile support revisits decision 8.
+  *W6 (decision 13):* the Edit view shows edit-session frames (new URL per frame, the previous
+  frame kept until the next is loaded) and thumbnails follow the recipe's identity; geometry
+  revisions join the recipe in W9.
+- Edited photos' thumbnails cost one full-resolution render after each committed change (after a
+  1.5 s quiet period, cached by settings on disk for hashed items); unedited photos keep their
+  camera preview after being opened in Edit.
+- At 100 % with the clipping overlay on, a 45 MP frame holds about 180 MB for the image and as
+  much for the overlay (only while the overlay is on).
 
 ## Alternatives considered
 
