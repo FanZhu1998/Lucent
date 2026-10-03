@@ -41,6 +41,13 @@ namespace lucent::core {
 // violations). Retry policies may use this; the ErrorCode for these is IoError.
 [[nodiscard]] bool is_transient_win32_error(std::uint32_t win32_code) noexcept;
 
+// True for Win32 errors that mean the volume a path is on is not there: a card reader or other
+// removable drive without media (NOT_READY, NO_MEDIA_IN_DRIVE), a device that was disconnected
+// (DEV_NOT_EXIST, DEVICE_NOT_CONNECTED, DEVICE_REMOVED, NO_SUCH_DEVICE) or a volume without a
+// recognised file system (UNRECOGNIZED_VOLUME). They map to IoError (the table above); presence
+// checks treat them like NotFound: the file is not reachable until the media comes back.
+[[nodiscard]] bool is_volume_absent_win32_error(std::uint32_t win32_code) noexcept;
+
 // System message text for a Win32 error code as UTF-8, without trailing whitespace or line
 // breaks. English text is requested first (Error::message is developer-facing English); if the
 // English resources are unavailable the user's default language is used; if the system has no

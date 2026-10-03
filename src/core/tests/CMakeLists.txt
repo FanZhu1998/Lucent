@@ -2,11 +2,14 @@
 
 lucent_add_test(lucent_core_tests
     SOURCES
+        app_paths_test.cpp
         cancellation_test.cpp
         error_test.cpp
+        file_copy_test.cpp
         file_test.cpp
         hash_test.cpp
         log_test.cpp
+        storage_test.cpp
         text_test.cpp
         test_support.hpp
         version_test.cpp
