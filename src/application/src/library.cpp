@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cstring>
 #include <format>
 #include <map>
 #include <mutex>
@@ -33,17 +32,24 @@ bool has_file_id(const core::FileIdentity& identity) noexcept {
                        [](std::uint8_t b) { return b != 0; });
 }
 
-// Lookup key of (volume serial, file id, subimage); empty when the identity has no file id.
+// Lookup key of a file version and image: (volume serial, file id, size, last write time,
+// subimage); empty when the identity has no file id. Size and time are part of the key because
+// file systems reuse file ids (see library.hpp).
 std::string file_key(const core::FileIdentity& identity, std::uint32_t subimage) {
     if (!has_file_id(identity)) {
         return {};
     }
-    std::string key(sizeof(identity.volume_serial) + identity.file_id.size() + sizeof(subimage), '\0');
-    std::memcpy(key.data(), &identity.volume_serial, sizeof(identity.volume_serial));
-    std::memcpy(key.data() + sizeof(identity.volume_serial), identity.file_id.data(),
-                identity.file_id.size());
-    std::memcpy(key.data() + sizeof(identity.volume_serial) + identity.file_id.size(), &subimage,
-                sizeof(subimage));
+    std::string key;
+    key.reserve(sizeof(identity.volume_serial) + identity.file_id.size() + sizeof(identity.size_bytes) +
+                sizeof(identity.last_write_time) + sizeof(subimage));
+    const auto append = [&key](const void* data, std::size_t size) {
+        key.append(static_cast<const char*>(data), size);
+    };
+    append(&identity.volume_serial, sizeof(identity.volume_serial));
+    append(identity.file_id.data(), identity.file_id.size());
+    append(&identity.size_bytes, sizeof(identity.size_bytes));
+    append(&identity.last_write_time, sizeof(identity.last_write_time));
+    append(&subimage, sizeof(subimage));
     return key;
 }
 
@@ -64,7 +70,41 @@ Status validate_item(const SourceItem& item, std::size_t index, std::string_view
     return ok();
 }
 
+Status unsupported(std::string_view operation) {
+    return fail(ErrorCode::Unsupported, std::format("this library does not support {}", operation),
+                std::format("app.library.{}", operation));
+}
+
 }  // namespace
+
+// ---- Library defaults (a library without the W4 capabilities) --------------------------------
+
+Status Library::set_content_hash(ItemId, const core::Digest256&, const core::FileIdentity&) {
+    return unsupported("hash");
+}
+
+Status Library::set_source_state(ItemId, SourceState) {
+    return unsupported("state");
+}
+
+Status Library::relocate_source(ItemId, const SourceRelocation&) {
+    return unsupported("relocate");
+}
+
+std::optional<ItemId> Library::find_copied_from(const std::filesystem::path&,
+                                                const core::FileIdentity&) const {
+    return std::nullopt;
+}
+
+Expected<std::uint64_t> Library::begin_import(const ImportJournalStart&) {
+    return std::uint64_t{0};
+}
+
+Status Library::finish_import(std::uint64_t, const ImportJournalFinish&) {
+    return ok();
+}
+
+// ---- SessionLibrary ----------------------------------------------------------------------------
 
 struct SessionLibrary::State {
     mutable std::mutex mutex;
@@ -170,6 +210,8 @@ Expected<std::vector<AddOutcome>> SessionLibrary::add(std::vector<SourceItem> it
                 SourceItem item = std::move(items[i]);
                 item.id = ItemId{state_->next_id};
                 item.revision = 1;
+                item.source_state = SourceState::Present;
+                item.content_duplicates.clear();
                 const ItemId id = item.id;
                 state_->items.emplace(id, std::move(item));
                 inserted.push_back(id);
@@ -276,6 +318,9 @@ Status SessionLibrary::refresh(const SourceItem& fresh) {
         item.identity = fresh.identity;
         item.probe = fresh.probe;
         item.support = fresh.support;
+        item.source_state = SourceState::Present;
+        item.storage = fresh.storage;
+        item.sha256 = fresh.sha256;  // a hash of the old version no longer applies
         ++item.revision;
         change.sequence = ++state_->sequence;
     } catch (const std::bad_alloc&) {

@@ -30,6 +30,28 @@ std::string_view to_string(SupportStatus status) noexcept {
     return "unknown";
 }
 
+std::string_view to_string(SourceState state) noexcept {
+    switch (state) {
+        case SourceState::Present:
+            return "present";
+        case SourceState::Missing:
+            return "missing";
+        case SourceState::Changed:
+            return "changed";
+    }
+    return "unknown";
+}
+
+std::string_view to_string(ImportMode mode) noexcept {
+    switch (mode) {
+        case ImportMode::Referenced:
+            return "referenced";
+        case ImportMode::Copied:
+            return "copied";
+    }
+    return "unknown";
+}
+
 SupportStatus support_status_for(raw::InterpretationStatus status) noexcept {
     switch (status) {
         case raw::InterpretationStatus::Complete:
@@ -93,6 +115,7 @@ ProbeSummary summarize_probe(const raw::RawMetadata& metadata) {
     summary.container = metadata.format.container;
     summary.extension_hint = metadata.format.extension_hint;
     summary.decoder = metadata.decoder.adapter_id;
+    summary.decoder_version = metadata.decoder.library_version;
     const raw::CameraIdentity& camera = metadata.camera;
     summary.camera_make = camera.normalized_make.empty() ? camera.make : camera.normalized_make;
     summary.camera_model = camera.normalized_model.empty() ? camera.model : camera.normalized_model;

@@ -86,6 +86,27 @@ TEST(SessionLibrary, RejectsDuplicatesByPathCaseInsensitivelyAndByFileObject) {
     EXPECT_FALSE(library.find_source(L"D:\\x.cr3", {}, 0));  // a zero file id never matches
 }
 
+// FAT and exFAT reuse file ids (directory positions) for new files: the same volume serial and
+// file id with another size or modification time is another file, not a duplicate.
+TEST(SessionLibrary, AReusedFileIdWithAnotherSizeOrTimeIsAnotherFile) {
+    SessionLibrary library;
+    SourceItem old_photo = item(L"E:\\DCIM\\IMG_0001.CR3");
+    old_photo.identity = identity(9);
+    ASSERT_TRUE(library.add({old_photo}));
+
+    SourceItem bigger = item(L"E:\\DCIM\\IMG_0102.CR3");
+    bigger.identity = identity(9);
+    bigger.identity.size_bytes += 1;
+    SourceItem later = item(L"E:\\DCIM\\IMG_0103.CR3");
+    later.identity = identity(9);
+    later.identity.last_write_time += 1;
+    auto outcomes = library.add({bigger});
+    ASSERT_TRUE(outcomes);
+    EXPECT_TRUE((*outcomes)[0].added);
+    EXPECT_FALSE(library.find_source(L"D:\\x.cr3", later.identity, 0));
+    EXPECT_EQ(library.find_source(L"D:\\x.cr3", bigger.identity, 0), (*outcomes)[0].id);
+}
+
 TEST(SessionLibrary, InvalidBatchesAddNothing) {
     SessionLibrary library;
     int notifications = 0;
@@ -185,8 +206,9 @@ TEST(SessionLibrary, RefreshReplacesTheSourceFactsOfAnItemInPlace) {
     ASSERT_EQ(changes.size(), 1u);
     EXPECT_EQ(changes[0].kind, LibraryChangeKind::Refreshed);
     EXPECT_EQ(changes[0].items, (std::vector<ItemId>{ItemId{1}}));
-    // Lookups follow the new file object; the old one no longer names the item.
-    EXPECT_EQ(library.find_source(L"C:\\elsewhere\\link.cr3", identity(3), 0), ItemId{1});
+    // Lookups follow the new file version; the old one no longer names the item.
+    EXPECT_EQ(library.find_source(L"C:\\elsewhere\\link.cr3", fresh.identity, 0), ItemId{1});
+    EXPECT_FALSE(library.find_source(L"C:\\elsewhere\\link.cr3", identity(3), 0));  // another size
     EXPECT_FALSE(library.find_source(L"C:\\elsewhere\\link.cr3", identity(1), 0));
     EXPECT_EQ(library.find_source(L"C:\\p\\a.cr3", {}, 0), ItemId{1});
     // Adding a file under the old file object is no longer a duplicate of the refreshed item.

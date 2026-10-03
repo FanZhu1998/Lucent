@@ -25,8 +25,11 @@
 #include <windows.h>
 #include <winioctl.h>
 
+#include <lucent/application/catalog_library.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/application/source_renderer.hpp>
+#include <lucent/catalog/catalog.hpp>
+#include <lucent/core/hash.hpp>
 #include <lucent/engine/display_rendering.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -267,6 +270,70 @@ inline SourceItem fake_item(const std::filesystem::path& path,
     probe.upright_size = probe.stored_size;
     item.probe = probe;
     return item;
+}
+
+// A synthetic DNG spec with an embedded 96 x 64 JPEG preview and the given EXIF orientation.
+inline rts::SyntheticDngSpec dng_with_preview(std::uint16_t orientation = 1) {
+    rts::SyntheticDngSpec spec;
+    spec.orientation = orientation;
+    spec.jpeg_previews = {rts::SyntheticJpegPreview{rts::jpeg_bytes(rts::kJpegRgb96x64), 96, 64, 3}};
+    return spec;
+}
+
+// Opens (creating) the catalog at `path` for a test; nullptr (with a test failure) on error.
+inline std::shared_ptr<catalog::Catalog> open_catalog(const std::filesystem::path& path,
+                                                      catalog::OpenMode mode = catalog::OpenMode::ReadWrite) {
+    catalog::OpenOptions options;
+    options.path = path;
+    options.mode = mode;
+    auto opened = catalog::Catalog::open(options);
+    EXPECT_TRUE(opened) << (opened ? std::string() : opened.error().describe());
+    if (!opened) {
+        return nullptr;
+    }
+    return std::shared_ptr<catalog::Catalog>(std::move(*opened));
+}
+
+// A catalog-backed library over a catalog file in `dir` (a fresh catalog the first time).
+struct CatalogFixture {
+    std::shared_ptr<catalog::Catalog> catalog;
+    std::unique_ptr<CatalogLibrary> library;
+
+    [[nodiscard]] static CatalogFixture open(const std::filesystem::path& catalog_path) {
+        CatalogFixture fixture;
+        fixture.catalog = open_catalog(catalog_path);
+        if (fixture.catalog) {
+            auto library = CatalogLibrary::open(fixture.catalog);
+            EXPECT_TRUE(library) << (library ? std::string() : library.error().describe());
+            if (library) {
+                fixture.library = std::move(*library);
+            }
+        }
+        return fixture;
+    }
+
+    // Closes the library and the catalog (the catalog file is released).
+    void close() {
+        library.reset();
+        catalog.reset();
+    }
+};
+
+// SHA-256 of the file at `path` (a stable read); all zero with a test failure on error.
+inline core::Digest256 file_sha256(const std::filesystem::path& path) {
+    auto hashed = core::hash_file(path, {});
+    EXPECT_TRUE(hashed) << (hashed ? std::string() : hashed.error().describe());
+    return hashed ? hashed->digest : core::Digest256{};
+}
+
+// The library's item for the file named `name` (first image), or std::nullopt.
+inline std::optional<SourceItem> item_named(const Library& library, const std::wstring& name) {
+    for (const SourceItem& item : library.items()) {
+        if (item.path.filename().wstring() == name) {
+            return item;
+        }
+    }
+    return std::nullopt;
 }
 
 }  // namespace lucent::app::test_support

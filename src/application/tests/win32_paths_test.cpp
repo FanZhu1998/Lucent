@@ -9,6 +9,9 @@
 
 #include <gtest/gtest.h>
 
+#include <lucent/core/file.hpp>
+#include <lucent/core/win32_error.hpp>
+
 #include "app_test_support.hpp"
 
 namespace lucent::app::detail {
@@ -102,6 +105,25 @@ TEST(Win32Paths, FreeSpace) {
     ASSERT_TRUE(free_bytes) << free_bytes.error().describe();
     EXPECT_GT(*free_bytes, 0u);
     EXPECT_FALSE(free_disk_bytes(L"Q:\\surely\\missing", "test"));
+}
+
+// Presence checks treat an absent volume (a card reader without its card reports NOT_READY, a
+// disconnected drive DEVICE_NOT_CONNECTED) like a file that is not there.
+TEST(Win32Paths, AbsenceCoversMissingFilesAndAbsentVolumes) {
+    EXPECT_TRUE(indicates_absence(core::win32_error(ERROR_FILE_NOT_FOUND, "test", "")));
+    EXPECT_TRUE(indicates_absence(core::win32_error(ERROR_PATH_NOT_FOUND, "test", "")));
+    EXPECT_TRUE(indicates_absence(core::win32_error(ERROR_NOT_READY, "test", "")));
+    EXPECT_TRUE(indicates_absence(core::win32_error(ERROR_DEVICE_NOT_CONNECTED, "test", "")));
+    EXPECT_TRUE(indicates_absence(Error{ErrorCode::NotFound, "gone", "test", 0}));
+    EXPECT_FALSE(indicates_absence(core::win32_error(ERROR_ACCESS_DENIED, "test", "")));
+    EXPECT_FALSE(indicates_absence(core::win32_error(ERROR_SHARING_VIOLATION, "test", "")));
+    EXPECT_FALSE(indicates_absence(core::win32_error(ERROR_CRC, "test", "")));
+    EXPECT_FALSE(indicates_absence(Error{ErrorCode::IoError, "no native code", "test", 0}));
+    // A drive letter that does not exist is not found.
+    auto stat = core::stat_file(L"Q:\\surely\\missing\\a.cr3");
+    if (!stat) {
+        EXPECT_TRUE(indicates_absence(stat.error())) << stat.error().describe();
+    }
 }
 
 }  // namespace

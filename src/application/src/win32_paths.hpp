@@ -64,4 +64,9 @@ struct DirectoryEntry {
 [[nodiscard]] Expected<std::uint64_t> free_disk_bytes(const std::filesystem::path& directory,
                                                       std::string_view where);
 
+// True when a failure to open or query a path means that nothing is reachable there: NotFound, or
+// an IoError whose Win32 code says the volume is absent (core::is_volume_absent_win32_error: an
+// empty card-reader slot, a disconnected drive). Presence checks mark such files Missing.
+[[nodiscard]] bool indicates_absence(const Error& error) noexcept;
+
 }  // namespace lucent::app::detail

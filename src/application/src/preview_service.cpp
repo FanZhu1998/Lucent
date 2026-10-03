@@ -13,6 +13,7 @@
 
 #include <lucent/application/display_image.hpp>
 #include <lucent/application/preview_service.hpp>
+#include <lucent/application/source_maintenance.hpp>
 #include <lucent/core/log.hpp>
 
 namespace lucent::app {
@@ -332,6 +333,39 @@ struct PreviewService::State : std::enable_shared_from_this<State> {
 
     // ---- Camera previews --------------------------------------------------------------------
 
+    // A request the disk thumbnail cache serves: the item's content is known and the wanted size
+    // is at most what cached entries are chosen for.
+    bool disk_cacheable(const SourceItem& item, const CameraPreviewRequest& request) const {
+        return options.thumbnails && item.sha256 && item.probe && request.min_long_edge > 0 &&
+               request.min_long_edge <= kCachedCameraPreviewEdge;
+    }
+
+    // The item's camera preview from the disk thumbnail cache, or null (see the header).
+    std::shared_ptr<const CameraPreview> from_disk_cache(const SourceItem& item,
+                                                         const CameraPreviewRequest& request) const {
+        if (!disk_cacheable(item, request)) {
+            return nullptr;
+        }
+        std::optional<Thumbnail> stored =
+            options.thumbnails->find(camera_thumbnail_key(*item.sha256, item.subimage));
+        if (!stored) {
+            return nullptr;
+        }
+        auto preview = std::make_shared<CameraPreview>();
+        preview->item = item.id;
+        preview->from_disk_cache = true;
+        preview->embedded.status = raw::EmbeddedPreviewStatus::Found;
+        preview->embedded.source_identity = item.identity;
+        raw::EmbeddedPreview& embedded = preview->embedded.preview.emplace();
+        embedded.format = raw::EmbeddedPreviewFormat::Jpeg;
+        embedded.bytes = std::move(stored->jpeg);
+        embedded.width = stored->width;
+        embedded.height = stored->height;
+        embedded.components = 3;
+        embedded.orientation = item.probe->orientation;
+        return preview;
+    }
+
     void run_camera(const TaskContext& context, std::uint64_t id, const SourceItem& item,
                     const CameraPreviewRequest& request, const CameraPreviewCallback& callback) {
         Expected<std::shared_ptr<const CameraPreview>> result =
@@ -342,9 +376,13 @@ struct PreviewService::State : std::enable_shared_from_this<State> {
                 // Cancelled before it started (shutdown, or the caller no longer wants it).
             } else if (auto cached = camera_cache.find(key)) {
                 result = std::move(cached);
+            } else if (auto stored = from_disk_cache(item, request)) {
+                camera_cache.insert(key, stored);
+                result = std::move(stored);
             } else {
+                const bool cacheable = disk_cacheable(item, request);
                 raw::EmbeddedPreviewOptions extract = options.camera_preview;
-                extract.min_long_edge = request.min_long_edge;
+                extract.min_long_edge = cacheable ? kCachedCameraPreviewEdge : request.min_long_edge;
                 auto embedded = raw::extract_embedded_preview(item.path, extract, context.cancel());
                 if (!embedded) {
                     result = Unexpected(std::move(embedded.error()));
@@ -353,6 +391,15 @@ struct PreviewService::State : std::enable_shared_from_this<State> {
                         fail(ErrorCode::SourceChanged, "the file changed since it was imported; re-import it",
                              std::string(kWhereCamera));
                 } else {
+                    if (cacheable && embedded->preview) {
+                        // Reduced for the cache (camera_thumbnail_entry); this request gets the
+                        // preview as extracted. A failure only costs a later re-read of the file.
+                        if (const std::optional<Thumbnail> entry =
+                                camera_thumbnail_entry(*embedded->preview, context.cancel())) {
+                            (void)options.thumbnails->insert(
+                                camera_thumbnail_key(*item.sha256, item.subimage), *entry);
+                        }
+                    }
                     auto preview = std::make_shared<CameraPreview>();
                     preview->item = item.id;
                     preview->embedded = std::move(*embedded);

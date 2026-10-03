@@ -46,6 +46,17 @@
 // they read anything. The result must be labelled as a camera preview and is never used as
 // analysis input (embedded_preview.hpp).
 //
+// Disk thumbnail cache (W4, PreviewServiceOptions::thumbnails; blueprint section 10: "immediate
+// cached thumbnails"). For an item whose content hash is known, a camera preview requested at up
+// to kCachedCameraPreviewEdge pixels is first looked up in the on-disk ThumbnailCache under
+// camera_thumbnail_key(hash, subimage) (source_maintenance.hpp): a hit is delivered without
+// opening the source file (CameraPreview::from_disk_cache), so a library loaded at start-up shows
+// its contact sheet before any source I/O, and a Missing file keeps its thumbnail. On a miss the
+// file's preview is chosen for kCachedCameraPreviewEdge (the smallest covering it, so one entry
+// serves every display scale up to 200 %), delivered, and stored in the disk cache. The
+// orientation applied to a cached JPEG is the item's probe orientation, the same RAW orientation
+// the file would give. Items without a hash use the W3 route only.
+//
 // Callbacks: every accepted request's callback is called exactly once, on an executor worker
 // thread (never inside request()), after the service no longer needs the request. Callbacks
 // should return quickly (post the result to the UI thread); they may call request(),
@@ -68,6 +79,7 @@
 #include <lucent/application/preview_cache.hpp>
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
+#include <lucent/application/thumbnail_cache.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/engine/render.hpp>
@@ -110,6 +122,8 @@ using PreviewCallback = std::function<void(const PreviewResult&)>;
 struct CameraPreview {
     ItemId item;
     raw::EmbeddedPreviewResult embedded;  // status, the JPEG (when Found) and every candidate
+    // Read from the disk thumbnail cache, not from the source file (no candidates are listed).
+    bool from_disk_cache = false;
 };
 
 using CameraPreviewCallback =
@@ -130,6 +144,8 @@ struct PreviewServiceOptions {
     std::uint64_t camera_cache_bytes = std::uint64_t{64} << 20;  // embedded camera JPEGs
     raw::EmbeddedPreviewOptions camera_preview;
     bool parallel = true;  // parallel downscaling and display encoding (results do not depend on it)
+    // On-disk cache of camera thumbnails (see the file comment); null: not used.
+    std::shared_ptr<ThumbnailCache> thumbnails;
 };
 
 class PreviewService {
