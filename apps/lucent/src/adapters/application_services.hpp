@@ -1,7 +1,7 @@
 #pragma once
 
-// The shell's services bound to the application services (docs/adr/0007): one Backend shared by
-// AppLibraryService, AppImageSource and AppExportService. Lucent.exe gets them through
+// The shell's services bound to the application services (docs/adr/0007, 0010): one Backend shared
+// by AppLibraryService, AppImageSource, AppExportService and AppEditService. Lucent.exe gets them through
 // service_factory.cpp; tests create them with their own options (for example a scripted
 // renderer).
 //

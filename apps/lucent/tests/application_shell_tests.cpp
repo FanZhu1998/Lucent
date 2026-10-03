@@ -108,7 +108,9 @@ TEST_F(ApplicationShellTest, ImportOpenNavigateAndExportOnTheRealServices) {
     EXPECT_FALSE(c->thumbnail_is_camera_preview);
     EXPECT_EQ(c->processing, ProcessingStatus::Processed);
 
-    // Opening a photo renders Lucent's preview, fills the histogram and replaces the thumbnail.
+    // Opening a photo opens its edit session: Lucent's frame and its histogram are shown. The
+    // thumbnail of an unedited photo stays the (labelled) camera preview (W6, ADR 0007 decision 4:
+    // only an edit makes Lucent render the thumbnail from the recipe).
     ASSERT_TRUE(controller->openItem(0));
     auto* viewer = child<QQuickItem>("previewViewer");
     ASSERT_TRUE(QTest::qWaitFor([viewer] { return viewer->property("status").toInt() == kImageStatusReady; },
@@ -116,9 +118,10 @@ TEST_F(ApplicationShellTest, ImportOpenNavigateAndExportOnTheRealServices) {
     ASSERT_TRUE(settle());
     CurrentItem& current = *controller->current();
     EXPECT_TRUE(current.has_render());
-    EXPECT_TRUE(current.render_label().startsWith(QStringLiteral("Neutral v0")));
+    EXPECT_TRUE(current.render_label().startsWith(QStringLiteral("Neutral v1")));
     EXPECT_EQ(current.processing_label(), QStringLiteral("Processed"));
-    EXPECT_FALSE(current.thumbnail_is_camera_preview());
+    EXPECT_TRUE(current.thumbnail_is_camera_preview());
+    EXPECT_FALSE(current.edited());
     EXPECT_FALSE(child("histogramPlot")->property("empty").toBool());
     EXPECT_TRUE(child<QQuickItem>("clippingSummary")->isVisible());
     EXPECT_FALSE(child<QQuickItem>("renderingLabel")->isVisible());

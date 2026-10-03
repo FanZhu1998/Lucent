@@ -3,14 +3,18 @@ import QtQuick.Layouts
 import Lucent
 
 // The Edit view's histogram (blueprint section 2): red, green and blue code-value histograms of
-// the preview Lucent rendered for the photo, with its luma outline, and the share of clipped
-// shadows and highlights. Empty until Lucent has rendered the photo.
+// the preview Lucent rendered for the photo (while editing: of the newest frame, so it follows the
+// sliders), with its luma outline, and the share of clipped shadows and highlights. Empty until
+// Lucent has rendered the photo.
 ColumnLayout {
     id: root
 
     required property CurrentItem item
     // True while the preview is being rendered.
     property bool rendering: false
+    // The RenderInfoPtr to plot: the item's latest render by default; the Edit view passes the
+    // newest frame of the edit session (a live histogram while editing).
+    property var info: item.renderInfo
 
     spacing: 8
 
@@ -56,7 +60,7 @@ ColumnLayout {
             objectName: "histogramPlot"
             anchors.fill: parent
             anchors.margins: 2
-            histogram: root.item.renderInfo
+            histogram: root.info
         }
 
         Text {

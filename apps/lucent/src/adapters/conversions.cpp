@@ -564,27 +564,32 @@ QImage decode_camera_preview(const raw::EmbeddedPreview& preview, QSize bounding
 }
 
 RenderInfoPtr to_render_info(const app::PreviewImage& preview) {
-    auto info = std::make_shared<RenderInfo>();
-    std::copy(preview.histogram.red.begin(), preview.histogram.red.end(), info->red.begin());
-    std::copy(preview.histogram.green.begin(), preview.histogram.green.end(), info->green.begin());
-    std::copy(preview.histogram.blue.begin(), preview.histogram.blue.end(), info->blue.begin());
-    std::copy(preview.histogram.luminance.begin(), preview.histogram.luminance.end(), info->luma.begin());
-    info->pixels = preview.histogram.pixels;
-    info->preview_width = preview.image.width;
-    info->preview_height = preview.image.height;
+    return to_render_info(preview.image, preview.histogram, preview.summary, preview.seconds);
+}
 
-    const app::RenderSummary& summary = preview.summary;
+RenderInfoPtr to_render_info(const app::DisplayImage& image, const app::Histogram& histogram,
+                             const app::RenderSummary& summary, double seconds) {
+    auto info = std::make_shared<RenderInfo>();
+    std::copy(histogram.red.begin(), histogram.red.end(), info->red.begin());
+    std::copy(histogram.green.begin(), histogram.green.end(), info->green.begin());
+    std::copy(histogram.blue.begin(), histogram.blue.end(), info->blue.begin());
+    std::copy(histogram.luminance.begin(), histogram.luminance.end(), info->luma.begin());
+    info->pixels = histogram.pixels;
+    info->preview_width = image.width;
+    info->preview_height = image.height;
+
     info->rendered_width = summary.rendered_size.width;
     info->rendered_height = summary.rendered_size.height;
-    switch (summary.rendering) {
-        case engine::DisplayRendering::NeutralV0:
-            info->rendering = tr_text("Neutral v0");
-            break;
+    // The base look of the develop pipeline (W6), e.g. "Neutral v1".
+    if (summary.look == "neutral") {
+        info->rendering = tr_text("Neutral v%1").arg(summary.look_version);
+    } else if (!summary.look.empty()) {
+        info->rendering = QString::fromStdString(summary.look);
     }
     info->provisional = summary.provisional;
     info->incomplete = app::support_status_for(summary.interpretation) == app::SupportStatus::Unsupported;
     info->render_seconds = summary.render_seconds;
-    info->preview_seconds = preview.seconds;
+    info->preview_seconds = seconds;
     for (const raw::InterpretationIssue& issue : summary.issues) {
         const QString note = describe_issue(issue.kind);
         if (!info->notes.contains(note)) {

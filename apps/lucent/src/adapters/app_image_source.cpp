@@ -1,10 +1,14 @@
 #include "adapters/app_image_source.hpp"
 
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QImage>
+#include <QImageReader>
+#include <QTimer>
 #include <algorithm>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <list>
 #include <mutex>
 #include <optional>
@@ -13,19 +17,17 @@
 #include <vector>
 
 #include <lucent/application/preview_service.hpp>
+#include <lucent/application/recipe_service.hpp>
 #include <lucent/core/cancellation.hpp>
 
 #include "adapters/conversions.hpp"
+#include "adapters/ui_dispatcher.hpp"
 
 namespace lucent::ui::adapters {
 namespace {
 
-// PreviewService channels of this source.
+// PreviewService channel of this source's Edit previews.
 constexpr std::uint64_t kEditChannel = 1;
-constexpr std::uint64_t kThumbnailChannel = 2;
-
-// W3 renders the default settings; their revision is 1 (W6 introduces recipe revisions).
-constexpr std::uint64_t kDefaultSettingsRevision = 1;
 
 QString tr_text(const char* text) {
     return QCoreApplication::translate("lucent::ui::adapters", text);
@@ -38,27 +40,62 @@ QImage fit_long_edge(const QImage& image, int edge) {
     return image.scaled(edge, edge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
-// Least-recently-used thumbnails by item, bounded by bytes.
+// Decodes a Lucent-rendered thumbnail (an sRGB JPEG, upright) scaled down to fit `bounding`.
+QImage decode_rendered_thumbnail(const app::Thumbnail& thumbnail, QSize bounding) {
+    if (thumbnail.jpeg.empty() || thumbnail.jpeg.size() > std::size_t(std::numeric_limits<int>::max())) {
+        return {};
+    }
+    const QByteArray bytes = QByteArray::fromRawData(reinterpret_cast<const char*>(thumbnail.jpeg.data()),
+                                                     static_cast<qsizetype>(thumbnail.jpeg.size()));
+    QBuffer buffer;
+    buffer.setData(bytes);
+    if (!buffer.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QImageReader reader(&buffer, "jpeg");
+    reader.setAutoTransform(false);  // rendered upright
+    const QSize stored(thumbnail.width, thumbnail.height);
+    if (stored.isValid()) {
+        QSize box = bounding;
+        if (box.width() <= 0) {
+            box.setWidth(stored.width());
+        }
+        if (box.height() <= 0) {
+            box.setHeight(stored.height());
+        }
+        if (stored.width() > box.width() || stored.height() > box.height()) {
+            reader.setScaledSize(stored.scaled(box, Qt::KeepAspectRatio));
+        }
+    }
+    QImage image = reader.read();
+    if (image.isNull()) {
+        return {};
+    }
+    return image.format() == QImage::Format_RGB32 ? image : image.convertToFormat(QImage::Format_RGB32);
+}
+
+// Least-recently-used thumbnails by item, bounded by bytes. Each entry shows the settings whose
+// canonical document has `settings` as SHA-256 (a changed recipe never finds an old thumbnail).
 class ThumbnailCache {
 public:
     explicit ThumbnailCache(std::uint64_t capacity) : capacity_(capacity) {}
 
-    std::optional<QImage> find(ItemId item) {
+    std::optional<QImage> find(ItemId item, const core::Digest256& settings) {
         const auto found = index_.find(item);
-        if (found == index_.end()) {
+        if (found == index_.end() || found->second->settings != settings) {
             return std::nullopt;
         }
         entries_.splice(entries_.begin(), entries_, found->second);
         return found->second->image;
     }
 
-    void insert(ItemId item, QImage image) {
+    void insert(ItemId item, const core::Digest256& settings, QImage image) {
         const auto bytes = static_cast<std::uint64_t>(image.sizeInBytes());
         erase(item);
         if (image.isNull() || bytes > capacity_) {
             return;
         }
-        entries_.push_front(Entry{item, std::move(image), bytes});
+        entries_.push_front(Entry{item, settings, std::move(image), bytes});
         index_[item] = entries_.begin();
         bytes_ += bytes;
         while (bytes_ > capacity_ && !entries_.empty()) {
@@ -80,6 +117,7 @@ public:
 private:
     struct Entry {
         ItemId item = 0;
+        core::Digest256 settings{};
         QImage image;
         std::uint64_t bytes = 0;
     };
@@ -99,33 +137,46 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
         Route route = Route::Edit;
         ImageRequest request;
         std::shared_ptr<ImageReply> reply;
-        std::uint64_t service_generation = 0;  // Edit and LucentThumbnail renders
-        std::optional<core::CancellationSource> cancel;  // Camera: cancelled with the reply
+        std::uint64_t service_generation = 0;  // Edit previews
+        // Camera previews and Lucent thumbnails: cancelled with the reply (skipped if not started).
+        std::optional<core::CancellationSource> cancel;
     };
 
     // Call-outs (reply completions, render events) collected under the lock and run after it is
     // released, so no foreign code ever runs while `mutex` is held.
     using Actions = std::vector<std::function<void()>>;
 
-    State(Backend& backend, QThreadPool& pool, RenderEventSink sink, const ImageSourceOptions& options)
+    State(Backend& backend, QThreadPool& pool, RenderEventSink sink, const ImageSourceOptions& options,
+          QObject& timer_context)
         : library(&backend.library()),
           previews(&backend.previews()),
+          recipes(&backend.recipes()),
+          activity(&backend.interactive()),
           pool(&pool),
           events(std::move(sink)),
+          timers(std::make_shared<UiDispatcher>(&timer_context)),
+          timer_context(&timer_context),
+          quiet_ms(std::max(0, options.interactive_quiet_ms)),
           thumbnails(options.thumbnail_cache_bytes) {}
 
     // Valid while !stopped (the owner keeps the Backend and the pool alive until stop()).
     app::Library* library;
     app::PreviewService* previews;
+    app::RecipeService* recipes;
+    InteractiveActivity* activity;
     QThreadPool* pool;
     const RenderEventSink events;
+    // Delayed thumbnail starts (the quiet period after interactive editing), on the UI thread.
+    const std::shared_ptr<UiDispatcher> timers;
+    QObject* const timer_context;  // used only by functions posted through `timers`
+    const int quiet_ms;
+    bool recheck_scheduled = false;
 
     std::mutex mutex;
     bool stopped = false;
     std::uint64_t next_token = 1;
     std::unordered_map<std::uint64_t, Pending> pending;
     std::uint64_t edit_generation = 0;
-    std::uint64_t thumbnail_generation = 0;
     int edit_outstanding = 0;  // Edit preview requests whose callback has not run yet
     std::deque<std::uint64_t> thumbnail_queue;
     std::optional<std::uint64_t> thumbnail_in_flight;
@@ -251,7 +302,7 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
         switch (result.outcome) {
             case app::PreviewOutcome::Delivered:
                 if (result.preview) {
-                    start_conversion(found->first, entry, result.preview);
+                    start_conversion(found->first, entry, result.preview, result.settings_sha256);
                     return;
                 }
                 pending.erase(found);
@@ -280,10 +331,10 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
         }
     }
 
-    // Converts a delivered render on the conversion pool. Requires `mutex` and !stopped.
+    // Converts a delivered Edit preview on the conversion pool. Requires `mutex` and !stopped.
     void start_conversion(std::uint64_t token, const Pending& entry,
-                          std::shared_ptr<const app::PreviewImage> preview) {
-        pool->start([weak = weak_from_this(), token, route = entry.route, item = entry.request.item,
+                          std::shared_ptr<const app::PreviewImage> preview, const core::Digest256& settings) {
+        pool->start([weak = weak_from_this(), token, item = entry.request.item, settings,
                      preview = std::move(preview)] {
             auto state = weak.lock();
             if (!state) {
@@ -291,15 +342,14 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
             }
             QImage image = to_qimage(preview->image);
             RenderInfoPtr info = to_render_info(*preview);
-            // Edit previews also give the item a Lucent thumbnail; thumbnail renders are one.
-            const QImage thumbnail =
-                route == Route::Edit ? fit_long_edge(image, ImageSourceOptions::kThumbnailEdge) : image;
-            state->finish_conversion(token, route, item, std::move(image), thumbnail, std::move(info));
+            // An Edit preview also gives the item a Lucent thumbnail of the same settings.
+            const QImage thumbnail = fit_long_edge(image, ImageSourceOptions::kThumbnailEdge);
+            state->finish_conversion(token, item, std::move(image), thumbnail, settings, std::move(info));
         });
     }
 
-    void finish_conversion(std::uint64_t token, Route route, ItemId item, QImage image,
-                           const QImage& thumbnail, RenderInfoPtr info) {
+    void finish_conversion(std::uint64_t token, ItemId item, QImage image, const QImage& thumbnail,
+                           const core::Digest256& settings, RenderInfoPtr info) {
         Actions actions;
         {
             const std::lock_guard lock(mutex);
@@ -322,7 +372,7 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
                 }
                 // Served only for Lucent-render generations (2+), which an item whose render is
                 // incomplete reaches only when it has no camera preview to keep.
-                thumbnails.insert(item, thumbnail);
+                thumbnails.insert(item, settings, thumbnail);
                 if (reply) {
                     actions.push_back(
                         [reply, image = std::move(image)]() mutable { reply->finish(std::move(image)); });
@@ -330,8 +380,8 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
                 RenderEvent event{RenderEvent::Kind::PreviewDelivered, item};
                 // An incomplete render (a mandatory step missing) never replaces the camera's
                 // own rendering in the contact sheet.
-                event.lucent_thumbnail = route == Route::Edit && !info->incomplete;
-                event.primary = route == Route::Edit;
+                event.lucent_thumbnail = !info->incomplete;
+                event.primary = true;
                 event.render = std::move(info);
                 post_event(actions, std::move(event));
             }
@@ -445,18 +495,36 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
 
     // ---- Lucent thumbnails --------------------------------------------------------------------
 
+    // The identity of the settings an item's thumbnail must show now (its committed recipe);
+    // std::nullopt when they cannot be read.
+    std::optional<core::Digest256> thumbnail_settings(ItemId item) const {
+        auto state = recipes->state(app::ItemId{item});
+        if (!state || state->recipe_unreadable) {
+            return std::nullopt;
+        }
+        return state->committed_sha256;
+    }
+
     void request_lucent_thumbnail(const ImageRequest& request, std::shared_ptr<ImageReply> reply) {
+        // Read before locking: the recipe service may read its store. The Backend keeps the recipe
+        // service alive while this source exists.
+        const std::optional<core::Digest256> settings = thumbnail_settings(request.item);
         Actions actions;
         std::uint64_t token = 0;
         {
             const std::lock_guard lock(mutex);
+            std::optional<QImage> cached;
+            if (!stopped && settings) {
+                cached = thumbnails.find(request.item, *settings);
+            }
             if (stopped) {
                 fail_later(actions, reply, tr_text("Lucent is closing."));
-            } else if (std::optional<QImage> cached = thumbnails.find(request.item)) {
+            } else if (cached) {
                 actions.push_back([reply, image = *cached]() mutable { reply->finish(std::move(image)); });
             } else {
                 token = next_token++;
-                pending.emplace(token, Pending{Route::LucentThumbnail, request, reply, 0});
+                Pending entry{Route::LucentThumbnail, request, reply, 0, core::CancellationSource{}};
+                pending.emplace(token, std::move(entry));
                 thumbnail_queue.push_back(token);
                 dispatch_thumbnail_locked(actions);
             }
@@ -467,10 +535,14 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
         }
     }
 
-    // Starts the next queued thumbnail render when none is running and no Edit preview is
-    // outstanding. Requires `mutex`.
+    // Starts the next queued thumbnail render when none is running, no Edit preview is outstanding
+    // and interactive editing is not waiting for a render (InteractiveActivity). Requires `mutex`.
     void dispatch_thumbnail_locked(Actions& actions) {
-        if (stopped || thumbnail_in_flight || edit_outstanding > 0) {
+        if (stopped || thumbnail_in_flight || edit_outstanding > 0 || activity->busy()) {
+            return;  // a callback or the idle listener comes back
+        }
+        if (const auto idle = activity->idle_for().count(); !thumbnail_queue.empty() && idle < quiet_ms) {
+            schedule_recheck_locked(static_cast<int>(quiet_ms - idle));
             return;
         }
         while (!thumbnail_queue.empty()) {
@@ -485,39 +557,67 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
                 pending.erase(found);
                 continue;
             }
-            if (std::optional<QImage> cached = thumbnails.find(entry.request.item)) {
-                actions.push_back(
-                    [reply = entry.reply, image = *cached]() mutable { reply->finish(std::move(image)); });
-                pending.erase(found);
-                continue;
-            }
-            const QSize full = full_size_locked(entry.request.item);
-            const std::uint64_t generation = ++thumbnail_generation;
-            app::PreviewRequest preview;
-            preview.item = app::ItemId{entry.request.item};
-            preview.settings_revision = kDefaultSettingsRevision;
-            preview.quality = preview_quality_for(entry.request.bounding_size, full.width(), full.height());
-            preview.channel = kThumbnailChannel;
-            preview.generation = generation;
-            const Status status = previews->request(
-                preview, [weak = weak_from_this(), token](const app::PreviewResult& result) {
+            // The item's current recipe, rendered and cached by its settings (memory and disk).
+            app::RenderedThumbnailRequest request;
+            request.item = app::ItemId{entry.request.item};
+            request.cancel = entry.cancel ? entry.cancel->token() : core::CancellationToken{};
+            const Status status = previews->request_rendered_thumbnail(
+                request, [weak = weak_from_this(), token](
+                             app::ItemId, const Expected<std::shared_ptr<const app::RenderedThumbnail>>& result) {
                     if (auto state = weak.lock()) {
-                        state->on_thumbnail(token, result);
+                        state->on_rendered_thumbnail(token, result);
                     }
                 });
             if (!status) {
-                fail_later(actions, entry.reply, describe_error(status.error()));
+                const QString message = describe_error(status.error());
+                fail_later(actions, entry.reply, message);
+                post_event(actions, RenderEvent{RenderEvent::Kind::PreviewFailed, entry.request.item, message});
                 pending.erase(found);
                 continue;
             }
-            entry.service_generation = generation;
             thumbnail_in_flight = token;
             post_event(actions, RenderEvent{RenderEvent::Kind::PreviewStarted, entry.request.item});
             return;
         }
     }
 
-    void on_thumbnail(std::uint64_t token, const app::PreviewResult& result) {
+    // Looks at the queue again after `delay_ms` (a timer on the UI thread). Requires `mutex`.
+    void schedule_recheck_locked(int delay_ms) {
+        if (recheck_scheduled) {
+            return;
+        }
+        recheck_scheduled = true;
+        timers->post([weak = weak_from_this(), context = timer_context, delay_ms] {
+            QTimer::singleShot(delay_ms, context, [weak] {
+                if (auto state = weak.lock()) {
+                    state->on_recheck();
+                }
+            });
+        });
+    }
+
+    void on_recheck() {
+        Actions actions;
+        {
+            const std::lock_guard lock(mutex);
+            recheck_scheduled = false;
+            dispatch_thumbnail_locked(actions);
+        }
+        run(actions);
+    }
+
+    // The idle listener of the InteractiveActivity: queued thumbnails may start.
+    void on_interactive_idle() {
+        Actions actions;
+        {
+            const std::lock_guard lock(mutex);
+            dispatch_thumbnail_locked(actions);
+        }
+        run(actions);
+    }
+
+    void on_rendered_thumbnail(std::uint64_t token,
+                               const Expected<std::shared_ptr<const app::RenderedThumbnail>>& result) {
         Actions actions;
         {
             const std::lock_guard lock(mutex);
@@ -527,10 +627,63 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
             if (thumbnail_in_flight == token) {
                 thumbnail_in_flight.reset();
             }
-            if (const auto found = pending.find(token); found != pending.end()) {
-                handle_render_result(found, result, actions);
+            const auto found = pending.find(token);
+            if (found != pending.end()) {
+                const Pending entry = found->second;
+                if (result && *result) {
+                    pool->start([weak = weak_from_this(), token, thumbnail = *result,
+                                 bounding = entry.request.bounding_size] {
+                        if (auto state = weak.lock()) {
+                            QImage image = decode_rendered_thumbnail(thumbnail->jpeg, bounding);
+                            state->finish_thumbnail(token, std::move(image), thumbnail->settings_sha256);
+                        }
+                    });
+                } else {
+                    pending.erase(found);
+                    if (!result && result.error().code == ErrorCode::Cancelled) {
+                        fail_later(actions, entry.reply, tr_text("The preview was cancelled."));
+                        post_event(actions, RenderEvent{RenderEvent::Kind::PreviewAbandoned, entry.request.item});
+                    } else {
+                        const QString message = !result ? describe_error(result.error())
+                                                        : tr_text("Lucent could not render this photo.");
+                        fail_later(actions, entry.reply, message);
+                        post_event(actions,
+                                   RenderEvent{RenderEvent::Kind::PreviewFailed, entry.request.item, message});
+                    }
+                }
             }
             dispatch_thumbnail_locked(actions);
+        }
+        run(actions);
+    }
+
+    void finish_thumbnail(std::uint64_t token, QImage image, const core::Digest256& settings) {
+        Actions actions;
+        {
+            const std::lock_guard lock(mutex);
+            if (stopped) {
+                return;
+            }
+            const auto found = pending.find(token);
+            if (found == pending.end()) {
+                return;
+            }
+            const Pending entry = found->second;
+            pending.erase(found);
+            if (image.isNull()) {
+                const QString message = tr_text("Lucent's thumbnail of this photo could not be read.");
+                fail_later(actions, entry.reply, message);
+                post_event(actions, RenderEvent{RenderEvent::Kind::PreviewFailed, entry.request.item, message});
+            } else {
+                thumbnails.insert(entry.request.item, settings, image);
+                actions.push_back(
+                    [reply = entry.reply, image = std::move(image)]() mutable { reply->finish(std::move(image)); });
+                // Processed, without render facts (a thumbnail render has no histogram): an Edit
+                // render provides those.
+                RenderEvent event{RenderEvent::Kind::PreviewDelivered, entry.request.item};
+                event.primary = false;
+                post_event(actions, std::move(event));
+            }
         }
         run(actions);
     }
@@ -568,7 +721,10 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
                 break;
             case Route::LucentThumbnail:
                 if (thumbnail_in_flight == token) {
-                    previews->cancel_channel(kThumbnailChannel);
+                    // Skipped when it has not started (a running render is short and finishes).
+                    if (found->second.cancel) {
+                        found->second.cancel->cancel();
+                    }
                 } else {
                     std::erase(thumbnail_queue, token);
                     pending.erase(found);
@@ -594,12 +750,14 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
             stopped = true;
             for (auto& [token, entry] : pending) {
                 replies.push_back(entry.reply);
+                if (entry.cancel) {
+                    entry.cancel->cancel();
+                }
             }
             pending.clear();
             thumbnail_queue.clear();
             thumbnail_in_flight.reset();
             previews->cancel_channel(kEditChannel);
-            previews->cancel_channel(kThumbnailChannel);
             previews = nullptr;
             library = nullptr;
             pool = nullptr;
@@ -612,10 +770,10 @@ struct AppImageSource::State : std::enable_shared_from_this<State> {
 
 AppImageSource::AppImageSource(std::shared_ptr<Backend> backend, RenderEventSink events,
                                const ImageSourceOptions& options)
-    : backend_(std::move(backend)), pool_(std::make_unique<QThreadPool>()) {
+    : backend_(std::move(backend)), timers_(std::make_unique<QObject>()), pool_(std::make_unique<QThreadPool>()) {
     pool_->setObjectName(QStringLiteral("lucent-image-conversion"));
     pool_->setMaxThreadCount(std::max(1, options.conversion_threads));
-    state_ = std::make_shared<State>(*backend_, *pool_, std::move(events), options);
+    state_ = std::make_shared<State>(*backend_, *pool_, std::move(events), options, *timers_);
     // Runs on the thread that changed the library (an import's worker).
     subscription_ = backend_->library().subscribe(
         [weak = std::weak_ptr<State>(state_)](const app::LibraryChange& change) {
@@ -626,9 +784,18 @@ AppImageSource::AppImageSource(std::shared_ptr<Backend> backend, RenderEventSink
                 state->forget_items(change.items);
             }
         });
+    // Thumbnail renders wait while the photo being edited waits for a render.
+    backend_->interactive().set_idle_listener([weak = std::weak_ptr<State>(state_)] {
+        if (auto state = weak.lock()) {
+            state->on_interactive_idle();
+        }
+    });
 }
 
 AppImageSource::~AppImageSource() {
+    backend_->interactive().set_idle_listener({});  // waits for a listener running on another thread
+    state_->timers->close();
+    timers_.reset();  // pending timers go with it
     subscription_.reset();  // waits for an observer running on another thread
     state_->stop();
     pool_->waitForDone();  // conversions still running see `stopped` and drop their results

@@ -122,10 +122,14 @@ AppController::AppController(Services services, QObject* parent)
     library_model_ = std::make_unique<LibraryModel>(*services_.library, registry_);
     export_model_ = std::make_unique<ExportJobModel>(*services_.exports);
     current_ = std::make_unique<CurrentItem>(*library_model_);
+    frame_store_ = std::make_shared<FrameStore>();
+    edit_ = std::make_unique<EditSession>(*services_.edits, frame_store_);
     // Owned here, never by the QML engine's garbage collector.
     QQmlEngine::setObjectOwnership(library_model_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(export_model_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(current_.get(), QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(edit_.get(), QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(edit_->history(), QQmlEngine::CppOwnership);
 
     url_opener_ = [](const QUrl& url) { return QDesktopServices::openUrl(url); };
 
@@ -139,13 +143,17 @@ AppController::AppController(Services services, QObject* parent)
     connect(&library, &LibraryService::backup_finished, this, &AppController::on_backup_finished);
     connect(&library, &LibraryService::verification_progress, this, &AppController::on_verification_progress);
     connect(services_.exports.get(), &ExportService::busy_changed, this, &AppController::busyChanged);
+    connect(services_.edits.get(), &EditService::busy_changed, this, &AppController::busyChanged);
+    connect(edit_.get(), &EditSession::notice, this, &AppController::set_status_message);
     // After the model has inserted the rows (it connected first).
     connect(&library, &LibraryService::items_added, this, &AppController::on_items_added);
     connect(current_.get(), &CurrentItem::changed, this, &AppController::on_current_changed);
     connect(this, &AppController::exportOptionsChanged, this, &AppController::update_suggested_export_name);
 }
 
-AppController::~AppController() = default;
+AppController::~AppController() {
+    edit_->set_item(0);  // commits a pending gesture and closes the session
+}
 
 bool AppController::addFiles(const QList<QUrl>& urls) {
     return import_urls(urls, false);
@@ -479,6 +487,7 @@ QString AppController::nativePath(const QString& path) const {
 
 void AppController::install_image_providers(QQmlEngine& engine) const {
     lucent::ui::install_image_providers(engine, services_.images, registry_);
+    install_frame_providers(engine, frame_store_);
 }
 
 void AppController::set_url_opener(UrlOpener opener) {
@@ -497,8 +506,13 @@ void AppController::set_current_view(View view) {
     }
     previous_view_ = view_;
     view_ = view;
+    update_edit_item();
     emit currentViewChanged();
     emit windowTitleChanged();
+}
+
+void AppController::update_edit_item() {
+    edit_->set_item(view_ == Edit && current_->valid() ? current_->item_id() : 0);
 }
 
 void AppController::set_current_index(int row) {
@@ -506,7 +520,8 @@ void AppController::set_current_index(int row) {
 }
 
 bool AppController::busy() const {
-    return importing_ || services_.library->is_busy() || services_.exports->is_busy();
+    return importing_ || services_.library->is_busy() || services_.exports->is_busy() ||
+           services_.edits->is_busy();
 }
 
 void AppController::set_include_subfolders(bool include) {
@@ -535,6 +550,7 @@ void AppController::set_clipping_overlay(bool enabled) {
         return;
     }
     clipping_overlay_ = enabled;
+    edit_->set_clipping(enabled);
     emit clippingOverlayChanged();
 }
 
@@ -649,6 +665,7 @@ void AppController::on_items_added() {
 }
 
 void AppController::on_current_changed() {
+    update_edit_item();
     if (current_->row() != last_row_) {
         last_row_ = current_->row();
         emit currentIndexChanged();

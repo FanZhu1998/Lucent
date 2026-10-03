@@ -255,7 +255,9 @@ TEST_F(ApplicationAdaptersTest, FilesWithoutACameraPreviewMoveToLucentThumbnails
     EXPECT_EQ(renderer->finished(L"plain.dng"), 1);
     ASSERT_TRUE(QTest::qWaitFor([&] { return current(id).processing == ProcessingStatus::Processed; },
                                 kAdapterWaitMs));
-    EXPECT_NE(current(id).render, nullptr);
+    // A thumbnail render (W6: PreviewService::request_rendered_thumbnail, the JPEG of the recipe)
+    // has no histogram: render facts come from the Edit view's renders.
+    EXPECT_EQ(current(id).render, nullptr);
 
     // Cached: the next request is served without rendering again.
     auto again = request_image(*services_.images, ImageKind::Thumbnail, id, 2, {512, 512});

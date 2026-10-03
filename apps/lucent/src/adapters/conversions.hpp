@@ -109,6 +109,10 @@ void merge_library_facts(LibraryItem& current, const LibraryItem& fresh);
 // What the shell shows about a finished preview (histograms, render facts, user-facing notes;
 // `incomplete` when the render's interpretation maps to Unsupported).
 [[nodiscard]] RenderInfoPtr to_render_info(const app::PreviewImage& preview);
+// The same for any displayed image with its histogram and render summary (edit-session frames);
+// `seconds` is the time from request to pixels.
+[[nodiscard]] RenderInfoPtr to_render_info(const app::DisplayImage& image, const app::Histogram& histogram,
+                                           const app::RenderSummary& summary, double seconds);
 
 // --- Export ----------------------------------------------------------------------------------
 

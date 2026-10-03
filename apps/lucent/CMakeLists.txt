@@ -1,7 +1,7 @@
 # Lucent.exe: the Qt Quick desktop application (blueprint sections 2, 4 and 9; W3).
 #
 # Targets
-#   lucent_ui_services   UI-side service interfaces (library, images, exports) and ImageReply.
+#   lucent_ui_services   UI-side service interfaces (library, images, exports, editing) and ImageReply.
 #                        Qt Core/Gui only; the seam the application services bind to.
 #   lucent_ui_adapters   The UI-side services implemented over the application services
 #                        (lucent_application): import, camera and Lucent previews, export. Binds
@@ -25,6 +25,8 @@ qt_standard_project_setup(REQUIRES 6.11)
 # --- Service interfaces --------------------------------------------------------------------------
 
 add_library(lucent_ui_services STATIC
+    src/services/edit_service.cpp
+    src/services/edit_service.hpp
     src/services/export_service.hpp
     src/services/image_reply.cpp
     src/services/image_source.hpp
@@ -42,6 +44,8 @@ set_target_properties(lucent_ui_services PROPERTIES FOLDER "apps/lucent")
 # --- Adapters over the application services -----------------------------------------------------
 
 add_library(lucent_ui_adapters STATIC
+    src/adapters/app_edit_service.cpp
+    src/adapters/app_edit_service.hpp
     src/adapters/app_export_service.cpp
     src/adapters/app_export_service.hpp
     src/adapters/app_image_source.cpp
@@ -54,6 +58,8 @@ add_library(lucent_ui_adapters STATIC
     src/adapters/backend.hpp
     src/adapters/conversions.cpp
     src/adapters/conversions.hpp
+    src/adapters/edit_conversions.cpp
+    src/adapters/edit_conversions.hpp
     src/adapters/ui_dispatcher.hpp
 )
 target_link_libraries(lucent_ui_adapters
@@ -65,6 +71,37 @@ set_target_properties(lucent_ui_adapters PROPERTIES FOLDER "apps/lucent")
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
+set(_lucent_qml_files
+    qml/AdjustmentSlider.qml
+    qml/AdjustPanel.qml
+    qml/AppHeader.qml
+    qml/Badge.qml
+    qml/CopySettingsDialog.qml
+    qml/EditView.qml
+    qml/ExportDialog.qml
+    qml/ExportJobRow.qml
+    qml/ExportsView.qml
+    qml/Filmstrip.qml
+    qml/FocusRing.qml
+    qml/Histogram.qml
+    qml/HistoryPanel.qml
+    qml/ImportDialog.qml
+    qml/LibraryEmptyState.qml
+    qml/LibraryView.qml
+    qml/LockButton.qml
+    qml/Main.qml
+    qml/MetadataPanel.qml
+    qml/NavButton.qml
+    qml/PanelSection.qml
+    qml/StyledButton.qml
+    qml/StyledCheckBox.qml
+    qml/StyledToolButton.qml
+    qml/Theme.qml
+    qml/ThumbnailCard.qml
+    qml/ToneCurveEditor.qml
+    qml/ZoomableImage.qml
+)
+
 qt_add_library(lucent_ui STATIC)
 qt_add_qml_module(lucent_ui
     URI Lucent
@@ -73,33 +110,14 @@ qt_add_qml_module(lucent_ui
     CLASS_NAME LucentPlugin
     # Must end in the module's target path for qmllint and other QML tooling.
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/qml/Lucent"
-    QML_FILES
-        qml/AppHeader.qml
-        qml/Badge.qml
-        qml/EditView.qml
-        qml/ExportDialog.qml
-        qml/ExportJobRow.qml
-        qml/ExportsView.qml
-        qml/Filmstrip.qml
-        qml/FocusRing.qml
-        qml/Histogram.qml
-        qml/ImportDialog.qml
-        qml/LibraryEmptyState.qml
-        qml/LibraryView.qml
-        qml/Main.qml
-        qml/MetadataPanel.qml
-        qml/NavButton.qml
-        qml/StyledButton.qml
-        qml/StyledCheckBox.qml
-        qml/StyledToolButton.qml
-        qml/Theme.qml
-        qml/ThumbnailCard.qml
-        qml/ZoomableImage.qml
+    QML_FILES ${_lucent_qml_files}
     SOURCES
         src/app_controller.cpp
         src/app_controller.hpp
         src/developer_automation.cpp
         src/developer_automation.hpp
+        src/imaging/frame_store.cpp
+        src/imaging/frame_store.hpp
         src/imaging/generation_registry.cpp
         src/imaging/generation_registry.hpp
         src/imaging/histogram_plot.cpp
@@ -108,8 +126,14 @@ qt_add_qml_module(lucent_ui
         src/imaging/image_id.hpp
         src/imaging/image_provider.cpp
         src/imaging/image_provider.hpp
+        src/imaging/tone_curve_plot.cpp
+        src/imaging/tone_curve_plot.hpp
         src/models/current_item.cpp
         src/models/current_item.hpp
+        src/models/edit_history_model.cpp
+        src/models/edit_history_model.hpp
+        src/models/edit_session.cpp
+        src/models/edit_session.hpp
         src/models/export_job_model.cpp
         src/models/export_job_model.hpp
         src/models/library_model.cpp
@@ -121,6 +145,19 @@ qt_add_qml_module(lucent_ui
         src/volume_watcher.cpp
         src/volume_watcher.hpp
 )
+# qmlcachegen's ahead-of-time compiled bindings instantiate Qt's QVariant templates in ways that
+# MSVC's optimiser reports as unreachable code inside Qt's own headers (C4702, which /external:W0
+# does not cover because it is raised during code generation). A false positive in generated code:
+# silenced for those files only.
+if(MSVC)
+    foreach(_lucent_qml IN LISTS _lucent_qml_files)
+        get_filename_component(_lucent_qml_name "${_lucent_qml}" NAME_WE)
+        set_source_files_properties(
+            "${CMAKE_CURRENT_BINARY_DIR}/.rcc/qmlcache/lucent_ui_qml/${_lucent_qml_name}_qml.cpp"
+            PROPERTIES COMPILE_OPTIONS "/wd4702")
+    endforeach()
+endif()
+
 target_link_libraries(lucent_ui
     PUBLIC
         lucent_ui_services

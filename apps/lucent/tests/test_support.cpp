@@ -57,13 +57,60 @@ ScriptedServices make_scripted_services() {
     ScriptedServices scripted;
     auto library = std::make_unique<ScriptedLibraryService>();
     auto exports = std::make_unique<RecordingExportService>();
+    auto edits = std::make_unique<RecordingEditService>();
     scripted.library = library.get();
     scripted.exports = exports.get();
+    scripted.edits = edits.get();
     scripted.images = std::make_shared<ManualImageSource>();
     scripted.services.library = std::move(library);
     scripted.services.exports = std::move(exports);
     scripted.services.images = scripted.images;
+    scripted.services.edits = std::move(edits);
     return scripted;
+}
+
+QList<double> RecordingEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {
+    QList<double> samples;
+    if (points.size() < 2 || count < 2) {
+        return samples;
+    }
+    for (int i = 0; i < count; ++i) {
+        const double x = double(i) / double(count - 1);
+        double y = x <= points.front().x() ? points.front().y() : points.back().y();
+        for (qsizetype p = 0; p + 1 < points.size(); ++p) {
+            if (x >= points[p].x() && x <= points[p + 1].x()) {
+                const double span = points[p + 1].x() - points[p].x();
+                const double t = span > 0.0 ? (x - points[p].x()) / span : 0.0;
+                y = points[p].y() + t * (points[p + 1].y() - points[p].y());
+                break;
+            }
+        }
+        samples << y;
+    }
+    return samples;
+}
+
+std::vector<RecordingEditService::Call> RecordingEditService::calls_named(const QString& name) const {
+    std::vector<Call> found;
+    for (const Call& call : calls) {
+        if (call.name == name) {
+            found.push_back(call);
+        }
+    }
+    return found;
+}
+
+void RecordingEditService::answer(ItemId item, quint64 token, const EditSettings& settings, bool can_undo,
+                                  bool can_redo) {
+    EditState state;
+    state.item = item;
+    state.token = token;
+    state.settings = settings;
+    state.committed = settings;
+    state.can_undo = can_undo;
+    state.can_redo = can_redo;
+    state.edited = !settings.renders_as_shot();
+    emit state_changed(state);
 }
 
 LibraryItem make_item(ItemId id, const QString& file_name, Generation thumbnail, Generation preview) {

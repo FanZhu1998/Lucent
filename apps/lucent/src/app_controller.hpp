@@ -2,7 +2,9 @@
 
 // AppController: the root object the QML window binds to (Main.qml's required property
 // `controller`). It owns the services, the view models and the generation registry, and turns user
-// intents (add photos, open a photo, export, open the output folder) into service calls.
+// intents (add photos, open a photo, export, open the output folder) into service calls. W6: its
+// EditSession (`edit`) follows the photo while the Edit view shows it, and the frame image
+// providers (imaging/frame_store.hpp) serve that session's frames.
 //
 // Blueprint section 2 ("Library, Edit and Exports are three views of one application") and
 // section 4 (the UI calls application services and never decodes on its thread).
@@ -24,8 +26,10 @@
 #include <QUrl>
 #include <QtQmlIntegration/qqmlintegration.h>
 
+#include "imaging/frame_store.hpp"
 #include "imaging/generation_registry.hpp"
 #include "models/current_item.hpp"
+#include "models/edit_session.hpp"
 #include "models/export_job_model.hpp"
 #include "models/library_model.hpp"
 #include "services/services.hpp"
@@ -43,6 +47,8 @@ class AppController : public QObject {
     Q_PROPERTY(lucent::ui::LibraryModel* library READ library CONSTANT FINAL)
     Q_PROPERTY(lucent::ui::ExportJobModel* exports READ exports CONSTANT FINAL)
     Q_PROPERTY(lucent::ui::CurrentItem* current READ current CONSTANT FINAL)
+    // W6. Editing of the photo shown in the Edit view (open while the Edit view shows it).
+    Q_PROPERTY(lucent::ui::EditSession* edit READ edit CONSTANT FINAL)
     Q_PROPERTY(bool importing READ importing NOTIFY importingChanged FINAL)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged FINAL)
     Q_PROPERTY(QString statusMessage READ status_message NOTIFY statusMessageChanged FINAL)
@@ -175,6 +181,8 @@ public:
     [[nodiscard]] LibraryModel* library() const noexcept { return library_model_.get(); }
     [[nodiscard]] ExportJobModel* exports() const noexcept { return export_model_.get(); }
     [[nodiscard]] CurrentItem* current() const noexcept { return current_.get(); }
+    [[nodiscard]] EditSession* edit() const noexcept { return edit_.get(); }
+    [[nodiscard]] EditService& edit_service() const noexcept { return *services_.edits; }
     [[nodiscard]] LibraryService& library_service() const noexcept { return *services_.library; }
     [[nodiscard]] ExportService& export_service() const noexcept { return *services_.exports; }
 
@@ -245,12 +253,16 @@ private:
     void on_backup_finished(const BackupResult& result);
     void on_verification_progress(const VerificationProgress& progress);
     bool relink(const QUrl& folder, const QList<ItemId>& items);
+    // The edit session follows the photo while the Edit view shows it.
+    void update_edit_item();
 
     Services services_;  // declared first: destroyed after the models that observe it
     std::shared_ptr<GenerationRegistry> registry_;
     std::unique_ptr<LibraryModel> library_model_;
     std::unique_ptr<ExportJobModel> export_model_;
     std::unique_ptr<CurrentItem> current_;
+    std::shared_ptr<FrameStore> frame_store_;  // shared with the frame image providers
+    std::unique_ptr<EditSession> edit_;
 
     View view_ = Library;
     View previous_view_ = Library;

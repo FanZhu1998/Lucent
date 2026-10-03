@@ -39,6 +39,27 @@
 //   --data-root <folder>       Use <folder> instead of %LOCALAPPDATA%\Lucent for the catalog
 //                              (<folder>\data) and the caches (<folder>\cache): screenshots and
 //                              smoke tests without touching the user's library. Created if needed.
+//   --set <control>=<value>    With --open-first (W6): once the photo's first frame is shown, make
+//                              this edit (one revision each, in order, each waiting for its final
+//                              frame). <control> is a slider key (exposure, contrast, highlights,
+//                              shadows, saturation, vibrance, temperature, tint, redBlue,
+//                              greenMagenta; display units: exposure in EV, temperature in kelvin,
+//                              the others -100..100), "curve" with points "x:y,x:y,..." (0..1), or
+//                              "lock" with a lock key (whiteBalance, exposure, ..., toneCurve).
+//                              Repeatable. With --measure, each edit's frame latency is reported.
+//   --drag <control>           With --open-first: after the --set edits, drag that slider with
+//                              synthetic mouse events (press, --drag-steps moves 16 ms apart over a
+//                              third of the track, release: one gesture). With --measure, reports
+//                              slider-to-frame latency (call to frame shown and to frame published),
+//                              the Quick and Final frames and the largest UI-thread gap during the
+//                              drag.
+//   --drag-steps <n>           Mouse moves of --drag (default 60, 10..1000).
+//   --compare <before|split>   With --open-first: show the as-shot render (before) or before/after
+//                              side by side before the screenshot.
+//   --clipping                 With --open-first: turn the clipping overlay on before the
+//                              screenshot.
+//   --scroll-panel <fraction>  With --open-first: scroll the Edit view's side panel (0 top, 1
+//                              bottom) before the screenshot, to show the history and details.
 //
 // Progress lines ("lucent: ...") go to stderr, which a WIN32 program only has when the caller
 // redirects it (for example `Lucent.exe --screenshot a.png 2> log.txt`). Set
@@ -48,10 +69,13 @@
 // one user-facing part of the command line (drag-and-drop onto Lucent.exe, "Open with").
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QImage>
+#include <QPointF>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -77,6 +101,13 @@ struct DeveloperOptions {
     bool quit_after_screenshot = false;
     int settle_timeout_ms = 60000;
     QString data_root;  // --data-root; empty: the user's own folders
+    // W6 editing automation (see the file comment).
+    std::vector<std::pair<QString, QString>> edits;  // --set key=value, in order
+    QString drag;                                     // --drag: a slider key
+    int drag_steps = 60;
+    QString compare;  // --compare: "", "before" or "split"
+    bool clipping = false;
+    std::optional<double> panel_scroll;  // --scroll-panel
 };
 
 struct CommandLine {
@@ -116,7 +147,7 @@ signals:
     void screenshotTaken(bool saved, const QString& path);
 
 private:
-    enum class Stage { WaitingForImports, WaitingForFitPreview, WaitingForZoomedPreview, Settling, Done };
+    enum class Stage { WaitingForImports, WaitingForFitPreview, WaitingForZoomedPreview, Editing, Settling, Done };
 
     void poll();
     void after_imports();
@@ -127,6 +158,15 @@ private:
     void report_measurements();
     void report_preview(const char* what, qint64 visible_ms);
     [[nodiscard]] int viewer_status() const;
+    // W6 editing automation.
+    [[nodiscard]] bool wants_editing() const;
+    void edit_step();
+    bool apply_edit(const QString& key, const QString& value);
+    void start_drag();
+    void drag_tick();
+    void send_mouse(QEvent::Type type, QPointF position);
+    void report_edit_latency(const QString& what);
+    void report_drag();
 
     DeveloperOptions options_;
     AppController& controller_;
@@ -149,6 +189,22 @@ private:
     qint64 open_ms_ = -1;          // when --open-first opened the photo
     qint64 zoom_ms_ = -1;          // when --zoom switched the view
     bool zoom_loading_seen_ = false;
+
+    // --set, --drag
+    std::size_t next_edit_ = 0;
+    bool edit_waiting_ = false;    // an edit was made; waiting for its final frame
+    int finals_before_ = 0;
+    QString edit_label_;
+    QTimer drag_timer_;
+    bool drag_active_ = false;     // between the press and the release
+    bool drag_measuring_ = false;  // from the press until the drag's final frame
+    bool drag_done_ = false;
+    int drag_step_ = 0;
+    QPointF drag_from_;
+    QPointF drag_to_;
+    qint64 drag_start_ms_ = -1;
+    qint64 drag_release_ms_ = -1;
+    std::vector<qint64> drag_gaps_ms_;
 };
 
 // Writes "lucent: <message>" and a newline to stderr (when the process has one).

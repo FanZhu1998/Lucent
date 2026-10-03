@@ -250,6 +250,8 @@ TEST(AdapterConversions, RenderInfoCarriesTheHistogramAndTheRenderFacts) {
     preview.histogram.luminance[255] = 5;
     preview.histogram.pixels = 8;
     preview.summary.rendered_size = image::Size{8192, 5464};
+    preview.summary.look = "neutral";
+    preview.summary.look_version = 1;
     preview.summary.provisional = true;
     preview.summary.render_seconds = 0.9;
     preview.summary.interpretation = raw::InterpretationStatus::OptionalOperationsSkipped;
@@ -261,7 +263,7 @@ TEST(AdapterConversions, RenderInfoCarriesTheHistogramAndTheRenderFacts) {
     EXPECT_EQ(info->pixels, 8u);
     EXPECT_EQ(info->preview_width, 4);
     EXPECT_EQ(info->rendered_width, 8192);
-    EXPECT_EQ(info->rendering, QStringLiteral("Neutral v0"));
+    EXPECT_EQ(info->rendering, QStringLiteral("Neutral v1"));
     EXPECT_TRUE(info->provisional);
     EXPECT_DOUBLE_EQ(info->preview_seconds, 1.1);
     EXPECT_EQ(info->notes,

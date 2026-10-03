@@ -60,6 +60,30 @@ TEST(CommandLine, ParsesExportZoomAndMeasureOptions) {
     EXPECT_EQ(parse({"--export-format", "jpeg"}).options.export_options.format, ExportFileFormat::Jpeg);
 }
 
+TEST(CommandLine, ParsesTheEditingAutomation) {
+    const CommandLine command_line =
+        parse({"--open-first", "--set", "exposure=+1", "--set", "temperature=5200", "--set",
+               "curve=0:0,0.3:0.25,1:1", "--set", "lock=toneCurve", "--drag", "shadows", "--drag-steps", "120",
+               "--compare", "split", "--clipping"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    const DeveloperOptions& options = command_line.options;
+    ASSERT_EQ(options.edits.size(), 4u);
+    EXPECT_EQ(options.edits[0], std::make_pair(QStringLiteral("exposure"), QStringLiteral("+1")));
+    EXPECT_EQ(options.edits[2].first, QStringLiteral("curve"));
+    EXPECT_EQ(options.edits[3], std::make_pair(QStringLiteral("lock"), QStringLiteral("toneCurve")));
+    EXPECT_EQ(options.drag, QStringLiteral("shadows"));
+    EXPECT_EQ(options.drag_steps, 120);
+    EXPECT_EQ(options.compare, QStringLiteral("split"));
+    EXPECT_TRUE(options.clipping);
+
+    const CommandLine defaults = parse({});
+    EXPECT_TRUE(defaults.options.edits.empty());
+    EXPECT_TRUE(defaults.options.drag.isEmpty());
+    EXPECT_EQ(defaults.options.drag_steps, 60);
+    EXPECT_TRUE(defaults.options.compare.isEmpty());
+    EXPECT_FALSE(defaults.options.clipping);
+}
+
 TEST(CommandLine, AcceptsEveryViewName) {
     EXPECT_EQ(parse({"--view", "library"}).options.view, AppController::Library);
     EXPECT_EQ(parse({"--view", "exports"}).options.view, AppController::Exports);
@@ -81,6 +105,17 @@ TEST(CommandLine, RejectsInvalidValues) {
         {"--export-quality", "101"},
         {"--zoom", "200"},
         {"--show-export-dialog"},
+        {"--set", "exposure=+1"},                      // needs --open-first
+        {"--open-first", "--set", "exposure"},         // no value
+        {"--open-first", "--set", "sharpness=10"},     // not a control
+        {"--open-first", "--set", "exposure=bright"},  // not a number
+        {"--open-first", "--set", "curve=0:0"},        // one point
+        {"--open-first", "--set", "curve=0:0,2:1"},    // out of range
+        {"--open-first", "--set", "lock=grain"},
+        {"--open-first", "--drag", "grain"},
+        {"--open-first", "--drag", "exposure", "--drag-steps", "5"},
+        {"--open-first", "--compare", "sideways"},
+        {"--clipping"},
     };
     for (const QStringList& arguments : invalid) {
         const CommandLine command_line = parse(arguments);

@@ -55,6 +55,8 @@ class CurrentItem : public QObject {
     Q_PROPERTY(QString pickKey READ pick_key NOTIFY changed FINAL)
     Q_PROPERTY(QString sourceNote READ source_note NOTIFY changed FINAL)
     Q_PROPERTY(bool missing READ missing NOTIFY changed FINAL)
+    // W6: the photo has develop settings other than as shot.
+    Q_PROPERTY(bool edited READ edited NOTIFY changed FINAL)
 
 public:
     // `model` must outlive this object.
@@ -102,6 +104,7 @@ public:
     [[nodiscard]] QString pick_key() const { return text(LibraryModel::PickKeyRole); }
     [[nodiscard]] QString source_note() const { return text(LibraryModel::SourceNoteRole); }
     [[nodiscard]] bool missing() const { return value(LibraryModel::MissingRole).toBool(); }
+    [[nodiscard]] bool edited() const { return value(LibraryModel::EditedRole).toBool(); }
 
 signals:
     void changed();

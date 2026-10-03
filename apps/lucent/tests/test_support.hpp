@@ -121,6 +121,85 @@ public:
     bool busy = false;
 };
 
+// An EditService that records every call and emits what the test asks (view-model tests).
+class RecordingEditService final : public EditService {
+    Q_OBJECT
+
+public:
+    struct Call {
+        QString name;  // "open", "close", "set_transient", "commit", "apply", "set_lock", "undo", ...
+        ItemId item = 0;
+        quint64 token = 0;
+        EditSettings settings;
+        quint64 revision = 0;
+        quint32 categories = 0;
+        bool flag = false;
+    };
+
+    void open(ItemId item) override { record({"open", item}); }
+    void close(ItemId item) override { record({"close", item}); }
+    void set_full_resolution(ItemId item, bool full) override { record({"set_full_resolution", item, 0, {}, 0, 0, full}); }
+    void set_comparison(ItemId item, bool wanted) override { record({"set_comparison", item, 0, {}, 0, 0, wanted}); }
+    void set_clipping(bool wanted) override { record({"set_clipping", 0, 0, {}, 0, 0, wanted}); }
+    quint64 set_transient(ItemId item, const EditSettings& settings) override {
+        return record({"set_transient", item, next_token(), settings});
+    }
+    quint64 commit(ItemId item) override { return record({"commit", item, next_token()}); }
+    quint64 apply(ItemId item, const EditSettings& settings) override {
+        return record({"apply", item, next_token(), settings});
+    }
+    quint64 set_lock(ItemId item, EditControl control, bool locked) override {
+        return record({"set_lock", item, next_token(), {}, static_cast<quint64>(control), 0, locked});
+    }
+    quint64 undo(ItemId item) override { return record({"undo", item, next_token()}); }
+    quint64 redo(ItemId item) override { return record({"redo", item, next_token()}); }
+    quint64 select_revision(ItemId item, quint64 revision) override {
+        return record({"select_revision", item, next_token(), {}, revision});
+    }
+    quint64 reset_to_as_shot(ItemId item) override { return record({"reset_to_as_shot", item, next_token()}); }
+    void copy_settings(ItemId item, quint32 categories) override {
+        record({"copy_settings", item, 0, {}, 0, categories});
+    }
+    [[nodiscard]] bool has_clipboard() const override { return clipboard; }
+    void paste_settings(const QList<ItemId>& targets) override {
+        record({"paste_settings", targets.isEmpty() ? 0 : targets.front()});
+    }
+    // Piecewise linear (the real curve is the renderer's monotone cubic).
+    [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
+    [[nodiscard]] bool is_busy() const override { return busy; }
+
+    // Calls named `name`, in order.
+    [[nodiscard]] std::vector<Call> calls_named(const QString& name) const;
+    [[nodiscard]] int count(const QString& name) const { return static_cast<int>(calls_named(name).size()); }
+
+    // Emits a state answering `token` for `item` with `settings` (committed = settings).
+    void answer(ItemId item, quint64 token, const EditSettings& settings, bool can_undo = false,
+                bool can_redo = false);
+    void emit_state(const EditState& state) { emit state_changed(state); }
+    void emit_history(ItemId item, const QList<EditHistoryEntry>& entries) { emit history_changed(item, entries); }
+    void emit_white_balance(ItemId item, const WhiteBalanceInfo& info) { emit white_balance_changed(item, info); }
+    void emit_frame(const EditFramePtr& frame) { emit frame_ready(frame); }
+    void emit_copied(ItemId item, quint32 categories) {
+        clipboard = true;
+        emit copied(item, categories);
+    }
+    void emit_pasted(const PasteReport& report) { emit pasted(report); }
+    void emit_command_failed(ItemId item, const QString& message) { emit command_failed(item, message); }
+
+    std::vector<Call> calls;
+    bool clipboard = false;
+    bool busy = false;
+
+private:
+    quint64 next_token() { return ++last_token_; }
+    quint64 record(Call call) {
+        calls.push_back(call);
+        return call.token;
+    }
+
+    quint64 last_token_ = 0;
+};
+
 // An ImageSource that keeps every request pending until the test completes it. Thread-safe.
 class ManualImageSource final : public ImageSource {
 public:
@@ -166,6 +245,7 @@ struct ScriptedServices {
     ScriptedLibraryService* library = nullptr;
     RecordingExportService* exports = nullptr;
     std::shared_ptr<ManualImageSource> images;
+    RecordingEditService* edits = nullptr;
 };
 
 [[nodiscard]] ScriptedServices make_scripted_services();

@@ -44,11 +44,19 @@ void HistogramPlot::set_histogram(const QVariant& value) {
 }
 
 double HistogramPlot::shadows_clipped() const noexcept {
-    return empty() ? 0.0 : double(info_->luma.front()) / double(info_->pixels);
+    if (empty()) {
+        return 0.0;
+    }
+    const std::uint64_t clipped = info_->clipping_counted ? info_->clipped_shadows : info_->luma.front();
+    return double(clipped) / double(info_->pixels);
 }
 
 double HistogramPlot::highlights_clipped() const noexcept {
-    return empty() ? 0.0 : double(info_->luma.back()) / double(info_->pixels);
+    if (empty()) {
+        return 0.0;
+    }
+    const std::uint64_t clipped = info_->clipping_counted ? info_->clipped_highlights : info_->luma.back();
+    return double(clipped) / double(info_->pixels);
 }
 
 double HistogramPlot::scale_of(const RenderInfo& info) noexcept {

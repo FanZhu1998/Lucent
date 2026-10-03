@@ -88,14 +88,29 @@ public:
         return QTest::qWaitFor([&] { return started(file_name) >= renders; }, kAdapterWaitMs);
     }
 
-    Expected<std::uint64_t> estimate_memory(const app::SourceItem&, const engine::RenderSettings&,
-                                            const core::CancellationToken&) const override {
-        return std::uint64_t{1} << 20;
+    Expected<engine::DevelopMemoryEstimate> estimate(const app::SourceItem&, const engine::StageOneRequest&,
+                                                     const core::CancellationToken&) const override {
+        engine::DevelopMemoryEstimate estimate;
+        estimate.stage_one_peak = std::uint64_t{1} << 20;
+        estimate.stage_one_bytes = std::uint64_t{1} << 20;
+        estimate.export_peak = std::uint64_t{1} << 20;
+        return estimate;
     }
 
-    Expected<engine::RenderResult> render(const app::SourceItem& item, const engine::RenderSettings& settings,
-                                          const app::StageObserver&,
-                                          const core::CancellationToken& cancel) const override {
+    // Edit sessions are not exercised by the shell tests.
+    Expected<engine::StageOneImage> render_stage_one(const app::SourceItem&, const engine::StageOneRequest&,
+                                                     const core::CancellationToken&) const override {
+        return fail(ErrorCode::Unsupported, "the gated renderer has no stage one", "test.render");
+    }
+    Expected<engine::DevelopResult> render_stage_two(const engine::StageOneImage&,
+                                                     const engine::DevelopSettings&,
+                                                     const core::CancellationToken&) const override {
+        return fail(ErrorCode::Unsupported, "the gated renderer has no stage two", "test.render");
+    }
+
+    Expected<app::DevelopRender> render(const app::SourceItem& item, const engine::DevelopSettings& settings,
+                                        const app::RenderProgress&,
+                                        const core::CancellationToken& cancel) const override {
         const std::wstring name = item.path.filename().wstring();
         increment(started_, name);
         while (true) {
@@ -127,12 +142,13 @@ public:
                 row[x] = level;
             }
         }
-        engine::RenderResult result;
+        app::DevelopRender result;
         result.display.pixels = std::move(*pixels);
         result.display.encoding = engine::display_linear_rec2020();
         result.report.settings = settings;
         result.report.output_size = size_;
-        result.report.total_seconds = 0.01;
+        result.report.full_size = size_;
+        result.report.stage_two_seconds = 0.01;
         increment(finished_, name);
         return result;
     }

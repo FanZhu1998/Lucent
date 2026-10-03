@@ -39,6 +39,15 @@ LibraryItem convert(const app::SourceItem& source, const app::Library& library) 
     return to_library_item(source, duplicates);
 }
 
+QByteArray identity_bytes(const core::Digest256& digest) {
+    return QByteArray(reinterpret_cast<const char*>(digest.data()), static_cast<qsizetype>(digest.size()));
+}
+
+// The edited flag of a recipe state (service_types.hpp, LibraryItem::edited).
+bool is_edited(const app::RecipeState& state) {
+    return state.revision.has_value() && (state.recipe_unreadable || !state.committed.is_as_shot());
+}
+
 QString describe_library_problem(const Error& error) {
     switch (error.code) {
         case ErrorCode::VersionMismatch:
@@ -106,11 +115,26 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
     backend_->set_maintenance_sink([this, dispatcher = dispatcher_](const app::MaintenanceEvent& event) {
         dispatcher->post([this, event] { on_maintenance(event); });
     });
+    // Committed recipes (an edit, undo/redo, a paste) change what the thumbnail must show. Runs on
+    // the thread that made the change; `this` is only used by the posted function.
+    recipe_subscription_ =
+        backend_->recipes().subscribe([this, dispatcher = dispatcher_](const app::RecipeChange& change) {
+            if (change.kind != app::RecipeChangeKind::Committed && change.kind != app::RecipeChangeKind::Moved) {
+                return;
+            }
+            const app::RecipeState& state = change.state;
+            dispatcher->post([this, item = state.item.value, edited = is_edited(state),
+                              identity = identity_bytes(state.committed_sha256),
+                              readable = !state.recipe_unreadable] {
+                apply_recipe(item, edited, identity, readable);
+            });
+        });
 }
 
 AppLibraryService::~AppLibraryService() {
     dispatcher_->close();
     backend_->set_maintenance_sink({});
+    recipe_subscription_.reset();
     subscription_.reset();
     running_task_.cancel();
 }
@@ -139,6 +163,7 @@ void AppLibraryService::start() {
         return;
     }
     started_ = true;
+    scan_recipes();
     app::MaintenanceService* maintenance = backend_->maintenance();
     if (maintenance == nullptr) {
         return;
@@ -535,6 +560,63 @@ void AppLibraryService::apply(const RenderEvent& event) {
                          item.thumbnail_generation != before.thumbnail_generation ||
                          item.thumbnail_is_camera_preview != before.thumbnail_is_camera_preview;
     if (changed) {
+        emit item_changed(item);
+    }
+}
+
+void AppLibraryService::scan_recipes() {
+    if (backend_->catalog() == nullptr || items_.isEmpty()) {
+        return;  // a session library starts without revisions
+    }
+    std::vector<app::ItemId> ids;
+    ids.reserve(static_cast<std::size_t>(items_.size()));
+    for (const ItemId id : initial_order_) {
+        ids.push_back(app::ItemId{id});
+    }
+    app::RecipeService* recipes = &backend_->recipes();
+    // Reading every item's current revision is a catalog query per item: on a worker, after the
+    // window is up. The recipe service outlives the executor's tasks (backend.hpp).
+    auto task = [this, recipes, ids = std::move(ids), dispatcher = dispatcher_](app::TaskContext& context) {
+        for (const app::ItemId id : ids) {
+            if (context.cancel().is_cancelled()) {
+                return;
+            }
+            auto state = recipes->state(id);
+            if (!state || !state->revision) {
+                continue;
+            }
+            dispatcher->post([this, item = id.value, edited = is_edited(*state),
+                              identity = identity_bytes(state->committed_sha256),
+                              readable = !state->recipe_unreadable] {
+                apply_recipe(item, edited, identity, readable);
+            });
+        }
+    };
+    if (auto submitted = backend_->executor().submit(app::Lane::Quick, std::move(task)); !submitted) {
+        core::log_warn("ui.library", "the edited photos could not be looked up: {}", submitted.error().describe());
+    }
+}
+
+void AppLibraryService::apply_recipe(ItemId item_id, bool edited, const QByteArray& identity, bool readable) {
+    const auto found = items_.find(item_id);
+    if (found == items_.end()) {
+        return;
+    }
+    LibraryItem& item = *found;
+    const LibraryItem before = item;
+    item.edited = edited;
+    if (readable) {
+        const auto known = recipe_identity_.constFind(item_id);
+        const bool changed = known == recipe_identity_.cend() ? edited : *known != identity;
+        recipe_identity_.insert(item_id, identity);
+        if (changed && item.thumbnail_generation != kNoImage) {
+            // Lucent's render of the new recipe (a new URL: Qt Quick requests the new pixels).
+            item.thumbnail_generation = std::max(item.thumbnail_generation, kCameraPreviewGeneration) + 1;
+            item.thumbnail_is_camera_preview = false;
+        }
+    }
+    if (item.edited != before.edited || item.thumbnail_generation != before.thumbnail_generation ||
+        item.thumbnail_is_camera_preview != before.thumbnail_is_camera_preview) {
         emit item_changed(item);
     }
 }

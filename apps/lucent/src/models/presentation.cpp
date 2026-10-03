@@ -344,6 +344,9 @@ QString accessible_label(const LibraryItem& item, const QLocale& locale) {
     QStringList parts{file_name(item), camera_label(item), capture_time_label(item, locale),
                       support_label(item.support)};
     parts << flag_labels(item.flags);
+    if (item.edited) {
+        parts << tr_text("edited");
+    }
     if (item.thumbnail_generation != kNoImage && item.thumbnail_is_camera_preview) {
         parts << tr_text("camera preview");
     }

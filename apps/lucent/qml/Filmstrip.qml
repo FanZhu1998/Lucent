@@ -41,6 +41,7 @@ ListView {
         required property string thumbnailSource
         required property bool thumbnailIsCameraPreview
         required property string accessibleLabel
+        required property bool edited
 
         readonly property bool isCurrent: ListView.isCurrentItem
 
@@ -100,6 +101,21 @@ ListView {
                 ToolTip.text: qsTr("Camera preview: the camera's embedded JPEG, shown until Lucent's own rendering replaces it.")
                 ToolTip.delay: 500
             }
+        }
+
+        // Edited photos (W6): a small mark in the corner.
+        Rectangle {
+            objectName: "filmstripEditedTag"
+            visible: cell.edited
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 6
+            width: 8
+            height: 8
+            radius: 4
+            color: Theme.accent
+            border.width: 1
+            border.color: Theme.imageBackground
         }
 
         FocusRing {
