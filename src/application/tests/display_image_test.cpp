@@ -264,5 +264,37 @@ TEST(Histogram, CountsCodeValuesAndLuma) {
     EXPECT_EQ(std::accumulate(h.luminance.begin(), h.luminance.end(), 0u), 3u);
 }
 
+TEST(DisplayAnalysis, EqualsTheHistogramAndClippingMaskInAnyThreading) {
+    DisplayImage image;
+    image.width = 641;  // not a multiple of any band size
+    image.height = 257;
+    image.rgb.resize(static_cast<std::size_t>(image.width) * image.height * 3);
+    std::uint32_t state = 12345;  // deterministic pseudo-random codes, with many 0 and 255
+    for (std::uint8_t& v : image.rgb) {
+        state = state * 1664525u + 1013904223u;
+        const std::uint32_t r = state >> 24;
+        v = r < 20 ? 0 : r > 235 ? 255 : static_cast<std::uint8_t>(r);
+    }
+    const Histogram histogram = compute_histogram(image);
+    auto clipping = compute_clipping(image);
+    ASSERT_TRUE(clipping);
+    EXPECT_GT(clipping->highlight_pixels, 0u);
+    EXPECT_GT(clipping->shadow_pixels, 0u);
+    for (const bool parallel : {false, true}) {
+        auto analysis = analyze_display(image, parallel);
+        ASSERT_TRUE(analysis);
+        EXPECT_EQ(analysis->histogram.red, histogram.red);
+        EXPECT_EQ(analysis->histogram.green, histogram.green);
+        EXPECT_EQ(analysis->histogram.blue, histogram.blue);
+        EXPECT_EQ(analysis->histogram.luminance, histogram.luminance);
+        EXPECT_EQ(analysis->histogram.pixels, histogram.pixels);
+        EXPECT_EQ(analysis->clipping.flags, clipping->flags);
+        EXPECT_EQ(analysis->clipping.highlight_pixels, clipping->highlight_pixels);
+        EXPECT_EQ(analysis->clipping.shadow_pixels, clipping->shadow_pixels);
+        EXPECT_EQ(analysis->clipping.width, 641);
+        EXPECT_EQ(analysis->clipping.height, 257);
+    }
+}
+
 }  // namespace
 }  // namespace lucent::app

@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include <lucent/application/recipe.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/version.hpp>
@@ -43,6 +44,23 @@ Json parameter_value(const engine::ParameterValue& value) {
             }
         },
         value);
+}
+
+Json neutral_v0_json(const engine::NeutralV0Record& n) {
+    return Json{{"version", n.version},
+                {"exposure_ev", number(n.parameters.exposure_ev)},
+                {"baseline_exposure_ev", number(n.parameters.baseline_exposure_ev)},
+                {"knee", number(n.parameters.knee)},
+                {"scene_white", number(n.parameters.scene_white)},
+                {"gain", number(n.gain)},
+                {"white", number(n.white)},
+                {"curve", std::string(engine::to_string(n.curve))},
+                {"exponent", number(n.exponent)},
+                {"lift", Json::array({number(n.lift[0]), number(n.lift[1]), number(n.lift[2])})},
+                {"compressed_pixels", n.compressed_pixels},
+                {"lifted_pixels", n.lifted_pixels},
+                {"limited_pixels", n.limited_pixels},
+                {"negative_samples", n.negative_samples}};
 }
 
 }  // namespace
@@ -131,7 +149,23 @@ Json render_report_json(const engine::RenderReport& r) {
         {"rendering_peak", m.rendering_peak},   {"orientation_peak", m.orientation_peak},
         {"peak_bytes", m.peak_bytes},           {"peak_stage", std::string(engine::to_string(m.peak_stage))},
         {"budget_bytes", m.budget_bytes}};
-    const engine::CameraColorRecord& c = r.color;
+    return Json{{"pipeline_version", r.pipeline_version},
+                {"settings", settings_json(r.settings)},
+                {"stages", std::move(stages)},
+                {"interpretation", Json{{"status", std::string(raw::to_string(r.interpretation.status))},
+                                        {"issues", std::move(issues)}}},
+                {"warnings", r.warnings},
+                {"memory", std::move(memory)},
+                {"color", color_json(r.color)},
+                {"working_space_matrix", matrix_json(r.working_space_matrix)},
+                {"rendering", neutral_v0_json(r.rendering)},
+                {"orientation", std::string(image::to_string(r.orientation))},
+                {"orientation_exif", image::to_exif(r.orientation)},
+                {"output_size", size_json(r.output_size)},
+                {"total_seconds", number(r.total_seconds)}};
+}
+
+Json color_json(const engine::CameraColorRecord& c) {
     Json color{{"version", c.version},
                {"path", std::string(engine::to_string(c.path))},
                {"provenance", std::string(raw::to_string(c.provenance))},
@@ -161,35 +195,99 @@ Json render_report_json(const engine::RenderReport& r) {
     } else {
         color["dng"] = nullptr;
     }
-    const engine::NeutralV0Record& n = r.rendering;
-    Json rendering{{"version", n.version},
-                   {"exposure_ev", number(n.parameters.exposure_ev)},
-                   {"baseline_exposure_ev", number(n.parameters.baseline_exposure_ev)},
-                   {"knee", number(n.parameters.knee)},
-                   {"scene_white", number(n.parameters.scene_white)},
-                   {"gain", number(n.gain)},
-                   {"white", number(n.white)},
-                   {"curve", std::string(engine::to_string(n.curve))},
-                   {"exponent", number(n.exponent)},
-                   {"lift", Json::array({number(n.lift[0]), number(n.lift[1]), number(n.lift[2])})},
-                   {"compressed_pixels", n.compressed_pixels},
-                   {"lifted_pixels", n.lifted_pixels},
-                   {"limited_pixels", n.limited_pixels},
-                   {"negative_samples", n.negative_samples}};
+    return color;
+}
+
+Json develop_report_json(const engine::DevelopReport& r) {
+    Json settings = nullptr;
+    if (auto document = app::write_recipe(r.settings)) {
+        settings = Json::parse(document->json);
+    }
+    Json operations = Json::array();
+    for (const engine::OperationRecord& op : r.operations) {
+        Json parameters = Json::object();
+        for (const engine::StageParameter& p : op.parameters) {
+            parameters[p.name] = parameter_value(p.value);
+        }
+        operations.push_back(Json{{"operation", std::string(engine::to_string(op.operation))},
+                                  {"algorithm", op.algorithm},
+                                  {"version", op.version},
+                                  {"applied", op.applied},
+                                  {"parameters", std::move(parameters)},
+                                  {"seconds", number(op.seconds)}});
+    }
+    Json stage_one_stages = Json::array();
+    for (const engine::StageRecord& s : r.stage_one_stages) {
+        stage_one_stages.push_back(stage_json(s));
+    }
+    const engine::WhiteBalanceRecord& wb = r.stage_one_white_balance;
+    Json white_balance{
+        {"target_multipliers", numbers(r.target_multipliers, 3)},
+        {"sample_multipliers", numbers(r.sample_multipliers, 3)},
+        {"correction", numbers(r.correction, 3)},
+        {"target_temperature", r.target_temperature
+                                   ? Json{{"temperature_k", number(r.target_temperature->temperature_k)},
+                                          {"tint", number(r.target_temperature->tint)}}
+                                   : Json(nullptr)},
+        {"clip_level", number(r.clip_level)}};
+    Json local_tone = nullptr;
+    if (r.local_tone) {
+        local_tone = Json{{"version", r.local_tone->version},
+                          {"radius", r.local_tone->radius},
+                          {"epsilon", number(r.local_tone->epsilon)},
+                          {"min_gain_ev", number(r.local_tone->min_gain_ev)},
+                          {"max_gain_ev", number(r.local_tone->max_gain_ev)}};
+    }
+    const engine::BaseLookRecord& look = r.base_look;
+    Json base_look{{"id", std::string(look.id)},
+                   {"version", look.version},
+                   {"white", number(look.white)},
+                   {"regime", std::string(engine::to_string(look.regime))},
+                   {"top_start_ev", number(look.top_start_ev)},
+                   {"end_slope", number(look.end_slope)},
+                   {"toe_ev", Json::array({number(look.toe_start_ev), number(look.toe_end_ev)})},
+                   {"limited_pixels", look.limited_pixels},
+                   {"negative_samples", look.negative_samples}};
+    Json downscale = nullptr;
+    if (r.downscale) {
+        downscale = Json{{"version", r.downscale->version},
+                         {"from", size_json(r.downscale->from)},
+                         {"to", size_json(r.downscale->to)},
+                         {"seconds", number(r.downscale->seconds)}};
+    }
+    Json stage_one{{"kind", std::string(engine::to_string(r.stage_one_kind))},
+                   {"stages", std::move(stage_one_stages)},
+                   {"white_balance", Json{{"source", std::string(engine::to_string(wb.applied.source))},
+                                          {"multipliers", numbers(wb.applied.multipliers, 4)},
+                                          {"highlights", std::string(engine::to_string(wb.highlights))},
+                                          {"clip_level", number(static_cast<double>(wb.clip_level))},
+                                          {"clipped_samples", wb.clipped_samples},
+                                          {"basis", wb.applied.basis}}},
+                   {"demosaic", Json{{"route", std::string(engine::to_string(r.demosaic.route))},
+                                     {"algorithm", std::string(r.demosaic.algorithm)},
+                                     {"algorithm_version", r.demosaic.algorithm_version}}},
+                   {"orientation", std::string(image::to_string(r.orientation))},
+                   {"orientation_exif", image::to_exif(r.orientation)},
+                   {"downscale", std::move(downscale)},
+                   {"seconds", number(r.stage_one_seconds)}};
     return Json{{"pipeline_version", r.pipeline_version},
-                {"settings", settings_json(r.settings)},
-                {"stages", std::move(stages)},
-                {"interpretation", Json{{"status", std::string(raw::to_string(r.interpretation.status))},
-                                        {"issues", std::move(issues)}}},
-                {"warnings", r.warnings},
-                {"memory", std::move(memory)},
-                {"color", std::move(color)},
-                {"working_space_matrix", matrix_json(r.working_space_matrix)},
-                {"rendering", std::move(rendering)},
-                {"orientation", std::string(image::to_string(r.orientation))},
-                {"orientation_exif", image::to_exif(r.orientation)},
+                {"settings", std::move(settings)},
+                {"full_size", size_json(r.full_size)},
                 {"output_size", size_json(r.output_size)},
-                {"total_seconds", number(r.total_seconds)}};
+                {"scale", number(r.scale)},
+                {"stage_one", std::move(stage_one)},
+                {"white_balance", std::move(white_balance)},
+                {"color", color_json(r.color)},
+                {"working_space_matrix", matrix_json(r.working_space_matrix)},
+                {"baseline_exposure_ev", number(r.baseline_exposure_ev)},
+                {"gain", number(r.gain)},
+                {"scene_white", number(r.scene_white)},
+                {"white", number(r.white)},
+                {"local_tone", std::move(local_tone)},
+                {"base_look", std::move(base_look)},
+                {"operations", std::move(operations)},
+                {"warnings", r.warnings},
+                {"stage_two_seconds", number(r.stage_two_seconds)}};
 }
 
 Json receipt_json(const exporter::ExportReceipt& receipt) {
@@ -221,7 +319,10 @@ Json generator_json() {
                 {"compiler", std::string(build.compiler)},
                 {"build_type", std::string(build.build_type)},
                 {"render_settings_schema", engine::kRenderSettingsVersion.to_string()},
-                {"pipeline_version", engine::kRenderPipelineVersion}};
+                {"pipeline_version", engine::kRenderPipelineVersion},
+                {"develop_pipeline_version", engine::kDevelopPipelineVersion},
+                {"recipe_schema", std::string(app::kRecipeSchema)},
+                {"recipe_schema_version", app::kRecipeSchemaVersion}};
 }
 
 }  // namespace lucent::render_tool

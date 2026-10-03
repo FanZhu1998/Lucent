@@ -1,8 +1,10 @@
-# lucent-render: developer CLI that renders a RAW file through the engine's first render path and
-# exports it (ADR 0006). See main.cpp for usage.
+# lucent-render: developer CLI that renders a RAW file through the engine's develop pipeline (ADR
+# 0010; the W2 render path of ADR 0006 with --legacy-neutral-v0) and exports it. See main.cpp for
+# usage.
 #
 # The float-TIFF dump, the side-file publication helpers and the JSON documents live in a small
 # static library so that the integration tests (tests/) exercise exactly the code the tool uses.
+# Recipes (--develop) are read with lucent_application's recipe reader (recipe.hpp).
 
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -21,6 +23,7 @@ target_link_libraries(lucent_render_tool
         Lucent::image
         Lucent::engine
         Lucent::export
+        Lucent::application
         nlohmann_json::nlohmann_json
     PRIVATE
         Lucent::compiler_options

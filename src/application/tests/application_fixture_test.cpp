@@ -9,11 +9,19 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+// clang-format off: psapi.h needs the declarations of windows.h.
+#include <windows.h>
+#include <psapi.h>
+// clang-format on
+
+#include <lucent/application/develop_preview.hpp>
 #include <lucent/application/display_image.hpp>
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/import.hpp>
@@ -141,7 +149,7 @@ TEST_F(ApplicationFixtures, CanonR5PreviewLatency) {
 
     // The direct display conversion against Little CMS on a real 45 MP render.
     {
-        auto render = renderer_->render(*library_.find(item), engine::RenderSettings{}, {}, {});
+        auto render = renderer_->render(*library_.find(item), engine::DevelopSettings{}, {}, {});
         ASSERT_TRUE(render) << render.error().describe();
         const auto direct_start = std::chrono::steady_clock::now();
         auto direct = encode_display_srgb8(render->display);
@@ -184,6 +192,7 @@ TEST_F(ApplicationFixtures, ExportsTheCanonR5AsJpeg) {
     ExportRequest request;
     request.item = item.id;
     request.output_directory = out.path();
+    request.settings = engine::DevelopSettings{};
     auto record = export_item(item, request, *renderer_, &executor_->admission(), Lane::Background, {}, {});
     ASSERT_TRUE(record) << record.error().describe();
     EXPECT_EQ(record->receipt.path.filename(),
@@ -271,6 +280,193 @@ TEST(ApplicationFixturesW4, OriginalsAreUnchangedByImportHashingAndCopying) {
     std::printf("  %zu originals: import + hash %.2f s, %llu thumbnails cached, %llu bytes copied\n",
                 originals.size(), hash_seconds, static_cast<unsigned long long>(hashed->thumbnails_cached),
                 static_cast<unsigned long long>(copied->bytes_copied));
+}
+
+// ---- W6: interactive editing on the 45 MP Canon EOS R5 ----------------------------------------
+
+std::uint64_t working_set_bytes() {
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    return ::K32GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof(counters))
+               ? static_cast<std::uint64_t>(counters.WorkingSetSize)
+               : 0;
+}
+
+struct Spread {
+    double min = 0.0;
+    double median = 0.0;
+    double max = 0.0;
+};
+
+Spread spread(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    return values.empty() ? Spread{} : Spread{values.front(), values[values.size() / 2], values.back()};
+}
+
+// Measurements (printed and recorded as test properties, not gates): opening an edit session
+// (decode, demosaic, 2048-pixel proxy, first frame), transient-edit latency from request() to the
+// delivered frame, a 60 Hz slider drag, the refine after a white-balance change, the 100 % view,
+// and the memory an open item holds. Also checks the contract on the real file: quick frames for
+// transient edits, a rebuilt stage one after a settled white-balance change, and that the source
+// is unchanged.
+TEST_F(ApplicationFixtures, CanonR5InteractiveEditing) {
+    LUCENT_REQUIRE_FIXTURE(path, "canon-eos-r5-cr3-raw");
+    const core::Digest256 source_before = ts::file_sha256(path);
+    auto report = import_sources(library_, *registry_, ImportRequest{.files = {path}});
+    ASSERT_TRUE(report);
+    const ItemId item = report->added.at(0);
+    ts::Collector<DevelopEvent> events;
+    DevelopPreviewService service(library_, *executor_, renderer_);
+    ASSERT_TRUE(service.open(item, [&](const DevelopEvent& e) { events.add(e); }));
+    const std::uint64_t working_set_before = working_set_bytes();
+
+    // Waits for the frame of `generation` in `phase` (or any phase) and returns it.
+    const auto frame_of = [&](std::uint64_t generation, std::optional<DevelopPhase> phase) {
+        std::shared_ptr<const DevelopFrame> found;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (!found && std::chrono::steady_clock::now() < deadline) {
+            for (const DevelopEvent& e : events.values()) {
+                if (e.kind == DevelopEvent::Kind::Failed && e.generation == generation) {
+                    ADD_FAILURE() << e.error->describe();
+                    return found;
+                }
+                if (e.kind == DevelopEvent::Kind::Frame && e.generation == generation &&
+                    (!phase || e.frame->phase == *phase)) {
+                    found = e.frame;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        EXPECT_TRUE(found) << "no frame for generation " << generation;
+        return found;
+    };
+    const auto view = [](const engine::DevelopSettings& settings, bool settled,
+                         PreviewQuality quality = PreviewQuality::fit(kDefaultProxyLongEdge)) {
+        DevelopView v;
+        v.settings = settings;
+        v.settled = settled;
+        v.quality = quality;
+        return v;
+    };
+
+    // Open: stage one (decode .. proxy) and the first frame.
+    const auto open_start = std::chrono::steady_clock::now();
+    auto first = service.request(item, view(engine::DevelopSettings{}, true));
+    ASSERT_TRUE(first);
+    auto opened = frame_of(*first, DevelopPhase::Final);
+    ASSERT_TRUE(opened);
+    const double open_seconds = seconds_since(open_start);
+    EXPECT_EQ(opened->image.width, 2048);
+    const DevelopSessionStats after_open = *service.stats(item);
+    const std::uint64_t working_set_open = working_set_bytes();
+
+    // Transient edits, one at a time (each waits for its frame): request -> pixels.
+    std::vector<double> latency;
+    std::vector<double> stage_two;
+    std::vector<double> display;
+    engine::DevelopSettings edit;
+    for (int step = 1; step <= 15; ++step) {
+        edit.exposure_ev = 0.05 * step;
+        edit.shadows = 0.02 * step;
+        edit.contrast = 0.01 * step;
+        auto generation = service.request(item, view(edit, false));
+        ASSERT_TRUE(generation);
+        auto frame = frame_of(*generation, std::nullopt);
+        ASSERT_TRUE(frame);
+        EXPECT_EQ(frame->phase, DevelopPhase::Quick);
+        latency.push_back(frame->latency_seconds);
+        stage_two.push_back(frame->stage_two_seconds);
+        display.push_back(frame->display_seconds);
+    }
+    const Spread transient = spread(latency);
+    const Spread stage_two_spread = spread(stage_two);
+    const Spread display_spread = spread(display);
+
+    // A 60 Hz slider drag: 60 positions 16 ms apart; frames follow the newest position.
+    const std::size_t frames_before_drag = events.size();
+    const auto drag_start = std::chrono::steady_clock::now();
+    std::uint64_t last = 0;
+    for (int step = 0; step < 60; ++step) {
+        edit.exposure_ev = 0.75 + 0.01 * step;
+        auto generation = service.request(item, view(edit, false));
+        ASSERT_TRUE(generation);
+        last = *generation;
+        std::this_thread::sleep_until(drag_start + std::chrono::milliseconds(16 * (step + 1)));
+    }
+    auto last_frame = frame_of(last, std::nullopt);
+    ASSERT_TRUE(last_frame);
+    const double drag_seconds = seconds_since(drag_start);
+    const std::size_t drag_frames = events.size() - frames_before_drag;
+    const double final_after_release = last_frame->latency_seconds;
+
+    // Refine: a settled white balance far from as shot.
+    engine::DevelopSettings warm = edit;
+    warm.white_balance = engine::KelvinWhiteBalance{3200.0, 6.0};
+    const auto refine_start = std::chrono::steady_clock::now();
+    auto settled = service.request(item, view(warm, true));
+    ASSERT_TRUE(settled);
+    auto quick = frame_of(*settled, DevelopPhase::Quick);
+    const double refine_quick_seconds = seconds_since(refine_start);
+    auto refined = frame_of(*settled, DevelopPhase::Final);
+    const double refine_seconds = seconds_since(refine_start);
+    ASSERT_TRUE(quick && refined);
+    EXPECT_TRUE(refined->stage_one_rebuilt);
+    EXPECT_EQ(service.stats(item)->stage_one_builds, 2u);
+
+    // 100 %: the full-resolution stage one at the settled white balance, then stage two.
+    const auto full_start = std::chrono::steady_clock::now();
+    auto full_generation = service.request(item, view(warm, true, PreviewQuality::full()));
+    ASSERT_TRUE(full_generation);
+    auto full = frame_of(*full_generation, DevelopPhase::Final);
+    const double full_seconds = seconds_since(full_start);
+    ASSERT_TRUE(full);
+    EXPECT_TRUE(full->full_resolution);
+    const DevelopSessionStats at_full = *service.stats(item);
+    const std::uint64_t working_set_full = working_set_bytes();
+    // An exposure change at 100 %: quick on the proxy, then full-resolution stage two only.
+    warm.exposure_ev += 0.2;
+    const auto full_edit_start = std::chrono::steady_clock::now();
+    auto full_edit = service.request(item, view(warm, true, PreviewQuality::full()));
+    ASSERT_TRUE(full_edit);
+    auto full_quick = frame_of(*full_edit, DevelopPhase::Quick);
+    const double full_quick_seconds = seconds_since(full_edit_start);
+    auto full_final = frame_of(*full_edit, DevelopPhase::Final);
+    const double full_edit_seconds = seconds_since(full_edit_start);
+    ASSERT_TRUE(full_quick && full_final);
+    EXPECT_EQ(service.stats(item)->stage_one_builds, at_full.stage_one_builds);  // no new build
+
+    service.release_full_resolution(item);
+    const DevelopSessionStats released = *service.stats(item);
+    service.close(item);
+    EXPECT_EQ(executor_->admission().stats().retained_bytes, 0u);
+    EXPECT_EQ(ts::file_sha256(path), source_before);  // original preservation
+
+    const auto mb = [](std::uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); };
+    std::printf(
+        "  open (stage one + proxy + first frame) %.3f s\n"
+        "  transient edit, request -> pixels: min %.1f / median %.1f / max %.1f ms (stage two %.1f / %.1f / "
+        "%.1f; display %.1f "
+        "ms)\n"
+        "  60 Hz drag over %.2f s: %zu frames; last position shown %.1f ms after its request\n"
+        "  refine (3200 K): quick frame %.3f s, refined %.3f s\n"
+        "  100 %%: %.3f s; exposure change at 100 %%: quick %.3f s, full %.3f s\n"
+        "  memory: proxy %.1f MiB (retained %.1f MiB), full resolution %.1f MiB (retained %.1f MiB), after "
+        "release %.1f MiB; working set +%.0f MiB open, +%.0f MiB at 100 %%\n",
+        open_seconds, transient.min * 1000, transient.median * 1000, transient.max * 1000,
+        stage_two_spread.min * 1000, stage_two_spread.median * 1000, stage_two_spread.max * 1000,
+        display_spread.median * 1000, drag_seconds, drag_frames, final_after_release * 1000,
+        refine_quick_seconds, refine_seconds, full_seconds, full_quick_seconds, full_edit_seconds,
+        mb(after_open.proxy_bytes), mb(after_open.retained_bytes), mb(at_full.full_bytes),
+        mb(at_full.retained_bytes), mb(released.retained_bytes),
+        mb(working_set_open > working_set_before ? working_set_open - working_set_before : 0),
+        mb(working_set_full > working_set_before ? working_set_full - working_set_before : 0));
+    RecordProperty("open_ms", static_cast<int>(open_seconds * 1000));
+    RecordProperty("transient_median_ms", static_cast<int>(transient.median * 1000));
+    RecordProperty("transient_max_ms", static_cast<int>(transient.max * 1000));
+    RecordProperty("refine_ms", static_cast<int>(refine_seconds * 1000));
+    RecordProperty("full_ms", static_cast<int>(full_seconds * 1000));
+    RecordProperty("proxy_mib", static_cast<int>(mb(after_open.proxy_bytes)));
+    RecordProperty("full_mib", static_cast<int>(mb(at_full.full_bytes)));
 }
 
 }  // namespace

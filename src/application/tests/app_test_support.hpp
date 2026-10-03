@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +31,7 @@
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/catalog/catalog.hpp>
 #include <lucent/core/hash.hpp>
+#include <lucent/engine/develop.hpp>
 #include <lucent/engine/display_rendering.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -128,16 +130,31 @@ private:
     bool open_ = false;
 };
 
+// Tests identify settings by a "revision" r encoded in DevelopSettings::exposure_ev as r / 100 EV
+// (valid for r <= 500), so scripted renders can be controlled per settings.
+inline engine::DevelopSettings settings_for(std::uint64_t revision) {
+    engine::DevelopSettings settings;
+    settings.exposure_ev = static_cast<double>(revision) / 100.0;
+    return settings;
+}
+
+inline std::uint64_t revision_of(const engine::DevelopSettings& settings) {
+    return static_cast<std::uint64_t>(std::llround(settings.exposure_ev * 100.0));
+}
+
 // Behaviour of ScriptedRenderer for one settings revision.
 struct Script {
     std::shared_ptr<Gate> gate;       // block until opened (nullptr: do not block)
     bool honour_cancellation = true;  // false: finish even when cancelled while blocked
     std::optional<Error> error;       // fail with this error instead of rendering
+    // Stage two only: the white-balance correction its report states (refine tests).
+    std::optional<engine::RgbMultipliers> correction;
 };
 
 // A SourceRenderer whose renders produce a synthetic display image (display-referred linear
-// Rec.2020, a horizontal ramp) of `size`, and whose timing tests control per settings revision.
-// The settings revision is read from RenderSettings::exposure_ev (tests encode it there).
+// Rec.2020, a horizontal ramp) of `size` (stage two: of the stage one's size), and whose timing
+// tests control per settings revision (settings_for). Stage one produces a flat camera-RGB image
+// of `size` or of the requested proxy size, gated by stage_one_gate().
 class ScriptedRenderer final : public SourceRenderer {
 public:
     explicit ScriptedRenderer(image::Size size = {400, 300}) : size_(size) {}
@@ -146,11 +163,22 @@ public:
         std::lock_guard lock(mutex_);
         scripts_[revision] = std::move(script);
     }
+    void stage_one_gate(std::shared_ptr<Gate> gate) {
+        std::lock_guard lock(mutex_);
+        stage_one_gate_ = std::move(gate);
+    }
 
     [[nodiscard]] int renders() const { return renders_.load(); }
     [[nodiscard]] int started() const { return started_.load(); }
+    [[nodiscard]] int stage_one_builds() const { return stage_one_.load(); }
+    [[nodiscard]] int stage_two_started() const { return stage_two_started_.load(); }
+    // Revisions stage two rendered, in completion order.
+    [[nodiscard]] std::vector<std::uint64_t> stage_two_revisions() const {
+        std::lock_guard lock(mutex_);
+        return stage_two_revisions_;
+    }
 
-    // Blocks until `count` renders have started.
+    // Blocks until `count` renders (render() or stage two) have started.
     bool wait_started(int count) const {
         const auto deadline = std::chrono::steady_clock::now() + kWaitTimeout;
         while (started_.load() < count) {
@@ -162,20 +190,95 @@ public:
         return true;
     }
 
-    Expected<std::uint64_t> estimate_memory(const SourceItem&, const engine::RenderSettings&,
-                                            const core::CancellationToken&) const override {
-        return std::uint64_t{1} << 20;
+    Expected<engine::DevelopMemoryEstimate> estimate(const SourceItem&, const engine::StageOneRequest&,
+                                                     const core::CancellationToken&) const override {
+        engine::DevelopMemoryEstimate estimate;
+        estimate.stage_one_peak = std::uint64_t{1} << 20;
+        estimate.stage_one_bytes = std::uint64_t{1} << 20;
+        estimate.stage_two_bytes = std::uint64_t{1} << 20;
+        estimate.export_peak = std::uint64_t{1} << 20;
+        return estimate;
     }
 
-    Expected<engine::RenderResult> render(const SourceItem&, const engine::RenderSettings& settings,
-                                          const StageObserver& on_stage,
-                                          const core::CancellationToken& cancel) const override {
+    Expected<engine::StageOneImage> render_stage_one(const SourceItem&,
+                                                     const engine::StageOneRequest& request,
+                                                     const core::CancellationToken& cancel) const override {
+        std::shared_ptr<Gate> gate;
+        {
+            std::lock_guard lock(mutex_);
+            gate = stage_one_gate_;
+        }
+        if (gate && !gate->wait(cancel)) {
+            return fail(ErrorCode::Cancelled, "scripted stage one cancelled", "test.render");
+        }
+        ++stage_one_;
+        const image::Size size = engine::proxy_size(size_, request.proxy_long_edge);
+        auto pixels = image::ImageBuffer<float>::create(size.width, size.height, 3);
+        EXPECT_TRUE(pixels);
+        engine::StageOneImage one;
+        one.pixels = std::move(*pixels);
+        one.encoding = image::ColorEncoding::camera_native_linear();
+        one.kind = request.kind;
+        one.full_size = size_;
+        one.scale = static_cast<double>(std::max(size.width, size.height)) /
+                    static_cast<double>(std::max(size_.width, size_.height));
+        return one;
+    }
+
+    Expected<engine::DevelopResult> render_stage_two(const engine::StageOneImage& stage_one,
+                                                     const engine::DevelopSettings& settings,
+                                                     const core::CancellationToken& cancel) const override {
+        ++stage_two_started_;
+        const std::uint64_t revision = revision_of(settings);
+        auto image = scripted(revision, stage_one.pixels.size(), cancel);
+        if (!image) {
+            return Unexpected(std::move(image.error()));
+        }
+        engine::DevelopResult result;
+        result.display = std::move(*image);
+        result.report.settings = settings;
+        result.report.output_size = stage_one.pixels.size();
+        result.report.full_size = stage_one.full_size;
+        result.report.scale = stage_one.scale;
+        result.report.demosaic.algorithm = "scripted";
+        {
+            std::lock_guard lock(mutex_);
+            if (const auto it = scripts_.find(revision); it != scripts_.end() && it->second.correction) {
+                result.report.correction = *it->second.correction;
+            }
+            stage_two_revisions_.push_back(revision);
+        }
+        return result;
+    }
+
+    Expected<DevelopRender> render(const SourceItem&, const engine::DevelopSettings& settings,
+                                   const RenderProgress& progress,
+                                   const core::CancellationToken& cancel) const override {
+        auto image = scripted(revision_of(settings), size_, cancel);
+        if (!image) {
+            return Unexpected(std::move(image.error()));
+        }
+        DevelopRender result;
+        result.display = std::move(*image);
+        result.report.settings = settings;
+        result.report.output_size = size_;
+        result.report.full_size = size_;
+        result.report.demosaic.algorithm = "scripted";
+        if (progress) {
+            progress(1.0);
+        }
+        return result;
+    }
+
+private:
+    // Runs the script of `revision` and produces the ramp image of `size`.
+    Expected<engine::ColorImage> scripted(std::uint64_t revision, image::Size size,
+                                          const core::CancellationToken& cancel) const {
         ++started_;
         Script script;
         {
             std::lock_guard lock(mutex_);
-            if (const auto it = scripts_.find(static_cast<std::uint64_t>(settings.exposure_ev));
-                it != scripts_.end()) {
+            if (const auto it = scripts_.find(revision); it != scripts_.end()) {
                 script = it->second;
             }
         }
@@ -193,38 +296,32 @@ public:
             return Unexpected(*script.error);
         }
         ++renders_;
-        auto pixels = image::ImageBuffer<float>::create(size_.width, size_.height, 3);
+        auto pixels = image::ImageBuffer<float>::create(size.width, size.height, 3);
         EXPECT_TRUE(pixels);
-        for (std::int32_t y = 0; y < size_.height; ++y) {
+        for (std::int32_t y = 0; y < size.height; ++y) {
             float* row = pixels->row(y);
-            for (std::int32_t x = 0; x < size_.width; ++x) {
-                const float v = static_cast<float>(x) / static_cast<float>(size_.width - 1);
+            for (std::int32_t x = 0; x < size.width; ++x) {
+                const float v = static_cast<float>(x) / static_cast<float>(std::max(1, size.width - 1));
                 row[3 * x] = v;
                 row[3 * x + 1] = v;
                 row[3 * x + 2] = v;
             }
         }
-        engine::RenderResult result;
-        result.display.pixels = std::move(*pixels);
-        result.display.encoding = engine::display_linear_rec2020();
-        result.report.settings = settings;
-        result.report.output_size = size_;
-        engine::StageRecord stage;
-        stage.stage = engine::RenderStage::Demosaic;
-        stage.algorithm = "scripted";
-        result.report.stages.push_back(stage);
-        if (on_stage) {
-            on_stage(stage);
-        }
-        return result;
+        engine::ColorImage image;
+        image.pixels = std::move(*pixels);
+        image.encoding = engine::display_linear_rec2020();
+        return image;
     }
 
-private:
     image::Size size_;
     mutable std::mutex mutex_;
     std::map<std::uint64_t, Script> scripts_;
+    std::shared_ptr<Gate> stage_one_gate_;
+    mutable std::vector<std::uint64_t> stage_two_revisions_;
     mutable std::atomic<int> renders_{0};
     mutable std::atomic<int> started_{0};
+    mutable std::atomic<int> stage_one_{0};
+    mutable std::atomic<int> stage_two_started_{0};
 };
 
 // Collects callback values and waits for them.

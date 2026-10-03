@@ -93,4 +93,33 @@ struct Histogram {
 
 [[nodiscard]] Histogram compute_histogram(const DisplayImage& image) noexcept;
 
+// Clipping overlay of a DisplayImage (blueprint section 2, "clipping overlays"): per pixel, whether
+// any channel reached the top code value (255: a highlight clipped in the displayed encoding, by
+// the base look's white point or by the conversion to sRGB) or the bottom one (0: a shadow or an
+// out-of-gamut component clipped to black). These are the pixels counted in the histogram's end
+// bins, so the overlay and the histogram agree.
+struct ClippingMask {
+    static constexpr std::uint8_t kHighlight = 1;  // some channel is 255
+    static constexpr std::uint8_t kShadow = 2;     // some channel is 0
+    std::int32_t width = 0;
+    std::int32_t height = 0;
+    std::vector<std::uint8_t> flags;  // width * height, row-major, top row first: kHighlight | kShadow
+    std::uint64_t highlight_pixels = 0;
+    std::uint64_t shadow_pixels = 0;
+
+    [[nodiscard]] std::size_t byte_size() const noexcept { return flags.size(); }
+};
+
+// The clipping mask of `image`. OutOfMemory ("app.display.clipping").
+[[nodiscard]] Expected<ClippingMask> compute_clipping(const DisplayImage& image);
+
+// compute_histogram() and compute_clipping() in one pass over the pixels, rows in parallel when
+// asked (the result does not depend on it): what an interactive frame needs. OutOfMemory
+// ("app.display.clipping").
+struct DisplayAnalysis {
+    Histogram histogram;
+    ClippingMask clipping;
+};
+[[nodiscard]] Expected<DisplayAnalysis> analyze_display(const DisplayImage& image, bool parallel = true);
+
 }  // namespace lucent::app

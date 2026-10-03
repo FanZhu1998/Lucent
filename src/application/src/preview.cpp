@@ -41,26 +41,29 @@ std::string to_string(const PreviewQuality& quality) {
     return std::format("fit-{}", quality.long_edge);
 }
 
-RenderSummary summarize_render(const engine::RenderReport& report) {
+RenderSummary summarize_render(const engine::DevelopReport& report,
+                               const raw::Interpretation& interpretation) {
     RenderSummary summary;
     summary.pipeline_version = report.pipeline_version;
-    summary.rendering = report.settings.rendering;
-    summary.interpretation = report.interpretation.status;
-    summary.issues = report.interpretation.issues;
+    summary.look = std::string(report.base_look.id);
+    summary.look_version = report.base_look.version;
+    summary.interpretation = interpretation.status;
+    summary.issues = interpretation.issues;
     summary.warnings = report.warnings;
-    summary.rendered_size = report.output_size;
+    summary.rendered_size = report.full_size;
     summary.orientation = report.orientation;
-    summary.limited_display_pixels = report.rendering.limited_pixels;
-    summary.estimated_peak_bytes = report.memory.peak_bytes;
-    summary.render_seconds = report.total_seconds;
-    for (const engine::StageRecord& stage : report.stages) {
+    summary.demosaic = std::string(report.demosaic.algorithm);
+    summary.limited_display_pixels = report.base_look.limited_pixels;
+    summary.render_seconds = report.stage_one_seconds + report.stage_two_seconds;
+    for (const engine::StageRecord& stage : report.stage_one_stages) {
         summary.provisional = summary.provisional || stage.provisional;
-        if (stage.stage == engine::RenderStage::Demosaic) {
-            summary.demosaic = stage.algorithm;
-        } else if (stage.stage == engine::RenderStage::CameraColor) {
-            summary.camera_color = stage.algorithm;
-        } else if (stage.stage == engine::RenderStage::WhiteBalance) {
+        if (stage.stage == engine::RenderStage::WhiteBalance) {
             summary.clipped_raw_samples += stage.clipped_samples;
+        }
+    }
+    for (const engine::OperationRecord& operation : report.operations) {
+        if (operation.operation == engine::DevelopOperation::CameraColor) {
+            summary.camera_color = operation.algorithm;
         }
     }
     return summary;
@@ -68,7 +71,11 @@ RenderSummary summarize_render(const engine::RenderReport& report) {
 
 std::size_t PreviewKeyHash::operator()(const PreviewKey& key) const noexcept {
     std::size_t seed = std::hash<std::uint64_t>{}(key.item.value);
-    seed = combine(seed, std::hash<std::uint64_t>{}(key.settings_revision));
+    std::uint64_t digest = 0;
+    for (std::size_t i = 0; i < 8; ++i) {
+        digest = (digest << 8) | key.settings[i];
+    }
+    seed = combine(seed, std::hash<std::uint64_t>{}(digest));
     seed = combine(seed, static_cast<std::size_t>(key.quality.kind));
     if (key.quality.kind == PreviewQualityKind::Fit) {
         seed = combine(seed, std::hash<std::int32_t>{}(key.quality.long_edge));

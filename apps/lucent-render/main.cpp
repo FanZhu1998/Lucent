@@ -1,10 +1,20 @@
-// lucent-render: renders one RAW file through the engine's first render path (ADR 0006) and
-// exports it with lucent::exporter (verified, no-clobber publication).
+// lucent-render: renders one RAW file through the engine's develop pipeline (ADR 0010: the export
+// render, engine::render_develop_file's composition, with DevelopSettings v1 and the "neutral" v1
+// base look) and exports it with lucent::exporter (verified, no-clobber publication).
 //
 // Usage:
 //   lucent-render <raw> --out <dir> [--format jpeg|tiff16] [--profile srgb|display-p3]
-//                 [--quality N] [--subimage N] [--exposure EV] [--dump-linear <file.tiff>]
+//                 [--quality N] [--subimage N] [--develop <settings.json>] [--exposure EV]
 //                 [--report <file.json>]
+//   lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV] [--dump-linear <file.tiff>]
+//                 [other options as above, without --develop]
+//
+//   --develop F        the settings to render: a "lucent.develop" recipe document (recipe.hpp),
+//                      read strictly (an unknown field or operation, or a newer version, is an
+//                      error, never ignored). Default: "as shot".
+//   --legacy-neutral-v0  render with the W2 path instead (engine::render_file, provisional
+//                      Neutral v0 display rendering; ADR 0006), for the W2 reference comparisons
+//                      (research/tools/render_reference.py).
 //
 //   --out DIR          export directory (created when missing). The file is named
 //                      <raw stem>_Lucent.jpg / .tif and is never overwritten: an existing file
@@ -13,10 +23,11 @@
 //   --profile          output ICC profile: srgb (default) or display-p3.
 //   --quality N        JPEG quality 1..100 (default 95); jpeg only.
 //   --subimage N       image of a multi-image file (required for those, e.g. Dual Pixel RAW).
-//   --exposure EV      user exposure on top of the file's baseline (default 0).
-//   --dump-linear F    also write the scene-linear image before display rendering, converted to
-//                      linear sRGB primaries (D65), as a 32-bit float TIFF (float_tiff.hpp), for
-//                      reference comparisons (research/tools/render_reference.py).
+//   --exposure EV      user exposure on top of the file's baseline (default 0; develop: replaces
+//                      the recipe's exposure_ev, within +-5 EV).
+//   --dump-linear F    --legacy-neutral-v0 only: also write the scene-linear image before display
+//                      rendering, converted to linear sRGB primaries (D65), as a 32-bit float TIFF
+//                      (float_tiff.hpp), for reference comparisons (research/tools/render_reference.py).
 //   --report F         write the lucent.render-report JSON (render_json.hpp), also for failures.
 //
 // Nothing is ever overwritten: an existing export, report or dump file is an error
@@ -26,7 +37,9 @@
 // long-path setting.
 //
 // Output: one lucent.render-result JSON line on standard output, also for failures.
-// Exit status: 0 success; 1 usage error; 2 render, export or output failure. Ctrl+C / Ctrl+Break
+// Exit status: 0 success; 1 usage error (including a --develop file that cannot be read as a
+// recipe: invalid_argument, or version_mismatch for a newer one); 2 render, export or output
+// failure. Ctrl+C / Ctrl+Break
 // cancel cooperatively; closing the console, log-off and shutdown cancel too and wait up to 4.5 s
 // for the render and export to stop and delete their temporary files (the export never
 // publishes a partial file). A process killed outright can leave a "~lucent-*.tmp" file in the
@@ -51,6 +64,7 @@
 #include <system_error>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <fcntl.h>
 #include <io.h>
@@ -59,8 +73,12 @@
 #include <psapi.h>
 // clang-format on
 
+#include <lucent/application/recipe.hpp>
 #include <lucent/core/cancellation.hpp>
+#include <lucent/core/file.hpp>
+#include <lucent/core/hash.hpp>
 #include <lucent/core/text.hpp>
+#include <lucent/engine/develop.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/export/export.hpp>
 #include <lucent/image/color_math.hpp>
@@ -135,7 +153,9 @@ struct Arguments {
     lucent::exporter::OutputProfile profile = lucent::exporter::OutputProfile::Srgb;
     std::optional<std::int32_t> quality;
     std::optional<std::uint32_t> subimage;
-    double exposure_ev = 0.0;
+    std::optional<double> exposure_ev;
+    std::optional<std::filesystem::path> develop;
+    bool legacy = false;  // --legacy-neutral-v0
     std::optional<std::filesystem::path> dump_linear;
     std::optional<std::filesystem::path> report;
     bool help = false;
@@ -144,12 +164,25 @@ struct Arguments {
 void print_usage(std::FILE* stream) {
     std::fputs(
         "usage: lucent-render <raw> --out <dir> [--format jpeg|tiff16] [--profile srgb|display-p3]\n"
-        "                     [--quality N] [--subimage N] [--exposure EV] [--dump-linear <file.tiff>]\n"
+        "                     [--quality N] [--subimage N] [--develop <settings.json>] [--exposure EV]\n"
         "                     [--report <file.json>]\n"
-        "Renders a RAW file (engine render path, Neutral v0) and exports <stem>_Lucent.jpg|.tif to <dir>\n"
-        "without overwriting anything. Prints one lucent.render-result JSON line.\n"
+        "       lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV]\n"
+        "                     [--dump-linear <file.tiff>] [other options]\n"
+        "Renders a RAW file (develop pipeline, neutral v1 look; --legacy-neutral-v0: the W2 render path)\n"
+        "and exports <stem>_Lucent.jpg|.tif to <dir> without overwriting anything. Prints one\n"
+        "lucent.render-result JSON line.\n"
         "Exit status: 0 ok, 1 usage error, 2 failure.\n",
         stream);
+}
+
+// Reads the --develop recipe strictly (recipe.hpp). Its errors are usage errors.
+lucent::Expected<lucent::engine::DevelopSettings> read_settings_file(const std::filesystem::path& path) {
+    auto bytes = lucent::core::read_file_bytes(path, std::uint64_t{16} << 20);
+    if (!bytes) {
+        return lucent::Unexpected(std::move(bytes.error()));
+    }
+    const std::string text(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+    return lucent::app::read_recipe(text);
 }
 
 bool write_line(const Json& j) {
@@ -235,6 +268,10 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
                 return std::string("--exposure needs a number (EV)");
             }
             args.exposure_ev = v;
+        } else if (arg == L"--develop" && has_value) {
+            args.develop = std::filesystem::path(argv[++i]);
+        } else if (arg == L"--legacy-neutral-v0") {
+            args.legacy = true;
         } else if (arg == L"--dump-linear" && has_value) {
             args.dump_linear = std::filesystem::path(argv[++i]);
         } else if (arg == L"--report" && has_value) {
@@ -251,6 +288,14 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
     }
     if (quality_given && args.format != Format::Jpeg) {
         return std::string("--quality applies to --format jpeg only");
+    }
+    if (args.legacy && args.develop) {
+        return std::string("--develop applies to the develop pipeline, not to --legacy-neutral-v0");
+    }
+    if (args.dump_linear && !args.legacy) {
+        return std::string(
+            "--dump-linear writes the W2 path's scene-linear image; add --legacy-neutral-v0 (the develop "
+            "pipeline does not expose a scene-linear stage)");
     }
     return args;
 }
@@ -309,6 +354,15 @@ int usage_error(const std::string& message) {
     return kExitUsage;
 }
 
+// A --develop file that is not a usable recipe: a usage error that keeps the reader's code
+// (invalid_argument, version_mismatch, not_found, ...).
+int recipe_error(const lucent::Error& error) {
+    const std::string message = "--develop: " + lucent::core::sanitize_utf8(error.message);
+    std::fprintf(stderr, "lucent-render: %s\n", message.c_str());
+    write_line(result_error(lucent::Error{error.code, message, "lucent-render.develop", error.native_code}));
+    return kExitUsage;
+}
+
 // The option name and path of a side file (--report or --dump-linear), if given.
 struct SideFile {
     const char* option;
@@ -319,12 +373,45 @@ struct SideFile {
 
 int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
     const auto start = Clock::now();
+    const char* pipeline =
+        args.legacy ? lucent::render_tool::kLegacyPipeline : lucent::render_tool::kDevelopPipeline;
+
+    // The develop settings and their identity (before anything is written).
+    lucent::engine::DevelopSettings settings;
+    lucent::app::RecipeDocument recipe;
+    Json recipe_json = nullptr;
+    if (!args.legacy) {
+        if (args.develop) {
+            auto read = read_settings_file(*args.develop);
+            if (!read) {
+                return recipe_error(read.error());
+            }
+            settings = std::move(*read);
+        }
+        if (args.exposure_ev) {
+            settings.exposure_ev = *args.exposure_ev;
+        }
+        auto document = lucent::app::write_recipe(settings);
+        if (!document) {
+            return recipe_error(document.error());
+        }
+        recipe = std::move(*document);
+        recipe_json = Json{
+            {"schema", std::string(lucent::app::kRecipeSchema)},
+            {"version", settings.version},
+            {"sha256", lucent::core::to_hex(recipe.sha256)},
+            {"document", Json::parse(recipe.json)},
+            {"file", args.develop ? Json(lucent::core::path_to_utf8_lossy(*args.develop)) : Json(nullptr)}};
+    }
+
     Json report{{"schema", lucent::render_tool::kReportSchema},
                 {"schema_version", lucent::render_tool::kSchemaVersion},
                 {"generator", lucent::render_tool::generator_json()},
                 {"source", Json{{"path", lucent::core::path_to_utf8_lossy(args.input)},
                                 {"file_name", lucent::core::path_to_utf8_lossy(args.input.filename())},
                                 {"subimage", args.subimage ? Json(*args.subimage) : Json(nullptr)}}},
+                {"pipeline", pipeline},
+                {"recipe", recipe_json},
                 {"status", "error"},
                 {"error", nullptr},
                 {"metadata", nullptr},
@@ -427,28 +514,53 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
     if (!registry) {
         return finish(registry.error(), {});
     }
-    lucent::engine::RenderSettings settings;
-    settings.exposure_ev = args.exposure_ev;
-    lucent::engine::RenderOptions options;
-    options.keep_scene_linear = args.dump_linear.has_value();
-    auto rendered =
-        lucent::engine::render_file(*registry, args.input, args.subimage, settings, options, cancel);
-    if (!rendered) {
-        return finish(rendered.error(), {});
-    }
-    report["metadata"] = lucent::probe::metadata_json(rendered->metadata);
-    report["render"] = lucent::render_tool::render_report_json(rendered->report);
-    for (const std::string& warning : rendered->report.warnings) {
-        std::fprintf(stderr, "lucent-render: warning: %s\n", lucent::core::sanitize_utf8(warning).c_str());
-    }
-
-    if (args.dump_linear && rendered->scene_linear) {
-        Json record;
-        if (auto dumped = dump_linear(*rendered->scene_linear, *args.dump_linear, record); !dumped) {
-            return finish(dumped.error(), {});
+    lucent::engine::ColorImage display;
+    std::vector<std::string> warnings;
+    if (args.legacy) {
+        // The W2 render path (ADR 0006).
+        lucent::engine::RenderSettings legacy;
+        legacy.exposure_ev = args.exposure_ev.value_or(0.0);
+        lucent::engine::RenderOptions options;
+        options.keep_scene_linear = args.dump_linear.has_value();
+        auto rendered =
+            lucent::engine::render_file(*registry, args.input, args.subimage, legacy, options, cancel);
+        if (!rendered) {
+            return finish(rendered.error(), {});
         }
-        report["dump_linear"] = std::move(record);
-        rendered->scene_linear.reset();  // release before exporting
+        report["metadata"] = lucent::probe::metadata_json(rendered->metadata);
+        report["render"] = lucent::render_tool::render_report_json(rendered->report);
+        warnings = rendered->report.warnings;
+        if (args.dump_linear && rendered->scene_linear) {
+            Json record;
+            if (auto dumped = dump_linear(*rendered->scene_linear, *args.dump_linear, record); !dumped) {
+                return finish(dumped.error(), {});
+            }
+            report["dump_linear"] = std::move(record);
+            rendered->scene_linear.reset();  // release before exporting
+        }
+        display = std::move(rendered->display);
+    } else {
+        // The develop pipeline's export render: exactly engine::render_develop_file (develop.cpp),
+        // run in its two steps to report the decoded metadata.
+        lucent::engine::StageOneRequest request;
+        request.kind = lucent::engine::StageOneKind::Export;
+        request.white_balance = settings.white_balance;
+        auto one =
+            lucent::engine::render_stage_one_file(*registry, args.input, args.subimage, request, {}, cancel);
+        if (!one) {
+            return finish(one.error(), {});
+        }
+        report["metadata"] = lucent::probe::metadata_json(one->metadata);
+        auto developed = lucent::engine::render_stage_two(std::move(*one), settings, {}, cancel);
+        if (!developed) {
+            return finish(developed.error(), {});
+        }
+        report["render"] = lucent::render_tool::develop_report_json(developed->report);
+        warnings = developed->report.warnings;
+        display = std::move(developed->display);
+    }
+    for (const std::string& warning : warnings) {
+        std::fprintf(stderr, "lucent-render: warning: %s\n", lucent::core::sanitize_utf8(warning).c_str());
     }
 
     const auto export_start = Clock::now();
@@ -465,12 +577,12 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
     // Quantise, then release the float display image before writing: the export's peak is the
     // quantised image plus its codec buffers, not also the float image.
     auto encoded = lucent::exporter::encode_for_output(
-        rendered->display.pixels.const_view(), rendered->display.encoding, export_settings.profile,
+        display.pixels.const_view(), display.encoding, export_settings.profile,
         lucent::exporter::bit_depth_for(export_settings.format), export_settings.transform, cancel);
     if (!encoded) {
         return finish(encoded.error(), {});
     }
-    rendered->display.pixels = lucent::image::ImageBuffer<float>{};
+    display.pixels = lucent::image::ImageBuffer<float>{};
     auto receipt = lucent::exporter::write_verified(*encoded, destination, export_settings, cancel);
     if (!receipt) {
         return finish(receipt.error(), {});
@@ -483,14 +595,16 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
     Json result{{"schema", lucent::render_tool::kResultSchema},
                 {"schema_version", lucent::render_tool::kSchemaVersion},
                 {"status", "ok"},
+                {"pipeline", pipeline},
                 {"output", lucent::core::path_to_utf8_lossy(receipt->path)},
                 {"format", std::string(lucent::exporter::to_string(receipt->format))},
                 {"profile", std::string(lucent::exporter::to_string(receipt->profile))},
                 {"width", receipt->width},
                 {"height", receipt->height},
                 {"sha256", lucent::core::to_hex(receipt->sha256)},
+                {"settings_sha256", args.legacy ? Json(nullptr) : Json(lucent::core::to_hex(recipe.sha256))},
                 {"seconds", std::chrono::duration<double>(Clock::now() - start).count()},
-                {"warnings", rendered->report.warnings.size()},
+                {"warnings", warnings.size()},
                 {"error", nullptr}};
     return finish(std::nullopt, std::move(result));
 }

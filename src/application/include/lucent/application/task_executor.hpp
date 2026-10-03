@@ -31,8 +31,17 @@
 // `max_concurrent` leases are active at once (default 1: one full-resolution render at a time on
 // the 12 GB reference machine, blueprint section 7) and their bytes never exceed `budget_bytes`.
 // Waiting interactive claims are granted before waiting claims of the other lanes (quick and
-// background claims form one class); within a class, first come first served. The engine's estimate covers its own pixel buffers; callers add what they
-// allocate on top (for example the quantised output image).
+// background claims form one class); within a class, first come first served. The engine's
+// estimate covers its own pixel buffers; callers add what they allocate on top (for example the
+// quantised output image).
+//
+// Retained memory (W6): bytes that live between tasks or beside a render without being a
+// full-resolution render themselves, such as an edit session's cached stage one or a stage-two
+// render of a 2048-pixel proxy. MemoryAdmission::retain() claims them against budget_bytes
+// without taking one of the max_concurrent places, so a cached image or a small interactive
+// render never waits for a running export to finish, while every full-resolution render still
+// sees the memory they hold. A render lease can be turned into a retained lease of the bytes it
+// keeps (AdmissionLease::retain_only()), which returns its place at once.
 //
 // Shutdown: shutdown() (also run by the destructor) stops accepting tasks, cancels every queued
 // and running task's token and every admission wait, runs the remaining queued tasks (with
@@ -74,8 +83,10 @@ struct AdmissionOptions {
 };
 
 struct AdmissionStats {
-    std::uint32_t active = 0;
-    std::uint64_t active_bytes = 0;
+    std::uint32_t active = 0;          // render leases (each holds a max_concurrent place)
+    std::uint64_t active_bytes = 0;    // bytes of every lease, retained ones included
+    std::uint32_t retained = 0;        // retained leases (no place)
+    std::uint64_t retained_bytes = 0;  // part of active_bytes
     std::uint32_t waiting_interactive = 0;
     std::uint32_t waiting_background = 0;  // quick and background claims
     std::uint64_t granted = 0;  // leases granted since construction
@@ -94,17 +105,25 @@ public:
 
     [[nodiscard]] bool held() const noexcept { return state_ != nullptr; }
     [[nodiscard]] std::uint64_t bytes() const noexcept { return bytes_; }
+    // True for a retained lease (MemoryAdmission::retain(), retain_only()): it holds no place.
+    [[nodiscard]] bool retained() const noexcept { return retained_; }
     void release() noexcept;
+
+    // Turns this lease into a retained lease of min(bytes, bytes()) bytes: a render lease gives its
+    // max_concurrent place and the bytes it no longer needs back at once (no waiting). Used when a
+    // render finishes and keeps only its result. Nothing happens to a lease that is not held.
+    void retain_only(std::uint64_t bytes) noexcept;
 
     struct State;  // implementation detail (shared with MemoryAdmission)
 
 private:
     friend class MemoryAdmission;
-    AdmissionLease(std::shared_ptr<State> state, std::uint64_t bytes) noexcept
-        : state_(std::move(state)), bytes_(bytes) {}
+    AdmissionLease(std::shared_ptr<State> state, std::uint64_t bytes, bool retained) noexcept
+        : state_(std::move(state)), bytes_(bytes), retained_(retained) {}
 
     std::shared_ptr<State> state_;
     std::uint64_t bytes_ = 0;
+    bool retained_ = false;
 };
 
 class MemoryAdmission {
@@ -123,6 +142,12 @@ public:
     // 10 ms) or shutdown() is called while waiting or before.
     [[nodiscard]] Expected<AdmissionLease> acquire(std::uint64_t bytes, Lane lane,
                                                    const core::CancellationToken& cancel);
+
+    // Claims retained memory (see the file comment): blocks until `bytes` fit within the budget
+    // beside every held lease, but takes no max_concurrent place and does not queue behind
+    // waiting render claims. Errors ("app.admission"): LimitExceeded when `bytes` alone exceeds
+    // the budget; Cancelled as for acquire().
+    [[nodiscard]] Expected<AdmissionLease> retain(std::uint64_t bytes, const core::CancellationToken& cancel);
 
     // Fails every current and future acquire() with Cancelled. Held leases stay valid.
     void shutdown() noexcept;

@@ -348,4 +348,106 @@ Histogram compute_histogram(const DisplayImage& image) noexcept {
     return histogram;
 }
 
+Expected<ClippingMask> compute_clipping(const DisplayImage& image) {
+    try {
+        ClippingMask mask;
+        mask.width = image.width;
+        mask.height = image.height;
+        const std::size_t pixels = image.rgb.size() / 3;
+        mask.flags.assign(pixels, 0);
+        const std::uint8_t* p = image.rgb.data();
+        for (std::size_t i = 0; i < pixels; ++i, p += 3) {
+            std::uint8_t flags = 0;
+            if (p[0] == 255 || p[1] == 255 || p[2] == 255) {
+                flags |= ClippingMask::kHighlight;
+                ++mask.highlight_pixels;
+            }
+            if (p[0] == 0 || p[1] == 0 || p[2] == 0) {
+                flags |= ClippingMask::kShadow;
+                ++mask.shadow_pixels;
+            }
+            mask.flags[i] = flags;
+        }
+        return mask;
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the clipping mask", "app.display.clipping");
+    }
+}
+
+Expected<DisplayAnalysis> analyze_display(const DisplayImage& image, bool parallel) {
+    struct Band {
+        std::size_t first = 0;  // pixel range
+        std::size_t last = 0;
+        Histogram histogram;
+        std::uint64_t highlights = 0;
+        std::uint64_t shadows = 0;
+    };
+    try {
+        DisplayAnalysis out;
+        const std::size_t pixels = image.rgb.size() / 3;
+        out.clipping.width = image.width;
+        out.clipping.height = image.height;
+        out.clipping.flags.resize(pixels);
+        const unsigned hardware = std::max(1u, std::thread::hardware_concurrency());
+        const std::size_t band_count =
+            parallel ? std::clamp<std::size_t>(hardware, 1, std::max<std::size_t>(1, pixels / 65536)) : 1;
+        std::vector<Band> bands(band_count);
+        for (std::size_t b = 0; b < band_count; ++b) {
+            bands[b].first = pixels * b / band_count;
+            bands[b].last = pixels * (b + 1) / band_count;
+        }
+        // The parallel section never allocates. Counters are locals (no sharing between bands, no
+        // aliasing with the flag writes) and are stored once per band.
+        const auto run_band = [&](Band& band) {
+            Histogram h;
+            std::uint64_t highlights = 0;
+            std::uint64_t shadows = 0;
+            const std::uint8_t* p = image.rgb.data() + band.first * 3;
+            std::uint8_t* const flags = out.clipping.flags.data() + band.first;
+            const std::size_t count = band.last - band.first;
+            for (std::size_t i = 0; i < count; ++i, p += 3) {
+                const std::uint32_t r = p[0];
+                const std::uint32_t g = p[1];
+                const std::uint32_t b = p[2];
+                ++h.red[r];
+                ++h.green[g];
+                ++h.blue[b];
+                // As compute_histogram(): round(0.2126 R + 0.7152 G + 0.0722 B).
+                const std::uint32_t luma = (2126u * r + 7152u * g + 722u * b + 5000u) / 10000u;
+                ++h.luminance[std::min<std::uint32_t>(luma, 255u)];
+                const std::uint32_t high = (r == 255) | (g == 255) | (b == 255);
+                const std::uint32_t low = (r == 0) | (g == 0) | (b == 0);
+                flags[i] =
+                    static_cast<std::uint8_t>(high * ClippingMask::kHighlight | low * ClippingMask::kShadow);
+                highlights += high;
+                shadows += low;
+            }
+            band.histogram = h;
+            band.highlights = highlights;
+            band.shadows = shadows;
+        };
+        if (band_count > 1) {
+            std::for_each(std::execution::par, bands.begin(), bands.end(), run_band);
+        } else {
+            for (Band& band : bands) {
+                run_band(band);
+            }
+        }
+        for (const Band& band : bands) {
+            for (std::size_t i = 0; i < Histogram::kBins; ++i) {
+                out.histogram.red[i] += band.histogram.red[i];
+                out.histogram.green[i] += band.histogram.green[i];
+                out.histogram.blue[i] += band.histogram.blue[i];
+                out.histogram.luminance[i] += band.histogram.luminance[i];
+            }
+            out.clipping.highlight_pixels += band.highlights;
+            out.clipping.shadow_pixels += band.shadows;
+        }
+        out.histogram.pixels = pixels;
+        return out;
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the clipping mask", "app.display.clipping");
+    }
+}
+
 }  // namespace lucent::app

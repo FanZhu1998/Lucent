@@ -28,8 +28,9 @@ public:
     EngineRenderer(std::shared_ptr<const raw::DecoderRegistry> registry, const EngineRendererOptions& options)
         : registry_(std::move(registry)), options_(options) {}
 
-    Expected<std::uint64_t> estimate_memory(const SourceItem& item, const engine::RenderSettings& settings,
-                                            const core::CancellationToken& cancel) const override {
+    Expected<engine::DevelopMemoryEstimate> estimate(const SourceItem& item,
+                                                     const engine::StageOneRequest& request,
+                                                     const core::CancellationToken& cancel) const override {
         raw::ProbeOptions probe_options;
         probe_options.subimage = item.subimage;
         probe_options.limits = options_.decode_limits;
@@ -41,35 +42,67 @@ public:
         if (auto same = require_identity(item, selection->probe.metadata.source.identity); !same) {
             return Unexpected(std::move(same.error()));
         }
-        auto estimate =
-            engine::estimate_render_memory(selection->probe.metadata, settings, render_options({}));
-        if (!estimate) {
-            return Unexpected(std::move(estimate.error()));
-        }
-        return estimate->peak_bytes;
+        return engine::estimate_develop_memory(selection->probe.metadata, request, develop_options());
     }
 
-    Expected<engine::RenderResult> render(const SourceItem& item, const engine::RenderSettings& settings,
-                                          const StageObserver& on_stage,
-                                          const core::CancellationToken& cancel) const override {
-        auto result = engine::render_file(*registry_, item.path, item.subimage, settings,
-                                          render_options(on_stage), cancel);
-        if (!result) {
-            return Unexpected(std::move(result.error()));
+    Expected<engine::StageOneImage> render_stage_one(const SourceItem& item,
+                                                     const engine::StageOneRequest& request,
+                                                     const core::CancellationToken& cancel) const override {
+        auto one = engine::render_stage_one_file(*registry_, item.path, item.subimage, request,
+                                                 develop_options(), cancel);
+        if (!one) {
+            return Unexpected(std::move(one.error()));
         }
-        if (auto same = require_identity(item, result->metadata.source.identity); !same) {
+        if (auto same = require_identity(item, one->metadata.source.identity); !same) {
             return Unexpected(std::move(same.error()));
         }
-        return result;
+        return one;
+    }
+
+    Expected<engine::DevelopResult> render_stage_two(const engine::StageOneImage& stage_one,
+                                                     const engine::DevelopSettings& settings,
+                                                     const core::CancellationToken& cancel) const override {
+        return engine::render_stage_two(stage_one, settings, develop_options(), cancel);
+    }
+
+    Expected<DevelopRender> render(const SourceItem& item, const engine::DevelopSettings& settings,
+                                   const RenderProgress& progress,
+                                   const core::CancellationToken& cancel) const override {
+        if (auto valid = settings.validate(); !valid) {
+            return Unexpected(std::move(valid.error()));
+        }
+        // engine::render_develop_file's composition (develop.cpp), with the identity check between
+        // decoding and stage two.
+        engine::StageOneRequest request;
+        request.kind = engine::StageOneKind::Export;
+        request.white_balance = settings.white_balance;
+        auto one = render_stage_one(item, request, cancel);
+        if (!one) {
+            return Unexpected(std::move(one.error()));
+        }
+        if (progress) {
+            progress(0.7);
+        }
+        DevelopRender out;
+        out.interpretation = one->metadata.interpretation;
+        auto two = engine::render_stage_two(std::move(*one), settings, develop_options(), cancel);
+        if (!two) {
+            return Unexpected(std::move(two.error()));
+        }
+        out.display = std::move(two->display);
+        out.report = std::move(two->report);
+        if (progress) {
+            progress(1.0);
+        }
+        return out;
     }
 
 private:
-    engine::RenderOptions render_options(const StageObserver& on_stage) const {
-        engine::RenderOptions options;
+    engine::DevelopOptions develop_options() const {
+        engine::DevelopOptions options;
         options.decode_limits = options_.decode_limits;
         options.memory_budget_bytes = options_.memory_budget_bytes;
         options.parallel = options_.parallel;
-        options.on_stage_completed = on_stage;
         return options;
     }
 
