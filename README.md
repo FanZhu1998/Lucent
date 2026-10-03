@@ -7,9 +7,9 @@ Offline, camera-independent RAW photo development for Windows.
 > adds RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
 > removable-media badges and relinking, browses them with labelled camera previews and support
-> states, shows Lucent's provisional render, and exports JPEG or 16-bit TIFF. It runs only from a
-> source build. There is **no installer and no editing control yet**, and no camera model is
-> verified as supported. The next section describes the product Lucent is being built to become,
+> states, shows Lucent's provisional render, and exports JPEG or 16-bit TIFF. It runs from a source
+> build or from an unsigned per-user installer built from source (see [Installing](#installing)).
+> There is **no editing control yet**, and no camera model is verified as supported. The next section describes the product Lucent is being built to become,
 > from its blueprint, not what it can do today.
 
 ## What Lucent is meant to be
@@ -57,9 +57,34 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 `Lucent.exe` is built with the `dev` preset and run from the build tree
 ([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library is saved in
 `%LOCALAPPDATA%\Lucent\data\lucent.catalog` (`--data-root` points a developer session elsewhere),
-photos are shown with a provisional neutral rendering and default settings (editing is W6's), and
-there is no installer (W5). The developer command-line tools `lucent-probe` and `lucent-render`
-remain.
+photos are shown with a provisional neutral rendering and default settings (editing is W6's). The
+developer command-line tools `lucent-probe` and `lucent-render` remain; they are not installed.
+
+## Installing
+
+There is no published release yet. `tools\package.ps1` builds the installer from source,
+`Lucent-Setup-<version>-x64.exe` ([setup](docs/development/setup.md#packaging-the-installer),
+[ADR 0009](docs/adr/0009-windows-packaging.md)).
+
+> **Not for distribution yet.** Do not publish or hand out installers built today: the way the
+> source code of the LGPL libraries it contains (Qt, LibRaw) is provided to recipients is decided
+> in release hardening (W12), and the installer's clean-machine test is still pending.
+
+- **Per user, no administrator rights.** Lucent installs into `%LOCALAPPDATA%\Programs\Lucent`
+  with a Start Menu shortcut and, optionally, a Desktop shortcut. Windows asks for permission only
+  if the computer lacks a recent Microsoft Visual C++ Runtime, which Setup then installs with
+  Microsoft's own installer (included, so no download is needed).
+- **Optional "Open with Lucent"** for camera RAW files. It never changes which program opens a
+  file when you double-click it: Lucent is added to the "Open with" menu of RAW types that already
+  have a default program, and offered under "Open with" > "Choose another app" for the others.
+- **x64 Windows 10 (1809) or 11 only.** Windows on Arm is not supported yet.
+- **Uninstall** from Windows Settings (Apps) removes the program, its shortcuts and registry
+  entries. Your library (catalog and backups), settings and caches in `%LOCALAPPDATA%\Lucent` are
+  kept; delete that folder yourself if you no longer need them. Photographs are never touched.
+- **Unsigned for now.** Windows SmartScreen may warn before the installer runs. The installer is
+  verified on the development machine; its clean-machine test is still pending.
+- **Licences.** The installation folder's `licenses` subfolder holds the third-party notices, the
+  LGPL information for Qt and LibRaw, every licence text, and a software bill of materials (SPDX).
 
 ## Repository layout
 
@@ -73,6 +98,7 @@ docs/architecture/   Module layering and dependency rules
 docs/blueprint/      Product blueprint: the product authority
 docs/development/    Engineering conventions, roadmap, developer setup
 docs/legal/          Third-party licence ledger (development ledger)
+installer/           Inno Setup script, packaging audit and licence/SBOM scripts, installer test (W5)
 fixtures/            Camera fixture manifest and reference data; downloads go to fixtures/cache/ (git-ignored)
 research/            Python research environment (rawpy reference decoding); development only
 src/core/            lucent_core: error model, hashing, files, text, logging, cancellation, versioning
@@ -83,7 +109,7 @@ src/export/          lucent_export: output profiles, JPEG/TIFF encoding, verifie
 src/catalog/         lucent_catalog: SQLite catalog of sources, items and imports; migrations, backups, restore
 src/application/     lucent_application: import, session and catalog libraries, source maintenance, task executor, preview and export services (no Qt)
 tests/               Cross-module integration tests (unit tests live in src/<module>/tests/)
-tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.ps1
+tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.ps1, package.ps1
 ```
 
 Modules are layered: a module may depend only on lower layers. `core` is the lowest, then `image`,

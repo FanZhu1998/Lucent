@@ -22,6 +22,7 @@ product authority. The current module structure is described in
 | [0006](0006-render-pipeline.md) | First render path: stage order, colour contracts and provisional display rendering | Accepted | 2026-09-26 | W2 |
 | [0007](0007-application-shell.md) | Application shell: UI adapters over in-process application services | Accepted | 2026-09-27 | W3 |
 | [0008](0008-catalog-and-source-identity.md) | Persistent library: catalog, source identity, duplicates, relinking and thumbnail cache | Accepted | 2026-10-03 | W4 |
+| [0009](0009-windows-packaging.md) | Windows packaging: installed layout, dependency audit and per-user Inno Setup installer | Accepted | 2026-10-03 | W5 |
 | [0010](0010-develop-pipeline-and-recipes.md) | Develop pipeline, recipes and interactive previews | Accepted | 2026-10-03 | W6 |
 
 ## Conventions

@@ -25,6 +25,11 @@ option(LUCENT_BUILD_TESTS "Build unit and integration tests" ON)
 option(LUCENT_BUILD_UI "Build the Qt Quick application (requires the vcpkg 'ui' feature)" OFF)
 option(LUCENT_BUILD_TOOLS "Build developer tools such as lucent-probe" ON)
 option(LUCENT_WARNINGS_AS_ERRORS "Treat compiler warnings in Lucent code as errors" ON)
+# Packaging (W5, docs/adr/0009-windows-packaging.md): `cmake --install` lays out Lucent.exe with its
+# runtime; tools/package.ps1 audits that layout and builds the installer.
+option(LUCENT_INSTALL_RUNTIME "Deploy Qt and every runtime DLL when installing Lucent.exe" ON)
+set(LUCENT_VC_REDIST "" CACHE FILEPATH
+    "Microsoft Visual C++ Redistributable (x64) bundled by the installer; empty: from the MSVC environment")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,6 +44,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 include(LucentCompilerOptions)
 include(LucentVersion)
 include(LucentTargets)
+include(LucentPackaging)
 
 if(LUCENT_BUILD_TESTS)
     enable_testing()
