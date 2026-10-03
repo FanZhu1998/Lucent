@@ -1,4 +1,5 @@
-# lucent_catalog: local SQLite catalog, schema migrations, backups, source identity and import records (W4). SQLite is private.
+# lucent_catalog: local SQLite catalog, schema migrations, backups, source identity, import records (W4)
+# and recipe revisions (W6). SQLite is private.
 #
 # Layout
 #   include/lucent/catalog/   public headers (no SQLite types)
@@ -43,7 +44,9 @@ lucent_add_test(lucent_catalog_tests
         tests/catalog_test_support.hpp
         tests/location_test.cpp
         tests/schema_test.cpp
+        tests/migration_v2_test.cpp
         tests/repository_test.cpp
+        tests/revision_test.cpp
         tests/transaction_test.cpp
         tests/backup_test.cpp
         tests/performance_test.cpp

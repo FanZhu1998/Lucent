@@ -1,8 +1,8 @@
 #pragma once
 
-// The Lucent catalog: a local SQLite database of sources, items, user flags and import records
-// (blueprint sections 2, 7 and 8). SQLite is a private dependency; no SQLite type or header
-// appears here.
+// The Lucent catalog: a local SQLite database of sources, items, user flags, import records and
+// the recipe revisions of items (blueprint sections 2, 7 and 8). SQLite is a private dependency; no SQLite
+// type or header appears here.
 //
 // Storage and durability
 //   * One database file (default %LOCALAPPDATA%\Lucent\Catalog\lucent.catalog, location.hpp) on a
@@ -86,9 +86,13 @@
 
 namespace lucent::catalog {
 
-// Schema version this build creates and writes. Version 1 (W4): catalog_meta, schema_history,
-// imports, sources, items. Later versions (W6 recipes, W7 job journal) are added as migrations.
-inline constexpr std::int32_t kSchemaVersion = 1;
+// Schema version this build creates and writes.
+//   1 (W4): catalog_meta, schema_history, imports, sources, items.
+//   2 (W6): recipe_revisions, items.current_revision_id and the capture fields of items (ISO,
+//           exposure time, f-number, focal length, image count). Adds only: its minimum reader
+//           version stays 1, so a schema-v1 build opens a v2 catalog read-only.
+// Later versions (W7 job journal) are added as migrations.
+inline constexpr std::int32_t kSchemaVersion = 2;
 
 enum class OpenMode : std::uint8_t {
     ReadWrite = 1,  // the application's catalog: migrates, writes, holds the writer lock
@@ -224,6 +228,17 @@ public:
     // The most recent imports first. InvalidArgument for a bad limit.
     [[nodiscard]] Expected<std::vector<ImportRecord>> list_imports(std::uint32_t limit) const;
 
+    // Recipe revisions (types.hpp). Reading a settings document verifies its SHA-256: a mismatch
+    // is Corrupt. A revision origin this build does not know is Corrupt (VersionMismatch in a
+    // catalog written by a newer schema).
+    [[nodiscard]] Expected<std::optional<RecipeRevision>> find_revision(RevisionId id) const;
+    // The item's current revision with its settings; std::nullopt when the item shows "as shot".
+    // NotFound when the item does not exist.
+    [[nodiscard]] Expected<std::optional<RecipeRevision>> current_revision(ItemId item) const;
+    // Every revision of the item, oldest first, with parent links and the current pointer (no
+    // settings documents). NotFound when the item does not exist.
+    [[nodiscard]] Expected<RevisionHistory> revision_history(ItemId item) const;
+
 protected:
     ReadTransaction(detail::Connection& connection, bool newer_schema) noexcept
         : connection_(&connection), newer_schema_(newer_schema) {}
@@ -293,6 +308,34 @@ public:
     [[nodiscard]] Status remove_items(std::span<const ItemId> items);
 
     [[nodiscard]] Status set_item_flags(ItemId id, ItemFlags flags);
+
+    // Recipe revisions (types.hpp). Revisions are immutable and never deleted (they go with their
+    // item); these calls only add revisions and move the item's current pointer.
+    //
+    // Stores `revision` as the item's next revision, derived from its current revision (the
+    // parent; none when the item shows "as shot"), and makes it current, atomically. After an
+    // undo this starts a new branch; the undone revisions are kept. Errors: NotFound (item),
+    // NewRevision::validate()'s errors, InvalidArgument when settings_json is not valid JSON.
+    // A caller that must not build on a current revision it has not seen (for example an
+    // automatic run that started from an older state) reads current_revision() in the same
+    // write() callback first.
+    [[nodiscard]] Expected<RevisionInfo> append_revision(ItemId item, const NewRevision& revision);
+
+    // Makes `revision` the item's current revision (an earlier recipe, a revision of another
+    // branch), or "as shot" with std::nullopt. Errors: NotFound (item or revision),
+    // InvalidArgument when the revision belongs to another item.
+    [[nodiscard]] Status set_current_revision(ItemId item, std::optional<RevisionId> revision);
+
+    // Undo: moves the current pointer to the parent of the current revision ("as shot" for a
+    // revision derived from it) and returns the new current revision. InvalidArgument
+    // ("catalog.undo_revision.nothing_to_undo") when the item already shows "as shot".
+    [[nodiscard]] Expected<std::optional<RevisionId>> undo_revision(ItemId item);
+
+    // Redo: moves the current pointer to the most recently created child of the current
+    // revision (of "as shot": the newest revision without a parent) and returns it. After an
+    // edit following an undo this follows the newest branch. InvalidArgument
+    // ("catalog.redo_revision.nothing_to_redo") when there is no such revision.
+    [[nodiscard]] Expected<RevisionId> redo_revision(ItemId item);
 
     // Import records. begin_import() creates a Running record; finish_import() completes it
     // exactly once (InvalidArgument when it is no longer Running or `finish.outcome` is Running).

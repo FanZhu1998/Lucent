@@ -2,11 +2,14 @@
 
 #include <chrono>
 #include <cstdio>
+#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "lucent/catalog/catalog.hpp"
+#include "lucent/core/text.hpp"
 
 #include "codec.hpp"
 
@@ -102,6 +105,62 @@ std::string_view to_string(BackupKind kind) noexcept {
             return "pre-restore";
     }
     return "invalid";
+}
+
+std::string_view to_string(RevisionOrigin value) noexcept {
+    switch (value) {
+        case RevisionOrigin::User:
+            return "user";
+        case RevisionOrigin::Auto:
+            return "auto";
+        case RevisionOrigin::Reset:
+            return "reset";
+        case RevisionOrigin::Paste:
+            return "paste";
+        case RevisionOrigin::Import:
+            return "import";
+    }
+    return "invalid";
+}
+
+Status NewRevision::validate() const {
+    constexpr const char* where = "catalog.revision";
+    const auto invalid = [&](std::string message) {
+        return fail(ErrorCode::InvalidArgument, std::move(message), where);
+    };
+    if (!detail::is_valid(origin)) {
+        return invalid("unknown revision origin");
+    }
+    if (schema_name.empty() || schema_name.size() > kMaxRevisionLabelBytes) {
+        return invalid(std::format("schema_name must be 1 ... {} bytes", kMaxRevisionLabelBytes));
+    }
+    if (schema_version < 1) {
+        return invalid("schema_version must be at least 1");
+    }
+    if (engine_version.size() > kMaxRevisionLabelBytes) {
+        return invalid(std::format("engine_version must be at most {} bytes", kMaxRevisionLabelBytes));
+    }
+    if (settings_json.size() > kMaxRevisionSettingsBytes) {
+        return fail(ErrorCode::LimitExceeded,
+                    std::format("settings_json has {} bytes; the limit is {}", settings_json.size(),
+                                kMaxRevisionSettingsBytes),
+                    where);
+    }
+    if (note.size() > kMaxRevisionNoteBytes) {
+        return fail(ErrorCode::LimitExceeded,
+                    std::format("note has {} bytes; the limit is {}", note.size(), kMaxRevisionNoteBytes),
+                    where);
+    }
+    for (const auto& [text, field] :
+         {std::pair<std::string_view, std::string_view>{schema_name, "schema_name"},
+          {engine_version, "engine_version"},
+          {settings_json, "settings_json"},
+          {note, "note"}}) {
+        if (!core::is_valid_utf8(text)) {
+            return invalid(std::format("{} is not valid UTF-8", field));
+        }
+    }
+    return ok();
 }
 
 Status ItemFlags::validate() const {
@@ -202,6 +261,13 @@ std::optional<ImportOutcome> parse_import_outcome(std::string_view text) noexcep
     return parse_with(text, kValues);
 }
 
+std::optional<RevisionOrigin> parse_revision_origin(std::string_view text) noexcept {
+    static constexpr RevisionOrigin kValues[] = {RevisionOrigin::User, RevisionOrigin::Auto,
+                                                 RevisionOrigin::Reset, RevisionOrigin::Paste,
+                                                 RevisionOrigin::Import};
+    return parse_with(text, kValues);
+}
+
 std::optional<BackupKind> parse_backup_kind(std::string_view text) noexcept {
     static constexpr BackupKind kValues[] = {BackupKind::Manual, BackupKind::PreMigration,
                                              BackupKind::PreRestore};
@@ -222,6 +288,9 @@ bool is_valid(SupportStatus value) noexcept {
 }
 bool is_valid(ImportOutcome value) noexcept {
     return parse_import_outcome(to_string(value)).has_value();
+}
+bool is_valid(RevisionOrigin value) noexcept {
+    return parse_revision_origin(to_string(value)).has_value();
 }
 
 bool is_valid_capture_time(std::string_view text) noexcept {

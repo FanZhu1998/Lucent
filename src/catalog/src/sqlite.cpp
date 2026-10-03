@@ -172,6 +172,18 @@ Statement& Statement::bind_int64(int index, std::int64_t value) noexcept {
     return *this;
 }
 
+Statement& Statement::bind_double(int index, double value) noexcept {
+    const int rc = ::sqlite3_bind_double(statement_, index, value);
+    if (rc != SQLITE_OK && bind_error_ == 0) {
+        bind_error_ = rc;
+    }
+    return *this;
+}
+
+Statement& Statement::bind_optional_double(int index, const std::optional<double>& value) noexcept {
+    return value.has_value() ? bind_double(index, *value) : bind_null(index);
+}
+
 Statement& Statement::bind_text(int index, std::string_view value) noexcept {
     // A non-null pointer even for empty text, so the value is '' and not NULL.
     static constexpr char kEmpty[] = "";
@@ -235,6 +247,10 @@ bool Statement::is_null(int column) const noexcept {
 
 std::int64_t Statement::column_int64(int column) const noexcept {
     return ::sqlite3_column_int64(statement_, column);
+}
+
+double Statement::column_double(int column) const noexcept {
+    return ::sqlite3_column_double(statement_, column);
 }
 
 std::string_view Statement::column_text(int column) const noexcept {

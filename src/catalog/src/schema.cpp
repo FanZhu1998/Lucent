@@ -32,7 +32,7 @@ constexpr std::string_view kWhereMigrate = "catalog.migrate";
 //   * items_by_capture_time orders unknown capture times last with the sentinel '~' (U+007E),
 //     which sorts after every valid capture time ("YYYY-..." starts with a digit). A single
 //     expression column lets keyset paging seek in the index instead of scanning from the start.
-// Later migrations add W6 recipes and W7 job tables; they reference items/sources by id.
+// Later migrations add W6 recipes (v2) and W7 job tables; they reference items/sources by id.
 // ---------------------------------------------------------------------------------------------
 constexpr std::string_view kSchemaV1 = R"sql(
 CREATE TABLE catalog_meta (
@@ -118,8 +118,104 @@ Status migrate_to_v1(Connection& connection) {
     return connection.exec(kSchemaV1, kWhereMigrate);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Version 2 (W6): edit revisions and the capture fields schema v1 lacked. Only adds tables,
+// columns, indexes and triggers, so min_reader_version stays 1: a v1 build opens a v2 catalog
+// read-only (catalog.hpp) and reads every v1 column unchanged.
+//
+// recipe_revisions: the immutable develop-settings history of an item (blueprint section 8).
+//   * item_id: the item edited. ON DELETE CASCADE: removing an item (or its source) removes its
+//     revisions with it; nothing else ever deletes a revision (trigger recipe_revisions_are_kept,
+//     "prune nothing").
+//   * revision_number: 1, 2, 3, ... per item in creation order, never reused (trigger
+//     recipe_revisions_are_numbered: each insert must be the item's highest number + 1).
+//   * parent_revision_id: the revision that was current when this one was created (NULL: it was
+//     created from "as shot"); always a revision of the same item (trigger
+//     recipe_revisions_parent_check). Undo moves items.current_revision_id along these links, and
+//     an edit after an undo creates a new branch: earlier branches are kept.
+//   * origin: "user", "auto", "reset", "paste" or "import" (types.hpp; validated by the code, no
+//     CHECK, so later versions can append values).
+//   * schema_name / schema_version: the settings document's own contract (for example
+//     "lucent.develop" v1); settings_json is opaque to the catalog apart from being valid JSON,
+//     settings_sha256 is the SHA-256 of its UTF-8 bytes (verified when it is read).
+//   * engine_version: the version of the engine that produced or validated the settings.
+//   * No row is ever updated (trigger recipe_revisions_are_immutable).
+// items.current_revision_id: the revision the item shows now; NULL means "as shot". Must be a
+//   revision of the same item (trigger items_current_revision_check).
+// items.iso, exposure_time_s, f_number, focal_length_mm: capture settings (positive, NULL when
+//   unknown); items.image_count: the images of the item's file (>= 1). All NULL for items
+//   catalogued before v2 until they are probed again.
+// ---------------------------------------------------------------------------------------------
+constexpr std::string_view kSchemaV2 = R"sql(
+CREATE TABLE recipe_revisions (
+    id                 INTEGER PRIMARY KEY,
+    item_id            INTEGER NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    revision_number    INTEGER NOT NULL CHECK (revision_number >= 1),
+    parent_revision_id INTEGER REFERENCES recipe_revisions (id),
+    created_at         INTEGER NOT NULL,
+    origin             TEXT    NOT NULL,
+    schema_name        TEXT    NOT NULL CHECK (length(schema_name) > 0),
+    schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
+    settings_json      TEXT    NOT NULL CHECK (json_valid(settings_json)),
+    settings_sha256    BLOB    NOT NULL CHECK (length(settings_sha256) = 32),
+    engine_version     TEXT    NOT NULL,
+    note               TEXT    NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE UNIQUE INDEX recipe_revisions_by_item ON recipe_revisions (item_id, revision_number);
+CREATE INDEX recipe_revisions_by_parent ON recipe_revisions (parent_revision_id);
+
+ALTER TABLE items ADD COLUMN current_revision_id INTEGER REFERENCES recipe_revisions (id);
+ALTER TABLE items ADD COLUMN iso REAL CHECK (iso IS NULL OR iso > 0);
+ALTER TABLE items ADD COLUMN exposure_time_s REAL CHECK (exposure_time_s IS NULL OR exposure_time_s > 0);
+ALTER TABLE items ADD COLUMN f_number REAL CHECK (f_number IS NULL OR f_number > 0);
+ALTER TABLE items ADD COLUMN focal_length_mm REAL CHECK (focal_length_mm IS NULL OR focal_length_mm > 0);
+ALTER TABLE items ADD COLUMN image_count INTEGER CHECK (image_count IS NULL OR image_count >= 1);
+
+-- Foreign-key lookups when revisions are deleted with their item.
+CREATE INDEX items_by_current_revision ON items (current_revision_id);
+
+CREATE TRIGGER recipe_revisions_are_immutable BEFORE UPDATE ON recipe_revisions
+BEGIN
+    SELECT RAISE(ABORT, 'recipe revisions are immutable');
+END;
+
+-- Deletion only by cascade from the item (its row is gone when the cascade runs).
+CREATE TRIGGER recipe_revisions_are_kept BEFORE DELETE ON recipe_revisions
+WHEN EXISTS (SELECT 1 FROM items WHERE id = OLD.item_id)
+BEGIN
+    SELECT RAISE(ABORT, 'recipe revisions are kept while their item exists');
+END;
+
+CREATE TRIGGER recipe_revisions_are_numbered BEFORE INSERT ON recipe_revisions
+WHEN NEW.revision_number IS NOT (SELECT ifnull(max(revision_number), 0) + 1 FROM recipe_revisions
+                                 WHERE item_id = NEW.item_id)
+BEGIN
+    SELECT RAISE(ABORT, 'revision numbers increase by one per item');
+END;
+
+CREATE TRIGGER recipe_revisions_parent_check BEFORE INSERT ON recipe_revisions
+WHEN NEW.parent_revision_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM recipe_revisions WHERE id = NEW.parent_revision_id AND item_id = NEW.item_id)
+BEGIN
+    SELECT RAISE(ABORT, 'the parent revision belongs to another item');
+END;
+
+CREATE TRIGGER items_current_revision_check BEFORE UPDATE OF current_revision_id ON items
+WHEN NEW.current_revision_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM recipe_revisions WHERE id = NEW.current_revision_id AND item_id = NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'the current revision belongs to another item');
+END;
+)sql";
+
+Status migrate_to_v2(Connection& connection) {
+    return connection.exec(kSchemaV2, kWhereMigrate);
+}
+
 constexpr Migration kBuiltinMigrations[] = {
     {1, 1, "catalog metadata, imports, sources and items (W4)", &migrate_to_v1},
+    {2, 1, "recipe revisions and capture settings (W6)", &migrate_to_v2},
 };
 static_assert(std::size(kBuiltinMigrations) == static_cast<std::size_t>(kSchemaVersion),
               "every schema version needs exactly one migration");
