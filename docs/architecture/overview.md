@@ -16,13 +16,13 @@ workflows (see `docs/development/roadmap.md`).
 | image | `lucent_image` | Pixel containers, CFA descriptors, colour-encoding contracts, colour math | — | W1 |
 | raw | `lucent_raw` | `RawDecoder` interface, decoded-RAW data contract, decoder registry, LibRaw adapter, DNG tag inspection | LibRaw (private) | W1 |
 | engine | `lucent_engine` | Sensor normalisation, white balance, demosaicing routes, camera colour, working space, provisional display rendering, orientation (W2, ADR 0006); typed render graph and operation semantics (W6) | — | W2 |
-| export | `lucent_export` | Output profiles, JPEG/TIFF encoding, ICC embedding, verification, no-clobber publication (W2); metadata (later) | libjpeg-turbo, libtiff, Little CMS (private) | W2 |
-| catalog | `lucent_catalog` | SQLite catalog, migrations, source identity, recipes, job journal | SQLite (private) | Planned |
+| export | `lucent_export` | Output profiles, JPEG/TIFF encoding, ICC embedding, verification, no-clobber publication (W2); reduced JPEG thumbnails for the cache (W4); metadata (later) | libjpeg-turbo, libtiff, Little CMS (private) | W2 |
+| catalog | `lucent_catalog` | SQLite catalog (local disk only, WAL, one writer), migrations, verified backups and restore, source identity, relinking, import records (W4, ADR 0008); recipes (W6), job journal (W7) | SQLite (private) | W4 |
 | analysis | `lucent_analysis` | Metrics, deterministic proposals, optimiser, optional learned inference | ONNX Runtime (private, later) | Planned |
 | assets | `lucent_assets` | Versioned camera/lens profiles, models, manifests, licences | — | Planned |
 | workers | `lucent_workers` | Worker process lifecycle, protocol, memory admission, job isolation | Qt Core (later) | Planned |
-| application | `lucent_application` | Import (discovery, exclusions, refresh of changed files), session library, task executor with memory admission, preview and camera-preview service, single-item export (W3, ADR 0007); command history and recipe revisions (W6) | — (no Qt) | W3 |
-| ui | `Lucent.exe`, `lucent_ui_adapters` | Qt Quick Library / Edit / Exports views, view models, UI-side service interfaces, and the adapters that bind them to `lucent_application` (ADR 0007) | Qt Quick | W3 |
+| application | `lucent_application` | Import (discovery, exclusions, refresh of changed files), session library, task executor with memory admission, preview and camera-preview service, single-item export (W3, ADR 0007); catalog-backed library, verified copies into a library folder, source maintenance (hashing, presence checks, relinking) in the background, disk thumbnail cache (W4, ADR 0008); command history and recipe revisions (W6) | — (no Qt) | W3 |
+| ui | `Lucent.exe`, `lucent_ui_adapters` | Qt Quick Library / Edit / Exports views, view models, UI-side service interfaces, and the adapters that bind them to `lucent_application` (ADR 0007); Import dialog, Missing/Duplicate/Removable badges, relink, catalog backup, re-checks when a volume arrives or leaves (W4, ADR 0008) | Qt Quick | W3 |
 
 Executables live in `apps/`: `Lucent.exe` (GUI, WIN32 subsystem), `lucent-worker.exe` (isolated
 processing worker) and developer tools such as `lucent-probe.exe` and `lucent-render.exe`.
