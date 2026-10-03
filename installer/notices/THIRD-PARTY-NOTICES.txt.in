@@ -1,0 +1,31 @@
+Lucent @VERSION@: third-party notices
+====================================
+
+Lucent is copyright (c) 2026 Fan Zhu and distributed under the MIT License (Lucent-LICENSE.txt in
+this folder). It includes the third-party components listed below, each under its own licence.
+This list is generated from the files that this installation actually contains (tools/package.ps1),
+so it names exactly the components that ship.
+
+- "DLL" components are separate files in the installation folder. "Compiled in" components are
+  header-only libraries whose code is part of Lucent.exe; code "linked statically into Lucent.exe"
+  is named with its own licence.
+- The full copyright and licence text of each component is in the folder named after it, in
+  copyright.txt (copied from the component's vcpkg package) and any further files listed.
+- Qt compiles code from other projects into its own files (Unicode data, hash functions, the Public
+  Suffix List and more). Each Qt component lists that code with its copyright holders, licence and
+  source, as recorded by Qt's own software bill of materials.
+- LGPL-NOTICE.txt explains the LGPL libraries (Qt, LibRaw): your right to replace them and where
+  their corresponding source comes from.
+- Lucent.spdx.json is the software bill of materials (SPDX 2.3) of this installation.
+- The Microsoft Visual C++ Runtime is not part of this folder. If the computer needed it, Lucent
+  Setup ran Microsoft's own redistributable installer, under Microsoft's licence terms.
+
+Required notices
+----------------
+
+@NOTICES@
+
+Components
+----------
+
+@COMPONENTS@

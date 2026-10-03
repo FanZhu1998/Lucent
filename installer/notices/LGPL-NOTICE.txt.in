@@ -1,0 +1,35 @@
+Lucent @VERSION@: libraries under the GNU Lesser General Public License
+=======================================================================
+
+Lucent's own code is distributed under the MIT License (Lucent-LICENSE.txt in this folder).
+Lucent uses the libraries listed below under the GNU Lesser General Public License (LGPL). Each
+one is a separate, unmodified DLL in Lucent's installation folder that Lucent loads dynamically
+when it runs. No LGPL-licensed code is linked statically into Lucent.exe.
+@STATIC_LINKED@
+Your rights
+-----------
+
+- You may replace any of these DLLs with a modified version of the same library, as long as your
+  build stays binary compatible with the one shipped: 64-bit (x64), built with the Microsoft
+  Visual C++ compiler against the dynamic C runtime, and the same library version. Qt's modules
+  and plugins also use each other's internal interfaces, so replace Qt files with a build of the
+  same Qt version and configuration. Copy your build over the file of the same name in the
+  installation folder. Lucent does not check signatures or hashes of these DLLs and does nothing
+  to prevent their replacement.
+- Lucent's terms do not restrict modifying these libraries for your own use, or reverse
+  engineering Lucent for debugging such modifications.
+- The licence texts are included in this folder:
+@LICENCE_TEXTS@
+
+Corresponding source
+--------------------
+
+The libraries were built, without changes by the Lucent project, from the upstream source archives
+listed below, with the build recipe (build script and patches) of the vcpkg port named for each.
+vcpkg verifies every archive against the SHA-512 value shown. A recipe is identified by the git
+tree hash of its port folder in the vcpkg registry (https://github.com/microsoft/vcpkg) and, when
+the registry commit Lucent builds against (@VCPKG_BASELINE@) holds exactly that tree, by
+a link to the port folder at that commit. The same information is available in machine-readable
+form in Lucent.spdx.json (SPDX 2.3).
+
+@COMPONENTS@

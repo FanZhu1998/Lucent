@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "comment": [
+    "Licence decisions that the build cannot derive by itself (ADR 0003, ADR 0009). tools/package.ps1",
+    "derives the shipped components from the audited layout and uses this file only for elections,",
+    "required credit lines, licence texts missing from vcpkg's copyright files, and ports that must never",
+    "ship. Each entry names the port version it was reviewed for: packaging fails when the build ships",
+    "another version, so a dependency upgrade is reviewed here (and in docs/legal/third-party-notices.md)."
+  ],
+  "neverShipped": {
+    "gtest": "Test-only (ADR 0003): GoogleTest and GoogleMock are never packaged.",
+    "qtshadertools": "Build tool (qsb); Qt tools are GPL-3.0 with the Qt GPL Exception 1.0 (ADR 0003).",
+    "qtlanguageserver": "Build-time dependency of the Qt Declarative tooling.",
+    "vcpkg-tool-meson": "Build tool.",
+    "vcpkg-cmake": "Build helper.",
+    "vcpkg-cmake-config": "Build helper.",
+    "vcpkg-cmake-get-vars": "Build helper."
+  },
+  "ports": {
+    "qtbase": {
+      "reviewedVersion": "6.11.1",
+      "concluded": "LGPL-3.0-only",
+      "comment": "Qt modules are used under LGPL-3.0-only, dynamically linked and unmodified (ADR 0003, decision 3). The third-party code compiled into the shipped Qt files is listed with its holders and licences from Qt's own SBOM; the licence texts are sections of the port's copyright file.",
+      "lgpl": true,
+      "extractSections": [
+        { "section": "LGPL-3.0-only.txt", "as": "LGPL-3.0-only.txt" },
+        { "section": "GPL-3.0-only.txt", "as": "GPL-3.0-only.txt" }
+      ],
+      "staticLibraries": {
+        "lib/Qt6EntryPoint.lib": {
+          "name": "Qt Windows entry point (Qt6::EntryPoint)",
+          "qtSbomPackage": "EntryPointPrivate",
+          "declared": "LicenseRef-Qt-Commercial OR BSD-3-Clause",
+          "concluded": "BSD-3-Clause",
+          "copyright": "Copyright (C) The Qt Company Ltd. and other contributors.",
+          "comment": "Qt's WinMain shim (src/entrypoint/qtentrypoint_win.cpp) that every Qt GUI program on Windows links; Qt offers it under its commercial licence or BSD-3-Clause, and Lucent elects BSD-3-Clause (text: the BSD-3-Clause section of qtbase\\copyright.txt)."
+        }
+      }
+    },
+    "qtdeclarative": {
+      "reviewedVersion": "6.11.1",
+      "concluded": "LGPL-3.0-only",
+      "comment": "Qt QML and Qt Quick under LGPL-3.0-only (ADR 0003, decision 3).",
+      "lgpl": true
+    },
+    "qtsvg": {
+      "reviewedVersion": "6.11.1",
+      "concluded": "LGPL-3.0-only",
+      "comment": "Qt SVG under LGPL-3.0-only (ADR 0003, decision 3).",
+      "lgpl": true
+    },
+    "libraw": {
+      "reviewedVersion": "0.22.2",
+      "concluded": "LGPL-2.1-only AND BSD-3-Clause",
+      "comment": "LibRaw is offered under LGPL-2.1-only or CDDL-1.0; Lucent elects LGPL-2.1-only (ADR 0003, decision 2). The notices for dcraw, DCB/FBDD, the X3F tools and the Adobe DNG SDK code are in the port's copyright file.",
+      "lgpl": true
+    },
+    "freetype": {
+      "reviewedVersion": "2.14.3",
+      "concluded": "FTL",
+      "comment": "FreeType is offered under the FreeType License or GPL-2.0-or-later; Lucent elects the FreeType License (ADR 0003, decision 4).",
+      "notices": [
+        "Portions of this software are copyright (c) 2026 The FreeType Project (https://freetype.org). All rights reserved."
+      ]
+    },
+    "libjpeg-turbo": {
+      "reviewedVersion": "3.2.0",
+      "notices": [
+        "This software is based in part on the work of the Independent JPEG Group."
+      ],
+      "supplementaryFiles": [
+        { "member": "README.ijg", "reason": "The IJG licence text that LICENSE.md refers to; the port does not install it." }
+      ]
+    },
+    "pcre2": {
+      "reviewedVersion": "10.47",
+      "concluded": "BSD-3-Clause WITH PCRE2-exception",
+      "supplementaryFiles": [
+        { "member": "LICENCE.md", "reason": "The installed copyright file only points to this file of the PCRE2 distribution." }
+      ]
+    },
+    "tiff": {
+      "reviewedVersion": "4.7.2",
+      "notices": [
+        "This product includes the LZW compression code of libtiff, which was developed by the University of California, Berkeley."
+      ]
+    },
+    "double-conversion": {
+      "reviewedVersion": "3.4.0",
+      "concluded": "BSD-3-Clause",
+      "comment": "The port declares no licence; the installed copyright file is the upstream BSD-3-Clause LICENSE."
+    }
+  },
+  "vcRedistributable": {
+    "name": "Microsoft Visual C++ Redistributable (x64)",
+    "licenseRef": "LicenseRef-Microsoft-VC-Redistributable",
+    "licenseText": "Microsoft Software License Terms for the Microsoft Visual C++ Redistributable. The terms are shown by the redistributable installer (vc_redist.x64.exe) and published by Microsoft. The redistributable is bundled unmodified inside Lucent Setup and installed by Microsoft's own installer only when the computer's runtime is older (blueprint section 9; https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files)."
+  }
+}
