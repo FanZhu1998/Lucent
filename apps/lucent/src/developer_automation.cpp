@@ -150,12 +150,17 @@ CommandLine parse_command_line(const QStringList& arguments) {
     const QCommandLineOption dialog_option(QStringLiteral("show-export-dialog"),
                                            QStringLiteral("With --open-first, open the Export dialog before the "
                                                           "screenshot."));
+    const QCommandLineOption data_root_option(
+        QStringLiteral("data-root"),
+        QStringLiteral("Keep the catalog and caches in <folder> instead of "
+                       "the user's application data."),
+        QStringLiteral("folder"));
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
     parser.addOptions({import_option, subfolders_option, open_first_option, view_option, export_option,
                        screenshot_option, quit_option, timeout_option, format_option, color_option,
-                       quality_option, zoom_option, measure_option, dialog_option});
+                       quality_option, zoom_option, measure_option, dialog_option, data_root_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -250,6 +255,12 @@ CommandLine parse_command_line(const QStringList& arguments) {
     if (options.show_export_dialog && !options.open_first) {
         return fail(QStringLiteral("--show-export-dialog needs --open-first."));
     }
+    if (parser.isSet(data_root_option)) {
+        options.data_root = parser.value(data_root_option).trimmed();
+        if (options.data_root.isEmpty()) {
+            return fail(QStringLiteral("--data-root needs a folder."));
+        }
+    }
     if (parser.isSet(timeout_option)) {
         bool ok = false;
         const int timeout = parser.value(timeout_option).toInt(&ok);
@@ -278,11 +289,12 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
     connect(&controller_.library_service(), &LibraryService::import_finished, this,
             [this](const ImportSummary& summary) {
                 report(QStringLiteral("import finished: %1 added (%2 limited, %3 unsupported), %4 already in "
-                                      "library, %5 ignored, %6 failed")
+                                      "library, %5 found again, %6 ignored, %7 failed")
                            .arg(summary.added)
                            .arg(summary.limited)
                            .arg(summary.unsupported)
                            .arg(summary.already_in_library)
+                           .arg(summary.restored)
                            .arg(summary.ignored)
                            .arg(summary.failed));
                 for (const QString& error : summary.errors) {

@@ -4,20 +4,25 @@
 // described in developer_automation.hpp (positional paths are imported; every option other than
 // --help and --version is developer-only).
 
-#include <windows.h>
-
-#include <utility>
-
 #include <QCoreApplication>
+#include <QDir>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
+#include <QSettings>
+#include <QTimer>
+#include <filesystem>
+#include <memory>
+#include <utility>
+
 #include <QtQml/QQmlExtensionPlugin>
+#include <windows.h>
 
 #include "app_controller.hpp"
 #include "developer_automation.hpp"
 #include "service_factory.hpp"
 #include "shell.hpp"
+#include "volume_watcher.hpp"
 
 // The Lucent QML module is a static plugin linked into this executable.
 Q_IMPORT_QML_PLUGIN(LucentPlugin)
@@ -55,7 +60,17 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    lucent::Expected<lucent::ui::Services> services = lucent::ui::create_services();
+    lucent::ui::ServiceOptions service_options;
+    // Per-user settings (QSettings); with --data-root they live in that folder too, so a developer
+    // session never changes the user's own settings.
+    std::unique_ptr<QSettings> settings = std::make_unique<QSettings>();
+    if (!command_line.options.data_root.isEmpty()) {
+        const QString data_root = QDir::current().absoluteFilePath(command_line.options.data_root);
+        service_options.data_root = std::filesystem::path(QDir::toNativeSeparators(data_root).toStdWString());
+        settings = std::make_unique<QSettings>(QDir(data_root).filePath(QStringLiteral("settings.ini")),
+                                               QSettings::IniFormat);
+    }
+    lucent::Expected<lucent::ui::Services> services = lucent::ui::create_services(service_options);
     if (!services) {
         show_text(QStringLiteral("Lucent could not start its processing services (%1).")
                       .arg(QString::fromStdString(services.error().describe())),
@@ -65,6 +80,13 @@ int main(int argc, char* argv[]) {
     // The controller must outlive the engine (declared first, destroyed last). It owns the
     // services; their executor threads are joined when it is destroyed.
     lucent::ui::AppController controller(std::move(*services));
+    // The Import dialog's library folder is remembered between sessions (QSettings: per user).
+    const QString destination_key = QStringLiteral("import/copyDestination");
+    controller.set_copy_destination(settings->value(destination_key).toUrl());
+    QObject::connect(&controller, &lucent::ui::AppController::importOptionsChanged, &controller,
+                     [settings = settings.get(), &controller, destination_key] {
+                         settings->setValue(destination_key, controller.copy_destination());
+                     });
     QQmlApplicationEngine engine;
     QQuickWindow* window = lucent::ui::load_main_window(engine, controller);
     if (window == nullptr) {
@@ -76,6 +98,15 @@ int main(int argc, char* argv[]) {
     QObject::connect(&automation, &lucent::ui::DeveloperAutomation::quitRequested, &app,
                      [](int exit_code) { QCoreApplication::exit(exit_code); });
     automation.start();
+    // Background upkeep of the library (presence checks, hashing) starts once the window is up:
+    // the contact sheet shows the catalog's items and cached thumbnails first.
+    QTimer::singleShot(0, &controller, [&controller] { controller.start(); });
+    // A card or drive that arrives or leaves while Lucent runs: check the library's files again
+    // (Missing badges for a removed card, Present again when it returns).
+    lucent::ui::VolumeWatcher volumes;
+    app.installNativeEventFilter(&volumes);
+    QObject::connect(&volumes, &lucent::ui::VolumeWatcher::volumes_changed, &controller,
+                     [&controller] { controller.recheck_library(); });
 
     return QGuiApplication::exec();
 }

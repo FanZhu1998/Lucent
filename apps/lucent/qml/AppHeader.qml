@@ -80,6 +80,18 @@ Rectangle {
             Accessible.name: qsTr("Working")
         }
 
+        // Background verification of the library's files (presence checks, content hashes).
+        Label {
+            objectName: "backgroundActivity"
+            visible: text.length > 0
+            text: header.controller.backgroundActivity
+            color: Theme.textTertiary
+            font.pixelSize: Theme.fontSmall
+            Layout.leftMargin: 4
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+        }
+
         Label {
             objectName: "statusMessage"
             text: header.controller.statusMessage
@@ -102,8 +114,40 @@ Rectangle {
             text: qsTr("Details")
             onClicked: problemsPopup.open()
             ToolTip.visible: hovered
-            ToolTip.text: qsTr("Why photos of the last import could not be added or are limited")
+            ToolTip.text: qsTr("Why photos of the last import could not be added, or are limited or on removable media")
             ToolTip.delay: 800
+        }
+
+        // The library itself is unavailable or read-only (the catalog could not be opened).
+        Rectangle {
+            objectName: "libraryNotice"
+            visible: header.controller.libraryNotice.length > 0
+            implicitWidth: libraryNoticeText.implicitWidth + 16
+            implicitHeight: 22
+            radius: 11
+            color: "transparent"
+            border.width: 1
+            border.color: Theme.unsupported
+            Layout.leftMargin: 10
+
+            Accessible.role: Accessible.StaticText
+            Accessible.name: header.controller.libraryNotice
+
+            Text {
+                id: libraryNoticeText
+                anchors.centerIn: parent
+                text: qsTr("Library not saved")
+                color: Theme.unsupported
+                font.pixelSize: Theme.fontSmall
+            }
+
+            HoverHandler {
+                id: libraryNoticeHover
+            }
+
+            ToolTip.visible: libraryNoticeHover.hovered
+            ToolTip.text: header.controller.libraryNotice
+            ToolTip.delay: 300
         }
 
         Rectangle {

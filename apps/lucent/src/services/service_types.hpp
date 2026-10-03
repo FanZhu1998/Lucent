@@ -24,8 +24,8 @@
 
 namespace lucent::ui {
 
-// Identity of a library item: unique and stable for the lifetime of the service instance (the
-// catalog id from W4 on). Zero is never a valid id.
+// Identity of a library item: unique and stable for the lifetime of the service instance; with the
+// catalog-backed library (W4) the catalog's item id, stable across restarts. Zero is never valid.
 using ItemId = std::uint64_t;
 
 // Image generation of an item's thumbnail or preview. It increases whenever the pixels that image
@@ -64,6 +64,7 @@ enum class ItemFlag : std::uint32_t {
     MissingSource = 1u << 1,      // the source file is not at its recorded location (relink)
     RemovableSource = 1u << 2,    // the source is on removable media (copy or relink before removal)
     DuplicateContent = 1u << 3,   // identical content to another library item
+    ChangedSource = 1u << 4,      // the file changed on disk; Lucent re-reads it (stale until then)
 };
 
 using ItemFlags = std::uint32_t;
@@ -75,6 +76,15 @@ using ItemFlags = std::uint32_t;
 [[nodiscard]] constexpr bool has_flag(ItemFlags flags, ItemFlag flag) noexcept {
     return (flags & flag_bit(flag)) != 0;
 }
+
+// The photographer's pick of an item (blueprint section 2: duplicates are flagged and the choice is
+// kept per item; nothing is merged or deleted automatically). Numeric values are stable (the
+// catalog's).
+enum class PickState : std::uint8_t {
+    None = 0,
+    Picked = 1,
+    Rejected = 2,
+};
 
 // What Lucent's most recent render of an item produced, for the Edit view's histogram and
 // details. Immutable once published; shared (RenderInfoPtr) so snapshots stay cheap to copy.
@@ -133,6 +143,14 @@ struct LibraryItem {
 
     SupportStatus support = SupportStatus::Unknown;
     QString support_detail;  // why the status is Limited/Unsupported; may be empty
+    PickState pick = PickState::None;
+    int rating = 0;  // 0 = unrated, 1..5
+    // The file is a verified copy Lucent made into a library folder; origin_path names the original.
+    bool copied = false;
+    QString origin_path;
+    // Other library files with the same content (DuplicateContent), native separators.
+    QStringList duplicate_paths;
+    bool content_verified = false;  // the file's SHA-256 is recorded
     ProcessingStatus processing = ProcessingStatus::NotProcessed;
     QString processing_detail;  // why processing failed; may be empty
     ItemFlags flags = 0;
@@ -154,10 +172,21 @@ struct ImportProgress {
     int candidates = 0;   // files to check
     int checked = 0;      // files checked so far
     int added = 0;        // library items added so far
+    bool copying = false;  // a file is being copied into the library folder and verified
+    int copied = 0;        // files copied and verified so far
     QString current;      // folder or file being processed; empty when done
 };
 
-// Outcome of one LibraryService::import_paths() request.
+// Options of one import request (blueprint section 2: "Include subfolders"; "Copy into library
+// folder" with a destination the user chooses).
+struct ImportOptions {
+    bool include_subfolders = false;
+    // Absolute path of an existing folder to copy the photos into before they are added (each
+    // copy verified); empty imports the photos where they are.
+    QString copy_to;
+};
+
+// Outcome of one LibraryService::start_import() request.
 struct ImportSummary {
     QStringList sources;          // the paths the request named
     int added = 0;                // new library items
@@ -165,13 +194,46 @@ struct ImportSummary {
     int unsupported = 0;          // of `added`: Unsupported items (listed, never auto-exported)
     int already_in_library = 0;   // files that were already library items
     int updated = 0;              // library items whose file had changed, read again
+    // Library items whose missing file was found again (back at its place, or moved, or a card
+    // under another drive letter): Present again with their flags.
+    int restored = 0;
     int ignored = 0;              // files that are not photos, or in Lucent's own locations
-    int failed = 0;               // files or locations that could not be read
+    int failed = 0;               // files or locations that could not be read (or copied)
+    int copied = 0;               // photos now in the library folder as verified copies
+    QString copy_to;              // the library folder of the copies; empty for an in-place import
+    int removable = 0;            // of `added`: photos on removable media
+    QStringList removable_locations;  // the removable drives they are on ("E:\\")
     bool cancelled = false;       // the import stopped early; items added so far stay
     QStringList errors;           // user-facing explanations of the failures, one per path
     // User-facing per-path notes: Limited/Unsupported items, selected files that are not RAW
     // photos, folders not searched because exports were written there.
     QStringList notes;
+};
+
+// Outcome of one LibraryService::relink() request (blueprint section 2: missing files remain in the
+// library with a relink action; a path changes only when the content hash matches).
+struct RelinkSummary {
+    QString folder;        // where Lucent looked
+    int missing = 0;       // missing files considered
+    int relinked = 0;      // found and confirmed by content
+    int unmatched = 0;     // left missing (includes unverifiable)
+    int unverifiable = 0;  // of unmatched: never verified, so a match cannot be confirmed
+    bool cancelled = false;
+    QString error;  // user-facing reason when the relink could not run at all; empty otherwise
+};
+
+// Outcome of LibraryService::back_up_catalog().
+struct BackupResult {
+    bool ok = false;
+    QString path;     // the backup file (native separators) when ok
+    QString message;  // user-facing reason when not ok
+};
+
+// Background verification of the library's files (presence checks and content hashing).
+struct VerificationProgress {
+    bool active = false;
+    int done = 0;   // photos verified in the current run
+    int total = 0;  // photos to verify in the current run
 };
 
 using JobId = std::uint64_t;

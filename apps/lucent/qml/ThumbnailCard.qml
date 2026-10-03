@@ -4,8 +4,9 @@ import Lucent
 
 // One contact-sheet cell: thumbnail, processing status (once Lucent has started on the photo),
 // support status, a "Camera preview" label while the thumbnail is the camera's embedded JPEG
-// (blueprint section 2), file name, camera, capture time and flags. The properties marked
-// required are LibraryModel roles.
+// (blueprint section 2), badges for the file (Missing, Changed, Duplicate, Removable) and the pick,
+// file name, camera, capture time and flags. The properties marked required are LibraryModel
+// roles.
 Item {
     id: card
 
@@ -24,6 +25,10 @@ Item {
     required property string thumbnailSource
     required property bool thumbnailIsCameraPreview
     required property string accessibleLabel
+    required property var flagBadges
+    required property string pickKey
+    required property string pickLabel
+    required property bool missing
 
     property bool selected: false
     property bool showFocus: false
@@ -76,7 +81,40 @@ Item {
                 asynchronous: true
                 smooth: true
                 mipmap: true
+                // A missing file keeps its cached thumbnail, dimmed.
+                opacity: card.missing ? 0.45 : 1
                 Accessible.ignored: true
+            }
+
+            // The file's state and the pick, most urgent first (blueprint section 2: a removable
+            // card stays visibly identified; missing files stay listed; duplicates are flagged).
+            Row {
+                objectName: "sourceBadges"
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 6
+                spacing: 4
+                layoutDirection: Qt.RightToLeft
+
+                Repeater {
+                    model: card.flagBadges
+
+                    delegate: Badge {
+                        required property var modelData
+
+                        objectName: "badge_" + modelData.key
+                        text: modelData.label
+                        dotColor: Theme.sourceColor(modelData.key)
+                        detail: modelData.detail
+                    }
+                }
+
+                Badge {
+                    objectName: "pickBadge"
+                    visible: card.pickKey !== "none"
+                    text: card.pickLabel
+                    dotColor: card.pickKey === "picked" ? Theme.verified : Theme.textTertiary
+                }
             }
 
             Text {

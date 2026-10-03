@@ -29,6 +29,7 @@ add_executable(lucent_ui_tests
     app_controller_tests.cpp
     application_adapters_tests.cpp
     application_shell_tests.cpp
+    catalog_adapters_tests.cpp
     developer_options_tests.cpp
     fake_services_tests.cpp
     image_provider_tests.cpp
@@ -38,6 +39,7 @@ add_executable(lucent_ui_tests
     test_main.cpp
     test_support.cpp
     test_support.hpp
+    volume_watcher_tests.cpp
 )
 target_include_directories(lucent_ui_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"

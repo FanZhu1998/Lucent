@@ -264,4 +264,13 @@ Expected<std::uint64_t> free_disk_bytes(const std::filesystem::path& directory, 
     return static_cast<std::uint64_t>(available.QuadPart);
 }
 
+bool indicates_absence(const Error& error) noexcept {
+    if (error.code == ErrorCode::NotFound) {
+        return true;
+    }
+    return error.code == ErrorCode::IoError && error.native_code > 0 &&
+           error.native_code <= std::int64_t{0xFFFF'FFFF} &&
+           core::is_volume_absent_win32_error(static_cast<std::uint32_t>(error.native_code));
+}
+
 }  // namespace lucent::app::detail

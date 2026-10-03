@@ -74,6 +74,14 @@ TEST(AdapterConversions, ErrorsAreDescribedByCodeAndLocation) {
     // Adding a changed file again does update it (app::Library::refresh), so the advice is real.
     EXPECT_EQ(describe_error(Error{ErrorCode::SourceChanged, "", "app.render.source", 0}),
               QStringLiteral("The file changed after it was added. Add it again to update it."));
+    // A library saved by a newer Lucent is read-only: that is the library's limit, not the photo's.
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "app.library.journal", 0}),
+              QStringLiteral("This library was saved by a newer version of Lucent and is open read-only, so "
+                             "photos cannot be added or changed."));
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "catalog.write", 0}),
+              describe_error(Error{ErrorCode::VersionMismatch, "", "app.library.add", 0}));
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "raw.dng.version", 0}),
+              QStringLiteral("The file needs a newer version of Lucent."));
     // Developer-facing messages are never shown.
     EXPECT_EQ(describe_error(Error{ErrorCode::Internal, "secret detail", "engine", 0}),
               QStringLiteral("Lucent ran into an internal problem (internal)."));
@@ -292,6 +300,7 @@ TEST(AdapterConversions, ImportSummariesCountAndExplainSkippedPaths) {
     report.ignored_non_raw = 3;
     report.cancelled = true;
     report.refreshed = {app::ItemId{7}};
+    report.restored = {app::ItemId{11}, app::ItemId{12}};
     report.skipped = {
         {L"C:\\a.dng", app::SkipReason::Duplicate, app::ItemId{9}, std::nullopt},
         {L"C:\\out", app::SkipReason::InOutputDirectory, std::nullopt, std::nullopt},
@@ -300,14 +309,16 @@ TEST(AdapterConversions, ImportSummariesCountAndExplainSkippedPaths) {
         {L"C:\\gone.cr3", app::SkipReason::NotFound, std::nullopt, Error{ErrorCode::NotFound, "", "", 0}},
         {L"C:\\locked.cr3", app::SkipReason::Inaccessible, std::nullopt,
          Error{ErrorCode::PermissionDenied, "", "core.file.open", 0}},
+        {L"C:\\bad.dng", app::SkipReason::InvalidName, std::nullopt, Error{ErrorCode::InvalidArgument, "", "", 0}},
     };
     const ImportSummary summary = summarize_import({QStringLiteral("C:/")}, report);
     EXPECT_EQ(summary.added, 2);
     EXPECT_EQ(summary.unsupported, 1);
     EXPECT_EQ(summary.already_in_library, 1);
     EXPECT_EQ(summary.updated, 1);
+    EXPECT_EQ(summary.restored, 2);
     EXPECT_EQ(summary.ignored, 4);  // three by extension, a.jpg; the output folder is a note, not a file
-    EXPECT_EQ(summary.failed, 2);
+    EXPECT_EQ(summary.failed, 3);
     EXPECT_TRUE(summary.cancelled);
     EXPECT_EQ(summary.notes,
               (QStringList{QStringLiteral(R"(C:\out was not searched: Lucent exported photos into it in this session.)"),
@@ -315,7 +326,9 @@ TEST(AdapterConversions, ImportSummariesCountAndExplainSkippedPaths) {
     EXPECT_EQ(summary.errors,
               (QStringList{QStringLiteral(R"(C:\gone.cr3 was not found.)"),
                            QStringLiteral(R"(C:\locked.cr3 could not be read: Windows denied access )"
-                                          R"(to the file.)")}));
+                                          R"(to the file.)"),
+                           QStringLiteral(R"(C:\bad.dng was not added: its name contains characters Lucent )"
+                                          R"(cannot store. Rename it and add it again.)")}));
 }
 
 }  // namespace

@@ -21,6 +21,7 @@ product authority. The current module structure is described in
 | [0005](0005-raw-decoder-boundary.md) | RAW decoder boundary and decoded-RAW data contract | Accepted | 2026-09-25 | W1 |
 | [0006](0006-render-pipeline.md) | First render path: stage order, colour contracts and provisional display rendering | Accepted | 2026-09-26 | W2 |
 | [0007](0007-application-shell.md) | Application shell: UI adapters over in-process application services | Accepted | 2026-09-27 | W3 |
+| [0008](0008-catalog-and-source-identity.md) | Persistent library: catalog, source identity, duplicates, relinking and thumbnail cache | Accepted | 2026-10-03 | W4 |
 
 ## Conventions
 

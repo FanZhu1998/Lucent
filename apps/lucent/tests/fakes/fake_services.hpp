@@ -87,7 +87,8 @@ public:
     ~FakeLibraryService() override;
 
     [[nodiscard]] QStringList supported_suffixes() const override;
-    void import_paths(const QStringList& paths, bool include_subfolders) override;
+    // Copying into a library folder is not simulated: options.copy_to is ignored.
+    void start_import(const QStringList& paths, const ImportOptions& options) override;
     [[nodiscard]] bool is_importing() const override { return active_imports_ > 0; }
     [[nodiscard]] bool is_busy() const override;
 

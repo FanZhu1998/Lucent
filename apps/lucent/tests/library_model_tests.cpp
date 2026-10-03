@@ -77,7 +77,7 @@ TEST_F(LibraryModelTest, AddsItemsInOrderAndExposesPresentationRoles) {
 TEST_F(LibraryModelTest, RoleNamesAreUniqueAndCoverEveryRole) {
     const QHash<int, QByteArray> names = model.roleNames();
     std::set<QByteArray> unique;
-    for (int id = LibraryModel::FileNameRole; id <= LibraryModel::RenderIncompleteRole; ++id) {
+    for (int id = LibraryModel::FileNameRole; id <= LibraryModel::FlagBadgesRole; ++id) {
         ASSERT_TRUE(names.contains(id)) << id;
         unique.insert(names.value(id));
     }
@@ -284,6 +284,67 @@ TEST_F(ExportJobModelTest, ClampsProgressAndIgnoresUnknownJobs) {
     service.add(job(0, ExportJobState::Queued));
     EXPECT_EQ(data_spy.count(), 0);
     EXPECT_EQ(model.rowCount(), 1);
+}
+
+// ---- W4 --------------------------------------------------------------------------------------
+
+TEST(LibraryModelStart, StartsWithTheItemsTheLibraryAlreadyHolds) {
+    ScriptedLibraryService service;
+    LibraryItem missing = make_item(7, QStringLiteral("GONE.CR3"));
+    missing.flags = flag_bit(ItemFlag::MissingSource) | flag_bit(ItemFlag::RemovableSource);
+    service.initial = {make_item(5, QStringLiteral("A.CR3")), missing};
+    auto registry = std::make_shared<GenerationRegistry>();
+    LibraryModel model(service, registry);
+    ASSERT_EQ(model.count(), 2);
+    EXPECT_EQ(model.item_at(1)->id, 7u);
+    EXPECT_EQ(registry->current(7, ImageKind::Thumbnail), Generation{1});
+    EXPECT_EQ(model.missing_count(), 1);
+    EXPECT_EQ(model.missing_items(), QList<ItemId>{7});
+    EXPECT_TRUE(role(model, 1, LibraryModel::MissingRole).toBool());
+    EXPECT_EQ(role(model, 1, LibraryModel::FlagKeysRole).toStringList(),
+              (QStringList{QStringLiteral("missing"), QStringLiteral("removable")}));
+    const QVariantList badges = role(model, 1, LibraryModel::FlagBadgesRole).toList();
+    ASSERT_EQ(badges.size(), 2);
+    EXPECT_EQ(badges[0].toMap().value(QStringLiteral("label")).toString(), QStringLiteral("Missing"));
+    EXPECT_FALSE(badges[0].toMap().value(QStringLiteral("detail")).toString().isEmpty());
+}
+
+TEST_F(LibraryModelTest, MissingCountFollowsTheItems) {
+    QSignalSpy missing(&model, &LibraryModel::missingCountChanged);
+    service.add({make_item(1, QStringLiteral("A.CR3")), make_item(2, QStringLiteral("B.CR3"))});
+    EXPECT_EQ(model.missing_count(), 0);
+    LibraryItem gone = make_item(1, QStringLiteral("A.CR3"));
+    gone.flags = flag_bit(ItemFlag::MissingSource);
+    service.change(gone);
+    EXPECT_EQ(model.missing_count(), 1);
+    service.change(make_item(1, QStringLiteral("A.CR3")));  // relinked
+    EXPECT_EQ(model.missing_count(), 0);
+    EXPECT_EQ(missing.count(), 2);
+}
+
+TEST_F(LibraryModelTest, PickAndSourceRolesDescribeTheFile) {
+    LibraryItem item = make_item(1, QStringLiteral("A.CR3"));
+    item.pick = PickState::Rejected;
+    item.copied = true;
+    item.origin_path = QStringLiteral("E:\\DCIM\\A.CR3");
+    item.duplicate_paths = {QStringLiteral("D:\\Old\\A.CR3")};
+    item.flags = flag_bit(ItemFlag::DuplicateContent);
+    service.add({item});
+    EXPECT_EQ(role(model, 0, LibraryModel::PickKeyRole).toString(), QStringLiteral("rejected"));
+    EXPECT_EQ(role(model, 0, LibraryModel::PickLabelRole).toString(), QStringLiteral("Rejected"));
+    EXPECT_EQ(role(model, 0, LibraryModel::OriginPathRole).toString(), item.origin_path);
+    EXPECT_EQ(role(model, 0, LibraryModel::DuplicatePathsRole).toStringList(), item.duplicate_paths);
+    const QString note = role(model, 0, LibraryModel::SourceNoteRole).toString();
+    EXPECT_TRUE(note.contains(QStringLiteral("A verified copy of E:\\DCIM\\A.CR3"))) << note.toStdString();
+    EXPECT_TRUE(note.contains(QStringLiteral("Same content as D:\\Old\\A.CR3"))) << note.toStdString();
+
+    CurrentItem current(model);
+    current.set_row(0);
+    EXPECT_EQ(current.pick_key(), QStringLiteral("rejected"));
+    EXPECT_EQ(current.flag_keys(), QStringList{QStringLiteral("duplicate")});
+    EXPECT_EQ(current.flag_badges().size(), 1);
+    EXPECT_FALSE(current.missing());
+    EXPECT_EQ(current.source_note(), note);
 }
 
 }  // namespace

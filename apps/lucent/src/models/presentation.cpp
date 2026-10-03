@@ -231,7 +231,113 @@ QStringList flag_labels(ItemFlags flags) {
     if (has_flag(flags, ItemFlag::DuplicateContent)) {
         labels << tr_text("Duplicate");
     }
+    if (has_flag(flags, ItemFlag::ChangedSource)) {
+        labels << tr_text("Changed on disk");
+    }
     return labels;
+}
+
+QStringList flag_keys(ItemFlags flags) {
+    QStringList keys;
+    if (has_flag(flags, ItemFlag::MissingSource)) {
+        keys << QStringLiteral("missing");
+    }
+    if (has_flag(flags, ItemFlag::ChangedSource)) {
+        keys << QStringLiteral("changed");
+    }
+    if (has_flag(flags, ItemFlag::DuplicateContent)) {
+        keys << QStringLiteral("duplicate");
+    }
+    if (has_flag(flags, ItemFlag::RemovableSource)) {
+        keys << QStringLiteral("removable");
+    }
+    return keys;
+}
+
+QString flag_badge_label(const QString& key) {
+    if (key == u"missing") {
+        return tr_text("Missing");
+    }
+    if (key == u"changed") {
+        return tr_text("Changed");
+    }
+    if (key == u"duplicate") {
+        return tr_text("Duplicate");
+    }
+    if (key == u"removable") {
+        return tr_text("Removable");
+    }
+    return {};
+}
+
+QString flag_badge_detail(const QString& key) {
+    if (key == u"missing") {
+        return tr_text(
+            "The file is not at its last known location. Reconnect its drive, or use Relink to "
+            "find it.");
+    }
+    if (key == u"changed") {
+        return tr_text("The file changed on disk after it was added. Lucent reads it again before using it.");
+    }
+    if (key == u"duplicate") {
+        return tr_text(
+            "Another file in the library has exactly the same content. Both are kept; pick or "
+            "reject each one.");
+    }
+    if (key == u"removable") {
+        return tr_text(
+            "The file is on removable media. Keep it connected, or copy it into a library folder "
+            "before you remove it.");
+    }
+    return {};
+}
+
+QString pick_key(PickState pick) {
+    switch (pick) {
+        case PickState::Picked:
+            return QStringLiteral("picked");
+        case PickState::Rejected:
+            return QStringLiteral("rejected");
+        case PickState::None:
+            break;
+    }
+    return QStringLiteral("none");
+}
+
+QString pick_label(PickState pick) {
+    switch (pick) {
+        case PickState::Picked:
+            return tr_text("Picked");
+        case PickState::Rejected:
+            return tr_text("Rejected");
+        case PickState::None:
+            break;
+    }
+    return {};
+}
+
+QString source_note(const LibraryItem& item) {
+    QStringList sentences;
+    if (has_flag(item.flags, ItemFlag::MissingSource)) {
+        sentences << tr_text(
+            "The file is not at its last known location. Reconnect its drive, or use "
+            "Relink to find it in another folder.");
+    } else if (has_flag(item.flags, ItemFlag::ChangedSource)) {
+        sentences << tr_text("The file changed on disk after it was added; Lucent reads it again.");
+    }
+    if (has_flag(item.flags, ItemFlag::RemovableSource)) {
+        sentences << tr_text(
+            "It is on removable media: keep it connected, or copy it into a library folder "
+            "before you remove it.");
+    }
+    if (item.copied && !item.origin_path.isEmpty()) {
+        sentences << tr_text("A verified copy of %1.").arg(item.origin_path);
+    }
+    if (!item.duplicate_paths.isEmpty()) {
+        sentences << tr_text("Same content as %1. Both are kept; your pick decides.")
+                         .arg(item.duplicate_paths.join(QStringLiteral(", ")));
+    }
+    return sentences.join(u' ');
 }
 
 QString accessible_label(const LibraryItem& item, const QLocale& locale) {

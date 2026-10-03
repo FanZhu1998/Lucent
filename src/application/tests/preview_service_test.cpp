@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -13,6 +14,8 @@
 
 #include <lucent/application/import.hpp>
 #include <lucent/application/preview_service.hpp>
+#include <lucent/application/source_maintenance.hpp>
+#include <lucent/application/thumbnail_cache.hpp>
 
 #include "app_test_support.hpp"
 
@@ -467,9 +470,8 @@ TEST_F(PreviewEngineTest, CameraPreviewsAreChosenForTheRequestedSizeAndCachedPer
                           rts::SyntheticJpegPreview{rts::jpeg_bytes(rts::kJpegRgb48x32), 48, 32, 3}};
     const ItemId item = import(ts::write_dng(dir_, "two.dng", spec));
     ts::Collector<Expected<std::shared_ptr<const CameraPreview>>> camera;
-    const CameraPreviewCallback callback = [&](ItemId, const Expected<std::shared_ptr<const CameraPreview>>& r) {
-        camera.add(r);
-    };
+    const CameraPreviewCallback callback =
+        [&](ItemId, const Expected<std::shared_ptr<const CameraPreview>>& r) { camera.add(r); };
     ASSERT_TRUE(service_->request_camera_preview({item, 40}, callback));  // a small thumbnail
     ASSERT_TRUE(camera.wait_for(1));
     ASSERT_TRUE(service_->request_camera_preview({item, 0}, callback));  // the largest
@@ -491,9 +493,8 @@ TEST_F(PreviewEngineTest, ACameraPreviewCancelledBeforeItStartsReadsNothing) {
     spec.jpeg_previews = {rts::SyntheticJpegPreview{rts::jpeg_bytes(rts::kJpegRgb96x64), 96, 64, 3}};
     const ItemId item = import(ts::write_dng(dir_, "with.dng", spec));
     ts::Collector<Expected<std::shared_ptr<const CameraPreview>>> camera;
-    const CameraPreviewCallback callback = [&](ItemId, const Expected<std::shared_ptr<const CameraPreview>>& r) {
-        camera.add(r);
-    };
+    const CameraPreviewCallback callback =
+        [&](ItemId, const Expected<std::shared_ptr<const CameraPreview>>& r) { camera.add(r); };
     core::CancellationSource scrolled_away;
     scrolled_away.cancel();
     ASSERT_TRUE(service_->request_camera_preview({item, 0, scrolled_away.token()}, callback));
@@ -517,9 +518,11 @@ TEST_F(PreviewEngineTest, CameraPreviewsAreNotHeldUpByBackgroundWork) {
         ASSERT_TRUE(h);
         background.push_back(*h);
     }
-    const std::uint32_t background_threads = options.workers - options.reserved_interactive - options.reserved_quick;
+    const std::uint32_t background_threads =
+        options.workers - options.reserved_interactive - options.reserved_quick;
     const auto deadline = std::chrono::steady_clock::now() + ts::kWaitTimeout;
-    while (executor_->stats().running_background < background_threads && std::chrono::steady_clock::now() < deadline) {
+    while (executor_->stats().running_background < background_threads &&
+           std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ASSERT_EQ(executor_->stats().running_background, background_threads);
@@ -529,10 +532,75 @@ TEST_F(PreviewEngineTest, CameraPreviewsAreNotHeldUpByBackgroundWork) {
         {item, 0}, [&](ItemId, const Expected<std::shared_ptr<const CameraPreview>>& r) { camera.add(r); }));
     ASSERT_TRUE(camera.wait_for(1));
     ASSERT_TRUE(camera.values()[0]) << camera.values()[0].error().describe();
-    EXPECT_EQ(executor_->stats().queued_background, options.workers + 2 - background_threads);  // still waiting
+    EXPECT_EQ(executor_->stats().queued_background,
+              options.workers + 2 - background_threads);  // still waiting
     hold->open();
     for (const TaskHandle& h : background) {
         h.wait();
+    }
+}
+
+// The on-disk thumbnail cache (W4): a camera preview of a hashed item is stored once read from the
+// file and later served without the file (a restart, a missing card); unhashed items and larger
+// requests use the file.
+TEST(PreviewDiskCache, ACachedCameraThumbnailNeedsNoSourceFile) {
+    rts::ScratchDir dir;
+    auto registry = ts::default_registry();
+    ts::CatalogFixture fixture = ts::CatalogFixture::open(dir.path() / L"data\\lucent.catalog");
+    ASSERT_NE(fixture.library, nullptr);
+    const auto path = ts::write_dng(dir, L"in\\with.dng", ts::dng_with_preview(6));
+    auto report = import_sources(*fixture.library, *registry, ImportRequest{.files = {path}});
+    ASSERT_TRUE(report);
+    ASSERT_EQ(report->added.size(), 1u);
+    const ItemId id = report->added[0];
+    auto hashed = core::hash_file(path, {});
+    ASSERT_TRUE(hashed);
+    ASSERT_TRUE(fixture.library->set_content_hash(id, hashed->digest, hashed->identity));
+
+    auto opened = ThumbnailCache::open(ThumbnailCacheOptions{dir.path() / L"cache\\thumbnails"});
+    ASSERT_TRUE(opened);
+    const std::shared_ptr<ThumbnailCache> cache(std::move(*opened));
+    auto executor = TaskExecutor::create(ExecutorOptions{});
+    ASSERT_TRUE(executor);
+    PreviewServiceOptions options;
+    options.thumbnails = cache;
+
+    using Result = Expected<std::shared_ptr<const CameraPreview>>;
+    std::vector<std::byte> from_file;
+    {
+        PreviewService service(*fixture.library, **executor, nullptr, options);
+        ts::Collector<Result> camera;
+        ASSERT_TRUE(
+            service.request_camera_preview({id, 512}, [&](ItemId, const Result& r) { camera.add(r); }));
+        ASSERT_TRUE(camera.wait_for(1));
+        const Result first = camera.values().front();
+        ASSERT_TRUE(first) << first.error().describe();
+        EXPECT_FALSE((*first)->from_disk_cache);
+        ASSERT_TRUE((*first)->embedded.preview);
+        from_file = (*first)->embedded.preview->bytes;
+    }
+    ASSERT_TRUE(cache->find(camera_thumbnail_key(hashed->digest, 0)));
+
+    std::filesystem::remove(path);
+    {
+        PreviewService service(*fixture.library, **executor, nullptr, options);  // empty memory caches
+        ts::Collector<Result> camera;
+        const CameraPreviewCallback callback = [&](ItemId, const Result& r) { camera.add(r); };
+        ASSERT_TRUE(service.request_camera_preview({id, 768}, callback));
+        ASSERT_TRUE(camera.wait_for(1));
+        ASSERT_TRUE(service.request_camera_preview({id, 0}, callback));  // the largest: from the file
+        ASSERT_TRUE(camera.wait_for(2));
+        const auto values = camera.values();
+        ASSERT_TRUE(values[0]) << values[0].error().describe();
+        const CameraPreview& cached = **values[0];
+        EXPECT_TRUE(cached.from_disk_cache);
+        ASSERT_TRUE(cached.embedded.preview);
+        EXPECT_EQ(cached.embedded.preview->bytes, from_file);
+        EXPECT_EQ(cached.embedded.preview->width, 96);
+        EXPECT_EQ(cached.embedded.preview->height, 64);
+        EXPECT_EQ(cached.embedded.preview->orientation, image::Orientation::Rotate90Cw);
+        ASSERT_FALSE(values[1]);
+        EXPECT_EQ(values[1].error().code, ErrorCode::NotFound);
     }
 }
 

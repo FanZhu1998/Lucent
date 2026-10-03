@@ -124,5 +124,27 @@ TEST(Presentation, RenderLabelNamesTheRenderingAndItsTime) {
     EXPECT_EQ(render_label(info, locale), QStringLiteral("Neutral v0 (provisional) · rendered in 0.95 s"));
 }
 
+TEST(Presentation, SourceBadgesAreOrderedByUrgency) {
+    using namespace presentation;
+    const ItemFlags all = flag_bit(ItemFlag::RemovableSource) | flag_bit(ItemFlag::DuplicateContent) |
+                          flag_bit(ItemFlag::ChangedSource) | flag_bit(ItemFlag::MissingSource) |
+                          flag_bit(ItemFlag::ReviewRecommended);
+    EXPECT_EQ(flag_keys(all), (QStringList{QStringLiteral("missing"), QStringLiteral("changed"),
+                                           QStringLiteral("duplicate"), QStringLiteral("removable")}));
+    EXPECT_TRUE(flag_keys(flag_bit(ItemFlag::ReviewRecommended)).isEmpty());
+    for (const QString& key : flag_keys(all)) {
+        EXPECT_FALSE(flag_badge_label(key).isEmpty()) << key.toStdString();
+        EXPECT_FALSE(flag_badge_detail(key).isEmpty()) << key.toStdString();
+    }
+    EXPECT_TRUE(flag_labels(flag_bit(ItemFlag::ChangedSource)).contains(QStringLiteral("Changed on disk")));
+    EXPECT_EQ(pick_key(PickState::Picked), QStringLiteral("picked"));
+    EXPECT_TRUE(pick_label(PickState::None).isEmpty());
+
+    LibraryItem item;
+    EXPECT_TRUE(source_note(item).isEmpty());
+    item.flags = flag_bit(ItemFlag::MissingSource);
+    EXPECT_TRUE(source_note(item).contains(QStringLiteral("Relink")));
+}
+
 }  // namespace
 }  // namespace lucent::ui::presentation

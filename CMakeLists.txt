@@ -52,6 +52,7 @@ add_subdirectory(src/image)
 add_subdirectory(src/raw)
 add_subdirectory(src/engine)
 add_subdirectory(src/export)
+add_subdirectory(src/catalog)
 add_subdirectory(src/application)
 
 if(LUCENT_BUILD_TOOLS)

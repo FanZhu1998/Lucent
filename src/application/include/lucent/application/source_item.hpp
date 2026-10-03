@@ -21,6 +21,15 @@
 // The status comes from the probe (metadata stage AfterOpen); a render reports the final
 // interpretation after unpacking in its RenderReport.
 //
+// Source facts (W4, blueprint sections 2 and 7: "File path alone is not image identity"). Besides
+// the probe, an item carries what the library knows about its source file: the content hash
+// (SHA-256 of the version `identity` describes, once it has been hashed in the background), the
+// result of the last presence check (SourceState), the kind of volume it is on (a removable card
+// stays visibly identified), whether it is the user's file referenced in place or a verified copy
+// Lucent made into a library folder, and which other items have the same content. The session
+// library stores these facts as given; the catalog library (catalog_library.hpp) persists them
+// and maintains content_duplicates.
+//
 // All types are plain values: safe to copy and to read concurrently.
 
 #include <compare>
@@ -35,6 +44,8 @@
 
 #include <lucent/core/error.hpp>
 #include <lucent/core/file.hpp>
+#include <lucent/core/hash.hpp>
+#include <lucent/core/storage.hpp>
 #include <lucent/image/geometry.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 
@@ -105,8 +116,9 @@ struct SupportAssessment {
 // What the contact sheet shows about an image, taken from its probe.
 struct ProbeSummary {
     raw::ContainerFormat container = raw::ContainerFormat::Unknown;
-    std::string extension_hint;  // lower case, without the dot
-    std::string decoder;         // adapter id, e.g. "libraw"
+    std::string extension_hint;   // lower case, without the dot
+    std::string decoder;          // adapter id, e.g. "libraw"
+    std::string decoder_version;  // version of the decoder library, e.g. "0.22.2-Release"
     // The decoder's normalised maker and model when it has them, otherwise as recorded.
     std::string camera_make;
     std::string camera_model;
@@ -142,6 +154,25 @@ struct ItemFlags {
     friend bool operator==(const ItemFlags&, const ItemFlags&) = default;
 };
 
+// Result of the last check of an item's source file. Persisted values (the catalog stores them as
+// "present", "missing", "changed"); append only.
+enum class SourceState : std::uint8_t {
+    Present = 1,  // the file at `path` had the item's identity when it was last checked or imported
+    Missing = 2,  // nothing was found at `path`: the item stays listed and can be relinked
+    Changed = 3,  // another version of the file is at `path`: the probe is stale until it is re-read
+};
+
+[[nodiscard]] std::string_view to_string(SourceState state) noexcept;  // "present", "missing", "changed"
+
+// How the source entered the library (blueprint section 2). Persisted values ("referenced",
+// "copied"); append only.
+enum class ImportMode : std::uint8_t {
+    Referenced = 1,  // the user's file, used where it is
+    Copied = 2,      // a verified copy Lucent made into a library folder; origin_path names the original
+};
+
+[[nodiscard]] std::string_view to_string(ImportMode mode) noexcept;  // "referenced", "copied"
+
 struct SourceItem {
     ItemId id;  // assigned by the library; ignored by Library::add
     // Canonical absolute path (links resolved, on-disk spelling); see import.hpp.
@@ -156,6 +187,27 @@ struct SourceItem {
     ItemFlags flags;
     // Assigned by the library: 1 when added, incremented by every change of the item.
     std::uint64_t revision = 0;
+
+    // ---- The source file (see the file comment) ----------------------------------------------
+    // Set by the library: Present when added or refreshed, then as background checks find it.
+    SourceState source_state = SourceState::Present;
+    // Kind of volume `path` was on when the file was last observed (core::storage_kind()).
+    core::StorageKind storage = core::StorageKind::Unknown;
+    ImportMode import_mode = ImportMode::Referenced;
+    // Copied items: the original the copy was made from (never written by Lucent); std::nullopt
+    // for Referenced items.
+    std::optional<std::filesystem::path> origin_path;
+    // Copied items: the identity of the original while it was copied (core::CopyReceipt::
+    // source_identity), when known. An import of the same original version recognises it as
+    // already copied without reading it (Library::find_copied_from).
+    std::optional<core::FileIdentity> origin_identity;
+    // SHA-256 of the content of the file version `identity` describes, once hashed (a stable read,
+    // core::hash_file). Shared by every item of the file.
+    std::optional<core::Digest256> sha256;
+    // Set by the library (ignored by add()): the other items with the same content hash and the
+    // same subimage, i.e. the same photograph under another file, in id order. Duplicates are
+    // only flagged; they are never merged or removed automatically (blueprint section 2).
+    std::vector<ItemId> content_duplicates;
 };
 
 }  // namespace lucent::app

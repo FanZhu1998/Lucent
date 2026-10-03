@@ -14,6 +14,32 @@ LibraryModel::LibraryModel(LibraryService& service, std::shared_ptr<GenerationRe
     : QAbstractListModel(parent), registry_(std::move(registry)) {
     connect(&service, &LibraryService::items_added, this, &LibraryModel::add_items);
     connect(&service, &LibraryService::item_changed, this, &LibraryModel::update_item);
+    add_items(service.current_items());
+}
+
+namespace {
+
+bool is_missing(const LibraryItem& item) {
+    return has_flag(item.flags, ItemFlag::MissingSource);
+}
+
+}  // namespace
+
+QList<ItemId> LibraryModel::missing_items() const {
+    QList<ItemId> ids;
+    for (const LibraryItem& item : items_) {
+        if (is_missing(item)) {
+            ids << item.id;
+        }
+    }
+    return ids;
+}
+
+void LibraryModel::set_missing(int missing) {
+    if (missing != missing_) {
+        missing_ = missing;
+        emit missingCountChanged();
+    }
 }
 
 int LibraryModel::rowCount(const QModelIndex& parent) const {
@@ -86,6 +112,29 @@ QVariant LibraryModel::data(const QModelIndex& index, int role) const {
         return item->render ? p::render_label(*item->render, locale_) : QString();
     case RenderNotesRole:
         return item->render ? item->render->notes : QStringList();
+    case FlagKeysRole:
+        return p::flag_keys(item->flags);
+    case PickKeyRole:
+        return p::pick_key(item->pick);
+    case PickLabelRole:
+        return p::pick_label(item->pick);
+    case SourceNoteRole:
+        return p::source_note(*item);
+    case OriginPathRole:
+        return item->origin_path;
+    case DuplicatePathsRole:
+        return item->duplicate_paths;
+    case MissingRole:
+        return is_missing(*item);
+    case FlagBadgesRole: {
+        QVariantList badges;
+        for (const QString& key : p::flag_keys(item->flags)) {
+            badges << QVariantMap{{QStringLiteral("key"), key},
+                                  {QStringLiteral("label"), p::flag_badge_label(key)},
+                                  {QStringLiteral("detail"), p::flag_badge_detail(key)}};
+        }
+        return badges;
+    }
     default:
         return {};
     }
@@ -122,6 +171,14 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {RenderNotesRole, "renderNotes"},
         {ProcessingKeyRole, "processingKey"},
         {RenderIncompleteRole, "renderIncomplete"},
+        {FlagKeysRole, "flagKeys"},
+        {PickKeyRole, "pickKey"},
+        {PickLabelRole, "pickLabel"},
+        {SourceNoteRole, "sourceNote"},
+        {OriginPathRole, "originPath"},
+        {DuplicatePathsRole, "duplicatePaths"},
+        {MissingRole, "missing"},
+        {FlagBadgesRole, "flagBadges"},
     };
 }
 
@@ -178,13 +235,16 @@ void LibraryModel::add_items(const QList<LibraryItem>& items) {
         record_generations(item);
     }
     const int first = count();
+    int missing = missing_;
     beginInsertRows({}, first, first + static_cast<int>(fresh.size()) - 1);
     for (const LibraryItem& item : fresh) {
         rows_.insert(item.id, count());
         items_.push_back(item);
+        missing += is_missing(item) ? 1 : 0;
     }
     endInsertRows();
     emit countChanged();
+    set_missing(missing);
 }
 
 void LibraryModel::update_item(const LibraryItem& item) {
@@ -193,9 +253,12 @@ void LibraryModel::update_item(const LibraryItem& item) {
         return;  // not (yet) in the library; nothing to show
     }
     record_generations(item);
-    items_[static_cast<std::size_t>(*row)] = item;
+    LibraryItem& slot = items_[static_cast<std::size_t>(*row)];
+    const int missing = missing_ - (is_missing(slot) ? 1 : 0) + (is_missing(item) ? 1 : 0);
+    slot = item;
     const QModelIndex changed = index(*row);
     emit dataChanged(changed, changed);
+    set_missing(missing);
 }
 
 }  // namespace lucent::ui

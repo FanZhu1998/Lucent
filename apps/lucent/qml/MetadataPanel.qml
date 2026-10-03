@@ -1,13 +1,19 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import Lucent
 
-// Details of the photo shown in the Edit view: file, camera, capture and exposure facts, and its
-// compatibility state with the reason when there is one (blueprint section 3).
+// Details of the photo shown in the Edit view: file, camera, capture and exposure facts, its
+// compatibility state with the reason when there is one (blueprint section 3), the state of its
+// file (missing, changed, removable, a verified copy, content duplicates) with Relink for a
+// missing file, and the photographer's pick (blueprint section 2: duplicates are flagged, the
+// choice is kept per photo).
 ColumnLayout {
     id: panel
 
     required property CurrentItem item
+    required property AppController controller
 
     readonly property var rows: [
         { label: qsTr("File"), value: item.fileName, path: true },
@@ -58,6 +64,75 @@ ColumnLayout {
         font.pixelSize: Theme.fontSmall
         wrapMode: Text.Wrap
         Layout.fillWidth: true
+    }
+
+    // The file: badges and what they mean.
+    Flow {
+        visible: panel.item.valid && panel.item.flagBadges.length > 0
+        spacing: 6
+        Layout.fillWidth: true
+
+        Repeater {
+            model: panel.item.flagBadges
+
+            delegate: Badge {
+                required property var modelData
+
+                text: modelData.label
+                dotColor: Theme.sourceColor(modelData.key)
+                detail: modelData.detail
+                color: Theme.surfaceRaised
+            }
+        }
+    }
+
+    Text {
+        objectName: "sourceNote"
+        visible: panel.item.valid && panel.item.sourceNote.length > 0
+        text: panel.item.sourceNote
+        color: panel.item.missing ? Theme.unsupported : Theme.textSecondary
+        font.pixelSize: Theme.fontSmall
+        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+        Layout.fillWidth: true
+    }
+
+    StyledButton {
+        objectName: "relinkCurrentButton"
+        visible: panel.item.valid && panel.item.missing && panel.controller.canRelink
+        text: qsTr("Relink…")
+        onClicked: relinkPicker.open()
+    }
+
+    // The pick: kept per photo, also for content duplicates.
+    RowLayout {
+        visible: panel.item.valid
+        spacing: 4
+
+        // Not checkable: a click asks the library, and the buttons follow the item when it changes.
+        StyledToolButton {
+            objectName: "pickButton"
+            text: qsTr("Pick")
+            checkable: false
+            checked: panel.item.pickKey === "picked"
+            onClicked: panel.controller.setCurrentPick(panel.item.pickKey === "picked" ? "none" : "picked")
+            Accessible.name: qsTr("Pick this photo")
+        }
+
+        StyledToolButton {
+            objectName: "rejectButton"
+            text: qsTr("Reject")
+            checkable: false
+            checked: panel.item.pickKey === "rejected"
+            onClicked: panel.controller.setCurrentPick(panel.item.pickKey === "rejected" ? "none" : "rejected")
+            Accessible.name: qsTr("Reject this photo")
+        }
+    }
+
+    FolderDialog {
+        id: relinkPicker
+
+        title: qsTr("Find this photo in a folder")
+        onAccepted: panel.controller.relinkCurrent(selectedFolder)
     }
 
     Repeater {

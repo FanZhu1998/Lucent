@@ -49,6 +49,21 @@ bool is_transient_win32_error(std::uint32_t win32_code) noexcept {
     return win32_code == ERROR_SHARING_VIOLATION || win32_code == ERROR_LOCK_VIOLATION;
 }
 
+bool is_volume_absent_win32_error(std::uint32_t win32_code) noexcept {
+    switch (static_cast<DWORD>(win32_code)) {
+        case ERROR_NOT_READY:
+        case ERROR_NO_MEDIA_IN_DRIVE:
+        case ERROR_DEV_NOT_EXIST:
+        case ERROR_DEVICE_NOT_CONNECTED:
+        case ERROR_DEVICE_REMOVED:
+        case ERROR_NO_SUCH_DEVICE:
+        case ERROR_UNRECOGNIZED_VOLUME:
+            return true;
+        default:
+            return false;
+    }
+}
+
 std::string win32_message(std::uint32_t win32_code) {
     struct LocalFreeDeleter {
         void operator()(wchar_t* buffer) const noexcept { ::LocalFree(buffer); }

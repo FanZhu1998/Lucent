@@ -49,6 +49,19 @@ TEST(Win32Error, OnlySharingAndLockViolationsAreTransient) {
     EXPECT_FALSE(is_transient_win32_error(ERROR_SUCCESS));
 }
 
+TEST(Win32Error, AbsentVolumesAreIoErrorsThatPresenceChecksRecognise) {
+    // An empty card-reader slot, a disconnected device, an unformatted volume.
+    for (const DWORD code : {ERROR_NOT_READY, ERROR_NO_MEDIA_IN_DRIVE, ERROR_DEV_NOT_EXIST, ERROR_DEVICE_NOT_CONNECTED,
+                             ERROR_DEVICE_REMOVED, ERROR_NO_SUCH_DEVICE, ERROR_UNRECOGNIZED_VOLUME}) {
+        EXPECT_TRUE(is_volume_absent_win32_error(code)) << code;
+        EXPECT_EQ(error_code_from_win32(code), ErrorCode::IoError) << code;
+    }
+    for (const DWORD code : {ERROR_SUCCESS, ERROR_FILE_NOT_FOUND, ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION,
+                             ERROR_CRC, ERROR_BAD_NETPATH}) {
+        EXPECT_FALSE(is_volume_absent_win32_error(code)) << code;
+    }
+}
+
 TEST(Win32Error, SystemMessageIsTrimmedText) {
     // The text is localised on non-English systems, so only its shape is checked.
     const std::string message = win32_message(ERROR_FILE_NOT_FOUND);

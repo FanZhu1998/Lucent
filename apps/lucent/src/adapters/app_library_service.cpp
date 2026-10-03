@@ -1,6 +1,7 @@
 #include "adapters/app_library_service.hpp"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <algorithm>
 #include <chrono>
@@ -9,6 +10,8 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include <lucent/core/log.hpp>
 
 #include "adapters/conversions.hpp"
 
@@ -24,6 +27,39 @@ QString tr_text(const char* text) {
     return QCoreApplication::translate("lucent::ui::adapters", text);
 }
 
+// The shell's snapshot of `source`, with the paths of its content duplicates looked up in
+// `library` (any thread).
+LibraryItem convert(const app::SourceItem& source, const app::Library& library) {
+    QStringList duplicates;
+    for (const app::ItemId id : source.content_duplicates) {
+        if (std::optional<app::SourceItem> twin = library.find(id)) {
+            duplicates << QDir::toNativeSeparators(to_qstring(twin->path));
+        }
+    }
+    return to_library_item(source, duplicates);
+}
+
+QString describe_library_problem(const Error& error) {
+    switch (error.code) {
+        case ErrorCode::VersionMismatch:
+            return tr_text(
+                "This library was saved by a newer version of Lucent. It is shown read-only; "
+                "changes are not saved.");
+        case ErrorCode::AlreadyExists:
+            return tr_text("The library is open in another Lucent window. Changes made here are not saved.");
+        case ErrorCode::Corrupt:
+            return tr_text(
+                "The library catalog is damaged. Changes made here are not saved; restore a "
+                "catalog backup.");
+        case ErrorCode::Unsupported:
+            return tr_text("The library catalog must be on a local disk. Changes made here are not saved.");
+        default:
+            break;
+    }
+    return tr_text("The library could not be opened (%1). Changes made here are not saved.")
+        .arg(describe_error(error));
+}
+
 }  // namespace
 
 AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* parent)
@@ -31,18 +67,18 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
       backend_(std::move(backend)),
       dispatcher_(std::make_shared<UiDispatcher>(this)) {
     app::Library* library = &backend_->library();
-    // Runs on the thread that committed the change (the import's worker). Snapshots are converted
-    // there; `this` is only used by the posted function, on the UI thread.
+    // Runs on the thread that committed the change (an import, the maintenance service, a pick).
+    // Snapshots are converted there; `this` is only used by the posted function, on the UI thread.
     subscription_ =
         library->subscribe([this, dispatcher = dispatcher_, library](const app::LibraryChange& change) {
             if (change.kind == app::LibraryChangeKind::Removed) {
-                return;  // nothing removes items in W3; the shell has no removal yet
+                return;  // nothing removes items from the shell yet
             }
             QList<LibraryItem> items;
             items.reserve(static_cast<qsizetype>(change.items.size()));
             for (const app::ItemId id : change.items) {
                 if (std::optional<app::SourceItem> source = library->find(id)) {
-                    items << to_library_item(*source);
+                    items << convert(*source, *library);
                 }
             }
             if (items.isEmpty()) {
@@ -59,10 +95,22 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
                 }
             });
         });
+    // The library as loaded (the catalog's items; none for a session library). Changes committed
+    // between the subscription and this snapshot are applied again when their posts arrive, which
+    // is harmless (add_items treats known ids as updates).
+    for (const app::SourceItem& source : library->items()) {
+        LibraryItem item = convert(source, *library);
+        initial_order_.push_back(item.id);
+        items_.insert(item.id, std::move(item));
+    }
+    backend_->set_maintenance_sink([this, dispatcher = dispatcher_](const app::MaintenanceEvent& event) {
+        dispatcher->post([this, event] { on_maintenance(event); });
+    });
 }
 
 AppLibraryService::~AppLibraryService() {
     dispatcher_->close();
+    backend_->set_maintenance_sink({});
     subscription_.reset();
     running_task_.cancel();
 }
@@ -75,12 +123,156 @@ QStringList AppLibraryService::supported_suffixes() const {
     return suffixes;
 }
 
-void AppLibraryService::import_paths(const QStringList& paths, bool include_subfolders) {
-    queue_.push_back(PendingImport{paths, include_subfolders});
+QList<LibraryItem> AppLibraryService::current_items() const {
+    QList<LibraryItem> items;
+    items.reserve(static_cast<qsizetype>(initial_order_.size()));
+    for (const ItemId id : initial_order_) {
+        if (const LibraryItem* found = item(id)) {
+            items << *found;
+        }
+    }
+    return items;
+}
+
+void AppLibraryService::start() {
+    if (started_) {
+        return;
+    }
+    started_ = true;
+    app::MaintenanceService* maintenance = backend_->maintenance();
+    if (maintenance == nullptr) {
+        return;
+    }
+    if (Status queued = maintenance->check_all(); queued) {
+        verifying_ = true;
+        update_busy();
+    } else {
+        core::log_warn("ui.library", "the library check could not start: {}", queued.error().describe());
+    }
+}
+
+void AppLibraryService::recheck_sources() {
+    app::MaintenanceService* maintenance = backend_->maintenance();
+    if (!started_ || maintenance == nullptr) {
+        return;  // start() checks everything anyway
+    }
+    if (Status queued = maintenance->check_all(); queued) {
+        verifying_ = true;
+        update_busy();
+    } else {
+        core::log_warn("ui.library", "the library check could not start: {}", queued.error().describe());
+    }
+}
+
+void AppLibraryService::start_import(const QStringList& paths, const ImportOptions& options) {
+    queue_.push_back(PendingImport{paths, options});
     ++active_imports_;
     update_busy();
     emit import_started(paths);
     start_next_import();
+}
+
+bool AppLibraryService::can_relink() const {
+    return backend_->maintenance() != nullptr;
+}
+
+void AppLibraryService::relink(const QString& folder, const QList<ItemId>& items) {
+    app::MaintenanceService* maintenance = backend_->maintenance();
+    if (maintenance == nullptr) {
+        LibraryService::relink(folder, items);
+        return;
+    }
+    app::RelinkRequest request;
+    request.folder = to_path(folder);
+    request.include_subfolders = true;
+    for (const ItemId id : items) {
+        request.items.push_back(app::ItemId{id});
+    }
+    ++pending_operations_;
+    update_busy();
+    const Status queued = maintenance->relink(
+        std::move(request),
+        [this, dispatcher = dispatcher_, folder](const Expected<app::RelinkReport>& report) {
+            dispatcher->post([this, summary = summarize_relink(folder, report)] {
+                operation_finished();
+                emit relink_finished(summary);
+            });
+        });
+    if (!queued) {
+        dispatcher_->post([this, summary = summarize_relink(folder, Unexpected(queued.error()))] {
+            operation_finished();
+            emit relink_finished(summary);
+        });
+    }
+}
+
+void AppLibraryService::set_pick(ItemId item_id, PickState pick) {
+    const LibraryItem* current = item(item_id);
+    if (current == nullptr || current->pick == pick) {
+        return;
+    }
+    app::Library* library = &backend_->library();
+    const app::ItemFlags flags{static_cast<app::PickFlag>(pick), static_cast<std::uint8_t>(current->rating)};
+    // A catalog write: never on the UI thread. The library's Updated change brings item_changed.
+    auto submitted =
+        backend_->executor().submit(app::Lane::Quick, [library, item_id, flags](app::TaskContext&) {
+            if (Status written = library->set_flags(app::ItemId{item_id}, flags); !written) {
+                core::log_warn("ui.library", "could not save the pick of item {}: {}", item_id,
+                               written.error().describe());
+            }
+        });
+    if (!submitted) {
+        core::log_warn("ui.library", "could not save the pick of item {}: {}", item_id,
+                       submitted.error().describe());
+    }
+}
+
+bool AppLibraryService::can_back_up() const {
+    return backend_->catalog() != nullptr && !backend_->catalog()->is_read_only();
+}
+
+void AppLibraryService::back_up_catalog() {
+    if (!can_back_up()) {
+        LibraryService::back_up_catalog();
+        return;
+    }
+    std::shared_ptr<catalog::Catalog> catalog = backend_->catalog();
+    ++pending_operations_;
+    update_busy();
+    // The catalog is kept alive by the Backend until the executor has run every task.
+    auto task = [catalog = catalog.get(), dispatcher = dispatcher_, this](app::TaskContext&) {
+        auto backup = catalog->create_backup();
+        BackupResult result;
+        if (backup) {
+            result.ok = true;
+            result.path = QDir::toNativeSeparators(to_qstring(backup->path));
+        } else {
+            core::log_warn("ui.library", "the catalog backup failed: {}", backup.error().describe());
+            result.message = describe_error(backup.error());
+        }
+        dispatcher->post([this, result] {
+            operation_finished();
+            emit backup_finished(result);
+        });
+    };
+    if (auto submitted = backend_->executor().submit(app::Lane::Background, std::move(task)); !submitted) {
+        BackupResult result;
+        result.message = describe_error(submitted.error());
+        dispatcher_->post([this, result] {
+            operation_finished();
+            emit backup_finished(result);
+        });
+    }
+}
+
+QString AppLibraryService::backup_folder() const {
+    const std::shared_ptr<catalog::Catalog>& catalog = backend_->catalog();
+    return catalog ? QDir::toNativeSeparators(to_qstring(catalog->backup_directory())) : QString();
+}
+
+QString AppLibraryService::library_notice() const {
+    const std::optional<Error>& problem = backend_->library_problem();
+    return problem ? describe_library_problem(*problem) : QString();
 }
 
 RenderEventSink AppLibraryService::render_event_sink() {
@@ -106,22 +298,28 @@ void AppLibraryService::start_next_import() {
     app::Library* library = &backend_->library();
     const raw::DecoderRegistry* registry = &backend_->registry();
     std::vector<std::filesystem::path> outputs = backend_->output_folders().snapshot();
+    std::vector<std::filesystem::path> own = backend_->lucent_directories();
     // The task uses the library and the registry by reference: the Backend keeps both alive until
     // its executor has run every task. `this` is only used by posted functions (UI thread).
-    auto task = [this, request, library, registry, outputs,
+    auto task = [this, request, library, registry, outputs, own,
                  dispatcher = dispatcher_](app::TaskContext& context) {
         app::ImportRequest import;
         for (const QString& path : request.paths) {
             std::filesystem::path native = to_path(path);
             std::error_code error;
             if (std::filesystem::is_directory(native, error)) {
-                import.folders.push_back(app::ImportFolder{std::move(native), request.include_subfolders});
+                import.folders.push_back(
+                    app::ImportFolder{std::move(native), request.options.include_subfolders});
             } else {
                 import.files.push_back(std::move(native));  // import reports it when it is missing
             }
         }
         import.output_directories = outputs;
+        import.lucent_directories = own;
         import.batch_size = kImportBatchSize;
+        if (!request.options.copy_to.isEmpty()) {
+            import.copy_to = to_path(request.options.copy_to);
+        }
 
         std::chrono::steady_clock::time_point last_post{};
         std::optional<app::ImportPhase> last_phase;
@@ -157,6 +355,7 @@ void AppLibraryService::finish_import(const PendingImport& request,
     ImportSummary summary;
     if (report) {
         summary = summarize_import(request.paths, *report);
+        summary.copy_to = QDir::toNativeSeparators(request.options.copy_to);
         std::vector<app::ItemId> listed = report->added;
         listed.insert(listed.end(), report->refreshed.begin(), report->refreshed.end());
         for (const app::ItemId id : listed) {
@@ -170,6 +369,9 @@ void AppLibraryService::finish_import(const PendingImport& request,
             summary.notes << tr_text("%1 — %2: %3")
                                  .arg(QFileInfo(added->file_path).fileName(), status, added->support_detail);
         }
+        // Files found again (back, or moved) may never have been hashed; hashed ones are skipped.
+        listed.insert(listed.end(), report->restored.begin(), report->restored.end());
+        queue_hashing(listed);
     } else {
         summary.sources = request.paths;
         summary.failed = static_cast<int>(request.paths.size());
@@ -178,6 +380,54 @@ void AppLibraryService::finish_import(const PendingImport& request,
     --active_imports_;
     emit import_finished(summary);
     start_next_import();
+    update_busy();
+}
+
+void AppLibraryService::queue_hashing(const std::vector<app::ItemId>& items) {
+    app::MaintenanceService* maintenance = backend_->maintenance();
+    if (maintenance == nullptr || items.empty()) {
+        return;
+    }
+    if (Status queued = maintenance->hash(items); queued) {
+        verifying_ = true;
+        update_busy();
+    } else {
+        core::log_warn("ui.library", "hashing could not be queued: {}", queued.error().describe());
+    }
+}
+
+void AppLibraryService::on_maintenance(const app::MaintenanceEvent& event) {
+    if (event.kind == app::MaintenanceEvent::Kind::Idle) {
+        verifying_ = false;
+        emit verification_progress(VerificationProgress{false, static_cast<int>(event.hash_items_done),
+                                                        static_cast<int>(event.hash_items_total)});
+        update_busy();
+        return;
+    }
+    const app::MaintenanceProgress& progress = event.progress;
+    VerificationProgress ui;
+    ui.active = true;
+    switch (progress.phase) {
+        case app::MaintenancePhase::Checking:
+        case app::MaintenancePhase::Reprobing:
+            ui.done = static_cast<int>(progress.items_done);
+            ui.total = static_cast<int>(progress.items_total);
+            break;
+        case app::MaintenancePhase::Hashing:
+            ui.done = static_cast<int>(event.hash_items_done);
+            ui.total = static_cast<int>(event.hash_items_total);
+            break;
+        case app::MaintenancePhase::Scanning:
+        case app::MaintenancePhase::Matching:
+            return;  // a relink: reported by relink_finished
+    }
+    verifying_ = true;
+    emit verification_progress(ui);
+    update_busy();
+}
+
+void AppLibraryService::operation_finished() {
+    pending_operations_ = std::max(0, pending_operations_ - 1);
     update_busy();
 }
 

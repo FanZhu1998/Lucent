@@ -45,19 +45,34 @@ public:
     struct ImportRequest {
         QStringList paths;
         bool include_subfolders = false;
+        QString copy_to;
     };
 
     [[nodiscard]] QStringList supported_suffixes() const override { return {"arw", "cr3"}; }
-    void import_paths(const QStringList& paths, bool include_subfolders) override {
-        requests.push_back({paths, include_subfolders});
+    void start_import(const QStringList& paths, const ImportOptions& options) override {
+        requests.push_back({paths, options.include_subfolders, options.copy_to});
     }
+    [[nodiscard]] QList<LibraryItem> current_items() const override { return initial; }
+    void start() override { ++starts; }
+    [[nodiscard]] bool can_relink() const override { return relink_supported; }
+    void relink(const QString& folder, const QList<ItemId>& items) override {
+        relinks.push_back({folder, items});
+    }
+    void set_pick(ItemId item, PickState pick) override { picks.push_back({item, pick}); }
+    [[nodiscard]] bool can_back_up() const override { return backup_supported; }
+    void back_up_catalog() override { ++backups; }
+    [[nodiscard]] QString backup_folder() const override { return backup_location; }
+    [[nodiscard]] QString library_notice() const override { return notice; }
     [[nodiscard]] bool is_importing() const override { return importing; }
     [[nodiscard]] bool is_busy() const override { return busy; }
 
-    void start(const QStringList& paths) {
+    void begin(const QStringList& paths) {
         importing = true;
         emit import_started(paths);
     }
+    void finish_relink(const RelinkSummary& summary) { emit relink_finished(summary); }
+    void finish_backup(const BackupResult& result) { emit backup_finished(result); }
+    void verify(const VerificationProgress& progress) { emit verification_progress(progress); }
     void add(const QList<LibraryItem>& items) { emit items_added(items); }
     void change(const LibraryItem& item) { emit item_changed(item); }
     void finish(const ImportSummary& summary) {
@@ -72,6 +87,16 @@ public:
     std::vector<ImportRequest> requests;
     bool importing = false;
     bool busy = false;
+    // W4 operations.
+    QList<LibraryItem> initial;
+    int starts = 0;
+    bool relink_supported = true;
+    std::vector<std::pair<QString, QList<ItemId>>> relinks;
+    std::vector<std::pair<ItemId, PickState>> picks;
+    bool backup_supported = true;
+    int backups = 0;
+    QString backup_location;
+    QString notice;
 };
 
 // An ExportService that records requests and emits what the test asks.

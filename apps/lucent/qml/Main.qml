@@ -87,8 +87,8 @@ ApplicationWindow {
         }
     }
 
-    // Drag and drop of photos and folders from Explorer (blueprint section 2). Folders are scanned
-    // recursively when Include subfolders is set.
+    // Drag and drop of photos and folders from Explorer (blueprint section 2). The Import dialog
+    // then offers Include subfolders and Copy into library folder.
     DropArea {
         id: dropArea
 
@@ -97,7 +97,7 @@ ApplicationWindow {
         keys: ["text/uri-list"]
         onEntered: drag => drag.accepted = drag.hasUrls
         onDropped: drop => {
-            if (drop.hasUrls && window.controller.addDropped(drop.urls)) {
+            if (drop.hasUrls && window.controller.requestImport(drop.urls)) {
                 drop.acceptProposedAction()
                 window.controller.showView(AppController.Library)
             }
@@ -113,8 +113,7 @@ ApplicationWindow {
 
         Text {
             anchors.centerIn: parent
-            text: window.controller.includeSubfolders ? qsTr("Drop photos or folders to add them (with subfolders)")
-                                                      : qsTr("Drop photos or folders to add them")
+            text: qsTr("Drop photos or folders to add them")
             color: Theme.textPrimary
             font.pixelSize: Theme.fontHeading
         }
@@ -160,18 +159,24 @@ ApplicationWindow {
         title: qsTr("Add photos")
         fileMode: FileDialog.OpenFiles
         nameFilters: window.controller.photoNameFilters
-        onAccepted: window.controller.addFiles(selectedFiles)
+        onAccepted: window.controller.requestImport(selectedFiles)
     }
 
     FolderDialog {
         id: folderDialog
 
-        title: window.controller.includeSubfolders ? qsTr("Add folder and its subfolders") : qsTr("Add folder")
-        onAccepted: window.controller.addFolder(selectedFolder)
+        title: qsTr("Add folder")
+        onAccepted: window.controller.requestImport([selectedFolder])
     }
 
     ExportDialog {
         id: exportDialog
+
+        controller: window.controller
+    }
+
+    ImportDialog {
+        id: importDialog
 
         controller: window.controller
     }
