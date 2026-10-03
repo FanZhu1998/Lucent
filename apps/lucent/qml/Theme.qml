@@ -89,6 +89,21 @@ QtObject {
         return textTertiary
     }
 
+    // Badges of an item's file (presentation::flag_keys).
+    function sourceColor(key) {
+        switch (key) {
+        case "missing":
+            return unsupported
+        case "changed":
+            return attention
+        case "duplicate":
+            return accent
+        case "removable":
+            return unverified
+        }
+        return textTertiary
+    }
+
     function jobStateColor(key) {
         switch (key) {
         case "completed":

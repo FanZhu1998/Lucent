@@ -2,11 +2,13 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import Lucent
 
 // Library: the contact sheet (blueprint section 2, "Import and organize"). Arrow keys move the
-// selection, Enter opens the selected photo in Edit, Home/End jump to the first/last photo.
+// selection, Enter opens the selected photo in Edit, Home/End jump to the first/last photo. The
+// toolbar offers Relink when photos are missing, and the Library menu backs up the catalog.
 FocusScope {
     id: root
 
@@ -56,18 +58,62 @@ FocusScope {
                     font.pixelSize: Theme.fontBody
                 }
 
+                Label {
+                    objectName: "missingSummary"
+                    visible: root.controller.library.missingCount > 0
+                    text: root.controller.library.missingCount === 1
+                          ? qsTr("· 1 missing")
+                          : qsTr("· %1 missing").arg(root.controller.library.missingCount)
+                    color: Theme.unsupported
+                    font.pixelSize: Theme.fontBody
+                }
+
                 Item {
                     Layout.fillWidth: true
                 }
 
-                StyledCheckBox {
-                    objectName: "toolbarIncludeSubfolders"
-                    text: qsTr("Include subfolders")
-                    checked: root.controller.includeSubfolders
-                    onToggled: root.controller.includeSubfolders = checked
+                StyledButton {
+                    objectName: "relinkMissingButton"
+                    visible: root.controller.canRelink && root.controller.library.missingCount > 0
+                    text: qsTr("Relink…")
+                    onClicked: relinkPicker.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Find missing photos in another folder. A file is relinked only when its content matches.")
+                    ToolTip.delay: 600
                 }
 
                 StyledButton {
+                    id: libraryMenuButton
+
+                    objectName: "libraryMenuButton"
+                    visible: root.controller.canBackUp
+                    text: qsTr("Library ▾")
+                    onClicked: libraryMenu.popup(libraryMenuButton, 0, libraryMenuButton.height)
+
+                    Menu {
+                        id: libraryMenu
+
+                        objectName: "libraryMenu"
+
+                        MenuItem {
+                            objectName: "backUpCatalogItem"
+                            text: qsTr("Back up catalog")
+                            onTriggered: root.controller.backUpCatalog()
+                        }
+                        MenuItem {
+                            text: qsTr("Open backup folder")
+                            onTriggered: root.controller.openBackupFolder()
+                        }
+                        MenuItem {
+                            enabled: root.controller.canRelink && root.controller.library.missingCount > 0
+                            text: qsTr("Relink missing photos…")
+                            onTriggered: relinkPicker.open()
+                        }
+                    }
+                }
+
+                StyledButton {
+                    objectName: "toolbarAddFolder"
                     text: qsTr("Add folder…")
                     onClicked: root.addFolderRequested()
                 }
@@ -159,6 +205,13 @@ FocusScope {
                     if (grid.currentIndex !== root.controller.currentIndex)
                         grid.currentIndex = root.controller.currentIndex
                 }
+            }
+
+            FolderDialog {
+                id: relinkPicker
+
+                title: qsTr("Find missing photos in a folder")
+                onAccepted: root.controller.relinkMissing(selectedFolder)
             }
 
             LibraryEmptyState {

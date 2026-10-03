@@ -36,6 +36,9 @@
 //                              3 when the window did not settle in time (the screenshot is still
 //                              saved).
 //   --settle-timeout <ms>      Longest wait for the window to settle (default 60000).
+//   --data-root <folder>       Use <folder> instead of %LOCALAPPDATA%\Lucent for the catalog
+//                              (<folder>\data) and the caches (<folder>\cache): screenshots and
+//                              smoke tests without touching the user's library. Created if needed.
 //
 // Progress lines ("lucent: ...") go to stderr, which a WIN32 program only has when the caller
 // redirects it (for example `Lucent.exe --screenshot a.png 2> log.txt`). Set
@@ -73,6 +76,7 @@ struct DeveloperOptions {
     QString screenshot_path;
     bool quit_after_screenshot = false;
     int settle_timeout_ms = 60000;
+    QString data_root;  // --data-root; empty: the user's own folders
 };
 
 struct CommandLine {

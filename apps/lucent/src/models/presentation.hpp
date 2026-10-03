@@ -66,6 +66,24 @@ namespace lucent::ui::presentation {
 // One label per set flag, in bit order.
 [[nodiscard]] QStringList flag_labels(ItemFlags flags);
 
+// Stable keys of the source badges for styling in QML, most urgent first: "missing", "changed",
+// "duplicate", "removable" (ReviewRecommended has no badge).
+[[nodiscard]] QStringList flag_keys(ItemFlags flags);
+// Compact badge text for a flag key: "Missing", "Changed", "Duplicate", "Removable".
+[[nodiscard]] QString flag_badge_label(const QString& key);
+// The tooltip of a badge: what the state means and what to do about it.
+[[nodiscard]] QString flag_badge_detail(const QString& key);
+
+// "none", "picked", "rejected".
+[[nodiscard]] QString pick_key(PickState pick);
+// "Picked", "Rejected"; empty for None.
+[[nodiscard]] QString pick_label(PickState pick);
+
+// One or two sentences about the item's file for the details panel: missing or changed on disk,
+// on removable media, a verified copy and its original, content duplicates. Empty when there is
+// nothing to say.
+[[nodiscard]] QString source_note(const LibraryItem& item);
+
 // A sentence for screen readers describing a contact-sheet cell.
 [[nodiscard]] QString accessible_label(const LibraryItem& item, const QLocale& locale);
 

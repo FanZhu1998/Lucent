@@ -49,6 +49,12 @@ class CurrentItem : public QObject {
     Q_PROPERTY(QVariant renderInfo READ render_info NOTIFY changed FINAL)
     Q_PROPERTY(QString renderLabel READ render_label NOTIFY changed FINAL)
     Q_PROPERTY(QStringList renderNotes READ render_notes NOTIFY changed FINAL)
+    // W4: the file and the photographer's pick.
+    Q_PROPERTY(QStringList flagKeys READ flag_keys NOTIFY changed FINAL)
+    Q_PROPERTY(QVariantList flagBadges READ flag_badges NOTIFY changed FINAL)
+    Q_PROPERTY(QString pickKey READ pick_key NOTIFY changed FINAL)
+    Q_PROPERTY(QString sourceNote READ source_note NOTIFY changed FINAL)
+    Q_PROPERTY(bool missing READ missing NOTIFY changed FINAL)
 
 public:
     // `model` must outlive this object.
@@ -91,6 +97,11 @@ public:
     [[nodiscard]] QStringList render_notes() const {
         return value(LibraryModel::RenderNotesRole).toStringList();
     }
+    [[nodiscard]] QStringList flag_keys() const { return value(LibraryModel::FlagKeysRole).toStringList(); }
+    [[nodiscard]] QVariantList flag_badges() const { return value(LibraryModel::FlagBadgesRole).toList(); }
+    [[nodiscard]] QString pick_key() const { return text(LibraryModel::PickKeyRole); }
+    [[nodiscard]] QString source_note() const { return text(LibraryModel::SourceNoteRole); }
+    [[nodiscard]] bool missing() const { return value(LibraryModel::MissingRole).toBool(); }
 
 signals:
     void changed();

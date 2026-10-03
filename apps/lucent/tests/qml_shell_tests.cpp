@@ -195,8 +195,8 @@ TEST_F(QmlShellTest, KeyboardMovesThroughLibraryEditAndExports) {
     QTest::keyClick(window, Qt::Key_Escape);
     EXPECT_EQ(controller->current_view(), AppController::Library);
 
-    // Tab reaches the contact sheet again from the toolbar (check box, two buttons, then the grid).
-    child<QQuickItem>("toolbarIncludeSubfolders")->forceActiveFocus(Qt::TabFocusReason);
+    // Tab reaches the contact sheet again from the toolbar (Add folder, Add photos, then the grid).
+    child<QQuickItem>("toolbarAddFolder")->forceActiveFocus(Qt::TabFocusReason);
     for (int i = 0; i < 3 && !grid->hasActiveFocus(); ++i) {
         QTest::keyClick(window, Qt::Key_Tab);
     }
@@ -299,6 +299,46 @@ TEST_F(QmlShellTest, ScreenshotAutomationWritesThePngAndRequestsQuit) {
     const QImage shot(options.screenshot_path);
     ASSERT_FALSE(shot.isNull());
     EXPECT_EQ(shot.size(), window->size() * window->devicePixelRatio());
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// W4: chosen photos wait in the Import dialog (Include subfolders, Copy into library folder), and
+// the contact sheet shows the file badges of the model's items.
+TEST_F(QmlShellTest, TheImportDialogConfirmsAnImportAndCardsShowSourceBadges) {
+    write_photos(12);
+    auto* dialog = child("importDialog");
+    ASSERT_NE(dialog, nullptr);
+    EXPECT_FALSE(dialog->property("opened").toBool());
+    ASSERT_TRUE(controller->requestImport({QUrl::fromLocalFile(folder.path())}));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    EXPECT_FALSE(controller->importing());  // nothing starts before the confirmation
+
+    auto* confirm = child("importConfirm");
+    ASSERT_NE(confirm, nullptr);
+    controller->set_copy_into_library(true);  // without a destination the import cannot start
+    EXPECT_FALSE(confirm->property("enabled").toBool());
+    controller->set_copy_into_library(false);
+    EXPECT_TRUE(confirm->property("enabled").toBool());
+    ASSERT_TRUE(QMetaObject::invokeMethod(confirm, "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return !dialog->property("visible").toBool(); }, kWaitMs));
+    EXPECT_TRUE(controller->pending_import().isEmpty());
+    ASSERT_TRUE(QTest::qWaitFor([this] { return controller->library()->count() == 12; }, kWaitMs));
+    ASSERT_TRUE(settle());
+
+    // A simulated content duplicate shows its badge on its card.
+    int duplicate_row = -1;
+    for (int row = 0; row < controller->library()->count(); ++row) {
+        if (has_flag(controller->library()->item_at(row)->flags, ItemFlag::DuplicateContent)) {
+            duplicate_row = row;
+            break;
+        }
+    }
+    ASSERT_GE(duplicate_row, 0) << "the simulated library has no content duplicate";
+    {
+        controller->set_current_index(duplicate_row);  // the contact sheet scrolls to it
+        EXPECT_TRUE(
+            QTest::qWaitFor([this] { return !visual_items("badge_duplicate", true).isEmpty(); }, kWaitMs));
+    }
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

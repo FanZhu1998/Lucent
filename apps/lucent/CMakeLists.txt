@@ -28,6 +28,7 @@ add_library(lucent_ui_services STATIC
     src/services/export_service.hpp
     src/services/image_reply.cpp
     src/services/image_source.hpp
+    src/services/library_service.cpp
     src/services/library_service.hpp
     src/services/service_types.hpp
     src/services/services.hpp
@@ -82,6 +83,7 @@ qt_add_qml_module(lucent_ui
         qml/Filmstrip.qml
         qml/FocusRing.qml
         qml/Histogram.qml
+        qml/ImportDialog.qml
         qml/LibraryEmptyState.qml
         qml/LibraryView.qml
         qml/Main.qml
@@ -116,6 +118,8 @@ qt_add_qml_module(lucent_ui
         src/models/presentation.hpp
         src/shell.cpp
         src/shell.hpp
+        src/volume_watcher.cpp
+        src/volume_watcher.hpp
 )
 target_link_libraries(lucent_ui
     PUBLIC

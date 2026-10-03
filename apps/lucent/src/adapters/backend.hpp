@@ -1,35 +1,53 @@
 #pragma once
 
-// Backend: the application services one Lucent.exe session runs on (docs/adr/0007).
+// Backend: the application services one Lucent.exe session runs on (docs/adr/0007, 0008).
 //
-// It owns, in construction order: the decoder registry, the session library, the two-lane task
-// executor (with its memory admission), the renderer, the preview service and the export
-// service. The UI adapters (app_library_service.hpp, app_image_source.hpp,
-// app_export_service.hpp) share ownership of one Backend.
+// It owns, in construction order: the decoder registry, the catalog (W4; when a catalog path is
+// given), the library, the on-disk thumbnail cache (when a folder is given), the three-lane task
+// executor (with its memory admission), the renderer, the preview service, the export service
+// and the maintenance service (W4: presence checks, hashing, relinking). The UI adapters
+// (app_library_service.hpp, app_image_source.hpp, app_export_service.hpp) share ownership of one
+// Backend.
 //
-// Destruction order is the reverse: the export and preview services cancel their outstanding
-// work and wait for its callbacks, the executor shuts down (queued tasks run once with cancelled
-// tokens, then the threads are joined), and only then are the library and the registry
-// released. So work running on the executor may use the library and the registry by reference:
-// both outlive every task.
+// The library. With BackendOptions::catalog_path the library is the persistent CatalogLibrary over
+// that catalog: it is opened (created on first use, migrated after a verified backup when older)
+// and loaded at creation, before any source file is read. When the catalog cannot be opened (it is
+// open in another Lucent, damaged, on a network drive, ...), the session falls back to an
+// in-memory SessionLibrary and library_problem() says why, so Lucent still starts and the user
+// is told that changes are not saved; a catalog written by a newer Lucent is opened read-only
+// (library_problem() set as well). Without a catalog path the library is a SessionLibrary (the
+// W3 behaviour, used by tests).
+//
+// Destruction order is the reverse: the maintenance, export and preview services cancel their
+// outstanding work and wait for its callbacks, the executor shuts down (queued tasks run once with
+// cancelled tokens, then the threads are joined), and only then are the library, the catalog
+// (which checkpoints its WAL on close), the thumbnail cache and the registry released. Work
+// running on the executor may therefore use the library, the registry and the catalog by
+// reference: they outlive every task.
 //
 // Rule for users: never let an executor task or service callback own a Backend (no
 // std::shared_ptr<Backend> captured in work). The last owner must release it on a thread that
 // is not an executor worker (the UI thread), because destruction joins those workers.
 //
 // Thread-safety: the accessors may be called from any thread; the services are thread-safe.
-// OutputFolders is thread-safe.
+// OutputFolders and the maintenance event relay are thread-safe.
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/library.hpp>
+#include <lucent/application/maintenance_service.hpp>
 #include <lucent/application/preview_service.hpp>
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
+#include <lucent/application/thumbnail_cache.hpp>
+#include <lucent/catalog/catalog.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/raw/decoder_registry.hpp>
 
@@ -41,6 +59,21 @@ struct BackendOptions {
     app::EngineRendererOptions renderer;
     // Replaces the engine renderer (tests use scripted renderers to control timing).
     std::shared_ptr<const app::SourceRenderer> renderer_override;
+
+    // W4. The catalog file of the persistent library (see the file comment); empty: a session
+    // library that keeps nothing.
+    std::filesystem::path catalog_path;
+    // Folder of the on-disk thumbnail cache; empty: no disk cache.
+    std::filesystem::path thumbnail_directory;
+    // Disk budget of the thumbnail cache: 1 GiB holds the reduced camera thumbnails of about
+    // 5,000 to 10,000 photos (app::camera_thumbnail_entry); older entries are evicted first.
+    std::uint64_t thumbnail_cache_bytes = std::uint64_t{1} << 30;
+    // Lucent's own folders (caches, catalog): never imported.
+    std::vector<std::filesystem::path> lucent_directories;
+    app::MaintenanceServiceOptions maintenance;  // its observer is replaced by the backend's relay
+    // Why no catalog could be configured (the per-user folders are unavailable): reported as the
+    // library problem of the session library.
+    std::optional<Error> catalog_unavailable;
 };
 
 // Output folders chosen for exports in this session. Imports do not scan into them when a scan
@@ -59,7 +92,8 @@ private:
 class Backend {
 public:
     // Errors: those of raw::create_default_registry(), TaskExecutor::create() (InvalidArgument for
-    // invalid executor options) and create_engine_renderer(); OutOfMemory.
+    // invalid executor options) and create_engine_renderer(); OutOfMemory. A catalog or thumbnail
+    // cache that cannot be opened is not an error (see the file comment).
     [[nodiscard]] static Expected<std::shared_ptr<Backend>> create(const BackendOptions& options = {});
 
     ~Backend();
@@ -73,17 +107,42 @@ public:
     [[nodiscard]] app::ExportService& exports() noexcept { return *exports_; }
     [[nodiscard]] OutputFolders& output_folders() noexcept { return output_folders_; }
 
+    // W4. The catalog of the persistent library (null for a session library).
+    [[nodiscard]] const std::shared_ptr<catalog::Catalog>& catalog() const noexcept { return catalog_; }
+    // The maintenance service (null when the library keeps no source facts).
+    [[nodiscard]] app::MaintenanceService* maintenance() noexcept { return maintenance_.get(); }
+    // Why the persistent library is unavailable or read-only (see the file comment).
+    [[nodiscard]] const std::optional<Error>& library_problem() const noexcept { return library_problem_; }
+    [[nodiscard]] const std::vector<std::filesystem::path>& lucent_directories() const noexcept {
+        return lucent_directories_;
+    }
+
+    // Receives the maintenance service's events (on its worker thread). Replaces the previous
+    // sink; an empty function detaches. When this returns, a previous sink is no longer running.
+    void set_maintenance_sink(std::function<void(const app::MaintenanceEvent&)> sink);
+
 private:
     Backend() = default;
 
+    struct Relay {
+        std::mutex mutex;
+        std::function<void(const app::MaintenanceEvent&)> sink;
+    };
+
     // Declaration order is construction order; see the file comment for destruction.
     std::shared_ptr<const raw::DecoderRegistry> registry_;
-    std::unique_ptr<app::SessionLibrary> library_;
+    std::shared_ptr<catalog::Catalog> catalog_;
+    std::unique_ptr<app::Library> library_;
+    std::optional<Error> library_problem_;
+    std::shared_ptr<app::ThumbnailCache> thumbnails_;
     std::unique_ptr<app::TaskExecutor> executor_;
     std::shared_ptr<const app::SourceRenderer> renderer_;
     std::unique_ptr<app::PreviewService> previews_;
     std::unique_ptr<app::ExportService> exports_;
+    std::shared_ptr<Relay> relay_ = std::make_shared<Relay>();
+    std::unique_ptr<app::MaintenanceService> maintenance_;
     OutputFolders output_folders_;
+    std::vector<std::filesystem::path> lucent_directories_;
 };
 
 }  // namespace lucent::ui::adapters

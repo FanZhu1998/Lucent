@@ -19,6 +19,7 @@
 #include <lucent/application/import.hpp>
 #include <lucent/application/preview.hpp>
 #include <lucent/application/source_item.hpp>
+#include <lucent/application/source_maintenance.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/export/export.hpp>
 #include <lucent/image/geometry.hpp>
@@ -46,13 +47,20 @@ namespace lucent::ui::adapters {
 // joined; for Supported items a note that the camera is not verified yet.
 [[nodiscard]] QString support_detail(const app::SupportAssessment& support);
 
+// The shell's flags for the source facts of `source` (W4): MissingSource, ChangedSource,
+// RemovableSource (a file on removable media, a card or a USB disk) and DuplicateContent.
+[[nodiscard]] ItemFlags source_flags(const app::SourceItem& source) noexcept;
+
 // The item as the shell first shows it: thumbnail generation 1 (the camera's embedded JPEG,
 // labelled) and preview generation 1, not processed. An item whose probe failed has no thumbnail
 // (kNoImage): nothing can be extracted from a file the decoder does not recognise.
-[[nodiscard]] LibraryItem to_library_item(const app::SourceItem& source);
+// `duplicate_paths` are the paths of source.content_duplicates (the caller looks them up).
+[[nodiscard]] LibraryItem to_library_item(const app::SourceItem& source,
+                                          const QStringList& duplicate_paths = {});
 
-// Copies the facts the application library owns (file, camera, capture, support) from `fresh`
-// into `current`, keeping the shell's own state (generations, processing, render).
+// Copies the facts the application library owns (file, camera, capture, support, source facts,
+// pick) from `fresh` into `current`, keeping the shell's own state (generations, processing,
+// render).
 void merge_library_facts(LibraryItem& current, const LibraryItem& fresh);
 
 // --- Errors ----------------------------------------------------------------------------------
@@ -65,10 +73,15 @@ void merge_library_facts(LibraryItem& current, const LibraryItem& fresh);
 [[nodiscard]] ImportProgress to_ui_progress(const app::ImportProgress& progress);
 
 // Counts, per-path failures and notes of a finished import. `sources` are the request's paths.
-// Notes name selected files that are not RAW photos and folders not searched because exports were
-// written there; notes about Limited and Unsupported items are added by the caller, which knows
-// the items.
+// Notes name selected files that are not RAW photos, folders not searched because exports were
+// written there, and removable drives the new photos are on; files that could not be copied into
+// the library folder are failures with their reason. Notes about Limited and Unsupported items
+// are added by the caller, which knows the items.
 [[nodiscard]] ImportSummary summarize_import(const QStringList& sources, const app::ImportReport& report);
+
+// The shell's summary of a relink (`folder` as the user chose it).
+[[nodiscard]] RelinkSummary summarize_relink(const QString& folder,
+                                             const Expected<app::RelinkReport>& report);
 
 // --- Previews --------------------------------------------------------------------------------
 

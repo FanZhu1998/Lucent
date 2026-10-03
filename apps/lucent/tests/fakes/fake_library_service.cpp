@@ -55,7 +55,8 @@ bool FakeLibraryService::is_busy() const {
     return active_imports_ > 0 || !render_queue_.empty();
 }
 
-void FakeLibraryService::import_paths(const QStringList& paths, bool include_subfolders) {
+void FakeLibraryService::start_import(const QStringList& paths, const ImportOptions& options) {
+    const bool include_subfolders = options.include_subfolders;
     ++active_imports_;
     update_busy();
     emit import_started(paths);

@@ -89,7 +89,7 @@ TEST_F(AppControllerTest, ImportPathsMakesPathsAbsoluteAndSkipsEmptyOnes) {
 
 TEST_F(AppControllerTest, ReportsImportProgressAndOutcome) {
     QSignalSpy importing(&controller, &AppController::importingChanged);
-    scripted.library->start({QStringLiteral("D:/Photos")});
+    scripted.library->begin({QStringLiteral("D:/Photos")});
     EXPECT_TRUE(controller.importing());
     EXPECT_TRUE(controller.busy());
     EXPECT_EQ(controller.status_message(), QStringLiteral("Importing from D:\\Photos…"));
@@ -116,6 +116,19 @@ TEST_F(AppControllerTest, ReportsImportProgressAndOutcome) {
     summary.sources = {QStringLiteral("D:/A"), QStringLiteral("E:/B"), QStringLiteral("e:/c.cr3")};
     scripted.library->finish(summary);
     EXPECT_EQ(controller.status_message(), QStringLiteral("No new photos in 2 locations"));
+
+    // Missing photos found again (a card that came back) are named, alone or after the new ones.
+    summary.restored = 3;
+    scripted.library->finish(summary);
+    EXPECT_EQ(controller.status_message(), QStringLiteral("Found 3 missing photos again in 2 locations"));
+    summary.added = 1;
+    summary.sources = {QStringLiteral("D:/Photos")};
+    scripted.library->finish(summary);
+    EXPECT_EQ(controller.status_message(),
+              QStringLiteral("Added 1 photo from D:\\Photos · 3 missing photos found again"));
+    summary.added = 0;
+    summary.restored = 0;
+    summary.sources = {QStringLiteral("D:/A"), QStringLiteral("E:/B"), QStringLiteral("e:/c.cr3")};
 
     // Files selected or dropped together are described by their folder, not counted as locations.
     summary.sources = {QStringLiteral("D:/Card/DCIM/IMG_1.CR3"), QStringLiteral("D:/Card/DCIM/IMG_2.CR3"),
@@ -284,6 +297,135 @@ TEST_F(AppControllerTest, ClippingOverlayIsAToggle) {
     controller.set_clipping_overlay(true);
     EXPECT_TRUE(controller.clipping_overlay());
     EXPECT_EQ(spy.count(), 1);
+}
+
+// ---- W4: the Import dialog, copies, relinking, picks, backups, background activity -------------
+
+TEST_F(AppControllerTest, RequestedImportsWaitForTheDialogAndCarryItsOptions) {
+    QSignalSpy pending(&controller, &AppController::pendingImportChanged);
+    EXPECT_FALSE(controller.requestImport({QUrl(QStringLiteral("https://example.com/a.cr3"))}));
+    EXPECT_TRUE(controller.pending_import().isEmpty());
+    ASSERT_TRUE(controller.requestImport({QUrl::fromLocalFile(QStringLiteral("D:/Card/DCIM"))}));
+    EXPECT_EQ(controller.pending_import(), QStringList{QStringLiteral("D:/Card/DCIM")});
+    EXPECT_EQ(pending.count(), 1);
+    EXPECT_TRUE(scripted.library->requests.empty());  // nothing happens before the confirmation
+
+    // Copying needs a destination; the pending import is kept until there is one.
+    controller.set_include_subfolders(true);
+    controller.set_copy_into_library(true);
+    EXPECT_FALSE(controller.confirmImport());
+    EXPECT_EQ(controller.pending_import().size(), 1);
+    EXPECT_FALSE(controller.status_message().isEmpty());
+    controller.set_copy_destination(QUrl::fromLocalFile(QStringLiteral("E:/Pictures")));
+    ASSERT_TRUE(controller.confirmImport());
+    EXPECT_TRUE(controller.pending_import().isEmpty());
+    ASSERT_EQ(scripted.library->requests.size(), 1u);
+    EXPECT_TRUE(scripted.library->requests[0].include_subfolders);
+    EXPECT_EQ(scripted.library->requests[0].copy_to, QStringLiteral("E:/Pictures"));
+    EXPECT_FALSE(controller.confirmImport());  // nothing pending any more
+
+    // Cancelling drops the selection.
+    ASSERT_TRUE(controller.requestImport({QUrl::fromLocalFile(QStringLiteral("D:/Other"))}));
+    controller.cancelImport();
+    EXPECT_TRUE(controller.pending_import().isEmpty());
+    EXPECT_EQ(scripted.library->requests.size(), 1u);
+}
+
+TEST_F(AppControllerTest, StartBeginsTheLibrarysBackgroundUpkeep) {
+    EXPECT_EQ(scripted.library->starts, 0);
+    controller.start();
+    EXPECT_EQ(scripted.library->starts, 1);
+}
+
+TEST_F(AppControllerTest, RelinkingAsksTheServiceAndReportsTheOutcome) {
+    add_two_photos();
+    EXPECT_TRUE(controller.can_relink());
+    EXPECT_FALSE(controller.relinkMissing(QUrl(QStringLiteral("https://example.com/"))));
+    ASSERT_TRUE(controller.relinkMissing(QUrl::fromLocalFile(QStringLiteral("F:/Moved"))));
+    ASSERT_EQ(scripted.library->relinks.size(), 1u);
+    EXPECT_EQ(scripted.library->relinks[0].first, QStringLiteral("F:/Moved"));
+    EXPECT_TRUE(scripted.library->relinks[0].second.isEmpty());  // every missing photo
+
+    controller.set_current_index(1);
+    ASSERT_TRUE(controller.relinkCurrent(QUrl::fromLocalFile(QStringLiteral("F:/Moved"))));
+    EXPECT_EQ(scripted.library->relinks[1].second, QList<ItemId>{2});
+
+    RelinkSummary summary;
+    summary.folder = QStringLiteral("F:\\Moved");
+    summary.missing = 3;
+    summary.relinked = 2;
+    summary.unmatched = 1;
+    summary.unverifiable = 1;
+    scripted.library->finish_relink(summary);
+    EXPECT_TRUE(controller.status_message().startsWith(QStringLiteral("Relinked 2 photos from F:\\Moved")))
+        << controller.status_message().toStdString();
+    EXPECT_TRUE(controller.status_message().contains(QStringLiteral("1 still missing")));
+    EXPECT_TRUE(controller.status_message().contains(QStringLiteral("never verified")));
+
+    summary = RelinkSummary{};
+    summary.error = QStringLiteral("The folder was not found.");
+    scripted.library->finish_relink(summary);
+    EXPECT_EQ(controller.status_message(), QStringLiteral("Could not relink: The folder was not found."));
+}
+
+TEST_F(AppControllerTest, PicksAreSetOnTheCurrentPhoto) {
+    controller.setCurrentPick(QStringLiteral("picked"));  // no current photo: nothing
+    EXPECT_TRUE(scripted.library->picks.empty());
+    add_two_photos();
+    controller.set_current_index(0);
+    controller.setCurrentPick(QStringLiteral("rejected"));
+    controller.setCurrentPick(QStringLiteral("none"));
+    ASSERT_EQ(scripted.library->picks.size(), 2u);
+    EXPECT_EQ(scripted.library->picks[0], (std::pair<ItemId, PickState>{1, PickState::Rejected}));
+    EXPECT_EQ(scripted.library->picks[1], (std::pair<ItemId, PickState>{1, PickState::None}));
+}
+
+TEST_F(AppControllerTest, CatalogBackupsAreRequestedAndReported) {
+    scripted.library->backup_location = QStringLiteral("C:\\Lucent\\backups");
+    EXPECT_TRUE(controller.can_back_up());
+    controller.backUpCatalog();
+    EXPECT_EQ(scripted.library->backups, 1);
+    scripted.library->finish_backup(BackupResult{true, QStringLiteral("C:\\Lucent\\backups\\x.bak"), {}});
+    EXPECT_EQ(controller.status_message(), QStringLiteral("Catalog backed up to C:\\Lucent\\backups\\x.bak"));
+    scripted.library->finish_backup(
+        BackupResult{false, {}, QStringLiteral("There is not enough free space.")});
+    EXPECT_TRUE(controller.status_message().contains(QStringLiteral("not enough free space")));
+    EXPECT_TRUE(controller.openBackupFolder());
+    ASSERT_EQ(opened.size(), 1u);
+    EXPECT_EQ(opened[0], QUrl::fromLocalFile(QStringLiteral("C:\\Lucent\\backups")));
+}
+
+TEST_F(AppControllerTest, BackgroundVerificationIsShownAsActivity) {
+    QSignalSpy activity(&controller, &AppController::backgroundActivityChanged);
+    scripted.library->verify(VerificationProgress{true, 0, 0});
+    EXPECT_EQ(controller.background_activity(), QStringLiteral("Checking the library…"));
+    scripted.library->verify(VerificationProgress{true, 12, 340});
+    EXPECT_EQ(controller.background_activity(), QStringLiteral("Verifying photos… 12 of 340"));
+    scripted.library->verify(VerificationProgress{false, 340, 340});
+    EXPECT_TRUE(controller.background_activity().isEmpty());
+    EXPECT_EQ(activity.count(), 3);
+}
+
+TEST_F(AppControllerTest, ImportSummariesNameCopiesAndRemovableMedia) {
+    ImportSummary summary;
+    summary.sources = {QStringLiteral("E:/DCIM")};
+    summary.added = 3;
+    summary.copied = 3;
+    summary.copy_to = QStringLiteral("D:\\Pictures");
+    scripted.library->finish(summary);
+    EXPECT_TRUE(controller.status_message().startsWith(
+        QStringLiteral("Copied 3 photos from E:\\DCIM into D:\\Pictures")))
+        << controller.status_message().toStdString();
+
+    summary = ImportSummary{};
+    summary.sources = {QStringLiteral("E:/DCIM")};
+    summary.added = 2;
+    summary.removable = 2;
+    summary.notes << QStringLiteral("2 photos are on removable media (E:\\).");
+    scripted.library->finish(summary);
+    EXPECT_TRUE(controller.status_message().contains(QStringLiteral("2 on removable media")));
+    EXPECT_TRUE(
+        controller.import_problems().contains(QStringLiteral("2 photos are on removable media (E:\\).")));
 }
 
 }  // namespace

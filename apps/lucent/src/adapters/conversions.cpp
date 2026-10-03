@@ -57,6 +57,23 @@ QString skip_message(const app::SkippedPath& skipped) {
             return tr_text("%1 was not searched: Lucent exported photos into it in this session.").arg(path);
         case app::SkipReason::NotRawPhoto:
             return tr_text("%1 is not a RAW photo, so it was not added.").arg(path);
+        case app::SkipReason::CopyFailed:
+            if (skipped.error && skipped.error->code == ErrorCode::Corrupt) {
+                return tr_text(
+                           "%1 was not added: its copy in the library folder did not match the original "
+                           "(a faulty drive, card or cable?). The original is unchanged.")
+                    .arg(path);
+            }
+            if (skipped.error && skipped.error->code == ErrorCode::SourceChanged) {
+                return tr_text("%1 was not added: it changed while it was being copied. Add it again.")
+                    .arg(path);
+            }
+            return tr_text("%1 could not be copied into the library folder: %2")
+                .arg(path, skipped.error ? describe_error(*skipped.error) : tr_text("the copy failed."));
+        case app::SkipReason::InvalidName:
+            return tr_text("%1 was not added: its name contains characters Lucent cannot store. Rename it "
+                           "and add it again.")
+                .arg(path);
         case app::SkipReason::Duplicate:
         case app::SkipReason::InLucentDirectory:
         case app::SkipReason::LucentTemporaryFile:
@@ -192,7 +209,28 @@ QString support_detail(const app::SupportAssessment& support) {
     return sentences.join(u' ');
 }
 
-LibraryItem to_library_item(const app::SourceItem& source) {
+ItemFlags source_flags(const app::SourceItem& source) noexcept {
+    ItemFlags flags = 0;
+    switch (source.source_state) {
+        case app::SourceState::Missing:
+            flags |= flag_bit(ItemFlag::MissingSource);
+            break;
+        case app::SourceState::Changed:
+            flags |= flag_bit(ItemFlag::ChangedSource);
+            break;
+        case app::SourceState::Present:
+            break;
+    }
+    if (source.storage == core::StorageKind::Removable) {
+        flags |= flag_bit(ItemFlag::RemovableSource);
+    }
+    if (!source.content_duplicates.empty()) {
+        flags |= flag_bit(ItemFlag::DuplicateContent);
+    }
+    return flags;
+}
+
+LibraryItem to_library_item(const app::SourceItem& source, const QStringList& duplicate_paths) {
     LibraryItem item;
     item.id = source.id.value;
     item.file_path = QDir::toNativeSeparators(to_qstring(source.path));
@@ -219,6 +257,15 @@ LibraryItem to_library_item(const app::SourceItem& source) {
     }
     item.support = to_ui_support(source.support.status);
     item.support_detail = support_detail(source.support);
+    item.flags = source_flags(source);
+    item.pick = static_cast<PickState>(source.flags.pick);
+    item.rating = source.flags.rating;
+    item.copied = source.import_mode == app::ImportMode::Copied;
+    if (source.origin_path) {
+        item.origin_path = QDir::toNativeSeparators(to_qstring(*source.origin_path));
+    }
+    item.duplicate_paths = duplicate_paths;
+    item.content_verified = source.sha256.has_value();
     item.thumbnail_generation = source.probe ? kCameraPreviewGeneration : kNoImage;
     item.thumbnail_is_camera_preview = source.probe.has_value();
     item.preview_generation = 1;
@@ -246,6 +293,12 @@ void merge_library_facts(LibraryItem& current, const LibraryItem& fresh) {
     current.support = fresh.support;
     current.support_detail = fresh.support_detail;
     current.flags = fresh.flags;
+    current.pick = fresh.pick;
+    current.rating = fresh.rating;
+    current.copied = fresh.copied;
+    current.origin_path = fresh.origin_path;
+    current.duplicate_paths = fresh.duplicate_paths;
+    current.content_verified = fresh.content_verified;
 }
 
 // --- Errors ----------------------------------------------------------------------------------
@@ -293,6 +346,13 @@ QString describe_error(const Error& error) {
         case ErrorCode::SourceChanged:
             return tr_text("The file changed after it was added. Add it again to update it.");
         case ErrorCode::VersionMismatch:
+            // The library (catalog) refuses changes: it was saved by a newer Lucent and is open
+            // read-only. Anywhere else it is a file this Lucent cannot read.
+            if (starts_with(where, "app.library") || starts_with(where, "catalog")) {
+                return tr_text(
+                    "This library was saved by a newer version of Lucent and is open read-only, so photos "
+                    "cannot be added or changed.");
+            }
             return tr_text("The file needs a newer version of Lucent.");
         case ErrorCode::InvalidArgument:
         case ErrorCode::Internal:
@@ -316,6 +376,8 @@ ImportProgress to_ui_progress(const app::ImportProgress& progress) {
     ui.candidates = clamp_int(progress.candidates);
     ui.checked = clamp_int(progress.probed);
     ui.added = clamp_int(progress.added);
+    ui.copying = progress.phase == app::ImportPhase::Copying;
+    ui.copied = clamp_int(progress.copied);
     ui.current = QDir::toNativeSeparators(to_qstring(progress.current));
     return ui;
 }
@@ -327,7 +389,13 @@ ImportSummary summarize_import(const QStringList& sources, const app::ImportRepo
     summary.limited = static_cast<int>(report.limited);
     summary.unsupported = static_cast<int>(report.unsupported);
     summary.updated = static_cast<int>(report.refreshed.size());
+    summary.restored = static_cast<int>(report.restored.size());
     summary.ignored = static_cast<int>(report.ignored_non_raw);
+    summary.copied = static_cast<int>(report.copied.size());
+    summary.removable = static_cast<int>(report.removable_items);
+    for (const std::filesystem::path& location : report.removable_locations) {
+        summary.removable_locations << QDir::toNativeSeparators(to_qstring(location));
+    }
     summary.cancelled = report.cancelled;
     for (const app::SkippedPath& skipped : report.skipped) {
         switch (skipped.reason) {
@@ -351,11 +419,44 @@ ImportSummary summarize_import(const QStringList& sources, const app::ImportRepo
             case app::SkipReason::Inaccessible:
             case app::SkipReason::NotFound:
             case app::SkipReason::NotAFileOrFolder:
+            case app::SkipReason::CopyFailed:
+            case app::SkipReason::InvalidName:
                 ++summary.failed;
                 summary.errors << skip_message(skipped);
                 break;
         }
     }
+    if (summary.removable > 0) {
+        const QString drives = summary.removable_locations.join(QStringLiteral(", "));
+        summary.notes << (summary.removable == 1
+                              ? tr_text("1 photo is on removable media (%1). Keep it connected, or copy the "
+                                        "photo into a library folder before you remove it.")
+                                    .arg(drives)
+                              : tr_text(
+                                    "%1 photos are on removable media (%2). Keep it connected, or copy the "
+                                    "photos into a library folder before you remove it.")
+                                    .arg(summary.removable)
+                                    .arg(drives));
+    }
+    return summary;
+}
+
+RelinkSummary summarize_relink(const QString& folder, const Expected<app::RelinkReport>& report) {
+    RelinkSummary summary;
+    summary.folder = QDir::toNativeSeparators(folder);
+    if (!report) {
+        summary.error = report.error().code == ErrorCode::NotFound ? tr_text("The folder was not found.")
+                                                                   : describe_error(report.error());
+        return summary;
+    }
+    const auto clamp_int = [](std::uint64_t value) {
+        return static_cast<int>(std::min<std::uint64_t>(value, std::numeric_limits<int>::max()));
+    };
+    summary.missing = clamp_int(report->files);
+    summary.relinked = clamp_int(report->relinked);
+    summary.unmatched = clamp_int(report->unmatched);
+    summary.unverifiable = clamp_int(report->unverifiable);
+    summary.cancelled = report->cancelled;
     return summary;
 }
 

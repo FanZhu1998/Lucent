@@ -195,6 +195,7 @@ FocusScope {
                         objectName: "metadataPanel"
                         Layout.fillWidth: true
                         item: root.current
+                        controller: root.controller
                     }
                 }
             }

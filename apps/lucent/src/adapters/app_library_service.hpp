@@ -1,28 +1,39 @@
 #pragma once
 
 // AppLibraryService: the shell's LibraryService (services/library_service.hpp) over the
-// application services' import and session library (docs/adr/0007).
+// application services' import, library and maintenance (docs/adr/0007, 0008).
 //
-// Import. Each import_paths() request becomes one app::import_sources() call on the executor's
+// Start-up (W4). The constructor converts every item the library already holds (the catalog,
+// loaded by the Backend without reading any source file) into snapshots: current_items(). start()
+// then queues the maintenance service's check of every file (Missing / Changed badges as they are
+// found, changed files re-read) followed by hashing of files without a content hash; nothing
+// happens before start(), so the window shows the library first. recheck_sources() queues the
+// same check again (a card was inserted or removed); before start() it does nothing.
+//
+// Import. Each start_import() request becomes one app::import_sources() call on the executor's
 // Background lane; requests run one at a time, in the order made. Paths that are folders are
 // scanned (recursively when asked), everything else is imported as a selected file; the probe
 // decides what is a photo, and files it rejects stay listed as Unsupported with the reason
 // (selected files with a non-RAW extension that are not RAW files are skipped and named in the
-// summary's notes). Folders chosen for exports in this session are not scanned into when a scan
-// reaches them below the folder being imported (Backend::output_folders(), import.hpp); the
-// summary's notes name them. Progress is throttled to about ten updates a second.
+// summary's notes). With ImportOptions::copy_to the photos are copied into that folder and the
+// verified copies are added (app::ImportRequest::copy_to). Folders chosen for exports in this
+// session, and Lucent's own folders, are not scanned into (Backend::output_folders(),
+// Backend::lucent_directories(), import.hpp). Progress is throttled to about ten updates a
+// second. When an import finishes, its new and refreshed items are queued for hashing.
 //
-// Changed files. Importing a file again after it changed on disk refreshes its items
-// (app::Library::refresh): the library facts are replaced, and the shell's own state is reset:
-// processing NotProcessed, render info cleared, preview generation + 1, and the thumbnail
-// moves to a new generation of Lucent's render (generation 1, the camera preview, may be cached
-// by Qt with the old file's pixels). The summary counts them as updated.
+// Changed files. Importing a file again after it changed on disk, or the background check
+// finding it changed, refreshes its items (app::Library::refresh): the library facts are
+// replaced, and the shell's own state is reset: processing NotProcessed, render info cleared,
+// preview generation + 1, and the thumbnail moves to a new generation of Lucent's render
+// (generation 1, the camera preview, may be cached by Qt with the old file's pixels). The summary
+// counts them as updated.
 //
-// Items. The adapter observes the application library: items committed by the import (on the
-// import's worker thread) are converted to LibraryItem snapshots on that thread and posted to the
-// UI thread, where items_added is emitted, before the request's import_finished. The adapter
-// keeps the shell's own state of each item: thumbnail and preview generations, processing status
-// and Lucent's latest render, which the image source reports through the RenderEvent sink.
+// Items. The adapter observes the application library: items committed on worker threads (an
+// import, the maintenance service, a pick) are converted to LibraryItem snapshots on that thread,
+// with the paths of their content duplicates, and posted to the UI thread, where items_added or
+// item_changed is emitted (an import's items_added before its import_finished). The adapter keeps
+// the shell's own state of each item: thumbnail and preview generations, processing status and
+// Lucent's latest render, which the image source reports through the RenderEvent sink.
 //
 // Render events (from AppImageSource, any thread; applied on the UI thread in posting order):
 //   CameraPreviewUnavailable  the thumbnail moves from generation 1 (camera JPEG) to 2 (Lucent's
@@ -34,10 +45,15 @@
 //                             camera-preview thumbnail replaced by Lucent's render (generation + 1)
 //                             when the event says a Lucent thumbnail is available.
 //
-// Lifetime and threading: lives on the UI thread; the destructor closes the dispatcher, ends the
-// library subscription (waiting for an observer running on another thread) and cancels a
-// running import, so nothing reaches the object afterwards. It emits no signals from its
-// destructor.
+// W4 operations: relink() runs the maintenance service's relink; set_pick() writes the item's
+// flags on the executor's Quick lane; back_up_catalog() writes a verified catalog backup on the
+// Background lane. Their results are signals. Verification progress (presence checks and hashing)
+// is reported by verification_progress, at most every 100 ms, and counts as busy.
+//
+// Lifetime and threading: lives on the UI thread; the destructor closes the dispatcher, detaches
+// from the maintenance events, ends the library subscription (waiting for an observer running on
+// another thread) and cancels a running import, so nothing reaches the object afterwards. It
+// emits no signals from its destructor.
 
 #include <QHash>
 #include <QList>
@@ -45,9 +61,11 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include <lucent/application/import.hpp>
 #include <lucent/application/library.hpp>
+#include <lucent/application/maintenance_service.hpp>
 #include <lucent/application/task_executor.hpp>
 #include <lucent/core/error.hpp>
 
@@ -88,9 +106,22 @@ public:
     ~AppLibraryService() override;
 
     [[nodiscard]] QStringList supported_suffixes() const override;
-    void import_paths(const QStringList& paths, bool include_subfolders) override;
+    [[nodiscard]] QList<LibraryItem> current_items() const override;
+    void start() override;
+    void recheck_sources() override;
+    void start_import(const QStringList& paths, const ImportOptions& options) override;
     [[nodiscard]] bool is_importing() const override { return active_imports_ > 0; }
-    [[nodiscard]] bool is_busy() const override { return is_importing(); }
+    [[nodiscard]] bool is_busy() const override {
+        return is_importing() || verifying_ || pending_operations_ > 0;
+    }
+
+    [[nodiscard]] bool can_relink() const override;
+    void relink(const QString& folder, const QList<ItemId>& items) override;
+    void set_pick(ItemId item, PickState pick) override;
+    [[nodiscard]] bool can_back_up() const override;
+    void back_up_catalog() override;
+    [[nodiscard]] QString backup_folder() const override;
+    [[nodiscard]] QString library_notice() const override;
 
     // A sink for render events that is safe to call from any thread at any time.
     [[nodiscard]] RenderEventSink render_event_sink();
@@ -101,7 +132,7 @@ public:
 private:
     struct PendingImport {
         QStringList paths;
-        bool include_subfolders = false;
+        ImportOptions options;
     };
 
     void start_next_import();
@@ -110,6 +141,9 @@ private:
     void update_items(const QList<LibraryItem>& items);
     void refresh_items(const QList<LibraryItem>& items);
     void apply(const RenderEvent& event);
+    void on_maintenance(const app::MaintenanceEvent& event);
+    void queue_hashing(const std::vector<app::ItemId>& items);
+    void operation_finished();
     void update_busy();
 
     std::shared_ptr<Backend> backend_;
@@ -117,10 +151,14 @@ private:
     app::Subscription subscription_;  // after dispatcher_: reset first on destruction
 
     QHash<ItemId, LibraryItem> items_;
+    std::vector<ItemId> initial_order_;  // library order of the items loaded at construction
     std::deque<PendingImport> queue_;
     bool running_ = false;
     app::TaskHandle running_task_;
     int active_imports_ = 0;  // queued + running
+    bool verifying_ = false;  // the maintenance service is checking or hashing
+    int pending_operations_ = 0;  // relinks and backups not yet finished
+    bool started_ = false;
     bool busy_ = false;
 };
 

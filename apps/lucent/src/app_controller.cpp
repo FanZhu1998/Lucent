@@ -53,7 +53,15 @@ QString describe_sources(const QStringList& paths) {
 QString summary_message(const ImportSummary& summary) {
     const QString sources = describe_sources(summary.sources);
     QString message;
-    if (summary.added > 0) {
+    if (summary.copied > 0 && !summary.copy_to.isEmpty()) {
+        message =
+            count_phrase(summary.copied, "Copied 1 photo from %2 into %3", "Copied %1 photos from %2 into %3")
+                .arg(sources, summary.copy_to);
+        if (summary.updated > 0) {
+            message += QStringLiteral(" · ") +
+                       count_phrase(summary.updated, "1 changed photo updated", "%1 changed photos updated");
+        }
+    } else if (summary.added > 0) {
         message = count_phrase(summary.added, "Added 1 photo from %2", "Added %1 photos from %2").arg(sources);
         if (summary.updated > 0) {
             message += QStringLiteral(" · ") + count_phrase(summary.updated, "1 changed photo updated",
@@ -62,8 +70,16 @@ QString summary_message(const ImportSummary& summary) {
     } else if (summary.updated > 0) {
         message = count_phrase(summary.updated, "Updated 1 changed photo in %2", "Updated %1 changed photos in %2")
                       .arg(sources);
+    } else if (summary.restored > 0) {
+        message = count_phrase(summary.restored, "Found 1 missing photo again in %2",
+                               "Found %1 missing photos again in %2")
+                      .arg(sources);
     } else {
         message = tr_controller("No new photos in %1").arg(sources);
+    }
+    if (summary.restored > 0 && (summary.copied > 0 || summary.added > 0 || summary.updated > 0)) {
+        message += QStringLiteral(" · ") + count_phrase(summary.restored, "1 missing photo found again",
+                                                        "%1 missing photos found again");
     }
     if (summary.cancelled) {
         message += QStringLiteral(" · ") + tr_controller("import stopped early");
@@ -73,6 +89,10 @@ QString summary_message(const ImportSummary& summary) {
     }
     if (summary.limited > 0) {
         message += QStringLiteral(" · ") + count_phrase(summary.limited, "1 limited", "%1 limited");
+    }
+    if (summary.removable > 0) {
+        message += QStringLiteral(" · ") +
+                   count_phrase(summary.removable, "1 on removable media", "%1 on removable media");
     }
     if (summary.already_in_library > 0) {
         message += QStringLiteral(" · ") + count_phrase(summary.already_in_library, "1 already in the library",
@@ -115,6 +135,9 @@ AppController::AppController(Services services, QObject* parent)
     connect(&library, &LibraryService::import_finished, this, &AppController::on_import_finished);
     connect(services_.exports.get(), &ExportService::job_changed, this, &AppController::on_job_changed);
     connect(&library, &LibraryService::busy_changed, this, &AppController::busyChanged);
+    connect(&library, &LibraryService::relink_finished, this, &AppController::on_relink_finished);
+    connect(&library, &LibraryService::backup_finished, this, &AppController::on_backup_finished);
+    connect(&library, &LibraryService::verification_progress, this, &AppController::on_verification_progress);
     connect(services_.exports.get(), &ExportService::busy_changed, this, &AppController::busyChanged);
     // After the model has inserted the rows (it connected first).
     connect(&library, &LibraryService::items_added, this, &AppController::on_items_added);
@@ -157,6 +180,10 @@ bool AppController::addFolder(const QUrl& folder) {
 }
 
 bool AppController::import_paths(const QStringList& paths, bool include_subfolders) {
+    return import_paths(paths, ImportOptions{include_subfolders, {}});
+}
+
+bool AppController::import_paths(const QStringList& paths, const ImportOptions& options) {
     QStringList absolute;
     for (const QString& path : paths) {
         if (!path.trimmed().isEmpty()) {
@@ -166,8 +193,187 @@ bool AppController::import_paths(const QStringList& paths, bool include_subfolde
     if (absolute.isEmpty()) {
         return false;
     }
-    services_.library->import_paths(absolute, include_subfolders);
+    services_.library->start_import(absolute, options);
     return true;
+}
+
+void AppController::start() {
+    services_.library->start();
+}
+
+void AppController::recheck_library() {
+    services_.library->recheck_sources();
+}
+
+bool AppController::requestImport(const QList<QUrl>& urls) {
+    QStringList paths;
+    for (const QUrl& url : urls) {
+        if (url.isLocalFile()) {
+            paths << QDir::cleanPath(url.toLocalFile());
+        }
+    }
+    if (paths.isEmpty()) {
+        if (!urls.isEmpty()) {
+            set_status_message(tr_controller("Only files on this computer or the network can be added."));
+        }
+        return false;
+    }
+    if (paths != pending_import_) {
+        pending_import_ = paths;
+        emit pendingImportChanged();
+    }
+    return true;
+}
+
+bool AppController::confirmImport() {
+    if (pending_import_.isEmpty()) {
+        return false;
+    }
+    ImportOptions options;
+    options.include_subfolders = include_subfolders_;
+    if (copy_into_library_) {
+        if (!copy_destination_.isLocalFile()) {
+            set_status_message(tr_controller("Choose a library folder for the copies."));
+            return false;
+        }
+        options.copy_to = QDir::cleanPath(copy_destination_.toLocalFile());
+    }
+    const QStringList paths = std::exchange(pending_import_, {});
+    emit pendingImportChanged();
+    return import_paths(paths, options);
+}
+
+void AppController::cancelImport() {
+    if (!pending_import_.isEmpty()) {
+        pending_import_.clear();
+        emit pendingImportChanged();
+    }
+}
+
+bool AppController::relinkMissing(const QUrl& folder) {
+    return relink(folder, {});
+}
+
+bool AppController::relinkCurrent(const QUrl& folder) {
+    if (!current_->valid()) {
+        return false;
+    }
+    return relink(folder, {current_->item_id()});
+}
+
+bool AppController::relink(const QUrl& folder, const QList<ItemId>& items) {
+    if (!folder.isLocalFile()) {
+        set_status_message(tr_controller("Choose a folder on this computer or the network."));
+        return false;
+    }
+    const QString path = QDir::cleanPath(folder.toLocalFile());
+    set_status_message(tr_controller("Looking for missing photos in %1…").arg(native(path)));
+    services_.library->relink(path, items);
+    return true;
+}
+
+void AppController::setCurrentPick(const QString& key) {
+    if (!current_->valid()) {
+        return;
+    }
+    PickState pick = PickState::None;
+    if (key == u"picked") {
+        pick = PickState::Picked;
+    } else if (key == u"rejected") {
+        pick = PickState::Rejected;
+    }
+    services_.library->set_pick(current_->item_id(), pick);
+}
+
+void AppController::backUpCatalog() {
+    set_status_message(tr_controller("Backing up the catalog…"));
+    services_.library->back_up_catalog();
+}
+
+bool AppController::openBackupFolder() {
+    const QString folder = services_.library->backup_folder();
+    if (folder.isEmpty()) {
+        return false;
+    }
+    if (!url_opener_(QUrl::fromLocalFile(folder))) {
+        set_status_message(tr_controller("Could not open %1").arg(native(folder)));
+        return false;
+    }
+    return true;
+}
+
+void AppController::set_copy_into_library(bool copy) {
+    if (copy != copy_into_library_) {
+        copy_into_library_ = copy;
+        emit importOptionsChanged();
+    }
+}
+
+void AppController::set_copy_destination(const QUrl& folder) {
+    if (folder != copy_destination_) {
+        copy_destination_ = folder;
+        emit importOptionsChanged();
+    }
+}
+
+bool AppController::can_relink() const {
+    return services_.library->can_relink();
+}
+
+bool AppController::can_back_up() const {
+    return services_.library->can_back_up();
+}
+
+QString AppController::library_notice() const {
+    return services_.library->library_notice();
+}
+
+void AppController::on_relink_finished(const RelinkSummary& summary) {
+    if (!summary.error.isEmpty()) {
+        set_status_message(tr_controller("Could not relink: %1").arg(summary.error));
+        return;
+    }
+    if (summary.missing == 0) {
+        set_status_message(tr_controller("No photos are missing."));
+        return;
+    }
+    QString message =
+        summary.relinked > 0
+            ? count_phrase(summary.relinked, "Relinked 1 photo from %2", "Relinked %1 photos from %2")
+                  .arg(summary.folder)
+            : tr_controller("No missing photos found in %1").arg(summary.folder);
+    if (summary.unmatched > 0) {
+        message +=
+            QStringLiteral(" · ") + count_phrase(summary.unmatched, "1 still missing", "%1 still missing");
+    }
+    if (summary.unverifiable > 0) {
+        message += QStringLiteral(" (") +
+                   count_phrase(summary.unverifiable, "1 was never verified, so it cannot be matched safely",
+                                "%1 were never verified, so they cannot be matched safely") +
+                   QStringLiteral(")");
+    }
+    if (summary.cancelled) {
+        message += QStringLiteral(" · ") + tr_controller("stopped early");
+    }
+    set_status_message(message);
+}
+
+void AppController::on_backup_finished(const BackupResult& result) {
+    set_status_message(result.ok ? tr_controller("Catalog backed up to %1").arg(result.path)
+                                 : tr_controller("The catalog backup failed: %1").arg(result.message));
+}
+
+void AppController::on_verification_progress(const VerificationProgress& progress) {
+    QString activity;
+    if (progress.active) {
+        activity = progress.total > 0
+                       ? tr_controller("Verifying photos… %1 of %2").arg(progress.done).arg(progress.total)
+                       : tr_controller("Checking the library…");
+    }
+    if (activity != background_activity_) {
+        background_activity_ = activity;
+        emit backgroundActivityChanged();
+    }
 }
 
 bool AppController::openItem(int row) {
@@ -267,6 +473,10 @@ QString AppController::displayPath(const QUrl& url) const {
     return url.isLocalFile() ? native(url.toLocalFile()) : url.toString();
 }
 
+QString AppController::nativePath(const QString& path) const {
+    return native(path);
+}
+
 void AppController::install_image_providers(QQmlEngine& engine) const {
     lucent::ui::install_image_providers(engine, services_.images, registry_);
 }
@@ -349,6 +559,12 @@ void AppController::on_import_started(const QStringList& paths) {
 void AppController::on_import_progress(const ImportProgress& progress) {
     if (progress.candidates <= 0) {
         set_status_message(tr_controller("Looking for photos… %1 files found").arg(progress.files_seen));
+        return;
+    }
+    if (progress.copying) {
+        set_status_message(tr_controller("Copying and verifying photos… %1 of %2")
+                               .arg(std::min(progress.checked + 1, progress.candidates))
+                               .arg(progress.candidates));
         return;
     }
     set_status_message(

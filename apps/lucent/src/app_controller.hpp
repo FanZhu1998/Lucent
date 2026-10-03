@@ -65,6 +65,20 @@ class AppController : public QObject {
     // File name the current photo would be exported as with the export options; empty when none.
     Q_PROPERTY(
         QString suggestedExportName READ suggested_export_name NOTIFY suggestedExportNameChanged FINAL)
+    // W4. Options of the Import dialog ("Copy into library folder" and its destination, kept for the
+    // session; Lucent.exe remembers the destination between sessions).
+    Q_PROPERTY(bool copyIntoLibrary READ copy_into_library WRITE set_copy_into_library NOTIFY
+                   importOptionsChanged FINAL)
+    Q_PROPERTY(QUrl copyDestination READ copy_destination WRITE set_copy_destination NOTIFY
+                   importOptionsChanged FINAL)
+    // Files and folders chosen for the next import, waiting for the Import dialog; empty when none.
+    Q_PROPERTY(QStringList pendingImport READ pending_import NOTIFY pendingImportChanged FINAL)
+    Q_PROPERTY(bool canRelink READ can_relink CONSTANT FINAL)
+    Q_PROPERTY(bool canBackUp READ can_back_up CONSTANT FINAL)
+    // A notice about the library itself (catalog unavailable or read-only); empty when all is well.
+    Q_PROPERTY(QString libraryNotice READ library_notice CONSTANT FINAL)
+    // Background verification of the library's files ("Verifying photos… 12 of 340"); empty when idle.
+    Q_PROPERTY(QString backgroundActivity READ background_activity NOTIFY backgroundActivityChanged FINAL)
 
 public:
     enum View { Library = 0, Edit = 1, Exports = 2 };
@@ -110,12 +124,41 @@ public:
     Q_INVOKABLE bool openOutputFolder(int row);
     // The local path of `url` with native separators (the URL as text when it is not local).
     Q_INVOKABLE QString displayPath(const QUrl& url) const;
+    // `path` with native separators.
+    Q_INVOKABLE QString nativePath(const QString& path) const;
+
+    // --- W4: import dialog, relinking, picks, catalog backup -----------------------------------
+
+    // Remembers the local files and folders among `urls` as pendingImport, for the Import dialog
+    // to confirm (with Include subfolders and Copy into library folder). False when none is local.
+    Q_INVOKABLE bool requestImport(const QList<QUrl>& urls);
+    // Imports pendingImport with the dialog's options and clears it. False (pendingImport kept)
+    // when copying is chosen without a destination, or when nothing is pending.
+    Q_INVOKABLE bool confirmImport();
+    Q_INVOKABLE void cancelImport();
+    // Looks for every missing photo in `folder` and its subfolders; files are relinked only when
+    // their content matches. False for a folder that is not local.
+    Q_INVOKABLE bool relinkMissing(const QUrl& folder);
+    // The same for the current photo's file only.
+    Q_INVOKABLE bool relinkCurrent(const QUrl& folder);
+    // Sets the current photo's pick: "picked", "rejected" or "none".
+    Q_INVOKABLE void setCurrentPick(const QString& key);
+    // Writes a verified backup of the catalog; the outcome appears in the status line.
+    Q_INVOKABLE void backUpCatalog();
+    Q_INVOKABLE bool openBackupFolder();
 
     // --- C++ API ---------------------------------------------------------------------------------
 
     // Starts one import request for the non-empty paths among `paths` (made absolute against the
     // current directory). False, without a request, when there is none.
     bool import_paths(const QStringList& paths, bool include_subfolders);
+    bool import_paths(const QStringList& paths, const ImportOptions& options);
+    // Begins the library's background upkeep (LibraryService::start). Lucent.exe calls it once the
+    // window is shown.
+    void start();
+    // Checks the library's files again (LibraryService::recheck_sources): Lucent.exe calls it when
+    // a volume arrives or leaves (VolumeWatcher).
+    void recheck_library();
     // Queues one export job per item, in order, into `folder` (absolute path). False when `items`
     // is empty or `folder` is empty.
     bool export_items(const QList<ItemId>& items, const QString& folder, const ExportOptions& options = {});
@@ -160,6 +203,15 @@ public:
     [[nodiscard]] int export_quality() const noexcept { return export_options_.jpeg_quality; }
     void set_export_quality(int quality);
     [[nodiscard]] QString suggested_export_name() const { return suggested_export_name_; }
+    [[nodiscard]] bool copy_into_library() const noexcept { return copy_into_library_; }
+    void set_copy_into_library(bool copy);
+    [[nodiscard]] QUrl copy_destination() const { return copy_destination_; }
+    void set_copy_destination(const QUrl& folder);
+    [[nodiscard]] QStringList pending_import() const { return pending_import_; }
+    [[nodiscard]] bool can_relink() const;
+    [[nodiscard]] bool can_back_up() const;
+    [[nodiscard]] QString library_notice() const;
+    [[nodiscard]] QString background_activity() const { return background_activity_; }
 
 signals:
     void currentViewChanged();
@@ -174,6 +226,9 @@ signals:
     void importProblemsChanged();
     void exportOptionsChanged();
     void suggestedExportNameChanged();
+    void importOptionsChanged();
+    void pendingImportChanged();
+    void backgroundActivityChanged();
 
 private:
     bool import_urls(const QList<QUrl>& urls, bool include_subfolders);
@@ -186,6 +241,10 @@ private:
     void on_current_changed();
     void set_status_message(const QString& message);
     void set_importing(bool importing);
+    void on_relink_finished(const RelinkSummary& summary);
+    void on_backup_finished(const BackupResult& result);
+    void on_verification_progress(const VerificationProgress& progress);
+    bool relink(const QUrl& folder, const QList<ItemId>& items);
 
     Services services_;  // declared first: destroyed after the models that observe it
     std::shared_ptr<GenerationRegistry> registry_;
@@ -205,6 +264,10 @@ private:
     QStringList import_problems_;
     ExportOptions export_options_;
     QString suggested_export_name_;
+    bool copy_into_library_ = false;
+    QUrl copy_destination_;
+    QStringList pending_import_;
+    QString background_activity_;
 };
 
 }  // namespace lucent::ui
