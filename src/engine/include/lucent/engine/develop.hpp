@@ -5,7 +5,10 @@
 // cached stage one and a fast stage two.
 //
 // Stage one (render_stage_one), done once per image and cached by the caller:
-//     decode -> normalise -> white balance -> demosaic -> orientation [-> proxy downscale]
+//     decode [-> DNG OpcodeList1] -> normalise [-> DNG OpcodeList2] -> white balance -> demosaic
+//     [-> DNG OpcodeList3] -> orientation [-> proxy downscale]
+// (the DNG opcode stages run when the file has those lists: dng_opcode_processing.hpp, ADR 0014;
+// every kind of stage one applies the same opcodes, so previews and exports agree)
 // producing white-balanced camera RGB (or monochrome), upright, at full resolution or as a proxy
 // (make_proxy: area-average box downscale in linear camera RGB to a requested long edge).
 // Two kinds (StageOneKind), both balanced with StageOneRequest::white_balance (as shot by
@@ -64,6 +67,7 @@
 #include <lucent/engine/demosaic.hpp>
 #include <lucent/engine/develop_operations.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/guided_filter.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/engine/sensor.hpp>
@@ -79,7 +83,8 @@ namespace lucent::engine {
 
 // Version of the develop pipeline's stage graph (bump when stages are added, removed or
 // reordered, or the split between the stages changes).
-inline constexpr std::uint32_t kDevelopPipelineVersion = 1;
+//   2: the DNG opcode stages (opcode processing version kDngOpcodeProcessingVersion 1).
+inline constexpr std::uint32_t kDevelopPipelineVersion = 2;
 // Version of the proxy downscale semantics.
 inline constexpr std::uint32_t kBoxDownscaleVersion = 1;
 
@@ -143,6 +148,8 @@ struct StageOneImage {
     DemosaicRecord demosaic;
     image::Orientation orientation = image::Orientation::Normal;  // baked into the pixels
     std::vector<StageRecord> stages;                               // decode .. orientation
+    // Every DNG opcode and the geometry changes it made, in stored orientation (ADR 0014).
+    DngOpcodeReport dng_opcodes;
     std::optional<DownscaleRecord> downscale;                      // proxies only
     // Developer-facing English: everything that makes the result less than a faithful
     // interpretation (interpretation issues, baseline routes, unbalanced data, ...).
@@ -206,6 +213,7 @@ struct DevelopReport {
     DemosaicRecord demosaic;
     image::Orientation orientation = image::Orientation::Normal;
     std::vector<StageRecord> stage_one_stages;
+    DngOpcodeReport dng_opcodes;
     std::optional<DownscaleRecord> downscale;
     std::vector<std::string> warnings;
     double stage_one_seconds = 0.0;

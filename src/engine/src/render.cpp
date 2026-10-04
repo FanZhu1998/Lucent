@@ -17,6 +17,7 @@
 #include <lucent/engine/orientation.hpp>
 #include <lucent/engine/render.hpp>
 
+#include "opcode_stages.hpp"
 #include "render_warnings.hpp"
 
 namespace lucent::engine {
@@ -138,8 +139,32 @@ public:
             return Unexpected(std::move(cancelled.error()));
         }
 
-        // ---- 2. normalize -------------------------------------------------------------------------
+        // ---- DNG OpcodeList1 on the stored samples ------------------------------------------------
+        DngOpcodeOptions opcode_options;
+        opcode_options.enabled = settings_.apply_dng_opcodes;
+        opcode_options.limits = options_.limits;
+        opcode_options.parallel = options_.parallel;
+        DngOpcodeProcessor opcodes(decoded.metadata, opcode_options);
         auto t = Clock::now();
+        if (opcodes.has_list(raw::DngOpcodeListId::List1)) {
+            const image::Size size = size_of(decoded.image);
+            if (auto status = opcodes.run_list1(decoded.image, cancel_); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            const image::ColorEncoding encoding = encoding_of(decoded.image);
+            StageRecord s = detail::opcode_stage_record(raw::DngOpcodeListId::List1,
+                                                        opcodes.records_of(raw::DngOpcodeListId::List1), encoding,
+                                                        size, size_of(decoded.image), seconds_since(t));
+            if (auto pushed = finish_stage(report, std::move(s), encoding); !pushed) {
+                return Unexpected(std::move(pushed.error()));
+            }
+            if (auto cancelled = cancel_.check(kWhereStage); !cancelled) {
+                return Unexpected(std::move(cancelled.error()));
+            }
+        }
+
+        // ---- 2. normalize -------------------------------------------------------------------------
+        t = Clock::now();
         const image::ColorEncoding raw_encoding = encoding_of(decoded.image);
         const image::Size raw_size = size_of(decoded.image);
         NormalizeOptions normalize_options;
@@ -183,6 +208,27 @@ public:
         }
         if (auto cancelled = cancel_.check(kWhereStage); !cancelled) {
             return Unexpected(std::move(cancelled.error()));
+        }
+
+        // ---- DNG OpcodeList2 on the normalised samples ---------------------------------------------
+        if (opcodes.has_list(raw::DngOpcodeListId::List2)) {
+            t = Clock::now();
+            const image::Size size = sensor->pixels.size();
+            if (auto status = opcodes.run_list2(*sensor, cancel_); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            StageRecord s = detail::opcode_stage_record(raw::DngOpcodeListId::List2,
+                                                        opcodes.records_of(raw::DngOpcodeListId::List2),
+                                                        sensor->encoding, size, sensor->pixels.size(), seconds_since(t));
+            s.parameters.push_back(StageParameter{
+                "resaturated_samples", static_cast<std::int64_t>(opcodes.report().list2_resaturated_samples)});
+            report.normalization.source_area = sensor->normalization.source_area;
+            if (auto pushed = finish_stage(report, std::move(s), sensor->encoding); !pushed) {
+                return Unexpected(std::move(pushed.error()));
+            }
+            if (auto cancelled = cancel_.check(kWhereStage); !cancelled) {
+                return Unexpected(std::move(cancelled.error()));
+            }
         }
 
         // ---- 3. white balance ---------------------------------------------------------------------
@@ -278,6 +324,32 @@ public:
         }
         if (auto cancelled = cancel_.check(kWhereStage); !cancelled) {
             return Unexpected(std::move(cancelled.error()));
+        }
+
+        // ---- DNG OpcodeList3 on the demosaiced image ------------------------------------------------
+        if (opcodes.has_list(raw::DngOpcodeListId::List3)) {
+            t = Clock::now();
+            const image::Size size = demosaiced->pixels.size();
+            const std::array<double, 3> multipliers =
+                demosaiced->white_balance
+                    ? detail::plane_multipliers(demosaiced->white_balance->applied.multipliers,
+                                                decoded.metadata.representation.channel_colors)
+                    : std::array<double, 3>{1.0, 1.0, 1.0};
+            if (auto status = opcodes.run_list3(demosaiced->pixels, multipliers, cancel_); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            StageRecord s = detail::opcode_stage_record(raw::DngOpcodeListId::List3,
+                                                        opcodes.records_of(raw::DngOpcodeListId::List3),
+                                                        demosaiced->encoding, size, demosaiced->pixels.size(),
+                                                        seconds_since(t));
+            s.parameters.push_back(StageParameter{"plane_multipliers",
+                                                  std::vector<double>(multipliers.begin(), multipliers.end())});
+            if (auto pushed = finish_stage(report, std::move(s), demosaiced->encoding); !pushed) {
+                return Unexpected(std::move(pushed.error()));
+            }
+            if (auto cancelled = cancel_.check(kWhereStage); !cancelled) {
+                return Unexpected(std::move(cancelled.error()));
+            }
         }
 
         // ---- 5. camera colour ---------------------------------------------------------------------
@@ -476,6 +548,16 @@ public:
                 return Unexpected(std::move(pushed.error()));
             }
         }
+        report.dng_opcodes = opcodes.report();
+        if (!settings_.apply_dng_opcodes) {
+            detail::add_disabled_opcode_issues(report.dng_opcodes, report.interpretation);
+            if (std::any_of(report.dng_opcodes.opcodes.begin(), report.dng_opcodes.opcodes.end(),
+                            [](const DngOpcodeRecord& r) { return r.outcome == OpcodeOutcome::Disabled; })) {
+                report.warnings.emplace_back(
+                    "DNG opcode processing is switched off by the render settings: this render is not a faithful "
+                    "interpretation of the file");
+            }
+        }
         report.total_seconds = seconds_since(start);
         result.metadata = std::move(decoded.metadata);
         return result;
@@ -540,6 +622,12 @@ std::string_view to_string(RenderStage stage) noexcept {
             return "display_rendering";
         case RenderStage::Orientation:
             return "orientation";
+        case RenderStage::DngOpcodeList1:
+            return "dng_opcode_list1";
+        case RenderStage::DngOpcodeList2:
+            return "dng_opcode_list2";
+        case RenderStage::DngOpcodeList3:
+            return "dng_opcode_list3";
     }
     return "invalid";
 }
@@ -625,14 +713,25 @@ Expected<MemoryEstimate> estimate_render_memory(const raw::RawMetadata& metadata
     e.color_peak = e.rgb_bytes + (rep.kind == raw::RawRepresentation::Monochrome ? e.sensor_bytes : 0);
     e.rendering_peak = e.rgb_bytes + scene;
     e.orientation_peak = e.rendering_peak + (orientation != image::Orientation::Normal ? e.rgb_bytes : 0);
+    const detail::OpcodeMemory opcode =
+        detail::opcode_memory(metadata, settings.apply_dng_opcodes, e.sensor_bytes, e.mask_bytes, e.rgb_bytes);
+    RenderStage opcode_stage = RenderStage::DngOpcodeList3;
+    if (opcode.list3_extra > 0) {
+        e.opcode_peak = e.rgb_bytes + opcode.list3_extra;
+    }
+    if (opcode.list2_extra > 0 && e.sensor_bytes + e.mask_bytes + opcode.list2_extra > e.opcode_peak) {
+        e.opcode_peak = e.sensor_bytes + e.mask_bytes + opcode.list2_extra;
+        opcode_stage = RenderStage::DngOpcodeList2;
+    }
 
-    const std::array<std::pair<std::uint64_t, RenderStage>, 6> peaks = {{
+    const std::array<std::pair<std::uint64_t, RenderStage>, 7> peaks = {{
         {e.decode_peak, RenderStage::Decode},
         {e.normalize_peak, RenderStage::Normalize},
         {e.demosaic_peak, RenderStage::Demosaic},
         {e.color_peak, RenderStage::CameraColor},
         {e.rendering_peak, RenderStage::DisplayRendering},
         {e.orientation_peak, RenderStage::Orientation},
+        {e.opcode_peak, opcode_stage},
     }};
     for (const auto& [bytes, stage] : peaks) {
         if (bytes > e.peak_bytes) {

@@ -547,15 +547,17 @@ TEST(LucentRender, RendersExportsReportsAndNeverOverwrites) {
     EXPECT_TRUE(report["recipe"].is_null());
     EXPECT_EQ(report["status"], "ok");
     EXPECT_EQ(report["export"]["sha256"], result["sha256"]);
+    // dji-fc4382-dng carries an OpcodeList3 WarpRectilinear, applied after demosaicing (ADR 0014).
     const std::vector<std::string> expected = {
-        "decode",       "normalize",     "white_balance",     "demosaic",
+        "decode",       "normalize",     "white_balance",     "demosaic",   "dng_opcode_list3",
         "camera_color", "working_space", "display_rendering", "orientation"};
     ASSERT_EQ(report["render"]["stages"].size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(report["render"]["stages"][i]["stage"], expected[i]);
     }
+    EXPECT_EQ(report["render"]["stages"][4]["parameters"]["applied"], "WarpRectilinear");
     EXPECT_EQ(report["render"]["color"]["path"], "dng_color_matrix");
-    EXPECT_TRUE(report["render"]["stages"][6]["provisional"].get<bool>());
+    EXPECT_TRUE(report["render"]["stages"][7]["provisional"].get<bool>());
     EXPECT_GT(report["process"]["peak_working_set_bytes"].get<std::uint64_t>(), 0u);
 
     auto dump = render_tool::read_float_tiff(dump_path);

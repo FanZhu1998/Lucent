@@ -373,7 +373,9 @@ TEST(RenderPipeline, EstimatesMemoryFromTheGeometry) {
 TEST(RenderSettings, RejectsNewerSchemasAndInvalidValues) {
     RenderSettings s;
     EXPECT_TRUE(s.validate());
-    s.schema = core::ContractVersion{1, 1};
+    s.schema = core::ContractVersion{1, 0};  // an older minor version is readable
+    EXPECT_TRUE(s.validate());
+    s.schema = core::ContractVersion{1, 2};
     ts::expect_error(s.validate(), ErrorCode::VersionMismatch, "engine.render.settings");
     s.schema = core::ContractVersion{2, 0};
     ts::expect_error(s.validate(), ErrorCode::VersionMismatch, "engine.render.settings");

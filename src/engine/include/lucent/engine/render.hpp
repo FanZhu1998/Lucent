@@ -8,22 +8,28 @@
 // ColorEncoding; the pipeline checks that every stage's input equals the previous stage's output
 // (an edge mismatch is ErrorCode::Internal, "engine.render.edge"):
 //   1. decode            raw::RawDecoder (render_file only)       -> camera-native stored samples
+//      dng_opcode_list1  DNG OpcodeList1 (dng_opcode_processing)  -> same encoding (stored samples)
 //   2. normalize         normalize_sensor (sensor.hpp)            -> camera-native, white = 1
+//      dng_opcode_list2  DNG OpcodeList2                          -> same encoding
 //   3. white_balance     resolve/apply_white_balance              -> camera-native, balanced
 //   4. demosaic          demosaic (demosaic.hpp)                  -> camera-native linear RGB / mono
+//      dng_opcode_list3  DNG OpcodeList3                          -> same encoding
 //   5. camera_color      resolve/apply_camera_color               -> CIE XYZ (D50 or D65)
 //   6. working_space     convert_to_working_space                 -> scene-linear Rec.2020 / D65
 //   7. display_rendering render_neutral_v0 (provisional)          -> display-referred linear Rec.2020
 //   8. orientation       apply_orientation                        -> same encoding, upright
+// An opcode stage is present only when the file has that opcode list (ADR 0014); it records every
+// opcode of the list, applied or not.
 // The hand-off to lucent::exporter::encode_for_output is display_linear_rec2020(). Values are
 // limited in three places: stage 3 clips raw highlights to the lowest white-balanced saturation
 // level (default highlight policy), stage 7 limits max(R, G, B) to 1, and the exporter clips per
 // channel whatever lies outside the output profile's range after its conversion (out-of-gamut
 // components, negative or above 1).
 //
-// Not yet part of the path (reported, never silently assumed): DNG opcode lists and other
-// required operations (the metadata's Interpretation says what is missing), DNG DefaultCrop,
-// lens corrections, non-square pixels, noise reduction, sharpening, resizing.
+// Not yet part of the path (reported, never silently assumed): DNG opcodes Lucent does not
+// implement and other required operations (the metadata's Interpretation says what is missing),
+// DNG DefaultCrop, lens-profile corrections, non-square pixels, noise reduction, sharpening,
+// resizing.
 //
 // Memory: before decoding (from the probe) and again before normalising, the pipeline estimates
 // the peak of its own pixel buffers (estimate_render_memory) and refuses with LimitExceeded
@@ -53,6 +59,7 @@
 #include <lucent/engine/camera_color.hpp>
 #include <lucent/engine/demosaic.hpp>
 #include <lucent/engine/display_rendering.hpp>
+#include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/sensor.hpp>
 #include <lucent/image/color_encoding.hpp>
 #include <lucent/image/color_math.hpp>
@@ -66,10 +73,12 @@ namespace lucent::engine {
 
 // Schema of RenderSettings, the seed of the W6 recipe. Persisted with every render record.
 //   1.0: W2 initial settings.
-inline constexpr core::ContractVersion kRenderSettingsVersion{1, 0};
+//   1.1: apply_dng_opcodes.
+inline constexpr core::ContractVersion kRenderSettingsVersion{1, 1};
 
 // Version of the ordered stage graph (bump when stages are added, removed or reordered).
-inline constexpr std::uint32_t kRenderPipelineVersion = 1;
+//   2: the DNG opcode stages (dng_opcode_list1..3).
+inline constexpr std::uint32_t kRenderPipelineVersion = 2;
 
 // Default bound on the pipeline's own pixel memory (4 GiB): a 45 MP render with a retained
 // scene-linear copy and a rotation needs about 2 GB. Process-wide admission control is W7's.
@@ -98,6 +107,11 @@ struct RenderSettings {
     double highlight_knee = kNeutralV0DefaultKnee;  // NeutralV0Parameters::knee
     // Bake the file's orientation into the pixels (false leaves stored orientation; reported).
     bool apply_orientation = true;
+    // Apply the DNG opcodes Lucent supports (ADR 0014). false is for reference comparisons with
+    // decoders that do not apply opcodes (LibRaw / rawpy): every opcode that would have been
+    // applied is then recorded as disabled and becomes an interpretation issue of the report, so
+    // such a render is never reported as complete.
+    bool apply_dng_opcodes = true;
 
     // VersionMismatch (engine.render.settings) when `schema` is not readable by this build
     // (core::check_readable); InvalidArgument for unknown enum values, a non-finite or
@@ -134,6 +148,9 @@ enum class RenderStage : std::uint8_t {
     WorkingSpace = 6,
     DisplayRendering = 7,
     Orientation = 8,
+    DngOpcodeList1 = 9,   // DNG OpcodeList1 on the stored samples
+    DngOpcodeList2 = 10,  // DNG OpcodeList2 on the normalised samples
+    DngOpcodeList3 = 11,  // DNG OpcodeList3 on the demosaiced image
 };
 
 [[nodiscard]] std::string_view to_string(RenderStage stage) noexcept;  // "decode", "white_balance", ...
@@ -178,6 +195,9 @@ struct MemoryEstimate {
     std::uint64_t color_peak = 0;        // RGB (+ the monochrome input while it is expanded)
     std::uint64_t rendering_peak = 0;    // RGB + retained scene-linear copy
     std::uint64_t orientation_peak = 0;  // + one oriented copy (non-Normal orientations)
+    // DNG opcodes: a List 2 TrimBounds copies the sensor image and mask, a List 3 warp or
+    // TrimBounds one RGB image (0 without such opcodes or when opcode processing is off).
+    std::uint64_t opcode_peak = 0;
     std::uint64_t peak_bytes = 0;        // maximum of the peaks above
     RenderStage peak_stage = RenderStage::Decode;
     std::uint64_t budget_bytes = 0;  // RenderOptions::memory_budget_bytes
@@ -188,7 +208,9 @@ struct RenderReport {
     std::uint32_t pipeline_version = kRenderPipelineVersion;
     RenderSettings settings;
     std::vector<StageRecord> stages;     // in execution order
-    raw::Interpretation interpretation;  // of the decoded image, copied from its metadata
+    // Of the decoded image, copied from its metadata; with RenderSettings::apply_dng_opcodes
+    // false, every disabled opcode is added as an issue.
+    raw::Interpretation interpretation;
     // Developer-facing English: everything that makes this render less than a faithful
     // interpretation (missing operations, baseline routes, ignored tags, ...).
     std::vector<std::string> warnings;
@@ -200,6 +222,7 @@ struct RenderReport {
     image::Matrix3d working_space_matrix;  // XYZ -> Rec.2020 as applied
     NeutralV0Record rendering;
     image::Orientation orientation = image::Orientation::Normal;  // baked into the pixels
+    DngOpcodeReport dng_opcodes;  // every DNG opcode and geometry change (ADR 0014)
     image::Size output_size;
     double total_seconds = 0.0;
 };
