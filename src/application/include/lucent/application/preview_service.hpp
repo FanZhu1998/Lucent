@@ -184,8 +184,10 @@ inline constexpr std::uint32_t kRenderedThumbnailGeneratorVersion = 1;
 // The disk-cache key of the Lucent-rendered thumbnail of image `subimage` of the file with content
 // `source_sha256`, rendered with the settings whose canonical document has `settings_sha256`, by
 // the decoder build `decoder_version` (ProbeSummary::decoder + " " + decoder_version). The variant
-// is the SHA-256 of "lucent.rendered-thumbnail", the settings SHA-256, engine::
-// kDevelopPipelineVersion, engine::kBoxDownscaleVersion and the decoder text.
+// is the SHA-256 of "lucent.rendered-thumbnail", the settings SHA-256 (which covers the recipe's
+// operation and base-look versions), every engine::kDevelopEngineVersions entry (the engine's
+// other algorithm versions, so an engine change never shows an old thumbnail) and the decoder
+// text.
 [[nodiscard]] ThumbnailKey rendered_thumbnail_key(const core::Digest256& source_sha256,
                                                   std::uint32_t subimage,
                                                   const core::Digest256& settings_sha256,

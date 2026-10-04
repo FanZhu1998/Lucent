@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -19,6 +21,8 @@
 #include <lucent/application/recipe_store.hpp>
 #include <lucent/application/source_maintenance.hpp>
 #include <lucent/application/thumbnail_cache.hpp>
+#include <lucent/core/hash.hpp>
+#include <lucent/engine/develop.hpp>
 
 #include "app_test_support.hpp"
 
@@ -736,6 +740,31 @@ TEST(PreviewRecipes, RenderedThumbnailsAreKeyedBySettingsAndSurviveTheSession) {
     EXPECT_EQ(key.generator, ThumbnailGenerator::LucentRender);
     ASSERT_TRUE(cache->find(key));
     EXPECT_NE(key, camera_thumbnail_key(hashed->digest, 0));
+    // The variant, independently: the settings identity, every engine algorithm version a recipe
+    // does not carry (so a new engine never shows an old thumbnail) and the decoder build.
+    {
+        const std::string decoder = item.probe->decoder + " " + item.probe->decoder_version;
+        std::vector<std::byte> material;
+        const auto append = [&](const void* data, std::size_t size) {
+            const auto* bytes = static_cast<const std::byte*>(data);
+            material.insert(material.end(), bytes, bytes + size);
+        };
+        const std::string_view tag = "lucent.rendered-thumbnail";
+        append(tag.data(), tag.size());
+        append(edited->committed_sha256.data(), edited->committed_sha256.size());
+        for (const std::uint32_t version :
+             {engine::kDevelopPipelineVersion, engine::kSensorNormalizationVersion, engine::kWhiteBalanceVersion,
+              engine::kMalvarHeCutlerVersion, engine::kXTransBaselineVersion, engine::kBypassVersion,
+              engine::kCameraColorVersion, engine::kWorkingSpaceVersion, engine::kGuidedFilterVersion,
+              engine::kBoxDownscaleVersion}) {
+            const std::uint8_t le[4] = {static_cast<std::uint8_t>(version), static_cast<std::uint8_t>(version >> 8),
+                                        static_cast<std::uint8_t>(version >> 16),
+                                        static_cast<std::uint8_t>(version >> 24)};
+            append(le, sizeof(le));
+        }
+        append(decoder.data(), decoder.size());
+        EXPECT_EQ(key.variant, *core::sha256(material));
+    }
 
     {
         PreviewService service(*fixture.library, **executor, *renderer, options);  // empty memory caches

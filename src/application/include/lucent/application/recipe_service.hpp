@@ -58,11 +58,14 @@
 // Read-only items (blueprint section 8: "Open incompatible recipes read-only with a clear
 // reason"). When the store is read-only (a catalog written by a newer Lucent), every change fails
 // with its reason. When the item's current revision cannot be read by this build (a newer schema,
-// operation or base-look version: VersionMismatch; or a damaged document), state().read_only says
-// why and current_settings() fails with that error, so previews and exports refuse the item
-// instead of rendering something else; edits, locks and pastes into it fail with the same error.
-// Moving away from it stays possible (undo, redo, select_revision, reset_to_as_shot, revert_to a
-// readable revision): those never interpret the unreadable recipe.
+// operation or base-look version, or values a newer catalog wrote: VersionMismatch; a damaged
+// document, or one that fails its SHA-256 check: Corrupt or InvalidArgument), state().read_only says
+// why (where kRecipeUnreadableWhere) and current_settings() fails with that error, so previews and
+// exports refuse the item instead of rendering something else; edits, locks and pastes into it fail
+// with the same error. Moving away from it stays possible (undo, redo, select_revision,
+// reset_to_as_shot, revert_to a readable revision): those never interpret the unreadable recipe.
+// Only the current revision matters: a damaged or newer revision elsewhere in the history never
+// makes the item unusable (a history that cannot be listed fails history() alone).
 //
 // Observers (subscribe) are called after every change of an item (RecipeChange), on the thread that
 // made it, after the service's lock is released, with the contract of library.hpp's observers.
@@ -79,6 +82,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <lucent/application/library.hpp>
@@ -92,6 +96,11 @@
 #include <lucent/raw/decoder_registry.hpp>
 
 namespace lucent::app {
+
+// The `where` of the error that makes an item's current recipe unreadable (RecipeState::read_only
+// with recipe_unreadable, current_settings()); its code says why (VersionMismatch: made by a newer
+// Lucent; otherwise damaged).
+inline constexpr std::string_view kRecipeUnreadableWhere = "app.recipe.unreadable";
 
 // What a camera supports, as far as recipes are concerned.
 struct CameraCapabilities {

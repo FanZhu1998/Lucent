@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <lucent/application/recipe_service.hpp>
+#include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/version.hpp>
 #include <lucent/engine/white_balance_model.hpp>
@@ -26,6 +27,7 @@ namespace {
 
 constexpr std::string_view kWhere = "app.recipe";
 constexpr std::string_view kWherePaste = "app.recipe.paste";
+constexpr std::string_view kWhereUnreadable = kRecipeUnreadableWhere;
 
 std::string join_controls(const std::vector<engine::DevelopControl>& controls) {
     std::string out;
@@ -110,6 +112,24 @@ Expected<engine::DevelopSettings> settings_of(const catalog::RecipeRevision& rev
     return read_recipe(revision.settings_json);
 }
 
+// A store error that describes stored revisions (a field this build cannot decode, a document that
+// fails its SHA-256 check) rather than the store failing to work (I/O, memory, a missing item): the
+// item stays usable, read-only where its current recipe is affected.
+bool is_stored_data_error(const Error& error) noexcept {
+    return error.code == ErrorCode::Corrupt || error.code == ErrorCode::VersionMismatch;
+}
+
+// `error` as the reason the item's current recipe cannot be used: where "app.recipe.unreadable" (so
+// user interfaces can say that the edit, not the photo, cannot be read), code kept, the original
+// location kept in the message for logs.
+Error unreadable_recipe(const Error& error) {
+    if (error.where == kWhereUnreadable) {
+        return error;
+    }
+    return Error{error.code, std::format("{} [{}]", error.message, error.where),
+                 std::string(kWhereUnreadable), error.native_code};
+}
+
 // Exceptions never leave the module (conventions): allocation failures become OutOfMemory.
 Unexpected out_of_memory() {
     return fail(ErrorCode::OutOfMemory, "the recipe service ran out of memory", std::string(kWhere));
@@ -154,6 +174,7 @@ struct RecipeService::State {
         engine::DevelopSettings committed;
         RecipeDocument committed_document;
         std::optional<Error> unreadable;  // the current revision's settings cannot be used
+        std::optional<Error> history_error;  // the history cannot be listed (history() fails with it)
         std::optional<engine::DevelopSettings> transient;
         RecipeDocument transient_document;
         std::uint64_t transient_generation = 0;
@@ -178,35 +199,58 @@ struct RecipeService::State {
 
     // ---- Loading ------------------------------------------------------------------------------
 
-    // Re-reads the item's revisions from the store into `entry` (the transient edit is kept).
+    // Re-reads the item's revisions from the store into `entry` (the transient edit is kept). The
+    // history listing and the current revision are read separately: stored data this build cannot
+    // use (is_stored_data_error) in the current revision makes the item read-only (`unreadable`),
+    // in the listing only the listing fails; neither makes the item unusable. Store failures fail.
     Status reload_locked(ItemId item, Entry& entry) const {
         auto history = store->history(item);
-        if (!history) {
+        if (!history && !is_stored_data_error(history.error())) {
             return Unexpected(std::move(history.error()));
         }
         auto current = store->current(item);
-        if (!current) {
+        if (!current && !is_stored_data_error(current.error())) {
             return Unexpected(std::move(current.error()));
         }
-        entry.history = std::move(*history);
+        entry.history_error.reset();
+        if (history) {
+            entry.history = std::move(*history);
+        } else {
+            core::log_warn("app.recipe", "the revision history of item {} cannot be listed: {}", item.value,
+                           history.error().describe());
+            entry.history = catalog::RevisionHistory{};
+            entry.history.item = catalog::ItemId{static_cast<std::int64_t>(item.value)};
+            entry.history_error = history.error();
+        }
         entry.revision = entry.history.current;
         entry.revision_number = 0;
         entry.unreadable.reset();
         entry.committed = engine::DevelopSettings{};
-        if (*current) {
+        if (!current) {
+            // The current revision fails its integrity check or holds values this build cannot
+            // decode: read-only with that reason; undo, redo, select and reset still work.
+            core::log_warn("app.recipe", "the current recipe of item {} cannot be read: {}", item.value,
+                           current.error().describe());
+            entry.unreadable = unreadable_recipe(current.error());
+            for (const catalog::RevisionInfo& info : entry.history.revisions) {
+                if (entry.revision == info.id) {
+                    entry.revision_number = info.revision_number;
+                }
+            }
+        } else if (*current) {
             entry.revision = (*current)->info.id;
             entry.revision_number = (*current)->info.revision_number;
             auto settings = settings_of(**current);
             if (settings) {
                 entry.committed = std::move(*settings);
             } else {
-                entry.unreadable = settings.error();
+                entry.unreadable = unreadable_recipe(settings.error());
             }
         }
         if (!entry.unreadable) {
             auto document = write_recipe(entry.committed);
             if (!document) {
-                entry.unreadable = document.error();
+                entry.unreadable = unreadable_recipe(document.error());
             } else {
                 entry.committed_document = std::move(*document);
             }
@@ -840,6 +884,9 @@ Expected<RecipeHistory> RecipeService::history(ItemId item) const {
             return Unexpected(std::move(entry.error()));
         }
         const State::Entry& e = **entry;
+        if (e.history_error) {
+            return Unexpected(*e.history_error);
+        }
         try {
             RecipeHistory out;
             out.item = item;

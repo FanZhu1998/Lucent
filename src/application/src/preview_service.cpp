@@ -237,8 +237,7 @@ ThumbnailKey rendered_thumbnail_key(const core::Digest256& source_sha256, std::u
     constexpr std::string_view kTag = "lucent.rendered-thumbnail";
     append(kTag.data(), kTag.size());
     append(settings_sha256.data(), settings_sha256.size());
-    const std::uint32_t versions[2] = {engine::kDevelopPipelineVersion, engine::kBoxDownscaleVersion};
-    for (const std::uint32_t v : versions) {
+    for (const std::uint32_t v : engine::kDevelopEngineVersions) {
         const std::uint8_t le[4] = {static_cast<std::uint8_t>(v), static_cast<std::uint8_t>(v >> 8),
                                     static_cast<std::uint8_t>(v >> 16), static_cast<std::uint8_t>(v >> 24)};
         append(le, sizeof(le));

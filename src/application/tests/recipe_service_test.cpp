@@ -3,6 +3,7 @@
 // observers. Items are synthetic DNGs imported into a session library (memory store) or a catalog.
 
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
 #include <set>
@@ -405,6 +406,110 @@ TEST_F(RecipeServiceTest, AnotherWritersRevisionIsAConflictNotAnOverwrite) {
 }
 
 // ---- Catalog-backed --------------------------------------------------------------------------
+
+// A memory store whose reads fail as a catalog's do for stored data this build cannot use: the
+// current revision `corrupt` fails its SHA-256 check, or the whole history listing fails.
+class DamagedStore final : public RecipeStore {
+public:
+    std::shared_ptr<RecipeStore> inner = create_memory_recipe_store();
+    std::optional<catalog::RevisionId> corrupt;
+    std::optional<Error> history_error;
+
+    std::optional<Error> read_only_reason() const override { return inner->read_only_reason(); }
+    Expected<catalog::RevisionHistory> history(ItemId item) const override {
+        if (history_error) {
+            return Unexpected(*history_error);
+        }
+        return inner->history(item);
+    }
+    Expected<std::optional<catalog::RecipeRevision>> current(ItemId item) const override {
+        auto found = inner->current(item);
+        if (found && *found && (*found)->info.id == corrupt) {
+            return fail(ErrorCode::Corrupt,
+                        std::format("the settings of recipe revision {} do not match their SHA-256", corrupt->value),
+                        "catalog.revision");
+        }
+        return found;
+    }
+    Expected<std::optional<catalog::RecipeRevision>> find(catalog::RevisionId id) const override {
+        return inner->find(id);
+    }
+    Expected<catalog::RevisionInfo> append(ItemId item, const catalog::NewRevision& revision,
+                                           std::optional<catalog::RevisionId> expected_current) override {
+        return inner->append(item, revision, expected_current);
+    }
+    Status set_current(ItemId item, std::optional<catalog::RevisionId> revision) override {
+        return inner->set_current(item, revision);
+    }
+    Expected<std::optional<catalog::RevisionId>> undo(ItemId item) override { return inner->undo(item); }
+    Expected<catalog::RevisionId> redo(ItemId item) override { return inner->redo(item); }
+};
+
+TEST_F(RecipeServiceTest, ADamagedCurrentRevisionOpensReadOnlyAndCanBeUndone) {
+    auto damaged = std::make_shared<DamagedStore>();
+    RecipeService service(library_, damaged);
+    ASSERT_TRUE(service.apply(a(), with_exposure(0.5)));
+    auto second = service.apply(a(), with_exposure(-3.2));
+    ASSERT_TRUE(second);
+    damaged->corrupt = second->revision;
+
+    // A fresh service (as after a restart) reads the damaged current revision.
+    RecipeService reopened(library_, damaged);
+    auto s = reopened.state(a());
+    ASSERT_TRUE(s) << s.error().describe();
+    ASSERT_TRUE(s->read_only);
+    EXPECT_TRUE(s->recipe_unreadable);
+    EXPECT_EQ(s->read_only->code, ErrorCode::Corrupt);
+    EXPECT_EQ(s->read_only->where, kRecipeUnreadableWhere);
+    EXPECT_EQ(s->revision, second->revision);
+    EXPECT_EQ(s->revision_number, 2u);
+    EXPECT_TRUE(s->can_undo);
+    // Never rendered with other settings, never edited on top of.
+    auto current = reopened.current_settings(a());
+    ASSERT_FALSE(current);
+    EXPECT_EQ(current.error().code, ErrorCode::Corrupt);
+    EXPECT_EQ(current.error().where, kRecipeUnreadableWhere);
+    EXPECT_EQ(reopened.apply(a(), with_exposure(1.0)).error().code, ErrorCode::Corrupt);
+    // The history still lists every revision.
+    auto history = reopened.history(a());
+    ASSERT_TRUE(history);
+    EXPECT_EQ(history->entries.size(), 2u);
+    // Undo shows the readable parent again.
+    auto undone = reopened.undo(a());
+    ASSERT_TRUE(undone) << undone.error().describe();
+    EXPECT_FALSE(undone->read_only);
+    EXPECT_EQ(undone->settings, with_exposure(0.5));
+    // ... and reset to as shot is possible from the damaged one too.
+    ASSERT_TRUE(reopened.redo(a()));
+    EXPECT_TRUE(reopened.state(a())->recipe_unreadable);
+    auto reset = reopened.reset_to_as_shot(a());
+    ASSERT_TRUE(reset) << reset.error().describe();
+    EXPECT_FALSE(reset->read_only);
+    EXPECT_TRUE(reopened.current_settings(a()));
+}
+
+TEST_F(RecipeServiceTest, AHistoryThatCannotBeListedLeavesTheCurrentRecipeUsable) {
+    auto damaged = std::make_shared<DamagedStore>();
+    RecipeService service(library_, damaged);
+    ASSERT_TRUE(service.apply(a(), with_exposure(0.5)));
+    damaged->history_error = Error{ErrorCode::VersionMismatch,
+                                   "recipe_revisions.revision_number holds '0', a value written by a newer Lucent",
+                                   "catalog.query", 0};
+
+    RecipeService reopened(library_, damaged);
+    auto s = reopened.state(a());
+    ASSERT_TRUE(s) << s.error().describe();
+    EXPECT_FALSE(s->read_only);
+    EXPECT_EQ(s->settings, with_exposure(0.5));
+    auto current = reopened.current_settings(a());
+    ASSERT_TRUE(current);
+    EXPECT_EQ(current->settings, with_exposure(0.5));
+    EXPECT_EQ(reopened.history(a()).error().code, ErrorCode::VersionMismatch);
+    // Store failures that are not about stored data still fail.
+    damaged->history_error = Error{ErrorCode::IoError, "disk I/O error", "catalog.query", 0};
+    RecipeService failing(library_, damaged);
+    EXPECT_EQ(failing.state(a()).error().code, ErrorCode::IoError);
+}
 
 class CatalogRecipeTest : public ::testing::Test {
 protected:
