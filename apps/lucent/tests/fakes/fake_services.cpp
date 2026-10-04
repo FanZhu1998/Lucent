@@ -133,6 +133,7 @@ Services create_fake_services(FakeTimings timings) {
     services.library = std::make_unique<FakeLibraryService>(catalog, timings);
     services.images = std::make_shared<FakeImageSource>(catalog, timings);
     services.exports = std::make_unique<FakeExportService>(catalog, timings);
+    services.edits = std::make_unique<FakeEditService>(catalog, timings);
     services.simulation_notice = tr_fake("Simulated services");
     return services;
 }

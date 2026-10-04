@@ -72,40 +72,87 @@ struct AdmissionLease::State {
     std::mutex mutex;
     std::condition_variable changed;
     AdmissionOptions options;
-    std::uint32_t active = 0;
-    std::uint64_t active_bytes = 0;
+    std::uint32_t active = 0;          // render leases
+    std::uint64_t active_bytes = 0;    // every lease's bytes
+    std::uint32_t retained = 0;        // retained leases
+    std::uint64_t retained_bytes = 0;  // their bytes (part of active_bytes)
     std::uint64_t next_ticket = 1;
     std::deque<std::uint64_t> waiting[2];  // tickets per admission class (interactive, others), FIFO
     bool shut_down = false;
     std::uint64_t granted = 0;
 
-    void give_back(std::uint64_t bytes) noexcept {
+    void give_back(std::uint64_t bytes, bool was_retained) noexcept {
+        {
+            std::lock_guard lock(mutex);
+            if (was_retained) {
+                --retained;
+                retained_bytes -= bytes;
+            } else {
+                --active;
+            }
+            active_bytes -= bytes;
+        }
+        changed.notify_all();
+    }
+
+    // A render lease of `bytes` becomes a retained lease of `kept` (<= bytes).
+    void convert(std::uint64_t bytes, std::uint64_t kept) noexcept {
         {
             std::lock_guard lock(mutex);
             --active;
-            active_bytes -= bytes;
+            ++retained;
+            active_bytes -= bytes - kept;
+            retained_bytes += kept;
+        }
+        changed.notify_all();
+    }
+
+    // A retained lease of `bytes` shrinks to `kept` (<= bytes).
+    void shrink(std::uint64_t bytes, std::uint64_t kept) noexcept {
+        {
+            std::lock_guard lock(mutex);
+            active_bytes -= bytes - kept;
+            retained_bytes -= bytes - kept;
         }
         changed.notify_all();
     }
 };
 
 AdmissionLease::AdmissionLease(AdmissionLease&& other) noexcept
-    : state_(std::move(other.state_)), bytes_(std::exchange(other.bytes_, 0)) {}
+    : state_(std::move(other.state_)),
+      bytes_(std::exchange(other.bytes_, 0)),
+      retained_(std::exchange(other.retained_, false)) {}
 
 AdmissionLease& AdmissionLease::operator=(AdmissionLease&& other) noexcept {
     if (this != &other) {
         release();
         state_ = std::move(other.state_);
         bytes_ = std::exchange(other.bytes_, 0);
+        retained_ = std::exchange(other.retained_, false);
     }
     return *this;
 }
 
 void AdmissionLease::release() noexcept {
     if (auto state = std::move(state_)) {
-        state->give_back(bytes_);
+        state->give_back(bytes_, retained_);
         bytes_ = 0;
+        retained_ = false;
     }
+}
+
+void AdmissionLease::retain_only(std::uint64_t bytes) noexcept {
+    if (!state_) {
+        return;
+    }
+    const std::uint64_t kept = std::min(bytes, bytes_);
+    if (retained_) {
+        state_->shrink(bytes_, kept);
+    } else {
+        state_->convert(bytes_, kept);
+        retained_ = true;
+    }
+    bytes_ = kept;
 }
 
 Status AdmissionOptions::validate() const {
@@ -174,7 +221,36 @@ Expected<AdmissionLease> MemoryAdmission::acquire(std::uint64_t bytes, Lane lane
             ++s.granted;
             lock.unlock();
             s.changed.notify_all();
-            return AdmissionLease(state, bytes);
+            return AdmissionLease(state, bytes, false);
+        }
+        s.changed.wait_for(lock, kAdmissionPoll);
+    }
+}
+
+Expected<AdmissionLease> MemoryAdmission::retain(std::uint64_t bytes, const core::CancellationToken& cancel) {
+    if (bytes > options_.budget_bytes) {
+        return fail(ErrorCode::LimitExceeded,
+                    std::format("{} bytes of retained memory exceed the admission budget of {}", bytes,
+                                options_.budget_bytes),
+                    std::string(kWhereAdmission));
+    }
+    const std::shared_ptr<AdmissionLease::State> state = state_;
+    const std::uint64_t budget = options_.budget_bytes;
+    AdmissionLease::State& s = *state;
+    std::unique_lock lock(s.mutex);
+    for (;;) {
+        if (s.shut_down || cancel.is_cancelled()) {
+            return fail(
+                ErrorCode::Cancelled,
+                s.shut_down ? "memory admission has been shut down" : "waiting for memory was cancelled",
+                std::string(kWhereAdmission));
+        }
+        if (s.active_bytes + bytes <= budget) {
+            ++s.retained;
+            s.retained_bytes += bytes;
+            s.active_bytes += bytes;
+            ++s.granted;
+            return AdmissionLease(state, bytes, true);
         }
         s.changed.wait_for(lock, kAdmissionPoll);
     }
@@ -193,6 +269,8 @@ AdmissionStats MemoryAdmission::stats() const {
     AdmissionStats stats;
     stats.active = state_->active;
     stats.active_bytes = state_->active_bytes;
+    stats.retained = state_->retained;
+    stats.retained_bytes = state_->retained_bytes;
     stats.waiting_interactive = static_cast<std::uint32_t>(state_->waiting[0].size());
     stats.waiting_background = static_cast<std::uint32_t>(state_->waiting[1].size());
     stats.granted = state_->granted;

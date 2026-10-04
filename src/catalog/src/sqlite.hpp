@@ -45,6 +45,9 @@ public:
 
     Statement& bind_null(int index) noexcept;
     Statement& bind_int64(int index, std::int64_t value) noexcept;
+    // SQLite stores a NaN as NULL; callers validate finiteness first.
+    Statement& bind_double(int index, double value) noexcept;
+    Statement& bind_optional_double(int index, const std::optional<double>& value) noexcept;
     Statement& bind_text(int index, std::string_view value) noexcept;  // copied by SQLite
     Statement& bind_blob(int index, std::span<const std::uint8_t> value) noexcept;
     Statement& bind_optional_text(int index, const std::optional<std::string>& value) noexcept;
@@ -56,6 +59,7 @@ public:
 
     [[nodiscard]] bool is_null(int column) const noexcept;
     [[nodiscard]] std::int64_t column_int64(int column) const noexcept;
+    [[nodiscard]] double column_double(int column) const noexcept;
     // The view is valid until the next step(), reset or destruction.
     [[nodiscard]] std::string_view column_text(int column) const noexcept;
     [[nodiscard]] std::span<const std::uint8_t> column_blob(int column) const noexcept;

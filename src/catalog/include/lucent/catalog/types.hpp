@@ -12,6 +12,8 @@
 //           probe, its support status and the user's flags.
 //   Import  one run of the importer: when it ran, which roots it scanned, the options it used and
 //           what it counted.
+//   Revision one immutable version of an item's develop settings (schema v2), linked to the
+//           revision it was derived from; the item points at its current revision.
 //
 // Persistence. Every enumeration below is stored in the catalog as the text returned by its
 // to_string() function ("present", "missing", ...). Those spellings and the numeric values are
@@ -27,6 +29,7 @@
 #include <array>
 #include <chrono>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -68,6 +71,14 @@ struct ImportId {
     [[nodiscard]] constexpr bool valid() const noexcept { return value > 0; }
     friend constexpr bool operator==(ImportId, ImportId) noexcept = default;
     friend constexpr auto operator<=>(ImportId, ImportId) noexcept = default;
+};
+
+// A recipe revision (schema v2). Unique across all items of the catalog.
+struct RevisionId {
+    std::int64_t value = 0;
+    [[nodiscard]] constexpr bool valid() const noexcept { return value > 0; }
+    friend constexpr bool operator==(RevisionId, RevisionId) noexcept = default;
+    friend constexpr auto operator<=>(RevisionId, RevisionId) noexcept = default;
 };
 
 // How a source entered the library (blueprint section 2: "Default import references files in
@@ -161,7 +172,7 @@ struct SourceObservation {
     // file has not been hashed (yet).
     std::optional<core::Digest256> sha256;
     ImportMode import_mode = ImportMode::Referenced;
-    std::optional<std::filesystem::path> origin_path;  // required for Copied, forbidden otherwise
+    std::optional<std::filesystem::path> origin_path;   // required for Copied, forbidden otherwise
     std::optional<core::FileIdentity> origin_identity;  // optional for Copied, forbidden otherwise
     StorageKind storage_kind = StorageKind::Unknown;
     Timestamp seen_at{};
@@ -237,6 +248,16 @@ struct ItemMetadata {
     std::string decoder_id;       // adapter id, e.g. "libraw"
     std::string decoder_version;  // version of that decoder build
     Timestamp probed_at{};
+    // Capture settings (schema v2). std::nullopt when unknown, and for items catalogued by a
+    // schema-v1 build until they are probed again. When set: finite and > 0 (InvalidArgument
+    // otherwise). ISO is the exposure index the camera recorded; exposure time in seconds.
+    std::optional<double> iso;
+    std::optional<double> exposure_time_s;
+    std::optional<double> f_number;
+    std::optional<double> focal_length_mm;
+    // Number of images in the item's file (schema v2): >= 1 and > subimage_index when set;
+    // std::nullopt when unknown (items catalogued before v2).
+    std::optional<std::uint32_t> image_count;
 };
 
 struct ItemFlags {
@@ -258,6 +279,8 @@ struct ItemRecord {
     SourceState source_state = SourceState::Present;
     StorageKind storage_kind = StorageKind::Unknown;
     bool source_hashed = false;  // the source has a content hash
+    // The recipe revision the item shows now; std::nullopt: "as shot" (no edit, or undone to it).
+    std::optional<RevisionId> current_revision;
 };
 
 // Contact-sheet filter. Empty vectors and unset optionals do not filter.
@@ -355,6 +378,99 @@ struct ImportRecord {
     std::vector<ImportRoot> roots;
     std::string options_json;
     ImportCounts counts;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Recipe revisions (schema v2; blueprint section 2, "Detailed individual editing", and section 8)
+// ---------------------------------------------------------------------------------------------
+//
+// Every edit of an item's develop settings is stored as a new, immutable revision; nothing ever
+// changes or deletes a revision (they go only with their item). Each item points at the revision
+// it shows now (its current revision; none means "as shot"):
+//   * an edit appends a revision whose parent is the current one and makes it current (one atomic
+//     call, WriteTransaction::append_revision);
+//   * undo / redo and "go back to an earlier recipe" only move the current pointer
+//     (set_current_revision, undo_revision, redo_revision);
+//   * an edit after an undo starts a new branch from the current revision; the undone branch
+//     stays in the history and can be made current again.
+// "Reset to as shot" is either a move to no revision (set_current_revision(item, std::nullopt):
+// undoable by redo) or, when the reset itself should be a recorded step, a Reset revision whose
+// settings are the as-shot defaults.
+//
+// The settings document is opaque to the catalog: it stores the JSON text, its schema name and
+// version (for example "lucent.develop" v1) and the engine version, and verifies the text's
+// SHA-256 when it is read back. Interpreting it, and refusing documents of a newer unknown schema
+// version, is the reader's job (blueprint section 8: "never treat newer unknown versions as
+// compatible").
+
+// Why a revision was created. Persisted as "user", "auto", "reset", "paste", "import"; later
+// versions may append values without a new schema (the column has no CHECK). Origins only label the
+// history, so a value this build does not know is read as Unknown rather than as an error.
+enum class RevisionOrigin : std::uint8_t {
+    Unknown = 0,  // read only: an origin written by a newer Lucent; never written
+    User = 1,     // the photographer changed controls
+    Auto = 2,    // the automatic optimiser produced it ("Auto creates a new editable revision")
+    Reset = 3,   // a recorded reset to as-shot settings
+    Paste = 4,   // settings pasted from another item
+    Import = 5,  // settings that arrived with the photograph (a sidecar or another catalog)
+};
+
+// "user", "auto", "reset", "paste", "import", "unknown"; "invalid" for out-of-range values.
+[[nodiscard]] std::string_view to_string(RevisionOrigin value) noexcept;
+
+// Largest settings document of a revision (UTF-8 bytes). A recipe with many brush strokes stays
+// far below it; LimitExceeded above it.
+inline constexpr std::size_t kMaxRevisionSettingsBytes = std::size_t{16} << 20;  // 16 MiB
+// Largest note of a revision (UTF-8 bytes).
+inline constexpr std::size_t kMaxRevisionNoteBytes = std::size_t{64} << 10;  // 64 KiB
+// Largest schema name and engine version (UTF-8 bytes).
+inline constexpr std::size_t kMaxRevisionLabelBytes = 256;
+
+// The input of WriteTransaction::append_revision(). The parent and the revision number are
+// assigned by the catalog.
+struct NewRevision {
+    RevisionOrigin origin = RevisionOrigin::User;
+    std::string schema_name;           // settings schema, e.g. "lucent.develop"; 1 ... 256 bytes
+    std::uint32_t schema_version = 0;  // settings schema version, >= 1
+    std::string settings_json;         // the settings document: valid JSON, at most 16 MiB
+    std::string engine_version;        // engine that produced / validated it (may be empty)
+    std::string note;                  // free text for the history list (may be empty)
+    Timestamp created_at{};
+
+    // InvalidArgument ("catalog.revision") for an unknown origin, an empty or overlong schema
+    // name, schema version 0, text that is not valid UTF-8 or an overlong engine version;
+    // LimitExceeded for settings or a note above their limits. JSON validity is checked by the
+    // catalog when the revision is stored.
+    [[nodiscard]] Status validate() const;
+};
+
+// A revision as listed in an item's history (without its settings document).
+struct RevisionInfo {
+    RevisionId id;
+    ItemId item;
+    std::uint32_t revision_number = 0;  // 1, 2, 3, ... per item in creation order
+    std::optional<RevisionId> parent;   // the revision it was derived from; none: from as shot
+    Timestamp created_at{};
+    RevisionOrigin origin = RevisionOrigin::User;
+    std::string schema_name;
+    std::uint32_t schema_version = 0;
+    core::Digest256 settings_sha256{};  // SHA-256 of settings_json's UTF-8 bytes
+    std::uint64_t settings_bytes = 0;   // size of settings_json
+    std::string engine_version;
+    std::string note;
+};
+
+// A revision with its settings document.
+struct RecipeRevision {
+    RevisionInfo info;
+    std::string settings_json;
+};
+
+// The whole history of one item.
+struct RevisionHistory {
+    ItemId item;
+    std::optional<RevisionId> current;    // none: the item shows "as shot"
+    std::vector<RevisionInfo> revisions;  // every revision, by revision_number (oldest first)
 };
 
 }  // namespace lucent::catalog

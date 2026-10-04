@@ -82,6 +82,15 @@ TEST(AdapterConversions, ErrorsAreDescribedByCodeAndLocation) {
               describe_error(Error{ErrorCode::VersionMismatch, "", "app.library.add", 0}));
     EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "raw.dng.version", 0}),
               QStringLiteral("The file needs a newer version of Lucent."));
+    // A photo's edit that cannot be read is the edit's problem, never the file's or an internal one.
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "app.recipe.unreadable", 0}),
+              QStringLiteral("This photo's edit was made by a newer version of Lucent."));
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "app.recipe", 0}),
+              QStringLiteral("This photo's edit was made by a newer version of Lucent."));
+    for (const ErrorCode code : {ErrorCode::InvalidArgument, ErrorCode::Corrupt, ErrorCode::Unsupported}) {
+        EXPECT_EQ(describe_error(Error{code, "", "app.recipe.unreadable", 0}),
+                  QStringLiteral("This photo's edit is damaged and cannot be read."));
+    }
     // Developer-facing messages are never shown.
     EXPECT_EQ(describe_error(Error{ErrorCode::Internal, "secret detail", "engine", 0}),
               QStringLiteral("Lucent ran into an internal problem (internal)."));
@@ -250,6 +259,8 @@ TEST(AdapterConversions, RenderInfoCarriesTheHistogramAndTheRenderFacts) {
     preview.histogram.luminance[255] = 5;
     preview.histogram.pixels = 8;
     preview.summary.rendered_size = image::Size{8192, 5464};
+    preview.summary.look = "neutral";
+    preview.summary.look_version = 1;
     preview.summary.provisional = true;
     preview.summary.render_seconds = 0.9;
     preview.summary.interpretation = raw::InterpretationStatus::OptionalOperationsSkipped;
@@ -261,7 +272,7 @@ TEST(AdapterConversions, RenderInfoCarriesTheHistogramAndTheRenderFacts) {
     EXPECT_EQ(info->pixels, 8u);
     EXPECT_EQ(info->preview_width, 4);
     EXPECT_EQ(info->rendered_width, 8192);
-    EXPECT_EQ(info->rendering, QStringLiteral("Neutral v0"));
+    EXPECT_EQ(info->rendering, QStringLiteral("Neutral v1"));
     EXPECT_TRUE(info->provisional);
     EXPECT_DOUBLE_EQ(info->preview_seconds, 1.1);
     EXPECT_EQ(info->notes,

@@ -8,7 +8,9 @@
 // Scaling: bin heights are linear, normalised to the tallest bin among 1..254, so that a spike of
 // clipped pixels in bin 0 or 255 cannot flatten the rest of the plot; extreme bins that exceed
 // the scale are drawn to full height. `shadowsClipped` and `highlightsClipped` report the share
-// of pixels whose luma is 0 or 255, for a textual indication beside the plot.
+// of clipped pixels for a textual indication beside the plot: those the clipping overlay marks
+// (some channel at 0 or 255) when the render counted them (edit frames), otherwise the pixels whose
+// luma is 0 or 255.
 //
 // Thread-safety: a Qt Quick item; UI thread only (paint() runs while the UI thread is blocked in
 // the scene graph's synchronisation, so it may read the members).

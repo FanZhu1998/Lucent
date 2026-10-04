@@ -12,6 +12,9 @@
 
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/import.hpp>
+#include <lucent/application/recipe.hpp>
+#include <lucent/application/recipe_service.hpp>
+#include <lucent/application/recipe_store.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/core/text.hpp>
 
@@ -143,6 +146,7 @@ protected:
         ExportRequest r;
         r.item = item.id;
         r.output_directory = out();
+        r.settings = engine::DevelopSettings{};  // export_item() renders resolved settings
         r.output = format == ExportFormat::Jpeg
                        ? exporter::ExportSettings::jpeg_srgb_q95()
                        : exporter::ExportSettings::tiff16(exporter::OutputProfile::Srgb);
@@ -346,6 +350,122 @@ TEST_F(ExportTest, TheServiceRunsExportsInTheBackground) {
         EXPECT_EQ(done.values()[1].error().code, ErrorCode::Cancelled);
     }  // the destructor waits for outstanding completions
     EXPECT_EQ(output_names(), (std::vector<std::wstring>{L"async_Lucent.jpg"}));
+}
+
+// W6: exports render the item's current recipe, frozen at submission, and record its identity.
+TEST_F(ExportTest, RecordsCarryTheRecipeIdentityAndTheOriginalIsPreserved) {
+    const SourceItem item = import(ts::write_dng(dir_, L"in\\edited.dng"));
+    const auto source_before = core::hash_file(item.path, {});
+    ASSERT_TRUE(source_before);
+    RecipeServiceOptions recipe_options;
+    recipe_options.registry = registry_;
+    RecipeService recipes(library_, create_memory_recipe_store(), recipe_options);
+    engine::DevelopSettings settings;
+    settings.white_balance = engine::KelvinWhiteBalance{4800.0, 2.0};
+    settings.exposure_ev = 0.6;
+    settings.shadows = 0.25;
+    settings.locks = {engine::DevelopControl::Exposure};
+    auto edited = recipes.apply(item.id, settings);
+    ASSERT_TRUE(edited) << edited.error().describe();
+
+    auto executor = TaskExecutor::create(ExecutorOptions{});
+    ASSERT_TRUE(executor);
+    ts::Collector<Expected<ExportRecord>> done;
+    {
+        ExportService service(library_, **executor, renderer_, &recipes);
+        ExportRequest request = request_for(item);
+        request.settings.reset();  // the current recipe
+        ASSERT_TRUE(
+            service.submit(request, {}, [&](ItemId, const Expected<ExportRecord>& r) { done.add(r); }));
+        ASSERT_TRUE(done.wait_for(1));
+    }
+    const Expected<ExportRecord> record = done.values()[0];
+    ASSERT_TRUE(record) << record.error().describe();
+    EXPECT_EQ(record->settings, settings);
+    const RecipeIdentity& recipe = record->recipe;
+    EXPECT_EQ(recipe.revision, edited->revision);
+    EXPECT_EQ(recipe.revision_number, 1u);
+    EXPECT_EQ(recipe.schema, "lucent.develop");
+    EXPECT_EQ(recipe.schema_version, 1u);
+    EXPECT_EQ(recipe.settings_sha256, edited->committed_sha256);
+    EXPECT_EQ(recipe.settings_json, write_recipe(settings)->json);
+    EXPECT_EQ(recipe.operations, engine::DevelopOperationVersions{});
+    EXPECT_EQ(recipe.base_look, "neutral");
+    EXPECT_EQ(recipe.base_look_version, 1u);
+    EXPECT_EQ(recipe.pipeline_version, engine::kDevelopPipelineVersion);
+    EXPECT_EQ(record->render.look, "neutral");
+
+    // "Original preservation": the source is byte-identical after editing and exporting.
+    const auto source_after = core::hash_file(item.path, {});
+    ASSERT_TRUE(source_after);
+    EXPECT_EQ(source_after->digest, source_before->digest);
+    EXPECT_EQ(source_after->identity, source_before->identity);
+}
+
+TEST(ExportRecipes, AQueuedExportKeepsItsFrozenRevision) {
+    SessionLibrary library;
+    auto added = library.add({ts::fake_item(L"C:\\photos\\frozen.cr3")});
+    ASSERT_TRUE(added);
+    const ItemId item = (*added)[0].id;
+    RecipeService recipes(library, create_memory_recipe_store());
+    auto first = recipes.apply(item, ts::settings_for(3));
+    ASSERT_TRUE(first) << first.error().describe();
+    auto renderer = std::make_shared<ts::ScriptedRenderer>(image::Size{40, 30});
+    auto gate = std::make_shared<ts::Gate>();
+    renderer->script(3, ts::Script{gate});
+    auto executor = TaskExecutor::create(ExecutorOptions{});
+    ASSERT_TRUE(executor);
+    ts::ScratchDir out;
+    ts::Collector<Expected<ExportRecord>> done;
+    {
+        ExportService service(library, **executor, renderer, &recipes);
+        ExportRequest request;
+        request.item = item;
+        request.output_directory = out.path();
+        ASSERT_TRUE(
+            service.submit(request, {}, [&](ItemId, const Expected<ExportRecord>& r) { done.add(r); }));
+        ASSERT_TRUE(renderer->wait_started(1));
+        // The photographer edits the photo while its export is running.
+        ASSERT_TRUE(recipes.apply(item, ts::settings_for(4)));
+        gate->open();
+        ASSERT_TRUE(done.wait_for(1));
+    }
+    const Expected<ExportRecord> record = done.values()[0];
+    ASSERT_TRUE(record) << record.error().describe();
+    EXPECT_EQ(record->settings, ts::settings_for(3));
+    EXPECT_EQ(record->recipe.revision, first->revision);
+    EXPECT_EQ(record->recipe.settings_sha256, first->committed_sha256);
+}
+
+TEST(ExportRecipes, ARecipeThisBuildCannotReadIsNeverExported) {
+    SessionLibrary library;
+    auto added = library.add({ts::fake_item(L"C:\\photos\\newer.cr3")});
+    ASSERT_TRUE(added);
+    const ItemId item = (*added)[0].id;
+    auto store = create_memory_recipe_store();
+    catalog::NewRevision newer;
+    newer.schema_name = "lucent.develop";
+    newer.schema_version = 2;  // written by a newer Lucent
+    newer.settings_json = R"({"schema":"lucent.develop","version":2})";
+    newer.created_at = catalog::current_time();
+    ASSERT_TRUE(store->append(item, newer, std::nullopt));
+    RecipeService recipes(library, store);
+    auto executor = TaskExecutor::create(ExecutorOptions{});
+    ASSERT_TRUE(executor);
+    ts::ScratchDir out;
+    const auto renderer = std::make_shared<ts::ScriptedRenderer>();
+    ExportService service(library, **executor, renderer, &recipes);
+    ExportRequest request;
+    request.item = item;
+    request.output_directory = out.path();
+    auto refused = service.submit(request, {}, [](ItemId, const Expected<ExportRecord>&) {});
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, ErrorCode::VersionMismatch);
+    // export_item() itself refuses unresolved settings.
+    EXPECT_EQ(
+        export_item(*library.find(item), request, *renderer, nullptr, Lane::Background, {}, {}).error().code,
+        ErrorCode::InvalidArgument);
+    EXPECT_EQ(renderer->started(), 0);
 }
 
 TEST(ExportStageNames, AreStable) {

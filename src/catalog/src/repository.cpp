@@ -2,6 +2,8 @@
 // SQLite as a bound parameter; SQL text is assembled only from the fixed fragments below.
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <format>
@@ -15,6 +17,7 @@
 
 #include "lucent/catalog/catalog.hpp"
 #include "lucent/catalog/location.hpp"
+#include "lucent/core/hash.hpp"
 #include "lucent/core/text.hpp"
 
 #include "catalog_impl.hpp"
@@ -41,8 +44,16 @@ constexpr std::string_view kSourceColumns =
 constexpr std::string_view kItemColumns =
     "i.id, i.source_id, i.subimage_index, i.make, i.model, i.lens, i.capture_time, i.width, i.height, "
     "i.orientation, i.format, i.support_status, i.support_reasons_json, i.decoder_id, i.decoder_version, "
-    "i.probed_at, i.pick, i.rating, s.path, s.state, s.storage_kind, s.sha256 IS NOT NULL, s.path_key";
+    "i.probed_at, i.pick, i.rating, s.path, s.state, s.storage_kind, s.sha256 IS NOT NULL, s.path_key, "
+    "i.current_revision_id, i.iso, i.exposure_time_s, i.f_number, i.focal_length_mm, i.image_count";
 constexpr int kItemPathKeyColumn = 22;
+
+// A revision without its settings document (columns 0 ... 11), and with it (column 12).
+// octet_length() takes the size from the record header without loading the document.
+constexpr std::string_view kRevisionInfoColumns =
+    "r.id, r.item_id, r.revision_number, r.parent_revision_id, r.created_at, r.origin, r.schema_name, "
+    "r.schema_version, r.settings_sha256, octet_length(r.settings_json), r.engine_version, r.note";
+constexpr int kRevisionSettingsColumn = 12;
 
 // Sort key of an unknown capture time (see items_by_capture_time in schema.cpp).
 constexpr const char* kUnknownCaptureTime = "~";
@@ -318,7 +329,99 @@ Expected<ItemRecord> read_item(const Statement& row, const RowDecoder& decode) {
     }
     item.storage_kind = *storage;
     item.source_hashed = row.column_int64(21) != 0;
+    if (!row.is_null(23)) {
+        item.current_revision = RevisionId{row.column_int64(23)};
+    }
+    struct CaptureColumn {
+        int column;
+        std::string_view name;
+        std::optional<double>* field;
+    };
+    const CaptureColumn capture[] = {{24, "items.iso", &m.iso},
+                                     {25, "items.exposure_time_s", &m.exposure_time_s},
+                                     {26, "items.f_number", &m.f_number},
+                                     {27, "items.focal_length_mm", &m.focal_length_mm}};
+    for (const CaptureColumn& c : capture) {
+        if (row.is_null(c.column)) {
+            continue;
+        }
+        const double value = row.column_double(c.column);
+        if (!std::isfinite(value) || value <= 0.0) {
+            return Unexpected(decode.bad(c.name, std::format("{}", value)));
+        }
+        *c.field = value;
+    }
+    if (!row.is_null(28)) {
+        const std::int64_t count = row.column_int64(28);
+        if (count < 1 || count > std::numeric_limits<std::uint32_t>::max()) {
+            return Unexpected(decode.bad("items.image_count", std::to_string(count)));
+        }
+        m.image_count = static_cast<std::uint32_t>(count);
+    }
     return item;
+}
+
+Expected<RevisionInfo> read_revision_info(const Statement& row, const RowDecoder& decode) {
+    RevisionInfo info;
+    info.id = RevisionId{row.column_int64(0)};
+    info.item = ItemId{row.column_int64(1)};
+    Expected<std::uint32_t> number = decode.u32("recipe_revisions.revision_number", row.column_int64(2));
+    if (!number) {
+        return Unexpected(std::move(number.error()));
+    }
+    info.revision_number = *number;
+    if (!row.is_null(3)) {
+        info.parent = RevisionId{row.column_int64(3)};
+    }
+    info.created_at = detail::timestamp_from_db(row.column_int64(4));
+    // An origin a later Lucent added labels the history only: listed as Unknown, never an error
+    // (one such revision must not make the item's history, or its current revision, unreadable).
+    info.origin = detail::parse_revision_origin(row.column_text(5)).value_or(RevisionOrigin::Unknown);
+    info.schema_name = std::string(row.column_text(6));
+    Expected<std::uint32_t> schema_version =
+        decode.u32("recipe_revisions.schema_version", row.column_int64(7));
+    if (!schema_version) {
+        return Unexpected(std::move(schema_version.error()));
+    }
+    info.schema_version = *schema_version;
+    Expected<core::Digest256> digest =
+        decode.blob<32>("recipe_revisions.settings_sha256", row.column_blob(8));
+    if (!digest) {
+        return Unexpected(std::move(digest.error()));
+    }
+    info.settings_sha256 = *digest;
+    info.settings_bytes = static_cast<std::uint64_t>(std::max<std::int64_t>(0, row.column_int64(9)));
+    info.engine_version = std::string(row.column_text(10));
+    info.note = std::string(row.column_text(11));
+    return info;
+}
+
+Expected<core::Digest256> sha256_of(std::string_view text) {
+    return core::sha256(std::as_bytes(std::span<const char>(text.data(), text.size())));
+}
+
+// A revision with its settings document, whose hash is verified.
+Expected<RecipeRevision> read_revision(const Statement& row, const RowDecoder& decode,
+                                       std::string_view where) {
+    Expected<RevisionInfo> info = read_revision_info(row, decode);
+    if (!info) {
+        return Unexpected(std::move(info.error()));
+    }
+    RecipeRevision revision;
+    revision.info = std::move(*info);
+    revision.settings_json = std::string(row.column_text(kRevisionSettingsColumn));
+    Expected<core::Digest256> digest = sha256_of(revision.settings_json);
+    if (!digest) {
+        return Unexpected(std::move(digest.error()));
+    }
+    if (*digest != revision.info.settings_sha256 ||
+        revision.settings_json.size() != revision.info.settings_bytes) {
+        return fail(ErrorCode::Corrupt,
+                    std::format("the settings of recipe revision {} do not match their SHA-256",
+                                revision.info.id.value),
+                    std::string(where));
+    }
+    return revision;
 }
 
 template <class Record, class Reader>
@@ -445,6 +548,19 @@ Status validate_item(const ItemMetadata& item, std::string_view where) {
     }
     if (!detail::is_valid(item.support_status)) {
         return invalid(where, "unknown support status");
+    }
+    const std::pair<const std::optional<double>*, std::string_view> capture[] = {
+        {&item.iso, "iso"},
+        {&item.exposure_time_s, "exposure_time_s"},
+        {&item.f_number, "f_number"},
+        {&item.focal_length_mm, "focal_length_mm"}};
+    for (const auto& [value, field] : capture) {
+        if (value->has_value() && (!std::isfinite(**value) || **value <= 0.0)) {
+            return invalid(where, std::format("{} must be finite and positive", field));
+        }
+    }
+    if (item.image_count && (*item.image_count < 1 || item.subimage_index >= *item.image_count)) {
+        return invalid(where, "image_count must be at least 1 and greater than subimage_index");
     }
     return ok();
 }
@@ -1223,15 +1339,18 @@ Expected<std::vector<ItemId>> WriteTransaction::upsert_items(SourceId source,
         Expected<Statement> upsert = connection_->prepare(
             "INSERT INTO items (source_id, subimage_index, make, model, lens, capture_time, width, height, "
             "orientation, format, support_status, support_reasons_json, decoder_id, decoder_version, "
-            "probed_at) "
-            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) "
+            "probed_at, iso, exposure_time_s, f_number, focal_length_mm, image_count) "
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, "
+            "?20) "
             "ON CONFLICT (source_id, subimage_index) DO UPDATE SET make = excluded.make, model = "
             "excluded.model, "
             "lens = excluded.lens, capture_time = excluded.capture_time, width = excluded.width, "
             "height = excluded.height, orientation = excluded.orientation, format = excluded.format, "
             "support_status = excluded.support_status, support_reasons_json = excluded.support_reasons_json, "
             "decoder_id = excluded.decoder_id, decoder_version = excluded.decoder_version, "
-            "probed_at = excluded.probed_at "
+            "probed_at = excluded.probed_at, iso = excluded.iso, exposure_time_s = excluded.exposure_time_s, "
+            "f_number = excluded.f_number, focal_length_mm = excluded.focal_length_mm, "
+            "image_count = excluded.image_count "
             "RETURNING id",
             where);
         if (!upsert) {
@@ -1251,7 +1370,16 @@ Expected<std::vector<ItemId>> WriteTransaction::upsert_items(SourceId source,
             .bind_text(12, item.support_reasons_json)
             .bind_text(13, item.decoder_id)
             .bind_text(14, item.decoder_version)
-            .bind_int64(15, detail::to_db(item.probed_at));
+            .bind_int64(15, detail::to_db(item.probed_at))
+            .bind_optional_double(16, item.iso)
+            .bind_optional_double(17, item.exposure_time_s)
+            .bind_optional_double(18, item.f_number)
+            .bind_optional_double(19, item.focal_length_mm);
+        if (item.image_count) {
+            upsert->bind_int64(20, static_cast<std::int64_t>(*item.image_count));
+        } else {
+            upsert->bind_null(20);
+        }
         Expected<bool> row = upsert->step();
         if (!row) {
             Error error = std::move(row.error());
@@ -1418,6 +1546,337 @@ Expected<std::uint64_t> WriteTransaction::mark_interrupted_imports(Timestamp now
         return Unexpected(std::move(s.error()));
     }
     return static_cast<std::uint64_t>(connection_->changes());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Recipe revisions
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+// The item's current revision (std::nullopt: as shot); NotFound when the item does not exist.
+Expected<std::optional<RevisionId>> current_of(Connection& connection, ItemId item, std::string_view where) {
+    Expected<Statement> statement =
+        connection.prepare("SELECT current_revision_id FROM items WHERE id = ?1", where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, item.value);
+    Expected<bool> row = statement->step();
+    if (!row) {
+        return Unexpected(std::move(row.error()));
+    }
+    if (!*row) {
+        return fail(ErrorCode::NotFound, std::format("no item with id {}", item.value), std::string(where));
+    }
+    if (statement->is_null(0)) {
+        return std::optional<RevisionId>();
+    }
+    return std::optional<RevisionId>(RevisionId{statement->column_int64(0)});
+}
+
+Status move_current(Connection& connection, ItemId item, std::optional<RevisionId> revision,
+                    std::string_view where) {
+    Expected<Statement> update =
+        connection.prepare("UPDATE items SET current_revision_id = ?2 WHERE id = ?1", where);
+    if (!update) {
+        return Unexpected(std::move(update.error()));
+    }
+    update->bind_int64(1, item.value);
+    if (revision) {
+        update->bind_int64(2, revision->value);
+    } else {
+        update->bind_null(2);
+    }
+    if (Status s = update->run(); !s) {
+        return s;
+    }
+    return require_changed(connection, "item", item.value, where);
+}
+
+}  // namespace
+
+Expected<std::optional<RecipeRevision>> ReadTransaction::find_revision(RevisionId id) const {
+    constexpr std::string_view where = "catalog.find_revision";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<Statement> statement = connection_->prepare(
+        sql({"SELECT ", kRevisionInfoColumns, ", r.settings_json FROM recipe_revisions r WHERE r.id = ?1"}),
+        where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, id.value);
+    return first<RecipeRevision>(
+        *statement, RowDecoder(newer_schema_, where),
+        [&](const Statement& row, const RowDecoder& decode) { return read_revision(row, decode, where); });
+}
+
+Expected<std::optional<RecipeRevision>> ReadTransaction::current_revision(ItemId item) const {
+    constexpr std::string_view where = "catalog.current_revision";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<std::optional<RevisionId>> current = current_of(*connection_, item, where);
+    if (!current) {
+        return Unexpected(std::move(current.error()));
+    }
+    if (!current->has_value()) {
+        return std::optional<RecipeRevision>();
+    }
+    Expected<std::optional<RecipeRevision>> revision = find_revision(**current);
+    if (revision && !revision->has_value()) {
+        // The foreign key makes this impossible in a sound catalog.
+        return fail(
+            ErrorCode::Corrupt,
+            std::format("item {} points at a missing recipe revision {}", item.value, (*current)->value),
+            std::string(where));
+    }
+    return revision;
+}
+
+Expected<RevisionHistory> ReadTransaction::revision_history(ItemId item) const {
+    constexpr std::string_view where = "catalog.revision_history";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<std::optional<RevisionId>> current = current_of(*connection_, item, where);
+    if (!current) {
+        return Unexpected(std::move(current.error()));
+    }
+    Expected<Statement> statement = connection_->prepare(
+        sql({"SELECT ", kRevisionInfoColumns,
+             " FROM recipe_revisions r WHERE r.item_id = ?1 ORDER BY r.revision_number"}),
+        where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, item.value);
+    Expected<std::vector<RevisionInfo>> revisions =
+        collect<RevisionInfo>(*statement, RowDecoder(newer_schema_, where), read_revision_info);
+    if (!revisions) {
+        return Unexpected(std::move(revisions.error()));
+    }
+    RevisionHistory history;
+    history.item = item;
+    history.current = *current;
+    history.revisions = std::move(*revisions);
+    return history;
+}
+
+Expected<RevisionInfo> WriteTransaction::append_revision(ItemId item, const NewRevision& revision) {
+    constexpr std::string_view where = "catalog.append_revision";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    if (Status valid = revision.validate(); !valid) {
+        return Unexpected(std::move(valid.error()));
+    }
+    Expected<std::optional<RevisionId>> parent = current_of(*connection_, item, where);
+    if (!parent) {
+        return Unexpected(std::move(parent.error()));
+    }
+    Expected<std::int64_t> next = [&]() -> Expected<std::int64_t> {
+        Expected<Statement> statement = connection_->prepare(
+            "SELECT ifnull(max(revision_number), 0) + 1 FROM recipe_revisions WHERE item_id = ?1", where);
+        if (!statement) {
+            return Unexpected(std::move(statement.error()));
+        }
+        statement->bind_int64(1, item.value);
+        Expected<bool> row = statement->step();
+        if (!row) {
+            return Unexpected(std::move(row.error()));
+        }
+        return statement->column_int64(0);
+    }();
+    if (!next) {
+        return Unexpected(std::move(next.error()));
+    }
+    if (*next > std::numeric_limits<std::uint32_t>::max()) {
+        return fail(ErrorCode::LimitExceeded, std::format("item {} has too many revisions", item.value),
+                    std::string(where));
+    }
+    Expected<core::Digest256> digest = sha256_of(revision.settings_json);
+    if (!digest) {
+        return Unexpected(std::move(digest.error()));
+    }
+
+    Expected<TransactionGuard> savepoint =
+        TransactionGuard::begin(*connection_, TransactionGuard::Kind::Savepoint, where);
+    if (!savepoint) {
+        return Unexpected(std::move(savepoint.error()));
+    }
+    Expected<Statement> insert = connection_->prepare(
+        "INSERT INTO recipe_revisions (item_id, revision_number, parent_revision_id, created_at, origin, "
+        "schema_name, schema_version, settings_json, settings_sha256, engine_version, note) "
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id",
+        where);
+    if (!insert) {
+        return Unexpected(std::move(insert.error()));
+    }
+    insert->bind_int64(1, item.value)
+        .bind_int64(2, *next)
+        .bind_int64(4, detail::to_db(revision.created_at))
+        .bind_text(5, to_string(revision.origin))
+        .bind_text(6, revision.schema_name)
+        .bind_int64(7, static_cast<std::int64_t>(revision.schema_version))
+        .bind_text(8, revision.settings_json)
+        .bind_blob(9, bytes_of(*digest))
+        .bind_text(10, revision.engine_version)
+        .bind_text(11, revision.note);
+    if (*parent) {
+        insert->bind_int64(3, (*parent)->value);
+    } else {
+        insert->bind_null(3);
+    }
+    Expected<bool> row = insert->step();
+    if (!row) {
+        Error error = std::move(row.error());
+        if (error.code == ErrorCode::InvalidArgument) {
+            error.message = "recipe revision rejected (settings_json must be valid JSON): " + error.message;
+        }
+        return Unexpected(std::move(error));
+    }
+    if (!*row) {
+        return fail(ErrorCode::Internal, "INSERT ... RETURNING returned no row", std::string(where));
+    }
+    const RevisionId id{insert->column_int64(0)};
+    insert->reset();
+    if (Status s = move_current(*connection_, item, id, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    if (Status s = savepoint->commit(); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+
+    RevisionInfo info;
+    info.id = id;
+    info.item = item;
+    info.revision_number = static_cast<std::uint32_t>(*next);
+    info.parent = *parent;
+    info.created_at = revision.created_at;
+    info.origin = revision.origin;
+    info.schema_name = revision.schema_name;
+    info.schema_version = revision.schema_version;
+    info.settings_sha256 = *digest;
+    info.settings_bytes = revision.settings_json.size();
+    info.engine_version = revision.engine_version;
+    info.note = revision.note;
+    return info;
+}
+
+Status WriteTransaction::set_current_revision(ItemId item, std::optional<RevisionId> revision) {
+    constexpr std::string_view where = "catalog.set_current_revision";
+    if (Status s = check_active(connection_, where); !s) {
+        return s;
+    }
+    if (Expected<std::optional<RevisionId>> current = current_of(*connection_, item, where); !current) {
+        return Unexpected(std::move(current.error()));
+    }
+    if (revision) {
+        Expected<Statement> owner =
+            connection_->prepare("SELECT item_id FROM recipe_revisions WHERE id = ?1", where);
+        if (!owner) {
+            return Unexpected(std::move(owner.error()));
+        }
+        owner->bind_int64(1, revision->value);
+        Expected<bool> row = owner->step();
+        if (!row) {
+            return Unexpected(std::move(row.error()));
+        }
+        if (!*row) {
+            return fail(ErrorCode::NotFound, std::format("no recipe revision with id {}", revision->value),
+                        std::string(where));
+        }
+        if (owner->column_int64(0) != item.value) {
+            return fail(ErrorCode::InvalidArgument,
+                        std::format("recipe revision {} belongs to item {}, not to item {}", revision->value,
+                                    owner->column_int64(0), item.value),
+                        std::string(where));
+        }
+    }
+    return move_current(*connection_, item, revision, where);
+}
+
+Expected<std::optional<RevisionId>> WriteTransaction::undo_revision(ItemId item) {
+    constexpr std::string_view where = "catalog.undo_revision";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<std::optional<RevisionId>> current = current_of(*connection_, item, where);
+    if (!current) {
+        return Unexpected(std::move(current.error()));
+    }
+    if (!current->has_value()) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("item {} shows its as-shot settings: nothing to undo", item.value),
+                    "catalog.undo_revision.nothing_to_undo");
+    }
+    Expected<Statement> parent =
+        connection_->prepare("SELECT parent_revision_id FROM recipe_revisions WHERE id = ?1", where);
+    if (!parent) {
+        return Unexpected(std::move(parent.error()));
+    }
+    parent->bind_int64(1, (*current)->value);
+    Expected<bool> row = parent->step();
+    if (!row) {
+        return Unexpected(std::move(row.error()));
+    }
+    if (!*row) {
+        return fail(
+            ErrorCode::Corrupt,
+            std::format("item {} points at a missing recipe revision {}", item.value, (*current)->value),
+            std::string(where));
+    }
+    const std::optional<RevisionId> target =
+        parent->is_null(0) ? std::nullopt : std::optional<RevisionId>(RevisionId{parent->column_int64(0)});
+    parent->reset();
+    if (Status s = move_current(*connection_, item, target, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    return target;
+}
+
+Expected<RevisionId> WriteTransaction::redo_revision(ItemId item) {
+    constexpr std::string_view where = "catalog.redo_revision";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<std::optional<RevisionId>> current = current_of(*connection_, item, where);
+    if (!current) {
+        return Unexpected(std::move(current.error()));
+    }
+    // "IS ?2" matches NULL too: the newest revision derived from as shot.
+    Expected<Statement> child = connection_->prepare(
+        "SELECT id FROM recipe_revisions WHERE item_id = ?1 AND parent_revision_id IS ?2 "
+        "ORDER BY revision_number DESC LIMIT 1",
+        where);
+    if (!child) {
+        return Unexpected(std::move(child.error()));
+    }
+    child->bind_int64(1, item.value);
+    if (*current) {
+        child->bind_int64(2, (*current)->value);
+    } else {
+        child->bind_null(2);
+    }
+    Expected<bool> row = child->step();
+    if (!row) {
+        return Unexpected(std::move(row.error()));
+    }
+    if (!*row) {
+        return fail(
+            ErrorCode::InvalidArgument,
+            std::format("item {} has no revision derived from its current one: nothing to redo", item.value),
+            "catalog.redo_revision.nothing_to_redo");
+    }
+    const RevisionId target{child->column_int64(0)};
+    child->reset();
+    if (Status s = move_current(*connection_, item, target, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    return target;
 }
 
 }  // namespace lucent::catalog

@@ -126,6 +126,8 @@ QVariant LibraryModel::data(const QModelIndex& index, int role) const {
         return item->duplicate_paths;
     case MissingRole:
         return is_missing(*item);
+    case EditedRole:
+        return item->edited;
     case FlagBadgesRole: {
         QVariantList badges;
         for (const QString& key : p::flag_keys(item->flags)) {
@@ -179,6 +181,7 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {DuplicatePathsRole, "duplicatePaths"},
         {MissingRole, "missing"},
         {FlagBadgesRole, "flagBadges"},
+        {EditedRole, "edited"},
     };
 }
 

@@ -45,6 +45,14 @@
 //                             camera-preview thumbnail replaced by Lucent's render (generation + 1)
 //                             when the event says a Lucent thumbnail is available.
 //
+// Edits (W6). The adapter observes the recipe service: when an item's committed recipe changes (a
+// revision, an undo or redo, a paste) its `edited` flag follows the new settings and, when the
+// settings' identity changed, its thumbnail moves to a new generation of Lucent's render of the
+// recipe (the camera preview is no longer shown: it does not show the edit). An item whose recipe
+// this Lucent cannot read keeps its thumbnail. start() also looks up the items of a persistent
+// library that already have revisions (in the background), so edited photos show their edits
+// from the start of a session.
+//
 // W4 operations: relink() runs the maintenance service's relink; set_pick() writes the item's
 // flags on the executor's Quick lane; back_up_catalog() writes a verified catalog backup on the
 // Background lane. Their results are signals. Verification progress (presence checks and hashing)
@@ -141,6 +149,9 @@ private:
     void update_items(const QList<LibraryItem>& items);
     void refresh_items(const QList<LibraryItem>& items);
     void apply(const RenderEvent& event);
+    // An item's committed recipe (W6): edited flag, settings identity, readable.
+    void apply_recipe(ItemId item, bool edited, const QByteArray& settings, bool readable);
+    void scan_recipes();
     void on_maintenance(const app::MaintenanceEvent& event);
     void queue_hashing(const std::vector<app::ItemId>& items);
     void operation_finished();
@@ -149,6 +160,9 @@ private:
     std::shared_ptr<Backend> backend_;
     std::shared_ptr<UiDispatcher> dispatcher_;
     app::Subscription subscription_;  // after dispatcher_: reset first on destruction
+    app::Subscription recipe_subscription_;
+    // Identity (settings SHA-256) of the recipe each item's thumbnail shows, once known.
+    QHash<ItemId, QByteArray> recipe_identity_;
 
     QHash<ItemId, LibraryItem> items_;
     std::vector<ItemId> initial_order_;  // library order of the items loaded at construction

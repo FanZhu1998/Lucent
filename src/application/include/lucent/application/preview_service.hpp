@@ -5,19 +5,27 @@
 // token. A late result from an earlier slider position must never replace the current preview.
 // ... Give interactive jobs reserved capacity").
 //
-// Lucent previews (request()): the item is rendered by the engine (SourceRenderer) on the
-// executor's Interactive lane, under memory admission, and delivered as an upright 8-bit sRGB
-// DisplayImage with its histogram and a summary of the render.
+// Lucent previews (request()): the item is rendered by the engine's develop pipeline
+// (SourceRenderer::render, the export render: stage one at the settings' white balance, then
+// stage two, ADR 0010) on the executor's Interactive lane, under memory admission, and delivered
+// as an upright 8-bit sRGB DisplayImage with its histogram and a summary of the render. This is the
+// route for photos that are not open for editing (Library browsing, Lucent thumbnails, the first
+// Edit view of a photo); interactive editing uses DevelopPreviewService (develop_preview.hpp).
+//
+//   Settings. A request names the settings to render, or none: the item's current recipe
+//   (PreviewServiceOptions::recipes, recipe_service.hpp; "as shot" without a recipe service). They
+//   are resolved when request() is called, so a request renders the recipe of that moment; an item
+//   whose recipe this build cannot read is refused with the recipe's error (never rendered with
+//   other settings). Results carry the recipe identity (settings_sha256 and revision).
 //
 //   Quality. Full delivers every rendered pixel. Fit renders the full-resolution image, then
 //   area-averages the display-referred LINEAR values down to the requested long edge
 //   (downscale_area) before the sRGB encoding, so the fit view is the exact downscale of the
 //   100% view (no gamma-space averaging, no second, lower-quality render path). The engine has
 //   no reduced-resolution decode yet, so a Fit preview costs a full render. Measured on the
-//   reference laptop for the 45 MP Canon EOS R5 fixture (lucent_application_fixture_tests,
-//   three runs): Fit 2048 1.0-1.13 s from request to callback, of which the render is
-//   0.9-1.03 s; Full 1.19-1.26 s; a cache hit under 1 ms; the embedded camera JPEG 3 ms. A
-//   reduced-resolution (half-size) demosaic route is the obvious next speed-up for Fit.
+//   reference laptop for the 45 MP Canon EOS R5 fixture with the W2 path (W3; the develop path's
+//   timings are in ADR 0010): Fit 2048 1.0-1.13 s from request to callback, Full 1.19-1.26 s; a
+//   cache hit under 1 ms; the embedded camera JPEG 3 ms.
 //
 //   Support status. Items of every status are rendered (the user may want to look at an
 //   Unsupported file); the RenderSummary carries the interpretation after unpacking, so the view
@@ -32,11 +40,22 @@
 //   delivered image is never followed by an older one: stale results never replace current
 //   ones.
 //
-//   Cache. Finished previews are cached by (item, settings revision, quality) in a bounded LRU
+//   Cache. Finished previews are cached by (item, settings SHA-256, quality) in a bounded LRU
 //   (PreviewCache); a request that hits it is delivered from the cache (from_cache = true) without
-//   rendering. Results that were superseded are still cached (the user may return to that
-//   revision). invalidate() drops an item's entries; removing an item from the library, or
+//   rendering. Results that were superseded are still cached (the user may return to those
+//   settings). invalidate() drops an item's entries; removing an item from the library, or
 //   refreshing it after its file changed (LibraryChangeKind::Refreshed), does so automatically.
+//
+// Lucent-rendered thumbnails (request_rendered_thumbnail(); blueprint section 2: the camera JPEG
+// is "labeled until replaced by Lucent's own render"). An edited photo's thumbnail must show its
+// recipe, so it is a Fit render of kRenderedThumbnailEdge pixels with the item's current settings,
+// encoded as an sRGB JPEG (kRenderedThumbnailQuality) and cached in memory and, for an item whose
+// content hash is known, in the disk ThumbnailCache under rendered_thumbnail_key(): generator
+// LucentRender, keyed by the source hash, subimage and a variant digest of the settings SHA-256,
+// the develop pipeline version and the decoder build, so a changed recipe or engine never shows an
+// old thumbnail and the next session shows it without rendering. Interactive lane (a cache hit
+// costs no render); callers queue them one at a time behind the photo being edited, as the W3
+// thumbnails are.
 //
 // Camera previews (request_camera_preview()): the file's embedded camera JPEG
 // (raw::extract_embedded_preview) on the executor's Quick lane, for immediate browsing: long
@@ -72,6 +91,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include <lucent/application/library.hpp>
@@ -80,17 +100,24 @@
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
 #include <lucent/application/thumbnail_cache.hpp>
+#include <lucent/catalog/types.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
-#include <lucent/engine/render.hpp>
+#include <lucent/core/hash.hpp>
+#include <lucent/engine/develop_settings.hpp>
 #include <lucent/raw/embedded_preview.hpp>
 
 namespace lucent::app {
 
+class RecipeService;
+
 struct PreviewRequest {
     ItemId item;
-    std::uint64_t settings_revision = 0;  // identifies `settings` for this item (cache key)
-    engine::RenderSettings settings;
+    // Caller's tag for the settings (for example the shell's image generation), returned in the
+    // result; not part of the cache key.
+    std::uint64_t settings_revision = 0;
+    // The settings to render; std::nullopt: the item's current recipe (see the file comment).
+    std::optional<engine::DevelopSettings> settings;
     PreviewQuality quality;
     std::uint64_t channel = 0;     // supersession scope, chosen by the caller
     std::uint64_t generation = 0;  // strictly increasing per channel, >= 1
@@ -110,7 +137,10 @@ struct PreviewResult {
     ItemId item;
     std::uint64_t channel = 0;
     std::uint64_t generation = 0;
-    std::uint64_t settings_revision = 0;
+    std::uint64_t settings_revision = 0;  // the request's tag
+    core::Digest256 settings_sha256{};    // identity of the settings rendered
+    std::optional<catalog::RevisionId>
+        recipe_revision;  // their revision (none: explicit settings or as shot)
     PreviewQuality quality;
     std::shared_ptr<const PreviewImage> preview;  // Delivered only
     bool from_cache = false;                      // Delivered from the cache without rendering
@@ -139,13 +169,59 @@ struct CameraPreviewRequest {
     core::CancellationToken cancel;
 };
 
+// ---- Lucent-rendered thumbnails ----------------------------------------------------------------
+
+// Long edge of Lucent-rendered thumbnails (the size camera thumbnails are cached at,
+// source_maintenance.hpp) and their JPEG quality.
+inline constexpr std::int32_t kRenderedThumbnailEdge = 1024;
+inline constexpr std::int32_t kRenderedThumbnailQuality = 85;
+// Version of the bytes ThumbnailGenerator::LucentRender entries hold: 1, a Fit render of
+// kRenderedThumbnailEdge (develop pipeline, downscale_area, encode_display_srgb8) written by the
+// exporter's JPEG writer at kRenderedThumbnailQuality with the sRGB profile. Bump when that
+// changes.
+inline constexpr std::uint32_t kRenderedThumbnailGeneratorVersion = 1;
+
+// The disk-cache key of the Lucent-rendered thumbnail of image `subimage` of the file with content
+// `source_sha256`, rendered with the settings whose canonical document has `settings_sha256`, by
+// the decoder build `decoder_version` (ProbeSummary::decoder + " " + decoder_version). The variant
+// is the SHA-256 of "lucent.rendered-thumbnail", the settings SHA-256 (which covers the recipe's
+// operation and base-look versions), every engine::kDevelopEngineVersions entry (the engine's
+// other algorithm versions, so an engine change never shows an old thumbnail) and the decoder
+// text.
+[[nodiscard]] ThumbnailKey rendered_thumbnail_key(const core::Digest256& source_sha256,
+                                                  std::uint32_t subimage,
+                                                  const core::Digest256& settings_sha256,
+                                                  std::string_view decoder_version);
+
+struct RenderedThumbnailRequest {
+    ItemId item;
+    std::optional<engine::DevelopSettings> settings;  // std::nullopt: the item's current recipe
+    // Checked when the task starts: a request cancelled by then renders nothing (Cancelled).
+    core::CancellationToken cancel;
+};
+
+struct RenderedThumbnail {
+    ItemId item;
+    core::Digest256 settings_sha256{};
+    std::optional<catalog::RevisionId> recipe_revision;
+    Thumbnail jpeg;                // upright sRGB JPEG, long edge at most kRenderedThumbnailEdge
+    bool from_disk_cache = false;  // read from the disk ThumbnailCache (no render)
+};
+
+using RenderedThumbnailCallback =
+    std::function<void(ItemId, const Expected<std::shared_ptr<const RenderedThumbnail>>&)>;
+
 struct PreviewServiceOptions {
-    std::uint64_t cache_bytes = std::uint64_t{384} << 20;        // Lucent previews
-    std::uint64_t camera_cache_bytes = std::uint64_t{64} << 20;  // embedded camera JPEGs
+    std::uint64_t cache_bytes = std::uint64_t{384} << 20;  // Lucent previews
+    // Embedded camera JPEGs and Lucent-rendered thumbnails (each kind its own LRU of this size).
+    std::uint64_t camera_cache_bytes = std::uint64_t{64} << 20;
     raw::EmbeddedPreviewOptions camera_preview;
     bool parallel = true;  // parallel downscaling and display encoding (results do not depend on it)
-    // On-disk cache of camera thumbnails (see the file comment); null: not used.
+    // On-disk cache of camera and Lucent-rendered thumbnails (see the file comment); null: not used.
     std::shared_ptr<ThumbnailCache> thumbnails;
+    // The items' recipes, for requests without settings; null: such requests render as shot. Must
+    // outlive the service.
+    RecipeService* recipes = nullptr;
 };
 
 class PreviewService {
@@ -160,7 +236,8 @@ public:
     // Queues a preview (see the file comment). Errors, with the callback never called
     // ("app.preview"): InvalidArgument for a null callback, an invalid quality or settings, or a
     // generation that is 0 or not newer than the channel's newest; NotFound for an unknown item;
-    // Cancelled when the service or the executor is shutting down.
+    // the recipe's error when the item's current recipe cannot be read; Cancelled when the service
+    // or the executor is shutting down.
     [[nodiscard]] Status request(const PreviewRequest& request, PreviewCallback callback);
 
     // Cancels every outstanding request of `channel` (their callbacks report Cancelled). Later
@@ -177,6 +254,12 @@ public:
     // Cancelled).
     [[nodiscard]] Status request_camera_preview(const CameraPreviewRequest& request,
                                                 CameraPreviewCallback callback);
+
+    // Queues the item's Lucent-rendered thumbnail (see the file comment). Errors as for request()
+    // (InvalidArgument for a null callback or invalid settings, NotFound, the recipe's error,
+    // Cancelled). The result fails with the render's error, or Cancelled.
+    [[nodiscard]] Status request_rendered_thumbnail(const RenderedThumbnailRequest& request,
+                                                    RenderedThumbnailCallback callback);
 
     [[nodiscard]] PreviewCacheStats cache_stats() const;
 

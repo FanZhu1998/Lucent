@@ -19,6 +19,7 @@ namespace lucent::catalog::detail {
 [[nodiscard]] std::optional<SupportStatus> parse_support_status(std::string_view text) noexcept;
 [[nodiscard]] std::optional<PickFlag> parse_pick_flag(std::string_view text) noexcept;
 [[nodiscard]] std::optional<ImportOutcome> parse_import_outcome(std::string_view text) noexcept;
+[[nodiscard]] std::optional<RevisionOrigin> parse_revision_origin(std::string_view text) noexcept;
 [[nodiscard]] std::optional<BackupKind> parse_backup_kind(std::string_view text) noexcept;
 
 // Persisted spelling of a storage kind; "invalid" for values outside the enumeration.
@@ -30,6 +31,7 @@ namespace lucent::catalog::detail {
 [[nodiscard]] bool is_valid(SourceState value) noexcept;
 [[nodiscard]] bool is_valid(SupportStatus value) noexcept;
 [[nodiscard]] bool is_valid(ImportOutcome value) noexcept;
+[[nodiscard]] bool is_valid(RevisionOrigin value) noexcept;
 
 [[nodiscard]] constexpr std::int64_t to_db(Timestamp time) noexcept {
     return time.time_since_epoch().count();

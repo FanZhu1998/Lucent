@@ -15,7 +15,11 @@
 //   - thumbnails and previews are painted synthetic landscapes; every item starts with a "camera
 //     preview" thumbnail (generation 1) that is replaced by a "Lucent render" (generation 2) in
 //     the background, except for Unsupported items, whose previews fail with their reason;
-//   - exports progress on a timer and complete without writing any file.
+//   - exports progress on a timer and complete without writing any file;
+//   - editing keeps revisions in memory with the recipe service's rules (one revision per gesture,
+//     undo to the parent, redo to the newest child, recorded resets, copy and paste by category)
+//     and paints frames from the landscape with exposure and contrast applied; Limited photos have
+//     no Kelvin calibration (camera-neutral white balance).
 //
 // Threading: the library and export services live on the UI thread (the interfaces' contract);
 // scanning and painting run on private thread pools. Destructors wait for their pools and complete
@@ -24,12 +28,14 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <vector>
 
+#include <QDateTime>
 #include <QHash>
 #include <QString>
 #include <QThreadPool>
@@ -174,6 +180,81 @@ private:
     JobId next_id_ = 1;
     QTimer timer_;
     bool busy_ = false;
+};
+
+class FakeEditService final : public EditService {
+    Q_OBJECT
+
+public:
+    FakeEditService(std::shared_ptr<const FakeCatalog> catalog, FakeTimings timings, QObject* parent = nullptr);
+
+    void open(ItemId item) override;
+    void close(ItemId item) override;
+    void set_full_resolution(ItemId item, bool full) override;
+    void set_comparison(ItemId item, bool wanted) override;
+    void set_clipping(bool wanted) override;
+    quint64 set_transient(ItemId item, const EditSettings& settings) override;
+    quint64 commit(ItemId item) override;
+    quint64 apply(ItemId item, const EditSettings& settings) override;
+    quint64 set_lock(ItemId item, EditControl control, bool locked) override;
+    quint64 undo(ItemId item) override;
+    quint64 redo(ItemId item) override;
+    quint64 select_revision(ItemId item, quint64 revision) override;
+    quint64 reset_to_as_shot(ItemId item) override;
+    void copy_settings(ItemId item, quint32 categories) override;
+    [[nodiscard]] bool has_clipboard() const override { return clipboard_.has_value(); }
+    void paste_settings(const QList<ItemId>& targets) override;
+    [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
+    [[nodiscard]] bool is_busy() const override { return pending_ > 0; }
+
+    // Revisions of `item` (for tests).
+    [[nodiscard]] int revision_count(ItemId item) const;
+
+private:
+    struct Revision {
+        quint64 id = 0;
+        quint32 number = 0;
+        quint64 parent = 0;
+        EditSettings settings;
+        QString origin;
+        QDateTime created;
+        QList<EditControl> changed;
+    };
+    struct Item {
+        std::vector<Revision> revisions;
+        quint64 current = 0;
+        std::optional<EditSettings> transient;
+        quint64 transient_generation = 0;
+        bool open = false;
+        bool before = false;
+    };
+    struct Clipboard {
+        ItemId source = 0;
+        EditSettings settings;
+        quint32 categories = 0;
+    };
+
+    [[nodiscard]] EditSettings committed(const Item& item) const;
+    [[nodiscard]] const Revision* find(const Item& item, quint64 id) const;
+    [[nodiscard]] EditState state_of(ItemId id, quint64 token) const;
+    [[nodiscard]] QList<EditHistoryEntry> history_of(ItemId id) const;
+    [[nodiscard]] bool kelvin_available(ItemId id) const;
+    quint64 append(ItemId id, const EditSettings& settings, const QString& origin, quint64 token);
+    // Emits the state (and history, frame) later, on the event loop.
+    void publish(ItemId id, quint64 token, bool history, bool frame, bool settled);
+    void later(std::function<void()> work);
+    [[nodiscard]] QImage paint(ItemId id, const EditSettings& settings) const;
+
+    std::shared_ptr<const FakeCatalog> catalog_;
+    FakeTimings timings_;
+    std::map<ItemId, Item> items_;
+    std::optional<Clipboard> clipboard_;
+    quint64 next_token_ = 0;
+    quint64 next_revision_ = 1;
+    quint64 next_sequence_ = 0;
+    quint64 next_generation_ = 0;
+    bool clipping_ = false;
+    int pending_ = 0;
 };
 
 // The complete simulated service set, with simulation_notice set.

@@ -72,6 +72,7 @@ public:
         DuplicatePathsRole,    // QStringList
         MissingRole,           // bool: the file is missing
         FlagBadgesRole,        // QVariantList of {key, label, detail} maps, one per flag key
+        EditedRole,            // bool: the photo has develop settings other than as shot (W6)
     };
     Q_ENUM(Role)
 

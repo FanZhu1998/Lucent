@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QKeyEvent>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -299,6 +300,127 @@ TEST_F(QmlShellTest, ScreenshotAutomationWritesThePngAndRequestsQuit) {
     const QImage shot(options.screenshot_path);
     ASSERT_FALSE(shot.isNull());
     EXPECT_EQ(shot.size(), window->size() * window->devicePixelRatio());
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// W6: the Edit view's adjustments edit the photo through its edit session: a key held on a slider
+// and a mouse drag are one revision each, the history, undo and before/after work from the keyboard,
+// copy and paste go through the category dialog and report the outcome, all without a warning.
+TEST_F(QmlShellTest, TheEditPanelMakesOneRevisionPerGestureAndComparesBeforeAndAfter) {
+    write_photos(1);
+    import_folder();
+    window->requestActivate();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window));
+    ASSERT_TRUE(controller->openItem(0));
+    auto* viewer = child<QQuickItem>("previewViewer");
+    ASSERT_TRUE(QTest::qWaitFor([viewer] { return viewer->property("status").toInt() == kImageStatusReady; },
+                                kWaitMs));
+    ASSERT_TRUE(settle());
+    auto* edits = dynamic_cast<fakes::FakeEditService*>(&controller->edit_service());
+    ASSERT_NE(edits, nullptr);
+    const ItemId item = controller->current()->item_id();
+    EditSession& edit = *controller->edit();
+    EXPECT_TRUE(edit.active());
+    EXPECT_TRUE(edit.can_edit());
+    EXPECT_FALSE(edit.frame_source().isEmpty());
+    for (const char* name : {"adjustPanel", "toneCurvePlot", "historyList", "compareToggle", "splitToggle",
+                             "undoToolButton", "redoToolButton"}) {
+        EXPECT_NE(child(name), nullptr) << name;
+    }
+    for (const char* name : {"slider_exposure", "slider_contrast", "slider_highlights", "slider_shadows",
+                             "slider_saturation", "slider_vibrance", "slider_temperature", "slider_tint",
+                             "field_exposure", "lock_exposure", "autoButton"}) {
+        EXPECT_FALSE(visual_items(name, true).isEmpty()) << name;
+    }
+    EXPECT_FALSE(visual_items("autoButton", true).front()->isEnabled());  // W8
+    EXPECT_FALSE(child<QQuickItem>("readOnlyBanner")->isVisible());
+    QQuickItem* slider = visual_items("slider_exposure", true).front();
+
+    // Arrow key held down on the exposure slider: one press, three repeats, one release.
+    slider->forceActiveFocus(Qt::TabFocusReason);
+    ASSERT_TRUE(slider->hasActiveFocus());
+    const auto key = [this](QEvent::Type type, bool repeat) {
+        QKeyEvent event(type, Qt::Key_Right, Qt::NoModifier, QString(), repeat);
+        QCoreApplication::sendEvent(window, &event);
+    };
+    key(QEvent::KeyPress, false);
+    for (int i = 0; i < 3; ++i) {
+        key(QEvent::KeyPress, true);
+    }
+    key(QEvent::KeyRelease, false);
+    ASSERT_TRUE(settle());
+    EXPECT_EQ(edits->revision_count(item), 1);
+    EXPECT_NEAR(edit.value(QStringLiteral("exposure")), 0.2, 1e-9);
+    // The slider runs in display units: assistive technology reads the value the field shows.
+    EXPECT_NEAR(slider->property("value").toDouble(), 0.2, 1e-9);
+    EXPECT_DOUBLE_EQ(slider->property("to").toDouble(), 5.0);
+    EXPECT_TRUE(edit.can_undo());
+    EXPECT_EQ(edit.history()->count(), 2);  // the revision and "As shot"
+
+    // A mouse drag on the contrast slider: one more revision.
+    QQuickItem* contrast = visual_items("slider_contrast", true).front();
+    auto* handle = contrast->property("handle").value<QQuickItem*>();
+    ASSERT_NE(handle, nullptr);
+    const QPoint from = handle->mapToScene(QPointF(handle->width() / 2, handle->height() / 2)).toPoint();
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, from);
+    for (int step = 1; step <= 8; ++step) {
+        QTest::mouseMove(window, from + QPoint(step * 6, 0));
+    }
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, from + QPoint(48, 0));
+    ASSERT_TRUE(settle());
+    EXPECT_EQ(edits->revision_count(item), 2);
+    EXPECT_GT(edit.value(QStringLiteral("contrast")), 0.0);
+
+    // Before/after from the keyboard (\), then side by side.
+    viewer->forceActiveFocus(Qt::OtherFocusReason);
+    QTest::keyClick(window, Qt::Key_Backslash);
+    EXPECT_TRUE(edit.compare());
+    ASSERT_TRUE(QTest::qWaitFor([viewer] { return viewer->property("showingBefore").toBool(); }, kWaitMs));
+    EXPECT_TRUE(child<QQuickItem>("beforeLabel")->isVisible());
+    QTest::keyClick(window, Qt::Key_Backslash);
+    EXPECT_FALSE(edit.compare());
+    edit.set_split(true);
+    ASSERT_TRUE(QTest::qWaitFor([this] { return child<QQuickItem>("splitDivider")->isVisible(); }, kWaitMs));
+    // The divider works from the keyboard too.
+    auto* divider = child<QQuickItem>("splitDivider");
+    const double split_at = viewer->property("splitPosition").toDouble();
+    divider->forceActiveFocus(Qt::TabFocusReason);
+    ASSERT_TRUE(divider->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Left);
+    EXPECT_NEAR(viewer->property("splitPosition").toDouble(), split_at - 0.02, 1e-9);
+    QTest::keyClick(window, Qt::Key_Right, Qt::ShiftModifier);
+    EXPECT_NEAR(viewer->property("splitPosition").toDouble(), split_at + 0.08, 1e-9);
+    edit.set_split(false);
+
+    // The clipping overlay (J) comes from the frames.
+    QTest::keyClick(window, Qt::Key_J);
+    EXPECT_TRUE(controller->clipping_overlay());
+    ASSERT_TRUE(QTest::qWaitFor([&edit] { return !edit.clipping_source().isEmpty(); }, kWaitMs));
+    QTest::keyClick(window, Qt::Key_J);
+
+    // Undo (Ctrl+Z) and redo (Ctrl+Y).
+    QTest::keyClick(window, Qt::Key_Z, Qt::ControlModifier);
+    ASSERT_TRUE(settle());
+    EXPECT_DOUBLE_EQ(edit.value(QStringLiteral("contrast")), 0.0);
+    EXPECT_TRUE(edit.can_redo());
+    QTest::keyClick(window, Qt::Key_Y, Qt::ControlModifier);
+    ASSERT_TRUE(settle());
+    EXPECT_GT(edit.value(QStringLiteral("contrast")), 0.0);
+
+    // Copy settings (Ctrl+Shift+C opens the category dialog), then paste (Ctrl+Shift+V).
+    auto* dialog = child("copySettingsDialog");
+    ASSERT_NE(dialog, nullptr);
+    QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    QMetaObject::invokeMethod(dialog, "accept");
+    ASSERT_TRUE(QTest::qWaitFor([&edit] { return edit.has_clipboard(); }, kWaitMs));
+    EXPECT_TRUE(edit.message().startsWith(QStringLiteral("Copied ")));
+    viewer->forceActiveFocus(Qt::OtherFocusReason);
+    QTest::keyClick(window, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+    ASSERT_TRUE(QTest::qWaitFor([&edit] { return edit.message().startsWith(QStringLiteral("Pasted ")); }, kWaitMs));
+    EXPECT_TRUE(child<QQuickItem>("editMessage")->isVisible());
+    EXPECT_TRUE(controller->status_message().startsWith(QStringLiteral("Pasted ")));
+    ASSERT_TRUE(settle());
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

@@ -345,6 +345,53 @@ TEST(MemoryAdmission, RespectsTheByteBudget) {
     EXPECT_EQ(too_big.error().code, ErrorCode::LimitExceeded);
 }
 
+TEST(MemoryAdmission, RetainedMemoryCountsBytesButHoldsNoPlace) {
+    MemoryAdmission admission(AdmissionOptions{1, 1000});
+    auto render = admission.acquire(600, Lane::Background, {});
+    ASSERT_TRUE(render);
+    // The only render place is taken, but a cached image or a small render is still admitted.
+    auto cached = admission.retain(300, {});
+    ASSERT_TRUE(cached) << cached.error().describe();
+    EXPECT_TRUE(cached->retained());
+    AdmissionStats stats = admission.stats();
+    EXPECT_EQ(stats.active, 1u);
+    EXPECT_EQ(stats.retained, 1u);
+    EXPECT_EQ(stats.active_bytes, 900u);
+    EXPECT_EQ(stats.retained_bytes, 300u);
+    // Retained claims still respect the budget: this one waits, and gives up when cancelled.
+    core::CancellationSource cancel;
+    std::thread waiter([&] {
+        auto over = admission.retain(200, cancel.token());
+        ASSERT_FALSE(over);
+        EXPECT_EQ(over.error().code, ErrorCode::Cancelled);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    cancel.cancel();
+    waiter.join();
+    EXPECT_EQ(admission.retain(1001, {}).error().code, ErrorCode::LimitExceeded);
+
+    // A finished render keeps only its result: its place and the rest of its bytes return at once.
+    render->retain_only(100);
+    EXPECT_TRUE(render->retained());
+    EXPECT_EQ(render->bytes(), 100u);
+    stats = admission.stats();
+    EXPECT_EQ(stats.active, 0u);
+    EXPECT_EQ(stats.retained, 2u);
+    EXPECT_EQ(stats.active_bytes, 400u);
+    // So the next render is admitted beside the retained memory, and must fit beside it.
+    auto next = admission.acquire(600, Lane::Interactive, {});
+    ASSERT_TRUE(next);
+    render->retain_only(50);  // shrinking a retained lease
+    EXPECT_EQ(admission.stats().active_bytes, 950u);
+    render->release();
+    cached->release();
+    next->release();
+    stats = admission.stats();
+    EXPECT_EQ(stats.active_bytes, 0u);
+    EXPECT_EQ(stats.retained, 0u);
+    EXPECT_EQ(stats.active, 0u);
+}
+
 TEST(MemoryAdmission, InteractiveClaimsGoFirst) {
     MemoryAdmission admission(AdmissionOptions{1, 1000});
     auto held = admission.acquire(10, Lane::Background, {});

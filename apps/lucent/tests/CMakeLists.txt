@@ -11,6 +11,7 @@
 find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
 
 add_library(lucent_ui_fakes STATIC
+    fakes/fake_edit_service.cpp
     fakes/fake_export_service.cpp
     fakes/fake_image_source.cpp
     fakes/fake_library_service.cpp
@@ -27,10 +28,12 @@ add_executable(lucent_ui_tests
     adapter_conversions_tests.cpp
     adapter_test_support.hpp
     app_controller_tests.cpp
+    app_edit_service_tests.cpp
     application_adapters_tests.cpp
     application_shell_tests.cpp
     catalog_adapters_tests.cpp
     developer_options_tests.cpp
+    edit_session_tests.cpp
     fake_services_tests.cpp
     image_provider_tests.cpp
     library_model_tests.cpp

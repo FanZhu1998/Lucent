@@ -3,9 +3,11 @@
 // Backend: the application services one Lucent.exe session runs on (docs/adr/0007, 0008).
 //
 // It owns, in construction order: the decoder registry, the catalog (W4; when a catalog path is
-// given), the library, the on-disk thumbnail cache (when a folder is given), the three-lane task
-// executor (with its memory admission), the renderer, the preview service, the export service
-// and the maintenance service (W4: presence checks, hashing, relinking). The UI adapters
+// given), the library, the recipe store and recipe service (W6: the catalog's revisions, or memory
+// for a session library), the on-disk thumbnail cache (when a folder is given), the three-lane task
+// executor (with its memory admission), the renderer, the preview service, the export service,
+// the edit-session service (W6, develop_preview.hpp) and the maintenance service (W4: presence
+// checks, hashing, relinking). The UI adapters
 // (app_library_service.hpp, app_image_source.hpp, app_export_service.hpp) share ownership of one
 // Backend.
 //
@@ -30,8 +32,9 @@
 // is not an executor worker (the UI thread), because destruction joins those workers.
 //
 // Thread-safety: the accessors may be called from any thread; the services are thread-safe.
-// OutputFolders and the maintenance event relay are thread-safe.
+// OutputFolders, InteractiveActivity and the maintenance event relay are thread-safe.
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -40,10 +43,13 @@
 #include <optional>
 #include <vector>
 
+#include <lucent/application/develop_preview.hpp>
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/application/maintenance_service.hpp>
 #include <lucent/application/preview_service.hpp>
+#include <lucent/application/recipe_service.hpp>
+#include <lucent/application/recipe_store.hpp>
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
 #include <lucent/application/thumbnail_cache.hpp>
@@ -89,6 +95,29 @@ private:
     std::vector<std::filesystem::path> folders_;
 };
 
+// Whether interactive editing is waiting for a render: the newest settings of an edit session have
+// not been rendered yet (app_edit_service.hpp). Lucent thumbnail renders wait while it is busy, so
+// they never hold the render admission a refine or a 100 % view needs (app_image_source.hpp).
+class InteractiveActivity {
+public:
+    // Calls the idle listener (on this thread, outside the internal lock) when the activity changes
+    // from busy to idle.
+    void set_busy(bool busy);
+    [[nodiscard]] bool busy() const;
+    // How long the activity has been idle (zero while busy; since creation when it never was).
+    [[nodiscard]] std::chrono::milliseconds idle_for() const;
+    // Replaces the listener; an empty function detaches. When this returns, a previous listener is
+    // no longer running. The listener must not call set_idle_listener().
+    void set_idle_listener(std::function<void()> listener);
+
+private:
+    mutable std::mutex mutex_;
+    bool busy_ = false;
+    std::chrono::steady_clock::time_point idle_since_ = std::chrono::steady_clock::now();
+    std::mutex listener_mutex_;  // held while the listener runs and while it is replaced
+    std::function<void()> listener_;
+};
+
 class Backend {
 public:
     // Errors: those of raw::create_default_registry(), TaskExecutor::create() (InvalidArgument for
@@ -105,7 +134,14 @@ public:
     [[nodiscard]] app::TaskExecutor& executor() noexcept { return *executor_; }
     [[nodiscard]] app::PreviewService& previews() noexcept { return *previews_; }
     [[nodiscard]] app::ExportService& exports() noexcept { return *exports_; }
+    // W6. The items' recipes and the edit sessions (used by the editor; ADR 0010).
+    [[nodiscard]] app::RecipeService& recipes() noexcept { return *recipes_; }
+    [[nodiscard]] app::DevelopPreviewService& develop() noexcept { return *develop_; }
     [[nodiscard]] OutputFolders& output_folders() noexcept { return output_folders_; }
+    // The recipe store under recipes() (tests write revisions through it directly).
+    [[nodiscard]] app::RecipeStore& recipe_store() noexcept { return *recipe_store_; }
+    // W6. Interactive editing's render activity (see InteractiveActivity).
+    [[nodiscard]] InteractiveActivity& interactive() noexcept { return interactive_; }
 
     // W4. The catalog of the persistent library (null for a session library).
     [[nodiscard]] const std::shared_ptr<catalog::Catalog>& catalog() const noexcept { return catalog_; }
@@ -134,14 +170,18 @@ private:
     std::shared_ptr<catalog::Catalog> catalog_;
     std::unique_ptr<app::Library> library_;
     std::optional<Error> library_problem_;
+    std::shared_ptr<app::RecipeStore> recipe_store_;
+    std::unique_ptr<app::RecipeService> recipes_;
     std::shared_ptr<app::ThumbnailCache> thumbnails_;
     std::unique_ptr<app::TaskExecutor> executor_;
     std::shared_ptr<const app::SourceRenderer> renderer_;
     std::unique_ptr<app::PreviewService> previews_;
     std::unique_ptr<app::ExportService> exports_;
+    std::unique_ptr<app::DevelopPreviewService> develop_;
     std::shared_ptr<Relay> relay_ = std::make_shared<Relay>();
     std::unique_ptr<app::MaintenanceService> maintenance_;
     OutputFolders output_folders_;
+    InteractiveActivity interactive_;
     std::vector<std::filesystem::path> lucent_directories_;
 };
 

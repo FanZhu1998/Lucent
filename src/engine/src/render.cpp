@@ -17,6 +17,8 @@
 #include <lucent/engine/orientation.hpp>
 #include <lucent/engine/render.hpp>
 
+#include "render_warnings.hpp"
+
 namespace lucent::engine {
 
 namespace {
@@ -104,42 +106,6 @@ Expected<std::uint64_t> buffer_bytes(std::int64_t width, std::int64_t height, st
     return static_cast<std::uint64_t>(layout->byte_size);
 }
 
-// Warnings that follow from the metadata alone.
-void metadata_warnings(const raw::RawMetadata& metadata, const RenderSettings& settings,
-                       std::vector<std::string>& warnings) {
-    if (metadata.interpretation.status != raw::InterpretationStatus::Complete) {
-        warnings.push_back(std::format("interpretation is '{}': this render is not a verified interpretation",
-                                       raw::to_string(metadata.interpretation.status)));
-        for (const raw::InterpretationIssue& issue : metadata.interpretation.issues) {
-            warnings.push_back(std::format("{}: {}", raw::to_string(issue.kind), issue.message));
-        }
-    }
-    if (metadata.geometry.pixel_aspect != 1.0) {
-        warnings.push_back(
-            std::format("non-square pixels (aspect {}) are not corrected; the image is distorted",
-                        metadata.geometry.pixel_aspect));
-    }
-    if (metadata.dng && metadata.dng->raw_ifd.default_crop_origin &&
-        metadata.dng->raw_ifd.default_crop_size) {
-        const auto& origin = *metadata.dng->raw_ifd.default_crop_origin;
-        const auto& size = *metadata.dng->raw_ifd.default_crop_size;
-        const image::PixelRect& visible = metadata.geometry.visible_area;
-        if (origin[0] != 0.0 || origin[1] != 0.0 || size[0] != static_cast<double>(visible.width) ||
-            size[1] != static_cast<double>(visible.height)) {
-            warnings.push_back(
-                std::format("DNG DefaultCrop (origin {}, {}; size {} x {}) is not applied; the whole visible "
-                            "area is rendered",
-                            origin[0], origin[1], size[0], size[1]));
-        }
-    }
-    if (!settings.apply_orientation && metadata.geometry.orientation != image::Orientation::Normal) {
-        warnings.push_back(
-            std::format("the file's orientation '{}' is not applied (settings); pixels stay in stored "
-                        "order",
-                        image::to_string(metadata.geometry.orientation)));
-    }
-}
-
 class Pipeline {
 public:
     Pipeline(const RenderSettings& settings, const RenderOptions& options,
@@ -152,7 +118,7 @@ public:
         RenderReport& report = result.report;
         report.settings = settings_;
         report.interpretation = decoded.metadata.interpretation;
-        metadata_warnings(decoded.metadata, settings_, report.warnings);
+        detail::metadata_warnings(decoded.metadata, settings_.apply_orientation, report.warnings);
 
         auto estimate = estimate_render_memory(decoded.metadata, settings_, options_);
         if (!estimate) {

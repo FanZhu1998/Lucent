@@ -2,15 +2,19 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its fourth development
-> increment (W4, catalog and import), pending its commit and merge: a Qt Quick `Lucent.exe` that
+> **Status: pre-alpha, under active development.** Lucent has completed its sixth development
+> increment (W6, recipes and editor), pending its commit and merge: a Qt Quick `Lucent.exe` that
 > adds RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
-> removable-media badges and relinking, browses them with labelled camera previews and support
-> states, shows Lucent's provisional render, and exports JPEG or 16-bit TIFF. It runs from a source
-> build or from an unsigned per-user installer built from source (see [Installing](#installing)).
-> There is **no editing control yet**, and no camera model is verified as supported. The next section describes the product Lucent is being built to become,
-> from its blueprint, not what it can do today.
+> removable-media badges and relinking, and browses them with labelled camera previews and support
+> states. Opening a photo edits it: white balance (temperature and tint where the camera's
+> calibration defines them), exposure, contrast, highlights and shadows, a tone curve, saturation
+> and vibrance, with a histogram, clipping overlay, before/after, undo/redo over an immutable
+> revision history and copy/paste by category. Thumbnails, previews and JPEG or 16-bit TIFF exports
+> render each photo's recipe. It runs from a source build or from an unsigned per-user installer
+> built from source (see [Installing](#installing)). There is **no automatic optimisation yet**
+> (W8), and no camera model is verified as supported. The next section describes the product
+> Lucent is being built to become, from its blueprint, not what it can do today.
 
 ## What Lucent is meant to be
 
@@ -51,14 +55,18 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W1 | `core`, `image` and `raw` modules, LibRaw probe adapter, `lucent-probe` developer tool, camera fixture manifest and downloader, rawpy reference-parity script, ADRs | Done |
 | W2 | `engine` render path (sensor normalisation, white balance, demosaicing, camera colour, Rec.2020 working space, provisional display rendering, orientation), `export` (verified JPEG / 16-bit TIFF with ICC profiles), `lucent-render` developer tool, rawpy render gates | Done |
 | W3 | Qt Quick `Lucent.exe` (Library / Edit / Exports), `application` services (import, session library, background previews and camera previews, export), UI adapters (ADR 0007) | Done |
-| W4 | `catalog` module (SQLite, migrations, backups), persistent library, import in place or as verified copies, source identity (SHA-256 and file identity), duplicates, missing files and relinking, disk thumbnail cache (ADR 0008) | Done, pending commit and merge |
-| W5–W12 | Installer, editor, batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
+| W4 | `catalog` module (SQLite, migrations, backups), persistent library, import in place or as verified copies, source identity (SHA-256 and file identity), duplicates, missing files and relinking, disk thumbnail cache (ADR 0008) | Done |
+| W5 | Per-user Inno Setup installer with Qt deployment, dependency audit, licences and SBOM (ADR 0009) | Done except the clean-machine test |
+| W6 | Develop settings v1 and editing operations (white balance, exposure, guided-filter highlights and shadows, contrast, tone curve, saturation and vibrance, base look "neutral" v1), two-stage interactive rendering, versioned recipes with immutable revisions (catalog schema v2), undo/redo, copy/paste, the Edit view (ADR 0010) | Done, pending commit and merge |
+| W7–W12 | Batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
 ([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library is saved in
-`%LOCALAPPDATA%\Lucent\data\lucent.catalog` (`--data-root` points a developer session elsewhere),
-photos are shown with a provisional neutral rendering and default settings (editing is W6's). The
-developer command-line tools `lucent-probe` and `lucent-render` remain; they are not installed.
+`%LOCALAPPDATA%\Lucent\data\lucent.catalog` (`--data-root` points a developer session elsewhere);
+edits are stored there as recipe revisions, so a library opened by Lucent W6 can no longer be
+opened by an earlier build. Photos are rendered with their recipe and the base look "neutral" v1.
+The developer command-line tools `lucent-probe` and `lucent-render` remain; they are not
+installed.
 
 ## Installing
 
@@ -89,7 +97,7 @@ There is no published release yet. `tools\package.ps1` builds the installer from
 ## Repository layout
 
 ```text
-apps/lucent/         Lucent.exe: the Qt Quick shell, its view models and the adapters to the application services (W3, W4)
+apps/lucent/         Lucent.exe: the Qt Quick shell and Edit view, its view models and the adapters to the application services (W3, W4, W6)
 apps/lucent-probe/   Developer CLI that prints RAW decoder probe results as JSON (W1)
 apps/lucent-render/  Developer CLI that renders a RAW file and exports JPEG / 16-bit TIFF (W2)
 cmake/               CMake helpers and the x64-windows-lucent vcpkg overlay triplet
@@ -104,10 +112,10 @@ research/            Python research environment (rawpy reference decoding); dev
 src/core/            lucent_core: error model, hashing, files, text, logging, cancellation, versioning
 src/image/           lucent_image: pixel containers, CFA descriptors, colour-encoding contracts
 src/raw/             lucent_raw: RawDecoder interface, decoded-RAW data contract, LibRaw adapter
-src/engine/          lucent_engine: the render path from decoded RAW to display-referred Rec.2020
+src/engine/          lucent_engine: the render and develop pipeline from decoded RAW to display-referred Rec.2020, editing operations
 src/export/          lucent_export: output profiles, JPEG/TIFF encoding, verified no-clobber export, cache thumbnails
-src/catalog/         lucent_catalog: SQLite catalog of sources, items and imports; migrations, backups, restore
-src/application/     lucent_application: import, session and catalog libraries, source maintenance, task executor, preview and export services (no Qt)
+src/catalog/         lucent_catalog: SQLite catalog of sources, items, imports and recipe revisions; migrations, backups, restore
+src/application/     lucent_application: import, session and catalog libraries, source maintenance, task executor, recipes, preview, develop-preview and export services (no Qt)
 tests/               Cross-module integration tests (unit tests live in src/<module>/tests/)
 tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.ps1, package.ps1
 ```

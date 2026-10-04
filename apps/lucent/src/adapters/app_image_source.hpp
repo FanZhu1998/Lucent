@@ -11,11 +11,18 @@
 //                             orientation applied and the JPEG's own EXIF orientation ignored.
 //                             A file without a usable camera preview fails the reply and reports
 //                             CameraPreviewUnavailable, which moves the item to generation 2.
-//   Thumbnail, generation 2+  Lucent's own render: from this source's thumbnail cache (filled by
-//                             every Edit preview), otherwise a Fit render at the requested size.
-//                             These renders run one at a time and only while no Edit preview is
-//                             outstanding, so they never delay the photo the user is looking at by
-//                             more than one render.
+//   Thumbnail, generation 2+  Lucent's own render of the item's current recipe (W6: edited photos
+//                             show their edits): from this source's thumbnail cache when it holds
+//                             the recipe's settings (filled by Edit previews and thumbnail renders,
+//                             keyed by the settings' SHA-256), otherwise PreviewService::
+//                             request_rendered_thumbnail (a 1024-pixel Fit render, cached in memory
+//                             and on disk by settings, ADR 0010 decision 9), decoded at the
+//                             requested size on the conversion threads. These renders run one at a
+//                             time and only while no Edit preview is outstanding and interactive
+//                             editing has not waited for a render for interactive_quiet_ms
+//                             (Backend::interactive()): they never delay the photo the user is looking
+//                             at by more than one render, and a thumbnail render (a full-resolution
+//                             render) does not compete with the next slider drag for the processor.
 //   Preview                   Lucent's render for the Edit view (PreviewService::request,
 //                             Interactive lane), Fit to the requested box or Full when the box is
 //                             the photo's full size (conversions.hpp, preview_quality_for).
@@ -24,8 +31,8 @@
 // gets the next channel generation, so a newer request (another photo, another zoom) cancels the
 // older ones and the service reports them Superseded: a late result can never replace a newer
 // one (blueprint section 4). The shell's own generations (in the image URL) select what is shown;
-// the preview generation is used as the settings revision (1 until W6 adds recipes: every render
-// uses the default settings).
+// the preview generation is used as the settings revision tag; every render uses the item's
+// current recipe (PreviewService resolves it when the request is made).
 //
 // Cancellation. When the shell cancels the reply of the newest Edit preview (the view closed or
 // moved on), the channel is cancelled, which stops the render cooperatively. Cancelled replies of
@@ -54,6 +61,7 @@
 //
 // Thread-safety: request_image() may be called concurrently from any thread.
 
+#include <QObject>
 #include <QThreadPool>
 #include <cstdint>
 #include <memory>
@@ -70,6 +78,8 @@ struct ImageSourceOptions {
     int conversion_threads = 2;
     // Thumbnails made from Lucent's renders (Format_RGB32, long edge kThumbnailEdge).
     std::uint64_t thumbnail_cache_bytes = std::uint64_t{48} << 20;
+    // Lucent thumbnail renders start once interactive editing has been idle this long.
+    int interactive_quiet_ms = 1500;
 
     static constexpr int kThumbnailEdge = 512;
 };
@@ -87,6 +97,7 @@ public:
 
 private:
     std::shared_ptr<Backend> backend_;
+    std::unique_ptr<QObject> timers_;  // lives on the creating (UI) thread: delayed thumbnail starts
     std::unique_ptr<QThreadPool> pool_;
     std::shared_ptr<State> state_;
     app::Subscription subscription_;  // reset first on destruction

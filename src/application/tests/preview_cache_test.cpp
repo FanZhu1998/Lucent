@@ -18,7 +18,10 @@ std::shared_ptr<const PreviewImage> preview(std::size_t pixel_bytes) {
 
 PreviewKey key(std::uint64_t item, std::uint64_t revision = 1,
                PreviewQuality quality = PreviewQuality::fit(256)) {
-    return PreviewKey{ItemId{item}, revision, quality};
+    core::Digest256 settings{};
+    settings[0] = static_cast<std::uint8_t>(revision);
+    settings[31] = static_cast<std::uint8_t>(revision >> 8);
+    return PreviewKey{ItemId{item}, settings, quality};
 }
 
 TEST(PreviewKey, QualityAndRevisionDistinguishEntries) {

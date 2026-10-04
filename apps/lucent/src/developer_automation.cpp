@@ -14,6 +14,8 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QMetaObject>
+#include <QMouseEvent>
+#include <QPointingDevice>
 #include <QQuickItem>
 #include <QQuickWindow>
 
@@ -88,6 +90,62 @@ void count_images(const QQuickItem& item, ImageCounts& counts) {
     }
 }
 
+// "x:y,x:y,..." with values in [0, 1].
+std::optional<QList<QPointF>> parse_curve(const QString& text) {
+    QList<QPointF> points;
+    for (const QString& pair : text.split(u',', Qt::SkipEmptyParts)) {
+        const QStringList xy = pair.split(u':');
+        bool x_ok = false;
+        bool y_ok = false;
+        const double x = xy.size() == 2 ? xy[0].trimmed().toDouble(&x_ok) : 0.0;
+        const double y = xy.size() == 2 ? xy[1].trimmed().toDouble(&y_ok) : 0.0;
+        if (!x_ok || !y_ok || x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
+            return std::nullopt;
+        }
+        points << QPointF(x, y);
+    }
+    if (points.size() < kMinCurvePoints || points.size() > kMaxCurvePoints) {
+        return std::nullopt;
+    }
+    return points;
+}
+
+// The visible item named `name` in the visual item tree (which, unlike the QObject tree, also holds
+// the delegates of repeaters and views); nullptr when there is none.
+QQuickItem* find_visible_item(QQuickItem* root, const QString& name) {
+    if (root == nullptr || !root->isVisible()) {
+        return nullptr;
+    }
+    if (root->objectName() == name) {
+        return root;
+    }
+    const QList<QQuickItem*> children = root->childItems();
+    for (QQuickItem* child : children) {
+        if (QQuickItem* found = find_visible_item(child, name)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+bool is_lock_key(const QString& key) {
+    static const QStringList kLocks{QStringLiteral("whiteBalance"), QStringLiteral("exposure"),
+                                    QStringLiteral("contrast"),     QStringLiteral("highlights"),
+                                    QStringLiteral("shadows"),      QStringLiteral("toneCurve"),
+                                    QStringLiteral("saturation"),   QStringLiteral("vibrance")};
+    return kLocks.contains(key);
+}
+
+template <typename T>
+T percentile_of(std::vector<T> values, double p) {
+    if (values.empty()) {
+        return T{};
+    }
+    std::sort(values.begin(), values.end());
+    const auto index = static_cast<std::size_t>(p * double(values.size() - 1) + 0.5);
+    return values[std::min(index, values.size() - 1)];
+}
+
 std::optional<AppController::View> parse_view(const QString& text) {
     const QString view = text.trimmed().toLower();
     if (view == u"library") {
@@ -155,12 +213,35 @@ CommandLine parse_command_line(const QStringList& arguments) {
         QStringLiteral("Keep the catalog and caches in <folder> instead of "
                        "the user's application data."),
         QStringLiteral("folder"));
+    const QCommandLineOption set_option(QStringLiteral("set"),
+                                        QStringLiteral("With --open-first, make an edit once the photo is "
+                                                       "shown: control=value (repeatable)."),
+                                        QStringLiteral("control=value"));
+    const QCommandLineOption drag_option(QStringLiteral("drag"),
+                                         QStringLiteral("With --open-first, drag this slider with synthetic "
+                                                        "mouse events."),
+                                         QStringLiteral("control"));
+    const QCommandLineOption drag_steps_option(QStringLiteral("drag-steps"),
+                                               QStringLiteral("Mouse moves of --drag (default 60)."),
+                                               QStringLiteral("n"));
+    const QCommandLineOption compare_option(QStringLiteral("compare"),
+                                            QStringLiteral("With --open-first, show before (as shot) or "
+                                                           "split before the screenshot."),
+                                            QStringLiteral("mode"));
+    const QCommandLineOption clipping_option(QStringLiteral("clipping"),
+                                             QStringLiteral("With --open-first, turn the clipping overlay "
+                                                            "on before the screenshot."));
+    const QCommandLineOption scroll_option(QStringLiteral("scroll-panel"),
+                                           QStringLiteral("With --open-first, scroll the Edit view's side panel to "
+                                                          "this fraction (0 top, 1 bottom) before the screenshot."),
+                                           QStringLiteral("fraction"));
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
     parser.addOptions({import_option, subfolders_option, open_first_option, view_option, export_option,
                        screenshot_option, quit_option, timeout_option, format_option, color_option,
-                       quality_option, zoom_option, measure_option, dialog_option, data_root_option});
+                       quality_option, zoom_option, measure_option, dialog_option, data_root_option, set_option,
+                       drag_option, drag_steps_option, compare_option, clipping_option, scroll_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -261,6 +342,59 @@ CommandLine parse_command_line(const QStringList& arguments) {
             return fail(QStringLiteral("--data-root needs a folder."));
         }
     }
+    for (const QString& edit : parser.values(set_option)) {
+        const qsizetype equals = edit.indexOf(u'=');
+        const QString key = equals > 0 ? edit.first(equals).trimmed() : QString();
+        const QString value = equals > 0 ? edit.sliced(equals + 1).trimmed() : QString();
+        bool valid = !key.isEmpty() && !value.isEmpty();
+        if (valid && key == u"curve") {
+            valid = parse_curve(value).has_value();
+        } else if (valid && key == u"lock") {
+            valid = is_lock_key(value);
+        } else if (valid) {
+            bool number = false;
+            QString(value).remove(u'+').toDouble(&number);
+            valid = EditSession::is_control(key) && number;
+        }
+        if (!valid) {
+            return fail(QStringLiteral("--set needs control=value with a slider key and a number, curve=x:y,..., or "
+                                       "lock=<control> (got '%1').")
+                            .arg(edit));
+        }
+        options.edits.emplace_back(key, value);
+    }
+    if (parser.isSet(drag_option)) {
+        options.drag = parser.value(drag_option).trimmed();
+        if (!EditSession::is_control(options.drag)) {
+            return fail(QStringLiteral("Unknown --drag control '%1'.").arg(options.drag));
+        }
+    }
+    if (parser.isSet(drag_steps_option)) {
+        bool ok = false;
+        options.drag_steps = parser.value(drag_steps_option).toInt(&ok);
+        if (!ok || options.drag_steps < 10 || options.drag_steps > 1000) {
+            return fail(QStringLiteral("--drag-steps needs a number from 10 to 1000."));
+        }
+    }
+    if (parser.isSet(compare_option)) {
+        options.compare = parser.value(compare_option).trimmed().toLower();
+        if (options.compare != u"before" && options.compare != u"split") {
+            return fail(QStringLiteral("Unknown --compare mode '%1': use before or split.").arg(options.compare));
+        }
+    }
+    options.clipping = parser.isSet(clipping_option);
+    if (parser.isSet(scroll_option)) {
+        bool ok = false;
+        options.panel_scroll = parser.value(scroll_option).toDouble(&ok);
+        if (!ok || *options.panel_scroll < 0.0 || *options.panel_scroll > 1.0) {
+            return fail(QStringLiteral("--scroll-panel needs a fraction from 0 to 1."));
+        }
+    }
+    if ((!options.edits.empty() || !options.drag.isEmpty() || !options.compare.isEmpty() || options.clipping ||
+         options.panel_scroll) &&
+        !options.open_first) {
+        return fail(QStringLiteral("--set, --drag, --compare, --clipping and --scroll-panel need --open-first."));
+    }
     if (parser.isSet(timeout_option)) {
         bool ok = false;
         const int timeout = parser.value(timeout_option).toInt(&ok);
@@ -286,6 +420,9 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
     probe_timer_.setInterval(kProbeIntervalMs);
     probe_timer_.setTimerType(Qt::PreciseTimer);
     connect(&probe_timer_, &QTimer::timeout, this, &DeveloperAutomation::probe_tick);
+    drag_timer_.setInterval(16);  // a 60 Hz mouse
+    drag_timer_.setTimerType(Qt::PreciseTimer);
+    connect(&drag_timer_, &QTimer::timeout, this, &DeveloperAutomation::drag_tick);
     connect(&controller_.library_service(), &LibraryService::import_finished, this,
             [this](const ImportSummary& summary) {
                 report(QStringLiteral("import finished: %1 added (%2 limited, %3 unsupported), %4 already in "
@@ -361,6 +498,9 @@ void DeveloperAutomation::probe_tick() {
     const qint64 now = clock_.elapsed();
     if (last_tick_ms_ >= 0) {
         gaps_ms_.push_back(now - last_tick_ms_);
+        if (drag_measuring_) {
+            drag_gaps_ms_.push_back(now - last_tick_ms_);
+        }
     }
     last_tick_ms_ = now;
     if (first_thumbnail_ms_ < 0 && (last_walk_ms_ < 0 || now - last_walk_ms_ >= kWalkIntervalMs)) {
@@ -460,6 +600,10 @@ void DeveloperAutomation::poll() {
             report_preview("fit", clock_.elapsed() - open_ms_);
         }
         QQuickItem* viewer = window_.findChild<QQuickItem*>(QStringLiteral("previewViewer"));
+        if (status == kImageStatusReady && wants_editing()) {
+            stage_ = Stage::Editing;
+            return;
+        }
         if (status == kImageStatusReady && options_.zoom_full.value_or(false) && viewer != nullptr) {
             zoom_ms_ = clock_.elapsed();
             QMetaObject::invokeMethod(viewer, "setFit", Q_ARG(QVariant, false), Q_ARG(QVariant, QVariant()),
@@ -478,6 +622,22 @@ void DeveloperAutomation::poll() {
             start_settling();
             return;
         }
+        if (const EditSession& edit = *controller_.edit(); edit.active()) {
+            // An edit session: a quick proxy frame first, then the full-resolution final frame.
+            if (!edit.frame_error().isEmpty()) {
+                report(QStringLiteral("the 100 % preview failed: %1").arg(edit.frame_error()));
+                start_settling();
+            } else if (edit.frame_full_resolution() && edit.frame_phase() == u"final" && !edit.busy()) {
+                if (options_.measure) {
+                    report_preview("100 %", clock_.elapsed() - zoom_ms_);
+                }
+                start_settling();
+            } else if (!grab_clock_.isValid() || grab_clock_.hasExpired(kGrabIntervalMs)) {
+                static_cast<void>(grab());  // lay the view out (and load the frames) without a display
+                grab_clock_.start();
+            }
+            return;
+        }
         if (status == kImageStatusLoading) {
             zoom_loading_seen_ = true;
         } else if (!zoom_loading_seen_ && (!grab_clock_.isValid() || grab_clock_.hasExpired(kGrabIntervalMs))) {
@@ -494,6 +654,9 @@ void DeveloperAutomation::poll() {
         }
         return;
     }
+    case Stage::Editing:
+        edit_step();
+        return;
     case Stage::Settling: {
         if (settle_clock_.hasExpired(options_.settle_timeout_ms)) {
             report(QStringLiteral("the window did not settle within %1 ms").arg(options_.settle_timeout_ms));
@@ -558,12 +721,233 @@ void DeveloperAutomation::after_imports() {
         }
     }
     const bool follow_preview = open_ms_ >= 0 && controller_.current_view() == AppController::Edit &&
-                                (options_.measure || options_.zoom_full.has_value());
+                                (options_.measure || options_.zoom_full.has_value() || wants_editing());
     if (follow_preview) {
         stage_ = Stage::WaitingForFitPreview;
         return;
     }
     start_settling();
+}
+
+bool DeveloperAutomation::wants_editing() const {
+    return !options_.edits.empty() || !options_.drag.isEmpty() || !options_.compare.isEmpty() || options_.clipping ||
+           options_.panel_scroll.has_value();
+}
+
+bool DeveloperAutomation::apply_edit(const QString& key, const QString& value) {
+    EditSession& edit = *controller_.edit();
+    if (key == u"curve") {
+        const std::optional<QList<QPointF>> points = parse_curve(value);
+        if (!points || !edit.can_edit()) {
+            return false;
+        }
+        // As the curve editor makes them: the end points moved, the others added on the curve and
+        // moved; one gesture, one revision.
+        edit.beginGesture();
+        edit.moveCurvePoint(0, points->front().x(), points->front().y());
+        edit.moveCurvePoint(static_cast<int>(edit.settings().tone_curve.size()) - 1, points->back().x(),
+                            points->back().y());
+        for (qsizetype i = 1; i + 1 < points->size(); ++i) {
+            const int index = edit.addCurvePoint((*points)[i].x());
+            if (index >= 0) {
+                edit.moveCurvePoint(index, (*points)[i].x(), (*points)[i].y());
+            }
+        }
+        edit.endGesture();
+        return true;
+    }
+    if (key == u"lock") {
+        edit.setLocked(value, true);
+        return true;
+    }
+    return edit.setValueText(key, value);
+}
+
+void DeveloperAutomation::edit_step() {
+    EditSession& edit = *controller_.edit();
+    if (settle_clock_.hasExpired(options_.settle_timeout_ms)) {
+        report(QStringLiteral("the edits did not finish within %1 ms").arg(options_.settle_timeout_ms));
+        drag_timer_.stop();
+        drag_measuring_ = false;
+        start_settling();
+        return;
+    }
+    if (drag_active_ || controller_.busy() || edit.busy()) {
+        return;
+    }
+    if (edit_waiting_) {
+        if (edit.final_frames() <= finals_before_ && edit.frame_error().isEmpty()) {
+            return;  // the final frame of the edit has not arrived yet
+        }
+        edit_waiting_ = false;
+        if (drag_measuring_) {
+            drag_measuring_ = false;
+            if (options_.measure) {
+                report_drag();
+            }
+        } else {
+            report_edit_latency(edit_label_);
+        }
+    }
+    if (next_edit_ < options_.edits.size()) {
+        const auto& [key, value] = options_.edits[next_edit_++];
+        edit.reset_latencies();
+        finals_before_ = edit.final_frames();
+        edit_label_ = key + u'=' + value;
+        if (!apply_edit(key, value)) {
+            report(QStringLiteral("--set %1: the edit was not accepted").arg(edit_label_));
+            return;
+        }
+        // A lock is a revision but changes no pixels: no frame follows.
+        edit_waiting_ = key != u"lock";
+        return;
+    }
+    if (!options_.drag.isEmpty() && !drag_done_) {
+        start_drag();
+        return;
+    }
+    if (options_.clipping) {
+        controller_.set_clipping_overlay(true);
+    }
+    if (options_.panel_scroll) {
+        if (auto* panel = window_.findChild<QQuickItem*>(QStringLiteral("editPanel")); panel != nullptr) {
+            const double range = std::max(0.0, panel->property("contentHeight").toDouble() - panel->height());
+            panel->setProperty("contentY", range * *options_.panel_scroll);
+        }
+    }
+    if (options_.compare == u"before") {
+        edit.set_compare(true);
+    } else if (options_.compare == u"split") {
+        edit.set_split(true);
+    }
+    if (!edit.message().isEmpty()) {
+        report(QStringLiteral("edit message: %1").arg(edit.message()));
+    }
+    QQuickItem* viewer = window_.findChild<QQuickItem*>(QStringLiteral("previewViewer"));
+    if (options_.zoom_full.value_or(false) && viewer != nullptr) {
+        zoom_ms_ = clock_.elapsed();
+        QMetaObject::invokeMethod(viewer, "setFit", Q_ARG(QVariant, false), Q_ARG(QVariant, QVariant()),
+                                  Q_ARG(QVariant, QVariant()));
+        grab_clock_.invalidate();
+        stage_ = Stage::WaitingForZoomedPreview;
+        return;
+    }
+    start_settling();
+}
+
+void DeveloperAutomation::report_edit_latency(const QString& what) {
+    if (!options_.measure) {
+        return;
+    }
+    const EditSession& edit = *controller_.edit();
+    const std::vector<double>& published = edit.published_latencies();
+    const std::vector<double>& shown = edit.shown_latencies();
+    report(QStringLiteral("measure: edit %1: %2 quick and %3 final frames; first frame published %4 ms and last "
+                          "%5 ms after the change; last frame shown %6 ms after it")
+               .arg(what)
+               .arg(edit.quick_frames())
+               .arg(edit.final_frames() - finals_before_)
+               .arg(published.empty() ? -1.0 : published.front(), 0, 'f', 0)
+               .arg(published.empty() ? -1.0 : published.back(), 0, 'f', 0)
+               .arg(shown.empty() ? -1.0 : shown.back(), 0, 'f', 0));
+}
+
+void DeveloperAutomation::send_mouse(QEvent::Type type, QPointF position) {
+    const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+    const Qt::MouseButtons buttons = type == QEvent::MouseButtonRelease ? Qt::MouseButtons() : Qt::LeftButton;
+    QMouseEvent event(type, position, position, window_.mapToGlobal(position), button, buttons, Qt::NoModifier,
+                      QPointingDevice::primaryPointingDevice());
+    QCoreApplication::sendEvent(&window_, &event);
+}
+
+void DeveloperAutomation::start_drag() {
+    drag_done_ = true;
+    QQuickItem* slider = find_visible_item(window_.contentItem(), QStringLiteral("slider_") + options_.drag);
+    auto* handle = slider != nullptr ? slider->property("handle").value<QQuickItem*>() : nullptr;
+    if (slider == nullptr || handle == nullptr || !slider->isVisible() || !slider->isEnabled()) {
+        report(QStringLiteral("--drag: the %1 slider is not available").arg(options_.drag));
+        return;
+    }
+    // Lay the scene out first (a session that presents no frames, see --measure).
+    static_cast<void>(grab());
+    drag_from_ = handle->mapToScene(QPointF(handle->width() / 2.0, handle->height() / 2.0));
+    const double travel = slider->property("availableWidth").toDouble() / 3.0;
+    const bool rightwards = slider->property("visualPosition").toDouble() <= 0.5;
+    drag_to_ = drag_from_ + QPointF(rightwards ? travel : -travel, 0.0);
+    EditSession& edit = *controller_.edit();
+    edit.reset_latencies();
+    finals_before_ = edit.final_frames();
+    drag_gaps_ms_.clear();
+    last_tick_ms_ = -1;
+    drag_step_ = 0;
+    drag_active_ = true;
+    drag_measuring_ = true;
+    drag_start_ms_ = clock_.elapsed();
+    if (!probe_timer_.isActive()) {
+        probe_timer_.start();
+    }
+    send_mouse(QEvent::MouseButtonPress, drag_from_);
+    drag_timer_.start();
+}
+
+void DeveloperAutomation::drag_tick() {
+    ++drag_step_;
+    const double t = std::min(1.0, double(drag_step_) / double(options_.drag_steps));
+    const QPointF at = drag_from_ + (drag_to_ - drag_from_) * t;
+    if (drag_step_ <= options_.drag_steps) {
+        send_mouse(QEvent::MouseMove, at);
+        return;
+    }
+    send_mouse(QEvent::MouseButtonRelease, at);
+    drag_timer_.stop();
+    drag_active_ = false;
+    drag_release_ms_ = clock_.elapsed();
+    edit_waiting_ = true;  // until the commit's final frame
+}
+
+void DeveloperAutomation::report_drag() {
+    const EditSession& edit = *controller_.edit();
+    const std::vector<double>& shown = edit.shown_latencies();
+    const std::vector<double>& published = edit.published_latencies();
+    const std::vector<qint64>& gaps = drag_gaps_ms_;
+    const qint64 now = clock_.elapsed();
+    const auto over = [&gaps](qint64 limit) {
+        return static_cast<qint64>(
+            std::count_if(gaps.begin(), gaps.end(), [limit](qint64 gap) { return gap > limit; }));
+    };
+    const double shown_max = shown.empty() ? 0.0 : *std::max_element(shown.begin(), shown.end());
+    const double published_max = published.empty() ? 0.0 : *std::max_element(published.begin(), published.end());
+    const qint64 gap_max = gaps.empty() ? 0 : *std::max_element(gaps.begin(), gaps.end());
+    report(QStringLiteral("measure: drag of %1: %2 mouse moves over %3 ms; %4 quick and %5 final frames published; "
+                          "the photo is at revision %6")
+               .arg(options_.drag)
+               .arg(options_.drag_steps)
+               .arg(drag_release_ms_ - drag_start_ms_)
+               .arg(edit.quick_frames())
+               .arg(edit.final_frames() - finals_before_)
+               .arg(edit.revision_number()));
+    const std::vector<double>& service = edit.service_latencies();
+    report(QStringLiteral("measure: slider-to-frame (position to its frame shown): median %1 ms, 90th percentile "
+                          "%2 ms, max %3 ms over %4 frames; to frame published on the UI thread: median %5 ms, "
+                          "max %6 ms; of which the develop service (request to frame ready): median %7 ms; "
+                          "final frame %8 ms after the release")
+               .arg(percentile_of(shown, 0.5), 0, 'f', 0)
+               .arg(percentile_of(shown, 0.9), 0, 'f', 0)
+               .arg(shown_max, 0, 'f', 0)
+               .arg(static_cast<qint64>(shown.size()))
+               .arg(percentile_of(published, 0.5), 0, 'f', 0)
+               .arg(published_max, 0, 'f', 0)
+               .arg(percentile_of(service, 0.5), 0, 'f', 0)
+               .arg(now - drag_release_ms_));
+    report(QStringLiteral("measure: UI thread during the drag (press to final frame): %1 ticks of a %2 ms timer; "
+                          "gap median %3 ms, 99th percentile %4 ms, max %5 ms; %6 gaps over 50 ms, %7 over 100 ms")
+               .arg(static_cast<qint64>(gaps.size()))
+               .arg(kProbeIntervalMs)
+               .arg(percentile_of(gaps, 0.5))
+               .arg(percentile_of(gaps, 0.99))
+               .arg(gap_max)
+               .arg(over(50))
+               .arg(over(100)));
 }
 
 void DeveloperAutomation::start_settling() {

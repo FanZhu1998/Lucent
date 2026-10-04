@@ -17,7 +17,8 @@
 #include <lucent/application/display_image.hpp>
 #include <lucent/application/source_item.hpp>
 #include <lucent/core/error.hpp>
-#include <lucent/engine/render.hpp>
+#include <lucent/core/hash.hpp>
+#include <lucent/engine/develop.hpp>
 #include <lucent/image/geometry.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 
@@ -56,33 +57,37 @@ struct PreviewQuality {
 [[nodiscard]] std::string to_string(const PreviewQuality& quality);
 
 // What the render did, in the terms the editor and diagnostics show.
+// What a render did, in the terms the editor and diagnostics show (develop pipeline, ADR 0010).
 struct RenderSummary {
-    std::uint32_t pipeline_version = 0;
-    engine::DisplayRendering rendering = engine::DisplayRendering::NeutralV0;
-    bool provisional = false;  // a provisional stage (Neutral v0) was used
+    std::uint32_t pipeline_version = 0;  // engine::kDevelopPipelineVersion
+    std::string look;                    // base look id, e.g. "neutral"
+    std::uint32_t look_version = 0;      // e.g. 1
+    // A provisional stage was used (the W2 Neutral v0 rendering; never in the develop pipeline).
+    bool provisional = false;
     // Interpretation of the decoded image (after unpacking) and its issues.
     raw::InterpretationStatus interpretation = raw::InterpretationStatus::Complete;
     std::vector<raw::InterpretationIssue> issues;
-    std::vector<std::string> warnings;                            // RenderReport::warnings
+    std::vector<std::string> warnings;                            // DevelopReport::warnings
     image::Size rendered_size;                                    // full-resolution upright size
     image::Orientation orientation = image::Orientation::Normal;  // baked into the pixels
-    std::string demosaic;  // algorithm id of the demosaic stage, e.g. "malvar-he-cutler-2004"
-    std::string
-        camera_color;  // algorithm id of the camera-colour stage, e.g. "camera-to-xyz-dng-color-matrix"
-    std::uint64_t clipped_raw_samples = 0;     // samples the white-balance stage clipped
-    std::uint64_t limited_display_pixels = 0;  // pixels Neutral v0 limited to display white
-    std::uint64_t estimated_peak_bytes = 0;    // RenderReport::memory.peak_bytes
-    double render_seconds = 0.0;               // RenderReport::total_seconds
+    std::string demosaic;      // demosaic algorithm id, e.g. "malvar-he-cutler-2004"
+    std::string camera_color;  // camera-colour algorithm id, e.g. "camera-to-xyz-dng_color_matrix"
+    std::uint64_t clipped_raw_samples = 0;     // samples stage one's white balance clipped (export kind)
+    std::uint64_t limited_display_pixels = 0;  // pixels the base look mapped to display white
+    std::uint64_t estimated_peak_bytes = 0;    // the memory admitted for the render
+    double render_seconds = 0.0;               // stage one + stage two
 };
 
-[[nodiscard]] RenderSummary summarize_render(const engine::RenderReport& report);
+// The summary of a develop report; `interpretation` is the decoded image's.
+[[nodiscard]] RenderSummary summarize_render(const engine::DevelopReport& report,
+                                             const raw::Interpretation& interpretation);
 
-// Identifies a cached preview: (item, settings revision, quality). The caller guarantees that a
-// settings revision always denotes the same settings for an item (W6 recipe revisions are
-// immutable).
+// Identifies a cached preview: (item, settings, quality). Settings are identified by the SHA-256 of
+// their canonical recipe document (recipe.hpp), so equal settings share a preview whatever
+// revision or transient edit they come from, and changed settings never hit an old one.
 struct PreviewKey {
     ItemId item;
-    std::uint64_t settings_revision = 0;
+    core::Digest256 settings{};
     PreviewQuality quality;
 
     friend bool operator==(const PreviewKey&, const PreviewKey&) = default;
@@ -98,7 +103,7 @@ struct PreviewImage {
     DisplayImage image;   // upright 8-bit sRGB
     Histogram histogram;  // of `image`
     RenderSummary summary;
-    std::shared_ptr<const engine::RenderReport> report;  // the complete render record
+    std::shared_ptr<const engine::DevelopReport> report;  // the complete render record
     double seconds = 0.0;  // time to produce it: estimate, admission wait, render, fit, encode
 
     // Memory charged to the preview cache: the pixels plus a fixed allowance for the records.

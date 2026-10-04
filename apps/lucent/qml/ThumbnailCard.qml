@@ -4,7 +4,8 @@ import Lucent
 
 // One contact-sheet cell: thumbnail, processing status (once Lucent has started on the photo),
 // support status, a "Camera preview" label while the thumbnail is the camera's embedded JPEG
-// (blueprint section 2), badges for the file (Missing, Changed, Duplicate, Removable) and the pick,
+// (blueprint section 2), an "Edited" badge for photos with develop settings (W6: their thumbnail
+// is Lucent's render of the recipe), badges for the file (Missing, Changed, Duplicate, Removable) and the pick,
 // file name, camera, capture time and flags. The properties marked required are LibraryModel
 // roles.
 Item {
@@ -29,6 +30,7 @@ Item {
     required property string pickKey
     required property string pickLabel
     required property bool missing
+    required property bool edited
 
     property bool selected: false
     property bool showFocus: false
@@ -107,6 +109,14 @@ Item {
                         dotColor: Theme.sourceColor(modelData.key)
                         detail: modelData.detail
                     }
+                }
+
+                Badge {
+                    objectName: "editedBadge"
+                    visible: card.edited
+                    text: qsTr("Edited")
+                    dotColor: Theme.accent
+                    detail: qsTr("This photo has develop settings; the thumbnail shows them.")
                 }
 
                 Badge {

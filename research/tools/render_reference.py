@@ -4,9 +4,11 @@
 For each selected fixture of ``fixtures/manifest.json`` this tool
 
 1. checks the cached file's SHA-256 against the manifest;
-2. runs ``lucent-render <file> --out <work>/<id>/export --subimage 0 --dump-linear <linear.tiff>
-   --report <report.json>``: the dump is Lucent's scene-linear image before display rendering,
-   upright, converted to linear sRGB primaries (D65), 32-bit float;
+2. runs ``lucent-render <file> --out <work>/<id>/export --subimage 0 --legacy-neutral-v0
+   --dump-linear <linear.tiff> --report <report.json>``: the W2 render path (ADR 0006; the develop
+   pipeline of ADR 0010 has no scene-linear dump, and its look is compared by the C++ tests), whose
+   dump is Lucent's scene-linear image before display rendering, upright, converted to linear sRGB
+   primaries (D65), 32-bit float;
 3. renders the file with rawpy ``postprocess`` using as-shot white balance, no automatic
    brightening, linear output (``gamma=(1, 1)``), 16 bits, sRGB primaries, highlight clipping,
    ``adjust_maximum_thr=0`` (LibRaw's image-dependent lowering of the white level is disabled
@@ -273,8 +275,8 @@ def compare_fixture(
     report_path = out_dir / "report.json"
     start = time.perf_counter()
     proc = subprocess.run(
-        [str(exe), str(path), "--out", str(out_dir / "export"), "--subimage", "0", "--dump-linear", str(linear_path),
-         "--report", str(report_path)],
+        [str(exe), str(path), "--out", str(out_dir / "export"), "--subimage", "0", "--legacy-neutral-v0",
+         "--dump-linear", str(linear_path), "--report", str(report_path)],
         capture_output=True,
         text=True,
         encoding="utf-8",

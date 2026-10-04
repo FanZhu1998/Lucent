@@ -3,9 +3,11 @@
 //   * the CIEDE2000 implementation used by the render gates, against Sharma et al.'s published
 //     test pairs (always runs);
 //   * the lucent-render executable: usage errors, missing input, side files that would name the
-//     input or the export (refused) or already exist (never replaced), a full render with report
-//     and dump, output directories beyond MAX_PATH, and no-clobber on a second run (the render
-//     cases skip when dji-fc4382-dng, the smallest smoke fixture, is not downloaded).
+//     input or the export (refused) or already exist (never replaced), strict reading of --develop
+//     recipes, the develop pipeline by default with its recipe identity in the result and report,
+//     the W2 path (--legacy-neutral-v0) with report and dump, output directories beyond MAX_PATH,
+//     and no-clobber on a second run (the render cases skip when dji-fc4382-dng, the smallest
+//     smoke fixture, is not downloaded).
 
 #include <algorithm>
 #include <array>
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -22,8 +25,10 @@
 #include <nlohmann/json.hpp>
 #include <windows.h>
 
+#include <lucent/application/recipe.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/core/text.hpp>
+#include <lucent/engine/develop_settings.hpp>
 
 #include "color_difference.hpp"
 #include "fixture_manifest.hpp"
@@ -286,7 +291,8 @@ TEST(LucentRender, SideFilesNeverNameTheInputOrTheExport) {
         {L"--report", (dir / L"same.bin").wstring(), L"--dump-linear", (dir / L"same.bin").wstring()},
     };
     for (const std::vector<std::wstring>& extra : collisions) {
-        std::vector<std::wstring> args = {input.wstring(), L"--out", out.wstring()};
+        // --dump-linear belongs to the W2 path.
+        std::vector<std::wstring> args = {input.wstring(), L"--out", out.wstring(), L"--legacy-neutral-v0"};
         args.insert(args.end(), extra.begin(), extra.end());
         const RunResult r = run_tool(args);
         EXPECT_EQ(r.exit_code, 1u) << core::wide_to_utf8_lossy(extra.back());
@@ -319,8 +325,9 @@ TEST(LucentRender, ExistingSideFilesAreNeverReplaced) {
 
     // An existing dump: refused; the (new) report records the failure.
     const std::filesystem::path report_path = dir / L"report.json";
-    const RunResult dump = run_tool({(dir / L"missing.dng").wstring(), L"--out", out.wstring(), L"--dump-linear",
-                                     existing.wstring(), L"--report", report_path.wstring()});
+    const RunResult dump =
+        run_tool({(dir / L"missing.dng").wstring(), L"--out", out.wstring(), L"--legacy-neutral-v0",
+                  L"--dump-linear", existing.wstring(), L"--report", report_path.wstring()});
     EXPECT_EQ(dump.exit_code, 2u);
     EXPECT_EQ(last_line(dump.out)["error"]["code"], "already_exists");
     EXPECT_EQ(file_digest(existing), before);
@@ -366,27 +373,165 @@ TEST(LucentRender, WritesIntoOutputDirectoriesBeyondMaxPath) {
     std::filesystem::remove_all(std::filesystem::path(L"\\\\?\\" + dir.wstring()), ec);
 }
 
-TEST(LucentRender, RendersExportsReportsAndNeverOverwrites) {
+// The smallest smoke fixture, or std::nullopt (with the reason in `skip`) when not downloaded.
+std::optional<std::filesystem::path> small_fixture() {
     const std::vector<Fixture> fixtures = load_manifest();
     const auto it = std::find_if(fixtures.begin(), fixtures.end(),
                                  [](const Fixture& f) { return f.id == "dji-fc4382-dng"; });
-    ASSERT_NE(it, fixtures.end());
+    EXPECT_NE(it, fixtures.end());
+    if (it == fixtures.end()) {
+        return std::nullopt;
+    }
     const std::filesystem::path input = cached_file(*it);
     if (!std::filesystem::exists(input)) {
+        return std::nullopt;
+    }
+    return input;
+}
+
+void write_text(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream(path, std::ios::binary) << text;
+}
+
+TEST(LucentRender, DevelopFilesAreReadStrictlyBeforeAnythingIsRendered) {
+    const std::filesystem::path dir = scratch_dir("develop-strict");
+    const std::filesystem::path out = dir / L"out";
+    const std::filesystem::path input = dir / L"missing.dng";  // never reached
+    auto canonical = app::write_recipe(engine::DevelopSettings{});
+    ASSERT_TRUE(canonical);
+    Json unknown = Json::parse(canonical->json);
+    unknown["sharpening"] = 0.5;
+    Json newer = Json::parse(canonical->json);
+    newer["version"] = 2;
+    Json newer_operation = Json::parse(canonical->json);
+    newer_operation["operations"]["exposure"] = 2;
+    const std::vector<std::pair<Json, std::string>> cases = {
+        {unknown, "invalid_argument"},
+        {newer, "version_mismatch"},
+        {newer_operation, "version_mismatch"},
+    };
+    for (std::size_t i = 0; i < cases.size(); ++i) {
+        const std::filesystem::path settings = dir / (L"settings" + std::to_wstring(i) + L".json");
+        write_text(settings, cases[i].first.dump());
+        const RunResult r =
+            run_tool({input.wstring(), L"--out", out.wstring(), L"--develop", settings.wstring()});
+        EXPECT_EQ(r.exit_code, 1u) << r.out;
+        const Json j = last_line(r.out);
+        EXPECT_EQ(j["error"]["code"], cases[i].second) << cases[i].first.dump();
+        EXPECT_EQ(j["error"]["where"], "lucent-render.develop");
+    }
+    const RunResult absent =
+        run_tool({input.wstring(), L"--out", out.wstring(), L"--develop", (dir / L"none.json").wstring()});
+    EXPECT_EQ(absent.exit_code, 1u);
+    EXPECT_EQ(last_line(absent.out)["error"]["code"], "not_found");
+    // An exposure outside the recipe's range is refused too.
+    const RunResult exposure = run_tool({input.wstring(), L"--out", out.wstring(), L"--exposure", L"6"});
+    EXPECT_EQ(exposure.exit_code, 1u);
+    // --dump-linear is the W2 path's; --develop is not.
+    EXPECT_EQ(
+        run_tool({input.wstring(), L"--out", out.wstring(), L"--dump-linear", (dir / L"d.tiff").wstring()})
+            .exit_code,
+        1u);
+    EXPECT_EQ(run_tool({input.wstring(), L"--out", out.wstring(), L"--legacy-neutral-v0", L"--develop",
+                        (dir / L"settings0.json").wstring()})
+                  .exit_code,
+              1u);
+    EXPECT_FALSE(std::filesystem::exists(out));
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
+    const std::optional<std::filesystem::path> input = small_fixture();
+    if (!input) {
         GTEST_SKIP() << "fixture 'dji-fc4382-dng' is not downloaded; run tools\\fetch-fixtures.ps1";
     }
+    const std::filesystem::path dir = scratch_dir("develop");
+    const std::filesystem::path report_path = dir / L"report.json";
+    const RunResult r =
+        run_tool({input->wstring(), L"--out", (dir / L"a").wstring(), L"--report", report_path.wstring()});
+    ASSERT_EQ(r.exit_code, 0u) << r.out;
+    const Json result = last_line(r.out);
+    EXPECT_EQ(result["schema_version"], 2);
+    EXPECT_EQ(result["pipeline"], "develop");
+    const auto as_shot = app::write_recipe(engine::DevelopSettings{});
+    ASSERT_TRUE(as_shot);
+    EXPECT_EQ(result["settings_sha256"], core::to_hex(as_shot->sha256));
+
+    const Json report = read_json(report_path);
+    EXPECT_EQ(report["schema_version"], 2);
+    EXPECT_EQ(report["pipeline"], "develop");
+    EXPECT_EQ(report["recipe"]["schema"], "lucent.develop");
+    EXPECT_EQ(report["recipe"]["version"], 1);
+    EXPECT_EQ(report["recipe"]["sha256"], result["settings_sha256"]);
+    EXPECT_EQ(report["recipe"]["document"], Json::parse(as_shot->json));
+    const Json& render = report["render"];
+    EXPECT_EQ(render["settings"], report["recipe"]["document"]);
+    EXPECT_EQ(render["stage_one"]["kind"], "export");
+    EXPECT_EQ(render["base_look"]["id"], "neutral");
+    EXPECT_EQ(render["base_look"]["version"], 1);
+    const std::vector<std::string> operations = {"white_balance", "camera_color", "working_space",
+                                                 "exposure",      "local_tone",   "contrast",
+                                                 "tone_curve",    "color",        "base_look"};
+    ASSERT_EQ(render["operations"].size(), operations.size());
+    for (std::size_t i = 0; i < operations.size(); ++i) {
+        EXPECT_EQ(render["operations"][i]["operation"], operations[i]);
+    }
+    EXPECT_FALSE(render["operations"][4]["applied"].get<bool>());  // no highlights/shadows as shot
+    EXPECT_EQ(render["color"]["path"], "dng_color_matrix");
+    EXPECT_FALSE(report["metadata"].is_null());
+
+    // A recipe file: its identity is recorded and the pixels differ.
+    engine::DevelopSettings edited;
+    edited.exposure_ev = 0.5;
+    edited.shadows = 0.4;
+    edited.white_balance = engine::KelvinWhiteBalance{4300.0, 3.0};
+    const auto document = app::write_recipe(edited);
+    ASSERT_TRUE(document);
+    const std::filesystem::path settings = dir / L"edit.json";
+    write_text(settings, Json::parse(document->json).dump(2));  // any formatting reads the same
+    const RunResult developed =
+        run_tool({input->wstring(), L"--out", (dir / L"b").wstring(), L"--develop", settings.wstring(),
+                  L"--report", (dir / L"edit-report.json").wstring()});
+    ASSERT_EQ(developed.exit_code, 0u) << developed.out;
+    const Json edit_result = last_line(developed.out);
+    EXPECT_EQ(edit_result["settings_sha256"], core::to_hex(document->sha256));
+    EXPECT_NE(edit_result["sha256"], result["sha256"]);
+    const Json edit_report = read_json(dir / L"edit-report.json");
+    EXPECT_EQ(edit_report["recipe"]["file"], core::path_to_utf8_lossy(settings));
+    EXPECT_TRUE(edit_report["render"]["operations"][4]["applied"].get<bool>());
+    EXPECT_FALSE(edit_report["render"]["white_balance"]["target_temperature"].is_null());
+
+    // Renders are deterministic: the same recipe gives the same file.
+    const RunResult again =
+        run_tool({input->wstring(), L"--out", (dir / L"c").wstring(), L"--develop", settings.wstring()});
+    ASSERT_EQ(again.exit_code, 0u) << again.out;
+    EXPECT_EQ(last_line(again.out)["sha256"], edit_result["sha256"]);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// The W2 render path stays available for the reference comparisons (render_reference.py).
+TEST(LucentRender, RendersExportsReportsAndNeverOverwrites) {
+    const std::optional<std::filesystem::path> fixture = small_fixture();
+    if (!fixture) {
+        GTEST_SKIP() << "fixture 'dji-fc4382-dng' is not downloaded; run tools\\fetch-fixtures.ps1";
+    }
+    const std::filesystem::path input = *fixture;
     const std::filesystem::path dir = scratch_dir("render");
     const std::filesystem::path out = dir / L"out";
     const std::filesystem::path report_path = dir / L"report.json";
     const std::filesystem::path dump_path = dir / L"linear.tiff";
-    const std::vector<std::wstring> args = {input.wstring(),  L"--out",           out.wstring(),
-                                            L"--format",      L"tiff16",          L"--profile",
-                                            L"display-p3",    L"--report",        report_path.wstring(),
-                                            L"--dump-linear", dump_path.wstring()};
+    const std::vector<std::wstring> args = {input.wstring(),       L"--out",       out.wstring(),
+                                            L"--legacy-neutral-v0", L"--format",    L"tiff16",
+                                            L"--profile",          L"display-p3",  L"--report",
+                                            report_path.wstring(), L"--dump-linear", dump_path.wstring()};
     const RunResult r = run_tool(args);
     ASSERT_EQ(r.exit_code, 0u) << r.out;
     const Json result = last_line(r.out);
     EXPECT_EQ(result["status"], "ok");
+    EXPECT_EQ(result["pipeline"], "neutral-v0");
+    EXPECT_TRUE(result["settings_sha256"].is_null());
     EXPECT_EQ(result["format"], "tiff");
     EXPECT_EQ(result["profile"], "display-p3");
     const std::filesystem::path output = out / (input.stem().wstring() + L"_Lucent.tif");
@@ -397,7 +542,9 @@ TEST(LucentRender, RendersExportsReportsAndNeverOverwrites) {
 
     const Json report = read_json(report_path);
     EXPECT_EQ(report["schema"], "lucent.render-report");
-    EXPECT_EQ(report["schema_version"], 1);
+    EXPECT_EQ(report["schema_version"], 2);
+    EXPECT_EQ(report["pipeline"], "neutral-v0");
+    EXPECT_TRUE(report["recipe"].is_null());
     EXPECT_EQ(report["status"], "ok");
     EXPECT_EQ(report["export"]["sha256"], result["sha256"]);
     const std::vector<std::string> expected = {

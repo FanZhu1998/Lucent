@@ -146,18 +146,43 @@ struct DngCalibrationRecord {
     double weight_matrix1 = 1.0;      // interpolation weight g of calibration 1
     std::uint32_t iterations = 0;     // passes of the neutral -> xy search
     bool converged = true;            // false: the last two estimates were averaged
-    // Camera -> XYZ(D50) for UNBALANCED camera values; maps camera_neutral to the D50 white.
+    // Camera -> XYZ(D50) for UNBALANCED camera values; maps camera_neutral to the D50 white
+    // (approximately for a ColorMatrix white whose Bradford adaptation the SDK's guards limit, see
+    // evaluate_dng_profile()).
     image::Matrix3d camera_to_xyz_d50;
     image::Vec3d camera_neutral;  // as used (maximum 1, entries >= 0.001)
 };
 
 // Evaluates a DNG profile for a camera neutral (camera R, G, B values of a neutral surface; any
-// positive scale). Errors (engine.color.dng): InvalidArgument for a neutral that is not finite
-// and positive or a profile without ColorMatrix1; Corrupt for a singular or non-finite matrix, a
-// ForwardMatrix whose rows do not sum to positive values, or a neutral that maps outside positive
-// XYZ.
+// positive scale). The ColorMatrix path adapts D50 to the camera white with the SDK's
+// MapWhiteMatrix: linearised Bradford, with negative cone responses taken as 0 and each cone's
+// scale pinned to [0.1, 10], so whites near or beyond the spectral locus (strong green tints at
+// low temperatures, whose S-cone response is negative) are rendered as the SDK renders them
+// instead of failing; the pinned adaptation no longer maps the neutral exactly to D50.
+// Errors (engine.color.dng): InvalidArgument for a neutral that is not finite and positive or a
+// profile without ColorMatrix1; Corrupt for a singular or non-finite matrix, a ForwardMatrix whose
+// rows do not sum to positive values, or a neutral that maps outside positive XYZ.
 [[nodiscard]] Expected<DngCalibrationRecord> evaluate_dng_profile(const DngProfile& profile,
                                                                   const image::Vec3d& camera_neutral);
+
+// Camera neutral of a DNG profile for a white chromaticity: the camera R, G, B values of a neutral
+// surface lit by `white`, XYZtoCamera(white) * XYZ(white) with the calibrations interpolated at
+// the white's temperature, scaled to a maximum of 1 and pinned to [0.001, 1] (the DNG SDK's
+// dng_color_spec::SetWhiteXY). The inverse of the white search of evaluate_dng_profile(): for a
+// neutral n, dng_camera_neutral(profile, evaluate_dng_profile(profile, n)->white_xy) reproduces
+// n (normalised) to the search tolerance. Errors (engine.color.dng): InvalidArgument for a
+// profile without ColorMatrix1 or an invalid chromaticity (not finite, x <= 0 or y <= 0; whites
+// beyond the spectral locus are accepted); Corrupt for invalid matrices or a white that maps to
+// non-positive camera values.
+[[nodiscard]] Expected<image::Vec3d> dng_camera_neutral(const DngProfile& profile, image::Chromaticity white);
+
+// The DNG profile of `metadata` (IFD 0 colour tags of an inspected DNG) in camera R, G, B order,
+// as resolve_camera_color() uses it; `notes` (optional) receives the tags that are present but
+// ignored. Errors (engine.color.calibration): Unsupported when the metadata has no DNG
+// ColorMatrix1, a profile with other than 3 colour planes or planes that are not red, green and
+// blue; Corrupt for malformed matrices.
+[[nodiscard]] Expected<DngProfile> dng_profile_from_metadata(const raw::RawMetadata& metadata,
+                                                             std::vector<std::string>* notes = nullptr);
 
 // What resolve_camera_color() chose and computed.
 struct CameraColorRecord {

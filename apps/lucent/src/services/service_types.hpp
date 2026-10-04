@@ -100,10 +100,15 @@ struct RenderInfo {
     std::uint64_t pixels = 0;
     int preview_width = 0;  // the preview image the histograms describe
     int preview_height = 0;
+    // W6 edit frames: pixels with some channel at 255 (highlights) or at 0 (shadows), the pixels the
+    // clipping overlay marks; when not known, the luma end bins stand in for them.
+    bool clipping_counted = false;
+    std::uint64_t clipped_highlights = 0;
+    std::uint64_t clipped_shadows = 0;
 
     int rendered_width = 0;  // full-resolution upright size of the render
     int rendered_height = 0;
-    QString rendering;   // display rendering, e.g. "Neutral v0"
+    QString rendering;   // base look, e.g. "Neutral v1"
     bool provisional = false;  // a provisional rendering stage was used
     // A mandatory interpretation step was not applied (the file is Unsupported, blueprint
     // section 3): the pixels are not an accurate rendering and must be presented as such.
@@ -160,6 +165,11 @@ struct LibraryItem {
     // shell labels such thumbnails (blueprint section 2): they are for browsing only.
     bool thumbnail_is_camera_preview = false;
     Generation preview_generation = kNoImage;
+
+    // W6. The photo has develop settings other than as shot (its current recipe revision changes
+    // something, or was made by a newer Lucent). Its thumbnail is then Lucent's render of that
+    // recipe (generation 2+), never the camera preview.
+    bool edited = false;
 
     // Lucent's most recent render of the item; null until one finished.
     RenderInfoPtr render;

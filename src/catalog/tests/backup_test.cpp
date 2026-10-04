@@ -71,7 +71,7 @@ TEST_F(CatalogBackup, CreatesAVerifiedSelfContainedBackup) {
     Expected<BackupInfo> backup = catalog_->create_backup();
     LUCENT_ASSERT_OK(backup);
     EXPECT_EQ(backup->kind, BackupKind::Manual);
-    EXPECT_EQ(backup->schema_version, 1);
+    EXPECT_EQ(backup->schema_version, kSchemaVersion);
     EXPECT_EQ(backup->path.parent_path(), catalog_->backup_directory());
     EXPECT_EQ(catalog_->backup_directory(), dir_ / L"backups");
     EXPECT_EQ(backup->size_bytes, std::filesystem::file_size(backup->path));
@@ -197,7 +197,7 @@ TEST_F(CatalogBackup, RestoreReplacesTheCatalogAndKeepsTheOldOne) {
     catalog_.reset();
     Expected<RestoreReport> report = Catalog::restore(path_, backup->path);
     LUCENT_ASSERT_OK(report);
-    EXPECT_EQ(report->restored_schema_version, 1);
+    EXPECT_EQ(report->restored_schema_version, kSchemaVersion);
     EXPECT_TRUE(report->moved_aside.empty());
     ASSERT_TRUE(report->pre_restore_backup.has_value());
     EXPECT_EQ(report->pre_restore_backup->kind, BackupKind::PreRestore);

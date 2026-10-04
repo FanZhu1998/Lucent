@@ -31,6 +31,40 @@ std::vector<std::filesystem::path> OutputFolders::snapshot() const {
     return folders_;
 }
 
+void InteractiveActivity::set_busy(bool busy) {
+    {
+        const std::lock_guard lock(mutex_);
+        const bool was_busy = busy_;
+        busy_ = busy;
+        if (busy || !was_busy) {
+            return;
+        }
+        idle_since_ = std::chrono::steady_clock::now();
+    }
+    const std::lock_guard lock(listener_mutex_);
+    if (listener_) {
+        listener_();
+    }
+}
+
+bool InteractiveActivity::busy() const {
+    const std::lock_guard lock(mutex_);
+    return busy_;
+}
+
+std::chrono::milliseconds InteractiveActivity::idle_for() const {
+    const std::lock_guard lock(mutex_);
+    if (busy_) {
+        return std::chrono::milliseconds(0);
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - idle_since_);
+}
+
+void InteractiveActivity::set_idle_listener(std::function<void()> listener) {
+    const std::lock_guard lock(listener_mutex_);  // waits for a listener that is running
+    listener_ = std::move(listener);
+}
+
 Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options) {
     try {
         std::shared_ptr<Backend> backend(new Backend());
@@ -79,6 +113,22 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             }
         }
 
+        // Recipes: the catalog's revisions with the persistent library, memory otherwise.
+        if (backend->catalog_) {
+            auto store = app::create_catalog_recipe_store(backend->catalog_);
+            if (!store) {
+                return Unexpected(std::move(store.error()));
+            }
+            backend->recipe_store_ = std::move(*store);
+        } else {
+            backend->recipe_store_ = app::create_memory_recipe_store();
+        }
+        app::RecipeServiceOptions recipe_options;
+        recipe_options.registry = backend->registry_;
+        recipe_options.probe_limits = options.renderer.decode_limits;
+        backend->recipes_ = std::make_unique<app::RecipeService>(*backend->library_, backend->recipe_store_,
+                                                                 std::move(recipe_options));
+
         if (!options.thumbnail_directory.empty()) {
             app::ThumbnailCacheOptions cache;
             cache.directory = options.thumbnail_directory;
@@ -111,10 +161,18 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
 
         app::PreviewServiceOptions previews = options.previews;
         previews.thumbnails = backend->thumbnails_;
+        previews.recipes = backend->recipes_.get();
         backend->previews_ = std::make_unique<app::PreviewService>(*backend->library_, *backend->executor_,
                                                                    backend->renderer_, previews);
-        backend->exports_ =
-            std::make_unique<app::ExportService>(*backend->library_, *backend->executor_, backend->renderer_);
+        backend->exports_ = std::make_unique<app::ExportService>(*backend->library_, *backend->executor_,
+                                                                 backend->renderer_, backend->recipes_.get());
+        app::DevelopPreviewOptions develop;
+        develop.on_metadata = [recipes = backend->recipes_.get()](app::ItemId item,
+                                                                  const raw::RawMetadata& metadata) {
+            recipes->note_camera(item, metadata);
+        };
+        backend->develop_ = std::make_unique<app::DevelopPreviewService>(
+            *backend->library_, *backend->executor_, backend->renderer_, std::move(develop));
 
         if (backend->library_->capabilities().source_maintenance) {
             app::MaintenanceServiceOptions maintenance = options.maintenance;
@@ -144,6 +202,7 @@ Backend::~Backend() {
     // use, the executor (joining every task) before the library, catalog and registry those tasks
     // use.
     maintenance_.reset();
+    develop_.reset();
     exports_.reset();
     previews_.reset();
     if (executor_) {
@@ -151,6 +210,8 @@ Backend::~Backend() {
     }
     executor_.reset();
     renderer_.reset();
+    recipes_.reset();
+    recipe_store_.reset();
     library_.reset();
     catalog_.reset();
     thumbnails_.reset();

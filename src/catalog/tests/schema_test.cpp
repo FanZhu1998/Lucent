@@ -20,7 +20,9 @@ namespace {
 
 using namespace test;
 
-// The builtin v1 migration plus a synthetic v2 that adds a column.
+// The builtin migrations plus a synthetic next version (kSchemaVersion + 1) that adds a column.
+constexpr std::int32_t kNext = kSchemaVersion + 1;
+
 Status add_note_column(detail::Connection& connection) {
     return connection.exec("ALTER TABLE items ADD COLUMN note TEXT NOT NULL DEFAULT ''", "test.migrate");
 }
@@ -41,10 +43,11 @@ Status orphan_item(detail::Connection& connection) {
         "test.migrate");
 }
 
-std::vector<detail::Migration> with_v2(Status (*apply)(detail::Connection&), std::int32_t min_reader = 1) {
+std::vector<detail::Migration> with_next(Status (*apply)(detail::Connection&),
+                                         std::int32_t min_reader = kSchemaVersion) {
     std::vector<detail::Migration> migrations(detail::builtin_migrations().begin(),
                                               detail::builtin_migrations().end());
-    migrations.push_back(detail::Migration{2, min_reader, "synthetic v2 for tests", apply});
+    migrations.push_back(detail::Migration{kNext, min_reader, "synthetic next version for tests", apply});
     return migrations;
 }
 
@@ -53,7 +56,7 @@ std::string file_digest(const std::filesystem::path& path) {
     return hash ? core::to_hex(hash->digest) : hash.error().describe();
 }
 
-// Marks a closed v1 catalog as written by a future Lucent with schema `version`.
+// Marks a closed catalog as written by a future Lucent with schema `version`.
 void pretend_newer(const std::filesystem::path& path, int version, int min_reader) {
     std::unique_ptr<detail::Connection> raw = raw_connection(path);
     ASSERT_NE(raw, nullptr);
@@ -66,7 +69,7 @@ void pretend_newer(const std::filesystem::path& path, int version, int min_reade
                   "test"));
 }
 
-TEST(CatalogSchema, CreatesANewCatalogAtSchemaV1) {
+TEST(CatalogSchema, CreatesANewCatalogAtTheCurrentSchema) {
     TempDir dir;
     const std::filesystem::path path = dir / L"Lucent" / L"Catalog" / L"lucent.catalog";  // folders created
     {
@@ -77,7 +80,7 @@ TEST(CatalogSchema, CreatesANewCatalogAtSchemaV1) {
         EXPECT_EQ(schema.found_version, 0);
         EXPECT_EQ(schema.version, kSchemaVersion);
         EXPECT_EQ(schema.supported_version, kSchemaVersion);
-        EXPECT_EQ(schema.migrations_applied, std::vector<std::int32_t>{1});
+        EXPECT_EQ(schema.migrations_applied, (std::vector<std::int32_t>{1, 2}));
         EXPECT_FALSE(schema.pre_migration_backup.has_value());  // nothing to back up
         EXPECT_EQ(schema.created_by, "0.1.0-test");
         EXPECT_EQ(schema.written_by, "0.1.0-test");
@@ -93,16 +96,19 @@ TEST(CatalogSchema, CreatesANewCatalogAtSchemaV1) {
     std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
     ASSERT_NE(raw, nullptr);
     EXPECT_EQ(query_int(*raw, "PRAGMA application_id"), detail::kApplicationId);
-    EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), 1);
+    EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), kSchemaVersion);
     EXPECT_EQ(query_text(*raw, "PRAGMA journal_mode"), "wal");  // persistent
-    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"), "1");
-    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "1");
+    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"),
+              std::to_string(kSchemaVersion));
+    // v2's recipes change what renders mean: schema-v1 readers must refuse it.
+    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "2");
     EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'created_by'"), "0.1.0-test");
-    EXPECT_EQ(
-        query_int(*raw,
-                  "SELECT count(*) FROM schema_history WHERE version = 1 AND app_version = '0.1.0-test'"),
-        1);
-    for (const char* table : {"sources", "items", "imports", "catalog_meta", "schema_history"}) {
+    EXPECT_EQ(query_int(*raw,
+                        "SELECT count(*) FROM schema_history WHERE version IN (1, 2) AND app_version = "
+                        "'0.1.0-test'"),
+              2);
+    for (const char* table :
+         {"sources", "items", "imports", "catalog_meta", "schema_history", "recipe_revisions"}) {
         EXPECT_EQ(
             query_int(*raw,
                       std::format("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = '{}'",
@@ -123,7 +129,7 @@ TEST(CatalogSchema, ReopeningACurrentCatalogAppliesNothing) {
     std::unique_ptr<Catalog> catalog = open_or_fail(path);
     ASSERT_NE(catalog, nullptr);
     EXPECT_FALSE(catalog->schema().created);
-    EXPECT_EQ(catalog->schema().found_version, 1);
+    EXPECT_EQ(catalog->schema().found_version, kSchemaVersion);
     EXPECT_TRUE(catalog->schema().migrations_applied.empty());
     EXPECT_FALSE(catalog->schema().pre_migration_backup.has_value());
 }
@@ -135,7 +141,7 @@ TEST(CatalogSchema, MigratesAnExistingEmptyFileFromV0) {
     std::unique_ptr<Catalog> catalog = open_or_fail(path);
     ASSERT_NE(catalog, nullptr);
     EXPECT_TRUE(catalog->schema().created);
-    EXPECT_EQ(catalog->schema().version, 1);
+    EXPECT_EQ(catalog->schema().version, kSchemaVersion);
 }
 
 TEST(CatalogSchema, RefusesAForeignSqliteDatabaseWithoutChangingIt) {
@@ -209,18 +215,18 @@ TEST(CatalogSchema, BacksUpBeforeMigratingAnOlderCatalog) {
         ASSERT_NE(catalog, nullptr);
         LUCENT_ASSERT_OK(populate(*catalog, dir / L"photos", 1, 25));
     }
-    const std::vector<detail::Migration> migrations = with_v2(&add_note_column);
+    const std::vector<detail::Migration> migrations = with_next(&add_note_column);
     Expected<std::unique_ptr<Catalog>> migrated = detail::CatalogAccess::open(options_for(path), migrations);
     LUCENT_ASSERT_OK(migrated);
     const SchemaStatus& schema = (*migrated)->schema();
-    EXPECT_EQ(schema.found_version, 1);
-    EXPECT_EQ(schema.version, 2);
-    EXPECT_EQ(schema.supported_version, 2);
-    EXPECT_EQ(schema.migrations_applied, std::vector<std::int32_t>{2});
+    EXPECT_EQ(schema.found_version, kSchemaVersion);
+    EXPECT_EQ(schema.version, kNext);
+    EXPECT_EQ(schema.supported_version, kNext);
+    EXPECT_EQ(schema.migrations_applied, std::vector<std::int32_t>{kNext});
     ASSERT_TRUE(schema.pre_migration_backup.has_value());
     const BackupInfo backup = *schema.pre_migration_backup;  // a copy: the catalog is closed below
     EXPECT_EQ(backup.kind, BackupKind::PreMigration);
-    EXPECT_EQ(backup.schema_version, 1);
+    EXPECT_EQ(backup.schema_version, kSchemaVersion);
     EXPECT_EQ(backup.path.parent_path(), dir / L"backups");
     EXPECT_TRUE(std::filesystem::exists(backup.path));
     EXPECT_GT(backup.size_bytes, 0u);
@@ -235,23 +241,25 @@ TEST(CatalogSchema, BacksUpBeforeMigratingAnOlderCatalog) {
     EXPECT_EQ(listed->front().path, backup.path);
     migrated->reset();
 
-    // The migrated file: v2 with history and the new column.
+    // The migrated file: the next version with history and the new column.
     {
         std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
         ASSERT_NE(raw, nullptr);
-        EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), 2);
-        EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM schema_history"), 2);
-        EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"), "2");
+        EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), kNext);
+        EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM schema_history"), kNext);
+        EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"),
+                  std::to_string(kNext));
         EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM items WHERE note = ''"), 25);
     }
-    // The backup: a self-contained v1 catalog with the pre-migration data, openable by this build.
+    // The backup: a self-contained catalog of the previous version with the pre-migration data,
+    // openable by this build.
     EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(backup.path.native() + L"-wal")));
     OpenOptions read_backup = options_for(backup.path);
     read_backup.mode = OpenMode::ReadOnly;
     read_backup.integrity_check = IntegrityCheck::Full;
     Expected<std::unique_ptr<Catalog>> old = Catalog::open(read_backup);
     LUCENT_ASSERT_OK(old);
-    EXPECT_EQ((*old)->schema().version, 1);
+    EXPECT_EQ((*old)->schema().version, kSchemaVersion);
     Expected<std::uint64_t> old_count = (*old)->query([](ReadTransaction& tx) { return tx.count_sources(); });
     LUCENT_ASSERT_OK(old_count);
     EXPECT_EQ(*old_count, 25u);
@@ -265,19 +273,20 @@ TEST(CatalogSchema, AFailedMigrationRollsBackAndKeepsTheBackup) {
         ASSERT_NE(catalog, nullptr);
         LUCENT_ASSERT_OK(populate(*catalog, dir / L"photos", 1, 10));
     }
-    const std::vector<detail::Migration> migrations = with_v2(&create_then_fail);
+    const std::vector<detail::Migration> migrations = with_next(&create_then_fail);
     Expected<std::unique_ptr<Catalog>> migrated = detail::CatalogAccess::open(options_for(path), migrations);
     ASSERT_FALSE(migrated);
     EXPECT_EQ(migrated.error().code, ErrorCode::IoError);
     EXPECT_EQ(migrated.error().where, "catalog.migrate");
-    EXPECT_NE(migrated.error().message.find("v2"), std::string::npos) << migrated.error().message;
+    EXPECT_NE(migrated.error().message.find(std::format("v{}", kNext)), std::string::npos)
+        << migrated.error().message;
 
     {
         std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
         ASSERT_NE(raw, nullptr);
-        EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), 1);
+        EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), kSchemaVersion);
         EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM sqlite_schema WHERE name = 'half_done'"), 0);
-        EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM schema_history"), 1);
+        EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM schema_history"), kSchemaVersion);
         EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM sources"), 10);
     }
     Expected<std::vector<BackupInfo>> backups = detail::list_backups_in(dir / L"backups", path, "test");
@@ -288,7 +297,7 @@ TEST(CatalogSchema, AFailedMigrationRollsBackAndKeepsTheBackup) {
     // The current build still opens it.
     std::unique_ptr<Catalog> reopened = open_or_fail(path);
     ASSERT_NE(reopened, nullptr);
-    EXPECT_EQ(reopened->schema().version, 1);
+    EXPECT_EQ(reopened->schema().version, kSchemaVersion);
 }
 
 TEST(CatalogSchema, AMigrationThatBreaksForeignKeysIsRolledBack) {
@@ -297,13 +306,13 @@ TEST(CatalogSchema, AMigrationThatBreaksForeignKeysIsRolledBack) {
     {
         ASSERT_NE(open_or_fail(path), nullptr);
     }
-    const std::vector<detail::Migration> migrations = with_v2(&orphan_item);
+    const std::vector<detail::Migration> migrations = with_next(&orphan_item);
     Expected<std::unique_ptr<Catalog>> migrated = detail::CatalogAccess::open(options_for(path), migrations);
     ASSERT_FALSE(migrated);
     EXPECT_EQ(migrated.error().code, ErrorCode::Corrupt) << migrated.error().describe();
     std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
     ASSERT_NE(raw, nullptr);
-    EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), 1);
+    EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), kSchemaVersion);
     EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM items"), 0);
 }
 
@@ -361,7 +370,7 @@ TEST(CatalogSchema, ANewerSchemaIsRefusedWhenThePolicySaysSo) {
     {
         ASSERT_NE(open_or_fail(path), nullptr);
     }
-    pretend_newer(path, 2, 1);
+    pretend_newer(path, kNext, 1);
     OpenOptions options = options_for(path);
     options.newer_schema = NewerSchemaPolicy::Refuse;
     Expected<std::unique_ptr<Catalog>> catalog = Catalog::open(options);
@@ -375,14 +384,15 @@ TEST(CatalogSchema, ANewerSchemaThatOlderReadersCannotReadIsRefused) {
     {
         ASSERT_NE(open_or_fail(path), nullptr);
     }
-    pretend_newer(path, 3, 2);  // v3 needs at least a v2 reader
+    pretend_newer(path, kSchemaVersion + 2, kNext);  // needs at least a reader of the next version
     for (const OpenMode mode : {OpenMode::ReadWrite, OpenMode::ReadOnly}) {
         OpenOptions options = options_for(path);
         options.mode = mode;
         Expected<std::unique_ptr<Catalog>> catalog = Catalog::open(options);
         ASSERT_FALSE(catalog);
         EXPECT_EQ(catalog.error().code, ErrorCode::VersionMismatch);
-        EXPECT_NE(catalog.error().message.find("v2"), std::string::npos) << catalog.error().message;
+        EXPECT_NE(catalog.error().message.find(std::format("v{}", kNext)), std::string::npos)
+            << catalog.error().message;
     }
 }
 
@@ -409,8 +419,9 @@ TEST(CatalogSchema, ReadOnlyModeRefusesWritesAndOlderSchemas) {
         LUCENT_ASSERT_OK(count);
         EXPECT_EQ(*count, 3u);
     }
-    // A v1 catalog opened read-only by a build that supports v2 cannot be migrated: refused.
-    const std::vector<detail::Migration> migrations = with_v2(&add_note_column);
+    // A current catalog opened read-only by a build that supports the next version cannot be
+    // migrated: refused.
+    const std::vector<detail::Migration> migrations = with_next(&add_note_column);
     Expected<std::unique_ptr<Catalog>> older = detail::CatalogAccess::open(options, migrations);
     ASSERT_FALSE(older);
     EXPECT_EQ(older.error().code, ErrorCode::VersionMismatch);
@@ -530,13 +541,17 @@ TEST(CatalogSchema, IntegrityCheckRejectsADamagedCopy) {
 TEST(CatalogSchema, MigrationListValidation) {
     LUCENT_EXPECT_OK(detail::validate_migrations(detail::builtin_migrations()));
     EXPECT_EQ(detail::builtin_migrations().size(), static_cast<std::size_t>(kSchemaVersion));
-    std::vector<detail::Migration> gap = with_v2(&add_note_column);
-    gap[1].version = 3;
+    std::vector<detail::Migration> gap = with_next(&add_note_column);
+    gap.back().version = kNext + 1;
     EXPECT_FALSE(detail::validate_migrations(gap));
-    std::vector<detail::Migration> reader = with_v2(&add_note_column, 3);
+    std::vector<detail::Migration> reader = with_next(&add_note_column, kNext + 1);
     EXPECT_FALSE(detail::validate_migrations(reader));
-    std::vector<detail::Migration> none = with_v2(nullptr);
+    std::vector<detail::Migration> none = with_next(nullptr);
     EXPECT_FALSE(detail::validate_migrations(none));
+    // A later version may not lower the reader requirement (schema v2 needs a v2 reader).
+    std::vector<detail::Migration> lowered = with_next(&add_note_column, 1);
+    EXPECT_FALSE(detail::validate_migrations(lowered));
+    EXPECT_EQ(detail::builtin_migrations()[1].min_reader_version, 2);
 }
 
 }  // namespace

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <lucent/application/export_service.hpp>
+#include <lucent/application/recipe_service.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/export/encode.hpp>
@@ -49,10 +50,9 @@ bool is_reserved_device_name(std::wstring_view stem) {
     return false;
 }
 
-// Overall progress fraction for a finished render stage (stages are 1..8).
-double render_fraction(engine::RenderStage stage) {
-    const double done = std::clamp(static_cast<double>(stage), 1.0, 8.0) / 8.0;
-    return 0.05 + 0.65 * done;
+// Overall progress fraction for a render that is `done` (0..1) complete.
+double render_fraction(double done) {
+    return 0.05 + 0.65 * std::clamp(done, 0.0, 1.0);
 }
 
 class ProgressReporter {
@@ -89,6 +89,27 @@ std::string reasons_text(const SupportAssessment& support) {
 }
 
 }  // namespace
+
+Expected<RecipeIdentity> recipe_identity(const engine::DevelopSettings& settings,
+                                         std::optional<catalog::RevisionId> revision,
+                                         std::uint32_t revision_number) {
+    auto document = write_recipe(settings);
+    if (!document) {
+        return Unexpected(std::move(document.error()));
+    }
+    RecipeIdentity identity;
+    identity.revision = revision;
+    identity.revision_number = revision ? revision_number : 0;
+    identity.schema = std::string(kRecipeSchema);
+    identity.schema_version = settings.version;
+    identity.settings_json = std::move(document->json);
+    identity.settings_sha256 = document->sha256;
+    identity.operations = settings.operations;
+    identity.base_look = settings.base_look.id;
+    identity.base_look_version = settings.base_look.version;
+    identity.pipeline_version = engine::kDevelopPipelineVersion;
+    return identity;
+}
 
 std::string_view to_string(ExportStage stage) noexcept {
     switch (stage) {
@@ -201,8 +222,13 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
     ProgressReporter reporter(item.id, progress);
     reporter.report(ExportStage::Preparing, 0.0);
 
-    if (auto valid = request.settings.validate(); !valid) {
-        return Unexpected(std::move(valid.error()));
+    if (!request.settings) {
+        return fail(ErrorCode::InvalidArgument, "the export's recipe was not resolved", "app.export.recipe");
+    }
+    const engine::DevelopSettings& settings = *request.settings;
+    auto identity = recipe_identity(settings, request.recipe_revision, request.recipe_revision_number);
+    if (!identity) {
+        return Unexpected(std::move(identity.error()));
     }
     if (auto valid = request.output.validate(); !valid) {
         return Unexpected(std::move(valid.error()));
@@ -246,13 +272,17 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
         }
     }
 
-    auto estimate = renderer.estimate_memory(item, request.settings, cancel);
+    engine::StageOneRequest export_request;
+    export_request.kind = engine::StageOneKind::Export;
+    export_request.white_balance = settings.white_balance;
+    auto estimate = renderer.estimate(item, export_request, cancel);
     if (!estimate) {
         return Unexpected(std::move(estimate.error()));
     }
+    const std::uint64_t admitted_bytes = estimate->export_peak + output_bytes;
     AdmissionLease lease;
     if (admission != nullptr) {
-        auto admitted = admission->acquire(*estimate + output_bytes, lane, cancel);
+        auto admitted = admission->acquire(admitted_bytes, lane, cancel);
         if (!admitted) {
             return Unexpected(std::move(admitted.error()));
         }
@@ -264,8 +294,10 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
     record.source_path = item.path;
     record.subimage = item.subimage;
     record.source_identity = item.identity;
+    record.source_sha256 = item.sha256;
     record.settings_revision = request.settings_revision;
-    record.settings = request.settings;
+    record.settings = settings;
+    record.recipe = std::move(*identity);
     record.support = item.support.status;
 
     reporter.report(ExportStage::Rendering, 0.05);
@@ -273,16 +305,15 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
     exporter::OutputImage output;
     {
         auto rendered = renderer.render(
-            item, request.settings,
-            [&reporter](const engine::StageRecord& stage) {
-                reporter.report(ExportStage::Rendering, render_fraction(stage.stage));
-            },
+            item, settings,
+            [&reporter](double done) { reporter.report(ExportStage::Rendering, render_fraction(done)); },
             cancel);
         if (!rendered) {
             return Unexpected(std::move(rendered.error()));
         }
         record.render_seconds = seconds_since(render_start);
-        record.render = summarize_render(rendered->report);
+        record.render = summarize_render(rendered->report, rendered->interpretation);
+        record.render.estimated_peak_bytes = admitted_bytes;
 
         reporter.report(ExportStage::Encoding, 0.72);
         const auto encode_start = std::chrono::steady_clock::now();
@@ -337,12 +368,13 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
 // ---------------------------------------------------------------------------------------------
 
 struct ExportService::State {
-    State(Library& l, TaskExecutor& e, std::shared_ptr<const SourceRenderer> r)
-        : library(l), executor(e), renderer(std::move(r)) {}
+    State(Library& l, TaskExecutor& e, std::shared_ptr<const SourceRenderer> r, RecipeService* rs)
+        : library(l), executor(e), renderer(std::move(r)), recipes(rs) {}
 
     Library& library;
     TaskExecutor& executor;
     std::shared_ptr<const SourceRenderer> renderer;
+    RecipeService* recipes;
 
     std::mutex mutex;
     std::condition_variable idle;
@@ -384,8 +416,8 @@ struct ExportService::State {
 };
 
 ExportService::ExportService(Library& library, TaskExecutor& executor,
-                             std::shared_ptr<const SourceRenderer> renderer)
-    : state_(std::make_shared<State>(library, executor, std::move(renderer))) {}
+                             std::shared_ptr<const SourceRenderer> renderer, RecipeService* recipes)
+    : state_(std::make_shared<State>(library, executor, std::move(renderer), recipes)) {}
 
 ExportService::~ExportService() {
     std::unique_lock lock(state_->mutex);
@@ -404,9 +436,6 @@ Expected<TaskHandle> ExportService::submit(const ExportRequest& request, ExportP
     if (!state_->renderer) {
         return fail(ErrorCode::InvalidArgument, "the export service has no renderer", std::string(kWhere));
     }
-    if (auto valid = request.settings.validate(); !valid) {
-        return Unexpected(std::move(valid.error()));
-    }
     if (auto valid = request.output.validate(); !valid) {
         return Unexpected(std::move(valid.error()));
     }
@@ -414,6 +443,23 @@ Expected<TaskHandle> ExportService::submit(const ExportRequest& request, ExportP
     if (!item) {
         return fail(ErrorCode::NotFound, std::format("no library item {}", request.item.value),
                     std::string(kWhere));
+    }
+    // Freeze the recipe now: a later edit never changes a queued export.
+    ExportRequest frozen = request;
+    if (frozen.settings) {
+        if (auto valid = frozen.settings->validate(); !valid) {
+            return Unexpected(std::move(valid.error()));
+        }
+    } else if (state_->recipes != nullptr) {
+        auto current = state_->recipes->current_settings(request.item);
+        if (!current) {
+            return Unexpected(std::move(current.error()));
+        }
+        frozen.settings = std::move(current->settings);
+        frozen.recipe_revision = current->revision;
+        frozen.recipe_revision_number = current->revision_number;
+    } else {
+        frozen.settings = engine::DevelopSettings{};
     }
     try {
         std::lock_guard lock(state_->mutex);
@@ -423,9 +469,9 @@ Expected<TaskHandle> ExportService::submit(const ExportRequest& request, ExportP
         // The task learns its own id from a shared cell filled in once the handle exists.
         auto task_id = std::make_shared<std::uint64_t>(0);
         auto submitted = state_->executor.submit(
-            Lane::Background,
-            [state = state_, item = std::move(*item), request, progress = std::move(progress),
-             completion = std::move(completion), task_id](TaskContext& context) {
+            Lane::Background, [state = state_, item = std::move(*item), request = std::move(frozen),
+                               progress = std::move(progress), completion = std::move(completion),
+                               task_id](TaskContext& context) {
                 std::uint64_t id = 0;
                 {
                     std::lock_guard lock(state->mutex);

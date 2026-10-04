@@ -4,10 +4,19 @@
 // user-selected destinations"). Batches, durable job records and receipts on disk are W7's.
 //
 // Flow of export_item(): validate the request -> estimate memory and check the destination's free
-// space -> admit the render (MemoryAdmission) -> render (engine) -> convert to the output profile
-// and quantise (exporter::encode_for_output) -> release the render memory -> choose a free name
-// -> exporter::write_verified (temporary sibling, flush, re-read verification, SHA-256,
+// space -> admit the render (MemoryAdmission) -> render (the engine's develop pipeline, the export
+// render of SourceRenderer::render: render_develop_file's composition, ADR 0010) -> convert to the
+// output profile and quantise (exporter::encode_for_output) -> release the render memory -> choose
+// a free name -> exporter::write_verified (temporary sibling, flush, re-read verification, SHA-256,
 // no-clobber publication) -> ExportRecord.
+//
+// Recipes (blueprint section 2: "an already queued export retains its frozen revision"; section 7:
+// a job's identity includes "recipe revision/hash + renderer and asset versions"). A request either
+// names the settings to render or none: ExportService::submit() then freezes the item's current
+// recipe (RecipeService::current_settings) at submission, so a later edit never changes a queued
+// export, and an item whose recipe this build cannot read is refused (never exported with other
+// settings). The record's RecipeIdentity holds the revision, the canonical settings document and its
+// SHA-256, the operation and base-look versions and the pipeline version.
 //
 // Naming: "{original-stem}[_img{k}]_Lucent[_{n}].{jpg|tif}" in the output directory.
 //   * {original-stem} is the source file name without its extension ("IMG_0001" for
@@ -37,27 +46,59 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 
 #include <lucent/application/library.hpp>
 #include <lucent/application/preview.hpp>
+#include <lucent/application/recipe.hpp>
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
+#include <lucent/catalog/types.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/core/file.hpp>
-#include <lucent/engine/render.hpp>
+#include <lucent/core/hash.hpp>
+#include <lucent/engine/develop.hpp>
+#include <lucent/engine/develop_settings.hpp>
 #include <lucent/export/export.hpp>
 
 namespace lucent::app {
 
+class RecipeService;
+
 inline constexpr std::uint32_t kMaxExportNameIndex = 9999;
 inline constexpr std::uint32_t kMaxPublicationAttempts = 32;
 
+// The recipe an export rendered (see the file comment).
+struct RecipeIdentity {
+    std::optional<catalog::RevisionId> revision;  // none: explicit settings without a revision, or as shot
+    std::uint32_t revision_number = 0;            // of `revision` (0: none)
+    std::string schema{kRecipeSchema};
+    std::uint32_t schema_version = kRecipeSchemaVersion;
+    std::string settings_json;          // the canonical settings document (recipe.hpp)
+    core::Digest256 settings_sha256{};  // SHA-256 of settings_json
+    engine::DevelopOperationVersions operations;
+    std::string base_look;
+    std::uint32_t base_look_version = 0;
+    std::uint32_t pipeline_version = engine::kDevelopPipelineVersion;
+};
+
+// The identity of `settings` (validated; errors of write_recipe()).
+[[nodiscard]] Expected<RecipeIdentity> recipe_identity(
+    const engine::DevelopSettings& settings, std::optional<catalog::RevisionId> revision = std::nullopt,
+    std::uint32_t revision_number = 0);
+
 struct ExportRequest {
     ItemId item;
-    engine::RenderSettings settings;
-    std::uint64_t settings_revision = 0;
+    // The settings to render; std::nullopt: the item's current recipe, frozen by
+    // ExportService::submit() (export_item() needs them resolved: InvalidArgument otherwise).
+    std::optional<engine::DevelopSettings> settings;
+    // With explicit settings, the revision they are (recorded in the RecipeIdentity).
+    std::optional<catalog::RevisionId> recipe_revision;
+    std::uint32_t recipe_revision_number = 0;
+    std::uint64_t settings_revision = 0;     // caller's tag, recorded
     std::filesystem::path output_directory;  // must exist
     // Format (JPEG or 16-bit TIFF), output profile, rendering intent, JPEG quality, TIFF
     // compression. Default: JPEG / sRGB / quality 95.
@@ -86,8 +127,10 @@ struct ExportRecord {
     std::filesystem::path source_path;
     std::uint32_t subimage = 0;
     core::FileIdentity source_identity;
-    std::uint64_t settings_revision = 0;
-    engine::RenderSettings settings;
+    std::optional<core::Digest256> source_sha256;      // the item's content hash when it was exported
+    std::uint64_t settings_revision = 0;               // the request's tag
+    engine::DevelopSettings settings;                  // rendered
+    RecipeIdentity recipe;                             // their identity (see the file comment)
     SupportStatus support = SupportStatus::Supported;  // of the item when it was exported
     exporter::ExportReceipt receipt;  // published path, SHA-256, dimensions, profile, encoder
     std::uint32_t name_index = 1;     // 1: no "_{n}" suffix
@@ -129,9 +172,10 @@ struct ChosenName {
                                                       exporter::ExportFormat format,
                                                       std::uint32_t first_index = 1);
 
-// Exports `item` synchronously on the calling thread. `admission` may be null (no admission).
-// Errors ("app.export.*" for the service's own checks): InvalidArgument (invalid settings or
-// output settings, empty directory); NotFound (the output directory does not exist);
+// Exports `item` synchronously on the calling thread with request.settings (which must be set).
+// `admission` may be null (no admission).
+// Errors ("app.export.*" for the service's own checks): InvalidArgument (no or invalid settings,
+// invalid output settings, empty directory); NotFound (the output directory does not exist);
 // Unsupported (an Unsupported item without allow_unsupported); DiskFull (the destination volume
 // has less free space than the uncompressed output); SourceChanged; LimitExceeded; Cancelled;
 // and the errors of the renderer, the exporter and publication.
@@ -147,17 +191,20 @@ struct ChosenName {
 // adapter does): otherwise waiting exports fill the Background lane and imports wait behind them.
 class ExportService {
 public:
-    // The library and the executor must outlive the service. With a null `renderer` every submit()
-    // fails with InvalidArgument.
-    ExportService(Library& library, TaskExecutor& executor, std::shared_ptr<const SourceRenderer> renderer);
+    // The library, the executor and `recipes` (when not null) must outlive the service. With a null
+    // `renderer` every submit() fails with InvalidArgument. Without `recipes`, requests without
+    // settings export "as shot".
+    ExportService(Library& library, TaskExecutor& executor, std::shared_ptr<const SourceRenderer> renderer,
+                  RecipeService* recipes = nullptr);
     // Cancels outstanding exports and waits until their completions have returned.
     ~ExportService();
     ExportService(const ExportService&) = delete;
     ExportService& operator=(const ExportService&) = delete;
 
-    // Queues an export; the handle cancels it. Errors, with no callback ever called
-    // ("app.export"): InvalidArgument for a null completion or invalid settings; NotFound for an
-    // unknown item; Cancelled when the service or executor is shutting down.
+    // Queues an export, freezing its recipe (see the file comment); the handle cancels it. Errors,
+    // with no callback ever called ("app.export"): InvalidArgument for a null completion or invalid
+    // settings; NotFound for an unknown item; the recipe's error when the item's current recipe
+    // cannot be read; Cancelled when the service or executor is shutting down.
     [[nodiscard]] Expected<TaskHandle> submit(const ExportRequest& request, ExportProgressCallback progress,
                                               ExportCompletion completion);
 

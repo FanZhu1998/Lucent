@@ -1,8 +1,9 @@
 # lucent_application: import, the session and catalog-backed libraries, source maintenance
 # (hashing, presence checks, relinking), embedded previews, background preview rendering, the
-# on-disk thumbnail cache and single-image export services (W3, W4). Pure C++, no Qt: the user
-# interface (apps/lucent) drives these services and marshals their callbacks to its own thread.
-# See docs/architecture/overview.md and docs/adr/0007, 0008.
+# on-disk thumbnail cache and single-image export services (W3, W4); recipes, their revisions and
+# editing commands, and interactive develop previews (W6). Pure C++, no Qt: the user interface
+# (apps/lucent) drives these services and marshals their callbacks to its own thread.
+# See docs/architecture/overview.md and docs/adr/0007, 0008, 0010.
 #
 # Layout
 #   include/lucent/application/   public headers
@@ -56,6 +57,16 @@ lucent_add_library(application
         # Single-item export.
         include/lucent/application/export_service.hpp
         src/export_service.cpp
+
+        # Recipes (W6): canonical documents, revision stores, the recipe service and edit sessions.
+        include/lucent/application/recipe.hpp
+        include/lucent/application/recipe_store.hpp
+        include/lucent/application/recipe_service.hpp
+        include/lucent/application/develop_preview.hpp
+        src/recipe.cpp
+        src/recipe_store.cpp
+        src/recipe_service.cpp
+        src/develop_preview.cpp
     PUBLIC_DEPS
         Lucent::core
         Lucent::image
@@ -88,6 +99,9 @@ set(LUCENT_APPLICATION_TEST_SOURCES
     tests/display_image_test.cpp
     tests/preview_cache_test.cpp
     tests/preview_service_test.cpp
+    tests/recipe_test.cpp
+    tests/recipe_service_test.cpp
+    tests/develop_preview_test.cpp
     tests/thumbnail_cache_test.cpp
     tests/export_service_test.cpp
 )
@@ -97,6 +111,7 @@ lucent_add_test(lucent_application_tests
         ${LUCENT_APPLICATION_TEST_SOURCES}
     DEPS
         Lucent::application
+        nlohmann_json::nlohmann_json  # recipe documents are built and mutated in tests
     LABELS
         application unit
 )
