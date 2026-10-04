@@ -129,6 +129,25 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         backend->recipes_ = std::make_unique<app::RecipeService>(*backend->library_, backend->recipe_store_,
                                                                  std::move(recipe_options));
 
+        // W7: durable batches over the writable persistent library.
+        if (options.batches && backend->catalog_ && !backend->catalog_->is_read_only() &&
+            backend->library_->capabilities().persistent) {
+            app::BatchServiceOptions batch = options.batch;
+            batch.registry = backend->registry_;
+            batch.lucent_directories = backend->lucent_directories_;
+            if (!batch.interactive_busy) {
+                batch.interactive_busy = [activity = &backend->interactive_] { return activity->busy(); };
+            }
+            auto opened = app::BatchService::open(*backend->library_, backend->catalog_, *backend->recipes_,
+                                                  std::move(batch));
+            if (opened) {
+                backend->batches_ = std::move(*opened);
+            } else {
+                core::log_warn(kLog, "batches are unavailable; exports run in-process: {}",
+                               opened.error().describe());
+            }
+        }
+
         if (!options.thumbnail_directory.empty()) {
             app::ThumbnailCacheOptions cache;
             cache.directory = options.thumbnail_directory;
@@ -165,7 +184,8 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         backend->previews_ = std::make_unique<app::PreviewService>(*backend->library_, *backend->executor_,
                                                                    backend->renderer_, previews);
         backend->exports_ = std::make_unique<app::ExportService>(*backend->library_, *backend->executor_,
-                                                                 backend->renderer_, backend->recipes_.get());
+                                                                 backend->renderer_, backend->recipes_.get(),
+                                                                 backend->batches_.get());
         app::DevelopPreviewOptions develop;
         develop.on_metadata = [recipes = backend->recipes_.get()](app::ItemId item,
                                                                   const raw::RawMetadata& metadata) {
@@ -210,6 +230,9 @@ Backend::~Backend() {
     }
     executor_.reset();
     renderer_.reset();
+    // After the export service (its exports wait for their batches); running batch jobs are given
+    // back and continue at the next start.
+    batches_.reset();
     recipes_.reset();
     recipe_store_.reset();
     library_.reset();

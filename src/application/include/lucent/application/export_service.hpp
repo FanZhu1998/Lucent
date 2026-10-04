@@ -1,7 +1,19 @@
 #pragma once
 
 // Export of one library item (blueprint section 2, step 3; section 7, "Export integrity and
-// user-selected destinations"). Batches, durable job records and receipts on disk are W7's.
+// user-selected destinations").
+//
+// W7 (ADR 0012, decision "Single exports are batches of one"): an ExportService given a
+// BatchService exports through it whenever it can, so a single export is a durable batch of one
+// photo: persisted before dispatch, rendered by an isolated lucent-worker process, published with
+// the journaled protocol and recorded with a receipt (batch_service.hpp). The request maps to a
+// batch with the W3 naming policy below (kSingleExportNamePattern, unique names), the request's
+// output settings and ExistingOutputs::ExportAgain (asking again makes a new file), without report
+// files. The executor task waits for the batch and builds the ExportRecord from its receipt, so
+// callers see the same contract. Cancelling the export cancels the batch. The in-process path below
+// remains for a library without a catalog (the session library: tests, and Lucent.exe when its
+// catalog cannot be opened) and for explicit settings that no recipe revision records (the journal
+// could not reproduce them after a restart).
 //
 // Flow of export_item(): validate the request -> estimate memory and check the destination's free
 // space -> admit the render (MemoryAdmission) -> render (the engine's develop pipeline, the export
@@ -36,8 +48,9 @@
 // refused unless ExportRequest::allow_unsupported is set, in which case the record says so; the
 // blueprint forbids exporting them silently.
 //
-// Callbacks (ExportService): progress and completion run on an executor worker thread; the
-// completion is called exactly once per accepted request. They must not destroy the service.
+// Callbacks (ExportService): progress and completion run on an executor worker thread (also for
+// exports through a batch); the completion is called exactly once per accepted request. They must
+// not destroy the service.
 //
 // Thread-safety: export_item() is reentrant; ExportService members are safe to call concurrently.
 
@@ -67,6 +80,7 @@
 namespace lucent::app {
 
 class RecipeService;
+class BatchService;
 
 inline constexpr std::uint32_t kMaxExportNameIndex = 9999;
 inline constexpr std::uint32_t kMaxPublicationAttempts = 32;
@@ -191,11 +205,12 @@ struct ChosenName {
 // adapter does): otherwise waiting exports fill the Background lane and imports wait behind them.
 class ExportService {
 public:
-    // The library, the executor and `recipes` (when not null) must outlive the service. With a null
-    // `renderer` every submit() fails with InvalidArgument. Without `recipes`, requests without
-    // settings export "as shot".
+    // The library, the executor, `recipes` and `batches` (when not null) must outlive the service.
+    // With a null `renderer` every submit() fails with InvalidArgument. Without `recipes`, requests
+    // without settings export "as shot". With `batches`, exports go through durable batches of one
+    // (see the file comment).
     ExportService(Library& library, TaskExecutor& executor, std::shared_ptr<const SourceRenderer> renderer,
-                  RecipeService* recipes = nullptr);
+                  RecipeService* recipes = nullptr, BatchService* batches = nullptr);
     // Cancels outstanding exports and waits until their completions have returned.
     ~ExportService();
     ExportService(const ExportService&) = delete;

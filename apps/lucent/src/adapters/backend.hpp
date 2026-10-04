@@ -20,6 +20,13 @@
 // (library_problem() set as well). Without a catalog path the library is a SessionLibrary (the
 // W3 behaviour, used by tests).
 //
+// W7: with a writable persistent library the Backend also opens the durable BatchService
+// (batch_service.hpp, ADR 0012) after the recipe service; it reconciles the job journal of the
+// previous session, continues running batches with lucent-worker.exe processes, and the export
+// service sends single exports through it (batches of one). It pauses admission while interactive
+// editing waits for a render (InteractiveActivity). When it cannot be opened, exports stay
+// in-process and batches() is null. The batch user interface is phase 3's.
+//
 // Destruction order is the reverse: the maintenance, export and preview services cancel their
 // outstanding work and wait for its callbacks, the executor shuts down (queued tasks run once with
 // cancelled tokens, then the threads are joined), and only then are the library, the catalog
@@ -43,6 +50,7 @@
 #include <optional>
 #include <vector>
 
+#include <lucent/application/batch_service.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/library.hpp>
@@ -80,6 +88,10 @@ struct BackendOptions {
     // Why no catalog could be configured (the per-user folders are unavailable): reported as the
     // library problem of the session library.
     std::optional<Error> catalog_unavailable;
+    // W7. Open the durable batch service over a writable catalog (see the file comment). Its
+    // interactive_busy, registry and lucent_directories are filled in by the Backend.
+    bool batches = true;
+    app::BatchServiceOptions batch;
 };
 
 // Output folders chosen for exports in this session. Imports do not scan into them when a scan
@@ -134,6 +146,8 @@ public:
     [[nodiscard]] app::TaskExecutor& executor() noexcept { return *executor_; }
     [[nodiscard]] app::PreviewService& previews() noexcept { return *previews_; }
     [[nodiscard]] app::ExportService& exports() noexcept { return *exports_; }
+    // W7. The durable batch service (null without a writable catalog, or when it could not open).
+    [[nodiscard]] app::BatchService* batches() noexcept { return batches_.get(); }
     // W6. The items' recipes and the edit sessions (used by the editor; ADR 0010).
     [[nodiscard]] app::RecipeService& recipes() noexcept { return *recipes_; }
     [[nodiscard]] app::DevelopPreviewService& develop() noexcept { return *develop_; }
@@ -172,6 +186,7 @@ private:
     std::optional<Error> library_problem_;
     std::shared_ptr<app::RecipeStore> recipe_store_;
     std::unique_ptr<app::RecipeService> recipes_;
+    std::unique_ptr<app::BatchService> batches_;
     std::shared_ptr<app::ThumbnailCache> thumbnails_;
     std::unique_ptr<app::TaskExecutor> executor_;
     std::shared_ptr<const app::SourceRenderer> renderer_;
