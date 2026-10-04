@@ -124,6 +124,7 @@ struct Ifd {
     std::vector<Entry> entries;
     std::vector<Ifd> sub_ifds;  // written as a SubIFDs (330) entry when non-empty
     std::vector<Ifd> exif;      // at most one; written as an ExifIFD (34665) entry
+    std::vector<Ifd> gps;       // at most one; written as a GPSInfo IFD (34853) entry, path ".gps"
     bool sort_entries = true;   // TIFF requires ascending tags; false keeps the given order
 };
 
@@ -184,6 +185,8 @@ struct Built {
 };
 
 namespace detail {
+
+inline constexpr std::uint16_t kGpsIfdTag = 34853;  // GPSInfo IFD pointer (EXIF)
 
 class Writer {
 public:
@@ -295,6 +298,9 @@ private:
         if (!spec.exif.empty()) {
             entries.push_back(integer_entry(tiff_tag::kExifIfd, pointer_type, {0}));
         }
+        if (!spec.gps.empty()) {
+            entries.push_back(integer_entry(kGpsIfdTag, pointer_type, {0}));
+        }
         if (spec.sort_entries) {
             std::stable_sort(entries.begin(), entries.end(),
                              [](const Entry& a, const Entry& b) { return a.tag < b.tag; });
@@ -344,6 +350,10 @@ private:
         if (!spec.exif.empty()) {
             const std::uint64_t child = write_ifd(spec.exif.front(), path + ".exif");
             built_.put(built_.value(path, tiff_tag::kExifIfd), child, pointer_size);
+        }
+        if (!spec.gps.empty()) {
+            const std::uint64_t child = write_ifd(spec.gps.front(), path + ".gps");
+            built_.put(built_.value(path, kGpsIfdTag), child, pointer_size);
         }
         return ifd_offset;
     }

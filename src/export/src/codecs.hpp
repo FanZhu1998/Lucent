@@ -31,6 +31,9 @@
 #include <lucent/core/error.hpp>
 #include <lucent/export/encode.hpp>
 #include <lucent/export/export.hpp>
+#include <lucent/export/metadata.hpp>
+
+#include "exif_writer.hpp"
 
 namespace lucent::exporter::detail {
 
@@ -72,14 +75,16 @@ struct DecodedFile {
     std::int32_t tiff_compression = 0;
 };
 
-// Encodes an 8-bit OutputImage as a complete JPEG stream in memory, with the ICC profile in APP2
-// markers (none when `icc` is empty), optimised Huffman tables, islow DCT, 4:4:4 from
-// kJpegFullChromaMinQuality. Errors (export.jpeg.encode): InvalidArgument for a 16-bit image,
-// LimitExceeded above kJpegMaxDimension, OutOfMemory, Internal for other libjpeg errors,
-// Cancelled.
+// Encodes an 8-bit OutputImage as a complete JPEG stream in memory, with `exif_app1` (a complete
+// APP1 payload from build_exif_app1, none when empty) right after the JFIF APP0 marker, the ICC
+// profile in APP2 markers (none when `icc` is empty), optimised Huffman tables, islow DCT, 4:4:4
+// from kJpegFullChromaMinQuality. Errors (export.jpeg.encode): InvalidArgument for a 16-bit image
+// or an APP1 payload above kMaxApp1Payload, LimitExceeded above kJpegMaxDimension, OutOfMemory,
+// Internal for other libjpeg errors, Cancelled.
 [[nodiscard]] Expected<std::vector<std::uint8_t>> encode_jpeg(const OutputImage& image, const JpegSettings& settings,
                                                               std::span<const std::uint8_t> icc,
-                                                              const core::CancellationToken& cancel = {});
+                                                              const core::CancellationToken& cancel = {},
+                                                              std::span<const std::uint8_t> exif_app1 = {});
 
 // Fully decodes a JPEG to 8-bit RGB, one row at a time. keep_samples fills samples8 with the
 // whole image (tests); verification passes false. Corrupt when libjpeg reports an error;
@@ -88,12 +93,22 @@ struct DecodedFile {
                                               const core::CancellationToken& cancel = {}, bool keep_samples = true);
 
 // Encodes a 16-bit OutputImage as a single-directory TIFF (RGB, chunky, orientation 1) into the
-// existing file `path` (truncated). Errors (export.tiff.write): IoError / DiskFull /
-// PermissionDenied for file failures, InvalidArgument for an 8-bit image, Internal when a field
-// cannot be set, Cancelled.
+// existing file `path` (truncated). With `metadata` (prepare_metadata's result) IFD 0 also holds
+// Make, Model, Artist, Copyright and Software, and Exif / GPS IFDs are written as libtiff custom
+// directories (TIFFCreateEXIFDirectory / TIFFCreateGPSDirectory, TIFFWriteCustomDirectory) when
+// capture fields / a position are present; IFD 0 is written once with placeholder pointer
+// entries whose inline values are patched with the directories' offsets after libtiff closes
+// the file (so no stale copy of IFD 0's values remains). `image_info` supplies the Exif IFD's ColorSpace and
+// PixelX/YDimension. Without `metadata` no metadata tag is written. libtiff stores EXIF RATIONAL
+// values as float and writes its own fraction approximation (1/8000 becomes
+// 376336/3010687857), so the exact fractions (the same as in a JPEG) are written over them in
+// place after closing; no size or offset changes.
+// Errors (export.tiff.write): IoError / DiskFull / PermissionDenied for file failures,
+// InvalidArgument for an 8-bit image, Internal when a field cannot be set, Cancelled.
 [[nodiscard]] Status write_tiff(const std::filesystem::path& path, const OutputImage& image,
                                 const TiffSettings& settings, std::span<const std::uint8_t> icc,
-                                const core::CancellationToken& cancel = {});
+                                const core::CancellationToken& cancel = {}, const ExportMetadata* metadata = nullptr,
+                                const ExifImageInfo& image_info = {});
 
 // Decodes a TIFF's first directory. Only 16-bit unsigned chunky RGB is decoded; other layouts
 // return the header fields with no samples (verification then rejects them). With `expected`

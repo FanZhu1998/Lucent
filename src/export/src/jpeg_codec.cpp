@@ -123,6 +123,8 @@ struct CompressJob {
     bool full_chroma;
     const JOCTET* icc;
     unsigned int icc_size;
+    const JOCTET* exif;  // complete APP1 payload ("Exif", two NULs, TIFF structure), or null
+    unsigned int exif_size;
 };
 
 struct DecompressJob {
@@ -184,7 +186,10 @@ bool run_compress(CompressJob* job) {
     const int luma_samp = job->full_chroma ? 1 : 2;
     job->cinfo.comp_info[0].h_samp_factor = luma_samp;
     job->cinfo.comp_info[0].v_samp_factor = luma_samp;
-    jpeg_start_compress(&job->cinfo, TRUE);
+    jpeg_start_compress(&job->cinfo, TRUE);  // writes SOI and the JFIF APP0 marker
+    if (job->exif != nullptr && job->exif_size > 0) {
+        jpeg_write_marker(&job->cinfo, JPEG_APP0 + 1, job->exif, job->exif_size);
+    }
     if (job->icc != nullptr && job->icc_size > 0) {
         jpeg_write_icc_profile(&job->cinfo, job->icc, job->icc_size);
     }
@@ -340,7 +345,8 @@ void reset_crt_errors() noexcept {
 
 Expected<std::vector<std::uint8_t>> encode_jpeg(const OutputImage& image, const JpegSettings& settings,
                                                 std::span<const std::uint8_t> icc,
-                                                const core::CancellationToken& cancel) {
+                                                const core::CancellationToken& cancel,
+                                                std::span<const std::uint8_t> exif_app1) {
     constexpr const char* kWhere = "export.jpeg.encode";
     if (image.bit_depth != BitDepth::Eight) {
         return fail(ErrorCode::InvalidArgument, "JPEG output requires 8-bit samples", kWhere);
@@ -349,6 +355,9 @@ Expected<std::vector<std::uint8_t>> encode_jpeg(const OutputImage& image, const 
         return fail(ErrorCode::LimitExceeded, "JPEG sides are limited to " + std::to_string(kJpegMaxDimension) +
                                                   " pixels",
                     kWhere);
+    }
+    if (exif_app1.size() > kMaxApp1Payload) {
+        return fail(ErrorCode::InvalidArgument, "the EXIF APP1 payload exceeds a JPEG marker segment", kWhere);
     }
     if (auto status = cancel.check(kWhere); !status) {
         return Unexpected(std::move(status.error()));
@@ -366,9 +375,12 @@ Expected<std::vector<std::uint8_t>> encode_jpeg(const OutputImage& image, const 
     job->full_chroma = jpeg_chroma_subsampling(settings.quality) == ChromaSubsampling::Yuv444;
     job->icc = icc.data();
     job->icc_size = static_cast<unsigned int>(icc.size());
+    job->exif = exif_app1.data();
+    job->exif_size = static_cast<unsigned int>(exif_app1.size());
 
     // A quarter of the raw size plus the profile covers typical q95 photographs without growing.
-    job->dest.capacity = std::max<std::size_t>(image.samples8.size() / 4 + icc.size() + 65536, 65536);
+    job->dest.capacity =
+        std::max<std::size_t>(image.samples8.size() / 4 + icc.size() + exif_app1.size() + 65536, 65536);
     job->dest.buffer = static_cast<JOCTET*>(std::malloc(job->dest.capacity));
     if (job->dest.buffer == nullptr) {
         return fail(ErrorCode::OutOfMemory, "cannot allocate the JPEG output buffer", kWhere);

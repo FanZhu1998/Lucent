@@ -7,8 +7,10 @@
 //
 // Publication protocol of write_verified():
 //  1. Validate settings, image and destination (the parent directory must exist; a destination
-//     that already exists is AlreadyExists before any work is done).
-//  2. JPEG only: encode into memory (before any file exists).
+//     that already exists is AlreadyExists before any work is done). Prepare the metadata:
+//     prepare_metadata(metadata, settings.metadata) (metadata.hpp).
+//  2. JPEG only: encode into memory (before any file exists). Marker order: SOI, APP0 (JFIF),
+//     APP1 "Exif" (only when the prepared metadata is not empty), APP2 ICC profile, image data.
 //  3. Reserve a temporary sibling "~lucent-<16 hex digits>.tmp" in the destination directory
 //     (same filesystem, created with CREATE_NEW so it never replaces anything).
 //  4. Write the JPEG bytes, or encode the TIFF, into the temporary file; flush the
@@ -19,6 +21,10 @@
 //     (compared row by row, without a second full-size copy). In both cases the format,
 //     dimensions, channel count, bit depth, orientation (TIFF), embedded ICC bytes (must equal
 //     icc_profile(settings.profile) exactly) must match and the decoder must report no warnings.
+//     Then the metadata is read back with Lucent's own EXIF parser and must match the prepared
+//     metadata: values (exact, fractions included), the
+//     presence of the Exif and GPS IFDs (GPS absent unless MetadataPolicy::include_gps), only
+//     the documented tags (never a maker note or thumbnail) and, for JPEG, Orientation 1.
 //  6. SHA-256 the temporary file with lucent::core::hash_file (stable read).
 //  7. Publish with MoveFileExW(temp, destination, MOVEFILE_WRITE_THROUGH) without
 //     MOVEFILE_REPLACE_EXISTING: if anything appeared at the destination meanwhile, the move
@@ -44,11 +50,13 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/export/encode.hpp>
+#include <lucent/export/metadata.hpp>
 #include <lucent/export/output_profile.hpp>
 #include <lucent/image/color_encoding.hpp>
 #include <lucent/image/pixel_buffer.hpp>
@@ -111,6 +119,8 @@ struct ExportSettings {
     OutputTransformOptions transform;
     JpegSettings jpeg;  // used when format == Jpeg
     TiffSettings tiff;  // used when format == Tiff
+    // Which metadata groups are written (GPS off by default). See metadata.hpp.
+    MetadataPolicy metadata;
 
     // Blueprint section 7 starting presets.
     // JPEG / sRGB / quality 95.
@@ -143,9 +153,16 @@ struct ExportReceipt {
     ChromaSubsampling chroma_subsampling = ChromaSubsampling::Yuv444;  // meaningful for JPEG only
     // Libraries that produced the file, e.g. "libjpeg-turbo 3.2.0; lcms 2.19".
     std::string encoder;
+    // The metadata written (prepare_metadata's result, verified in the file) and the notes about
+    // values prepare_metadata had to change or drop. Part of the hashed bytes.
+    ExportMetadata metadata;
+    std::vector<std::string> metadata_notes;
 };
 
-// Writes `image` to `destination` with the protocol described at the top of this file.
+// Writes `image` with `metadata` (filtered by settings.metadata) to `destination` with the
+// protocol described at the top of this file. The written bytes, and so the receipt's hash,
+// include the metadata; identical inputs (image, metadata, settings, Lucent version) produce
+// identical files.
 //
 // Preconditions (InvalidArgument otherwise): settings.validate() passes; image.validate()
 // passes; image.bit_depth == bit_depth_for(settings.format); image.profile == settings.profile;
@@ -160,11 +177,27 @@ struct ExportReceipt {
 [[nodiscard]] Expected<ExportReceipt> write_verified(const OutputImage& image,
                                                      const std::filesystem::path& destination,
                                                      const ExportSettings& settings,
+                                                     const ExportMetadata& metadata,
+                                                     core::CancellationToken cancel = {});
+
+// write_verified() without photograph metadata (ExportMetadata{}): only what the policy adds by
+// itself, i.e. Software when settings.metadata.include_software is set.
+[[nodiscard]] Expected<ExportReceipt> write_verified(const OutputImage& image,
+                                                     const std::filesystem::path& destination,
+                                                     const ExportSettings& settings,
                                                      core::CancellationToken cancel = {});
 
 // encode_for_output(rgb, source, settings.profile, bit_depth_for(settings.format),
 // settings.transform) followed by write_verified(). The destination is checked before the
 // (comparatively expensive) conversion, so an existing target fails fast.
+[[nodiscard]] Expected<ExportReceipt> export_image(image::ConstImageView<float> rgb,
+                                                   const image::ColorEncoding& source,
+                                                   const std::filesystem::path& destination,
+                                                   const ExportSettings& settings,
+                                                   const ExportMetadata& metadata,
+                                                   core::CancellationToken cancel = {});
+
+// export_image() without photograph metadata (see the write_verified overload above).
 [[nodiscard]] Expected<ExportReceipt> export_image(image::ConstImageView<float> rgb,
                                                    const image::ColorEncoding& source,
                                                    const std::filesystem::path& destination,

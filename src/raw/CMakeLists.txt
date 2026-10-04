@@ -53,6 +53,10 @@ set(LUCENT_RAW_SOURCES
     src/jpeg_header.cpp
     src/jpeg_header.hpp
     src/libraw_preview.cpp
+
+    # Capture metadata for exports: Lucent's own bounded EXIF reader (no third-party code).
+    include/lucent/raw/capture_metadata.hpp
+    src/capture_metadata.cpp
 )
 
 lucent_add_library(raw
@@ -74,6 +78,7 @@ lucent_add_library(raw
 lucent_add_test(lucent_raw_tiff_tests
     SOURCES
         tests/tiff_test_writer.hpp
+        tests/capture_metadata_test.cpp
         tests/dng_opcodes_test.cpp
         tests/tiff_corrupt_test.cpp
         tests/tiff_inspector_test.cpp
@@ -103,6 +108,7 @@ lucent_add_test(lucent_raw_decoder_tests
         tests/libraw_metadata_test.cpp
         tests/libraw_decoder_test.cpp
         tests/libraw_fixture_test.cpp
+        tests/capture_metadata_fixture_test.cpp
         tests/test_jpegs.hpp
         tests/jpeg_header_test.cpp
         tests/embedded_preview_test.cpp
