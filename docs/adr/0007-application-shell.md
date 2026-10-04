@@ -3,8 +3,12 @@
 - **Status:** Accepted
 - **Date:** 2026-09-27 (revised the same day after the W3 review: executor lanes, serial exports,
   embedded-preview selection, import rules, labelling of camera and incomplete renders); amended
-  2026-10-03 for the W6 editor (decisions 3, 4, 5 and 10 amended, decision 13 added)
-- **Workflow:** W3 (Application shell); W6 (Recipes and editor), phase 3
+  2026-10-03 for the W6 editor (decisions 3, 4, 5 and 10 amended, decision 13 added); amended
+  2026-10-04 for the W7 batch interface (decisions 3 and 10 amended, decision 14 added; decision 14
+  revised by the W7 closing review: unfinished batches and paging, attentions outside the Exports
+  view, keyboard selection, single-export marker)
+- **Workflow:** W3 (Application shell); W6 (Recipes and editor), phase 3; W7 (Durable batch),
+  phase 3
 
 ## Context
 
@@ -86,6 +90,9 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
    (`AppEditService`) runs recipe commands (catalog writes, file probes, session open and close)
    in call order on its own command thread and converts edit-session frames on its own conversion
    thread; the UI thread only stores the converted frame and publishes its URL (decision 13).
+   *W7:* the batch adapter (`AppBatchService`) calls the durable batch service only from its own
+   three single-thread pools (plans, submissions, commands and reads) and applies the service's
+   events on the UI thread coalesced (decision 14).
 
 4. **Generations and staleness.** Two levels, both required:
    - *Shell generations.* Every image URL carries item id and generation
@@ -186,7 +193,10 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
     <control>=<value>`, `--drag <control>`, `--drag-steps`, `--compare <before|split>` and
     `--clipping`: edits made once the photo's first frame is shown, a synthetic 60 Hz mouse drag
     of a slider with its frame latencies and UI-thread gaps, and the comparison and overlay for a
-    screenshot). Screenshots wait for idle
+    screenshot; W7 adds `--export-batch <folder> --to <folder> [--preset jpeg|tiff]`, which starts a
+    folder batch as the Export batch dialog does and reports its progress and outcome,
+    `--show-batch-dialog` (open the dialog with those settings instead), `--screenshot-running
+    <file.png>` (a screenshot while the batch runs) and `--quit-when-done`). Screenshots wait for idle
     services and two identical rendered frames. `--measure` reports start-up time, the first
     visible thumbnail, preview latency (visible, and the services' render and request-to-pixels
     times) and UI-thread responsiveness as gaps between ticks of a 5 ms timer, with window grabs
@@ -294,6 +304,94 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       The UI side (command thread, conversion, posting, image provider) adds about 8 to 10 ms
       to the develop service's latency.
 
+14. **Batch export (W7, phase 3; ADR 0012).** A fifth UI-side service, `BatchService`
+    (`services/batch_service.hpp`), is bound to `app::BatchService` by `AppBatchService`
+    (`adapters/app_batch_service.hpp`). Its view models are `BatchSetupModel` (the Export batch
+    dialog, `AppController.batchSetup`), `BatchListModel` (the Exports view, `batches`) and
+    `BatchReportModel` (the selected batch's report, `batchReport`). Without a writable catalog the
+    service reports itself unavailable with the reason, Export batch is hidden, and the Exports view
+    lists the session's in-process export jobs as before (`ExportJobModel`).
+    - *Selection.* The contact sheet keeps a multi-selection by item id: Ctrl+click toggles,
+      Shift+click selects from the anchor, Ctrl+A selects every photo; from the keyboard
+      Shift+Arrow / Home / End / Page Up / Page Down extend the selection from the anchor,
+      Ctrl+Arrow moves the current photo without changing it and Ctrl+Space toggles the current
+      photo; a plain click or a plain keyboard move selects the current photo only, and opening
+      another photo elsewhere (the Edit filmstrip) keeps a selection of several photos. Selected
+      photos are filled and outlined in the accent and reported selected to assistive technology;
+      the current photo outside the selection only gets a thin neutral outline. Export batch
+      (toolbar, Ctrl+Shift+E) opens the dialog with the selection when several photos are selected
+      and with every listed photo otherwise (the library has no albums or filters yet: "all filtered
+      items" is every listed photo); "Export a folder" (Library menu, the empty library's opening
+      screen and the Exports view) selects a folder, which the service imports when the batch
+      starts, so a folder can be exported without importing it by hand first.
+    - *Dialog.* Photos (selected, all, or a folder with Include subfolders), output folder, naming
+      pattern with token buttons and a local check as the user types, mirrored subfolders, the preset
+      (JPEG / sRGB / quality 95, or 16-bit TIFF with sRGB or Display P3), "If a name is taken" (a
+      number is added; "Replace the existing file" only after a confirmation dialog that names the
+      folder, states that originals and the batch's own outputs are never replaced and defaults to
+      keeping files; the choice is withdrawn when the folder changes and for every new batch), photos
+      already exported (skip, the default, or export again), metadata (capture details, Artist /
+      Copyright with the user's text, an empty field keeping the camera's value, and "Include GPS
+      location", off each time the dialog opens), and Automatic settings shown disabled with
+      "Available when Natural v1 is integrated". The plan panel stays in view below the scrolling
+      settings: up to three example destination paths, outputs that will be written first (marked "a
+      number is added" or "replaces the existing file"; an already exported one is marked "already
+      exported: skipped"), the counts (exported, renamed, replaced, already exported, left out with
+      reasons, originals to fingerprint first), the upper bound of the outputs' size with the drive's
+      free space, and warnings in the user's terms worded from the service's stable plan notices
+      (network or removable destination, a drive too full). A plan checks earlier outputs by size
+      only (submission confirms them byte for byte), so a plan stays cheap however many outputs the
+      folder already holds. Every change asks for a plan after 300 ms without further changes
+      (typing a pattern makes one request); the newest request cancels the running plan and only its
+      answer is shown.
+      Start is enabled while a plan is computed (the service validates everything again when the
+      batch is created) and disabled for a local problem or a plan error. The output folder, pattern,
+      preset and the artist and copyright text are remembered in the per-user settings (`batch/*`);
+      the GPS choice and a decision to replace files never are.
+    - *Exports view.* The newest 100 batches and every batch with work left whatever its age (a
+      paused batch is never lost behind newer single exports), newest first, with "Show older
+      exports" paging further back; each with its state, live counts (exported, remaining, failed,
+      skipped, left out at the start, for review), a progress bar, the running photos' stages
+      ("Rendering IMG_0001.CR3 (42 %)"), an ETA only while the batch runs and the service has one,
+      and Pause, Resume, Cancel, Retry failed (only while failed photos can be retried), Open report
+      and Open output folder as they apply. A destination attention (full, with the free space and
+      what the next photo needs; unavailable; permission; replaced) is a banner on the batch with
+      what happened and what to do, naming the folder, and Resume, or "Use this folder" when another
+      folder took the output folder's path. An attention is also posted to the status line and
+      flags the Exports tab (an amber "!" badge, "needs attention" for screen readers) wherever the
+      photographer is. A batch paused by the user (or found paused after a restart, when the service
+      no longer knows why) reads "Paused. Choose Resume to continue." A single export (marked by the
+      service, not guessed from its size) is a compact row: the photo's export, its file once
+      written, its state, a "Review" mark when its receipt recommends one, and why it was not
+      exported when the destination stopped it ("Not exported"); a batch of one from the dialog is a
+      batch. The selected batch's report (the newest batch is followed unless the user chose
+      another) lists every photo with its outcome, output, reason, suggested action and review
+      notes, filtered by outcome (a newly selected batch starts with all photos), with Open output
+      folder and Open report (the HTML report in the output folder, written on request when missing;
+      for a single export in the report pane only). Reading the report again for the same batch
+      updates its rows in place, so a list scrolled down keeps its place. A submission that is still
+      importing a folder or fingerprinting originals is shown as "Preparing" with its step and
+      Cancel. Batches started from the dialog report their start and outcome in the status line;
+      single exports keep their job messages.
+    - *Coalescing and responsiveness.* The service's observer runs on its coordinator and slot
+      threads about a hundred times per photo; the adapter merges each event into a pending record
+      per batch under a mutex and posts one wake-up while none is outstanding, and the UI thread
+      applies the accumulated changes at most every 200 ms, one snapshot per changed batch. While a
+      batch has work its status (ETA, running photos, attention, review and retry counts, left-out
+      photos; a batch of one: its output) is read every second and once more as soon as a photo or
+      the batch finishes; no report is read for the list. A status read that started before newer
+      events does not overwrite their counts. The report pane reads the selected report again at
+      most every 2 s (2 ms per photo for large batches, at most 15 s; the first change after a quiet
+      interval at once) and a batch's final report as soon as it finishes. Plans, submissions (which
+      import and hash), commands, status reads and reports run on the adapter's three single-thread
+      pools, so a long submission never delays Pause or Resume. Measured on the reference laptop
+      with the smoke fixtures, `--export-batch --measure`, 2026-10-04: the batch of five (four
+      exported, the DJI DNG left out as Unsupported, one review note for the X-Trans baseline
+      demosaic) took 14.1 s from process start to the final screenshot; the UI thread's largest gap
+      between 5 ms timer ticks during the run was 91 ms (median 17 ms, four gaps over 50 ms, none
+      over 100 ms). The adapter test runs a 24-photo batch through lucent-worker.exe and requires at
+      most one application of events per 200 ms and no UI-thread gap of a second.
+
 ## Consequences
 
 - The shell is testable end to end offscreen against the real services with synthetic DNGs
@@ -322,6 +420,11 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
   camera preview after being opened in Edit.
 - At 100 % with the clipping overlay on, a 45 MP frame holds about 180 MB for the image and as
   much for the overlay (only while the overlay is on).
+- *W7 (decision 14):* the Exports view lists the newest 100 batches and every unfinished one (every
+  single export is a batch); older finished ones are paged in with "Show older exports". Report
+  files exist for batches started from the dialog; single exports write none unless Open report is
+  chosen in the report pane. Live counts lag the service by up to 200 ms, the ETA, review and retry
+  counts by up to a second. The dialog's examples cover at most three photos.
 
 ## Alternatives considered
 

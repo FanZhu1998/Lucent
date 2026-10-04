@@ -60,6 +60,21 @@
 //                              screenshot.
 //   --scroll-panel <fraction>  With --open-first: scroll the Edit view's side panel (0 top, 1
 //                              bottom) before the screenshot, to show the history and details.
+//   --export-batch <folder>    W7: when the imports have finished, export every photo of <folder>
+//                              (and its subfolders with --include-subfolders) as one durable batch,
+//                              as the Export batch dialog's Start does: the folder is added to the
+//                              library first. Progress and the outcome are reported on stderr.
+//   --to <folder>              The output folder of --export-batch (required with it).
+//   --preset <jpeg|tiff>       The preset of --export-batch: JPEG / sRGB / quality 95 (default) or
+//                              16-bit TIFF (profile from --export-color-space, default sRGB).
+//   --show-batch-dialog        With --export-batch: open the Export batch dialog with these settings
+//                              instead of starting (a screenshot then shows its example paths).
+//   --screenshot-running <file.png>
+//                              With --export-batch: also save the window while the batch runs (once
+//                              a photo is exported and another remains), without waiting to settle.
+//   --quit-when-done           With --export-batch: exit when the batch has finished (after the
+//                              screenshots): 0 when no photo failed, 4 otherwise, 5 when the batch
+//                              could not be created.
 //
 // Progress lines ("lucent: ...") go to stderr, which a WIN32 program only has when the caller
 // redirects it (for example `Lucent.exe --screenshot a.png 2> log.txt`). Set
@@ -108,6 +123,13 @@ struct DeveloperOptions {
     QString compare;  // --compare: "", "before" or "split"
     bool clipping = false;
     std::optional<double> panel_scroll;  // --scroll-panel
+    // W7 batch automation (see the file comment).
+    QString batch_folder;  // --export-batch
+    QString batch_to;      // --to
+    bool batch_tiff = false;
+    bool show_batch_dialog = false;
+    QString running_screenshot_path;
+    bool quit_when_done = false;
 };
 
 struct CommandLine {
@@ -167,6 +189,14 @@ private:
     void send_mouse(QEvent::Type type, QPointF position);
     void report_edit_latency(const QString& what);
     void report_drag();
+    // W7 batch automation.
+    void start_batch();
+    void on_batch_changed(const BatchSnapshot& batch);
+    // True while the automation's batch is preparing, running, or finished without its final review
+    // count and report (the screenshot waits for them).
+    [[nodiscard]] bool batch_pending() const;
+    void take_running_screenshot();
+    void finish_when_done();
 
     DeveloperOptions options_;
     AppController& controller_;
@@ -205,6 +235,16 @@ private:
     qint64 drag_start_ms_ = -1;
     qint64 drag_release_ms_ = -1;
     std::vector<qint64> drag_gaps_ms_;
+
+    // --export-batch
+    quint64 batch_token_ = 0;
+    BatchId batch_id_ = 0;
+    bool batch_failed_to_start_ = false;
+    bool batch_finished_ = false;
+    bool batch_reported_ = false;
+    qint64 batch_last_done_ = -1;
+    bool running_shot_taken_ = false;
+    bool screenshot_done_ = false;
 };
 
 // Writes "lucent: <message>" and a newline to stderr (when the process has one).

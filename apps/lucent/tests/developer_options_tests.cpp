@@ -134,5 +134,29 @@ TEST(CommandLine, HelpAndVersion) {
     EXPECT_TRUE(version.message.startsWith(QStringLiteral("Lucent ")));
 }
 
+TEST(CommandLine, ParsesTheBatchAutomation) {
+    const CommandLine command_line =
+        parse({"--export-batch", "in", "--to", "out", "--preset", "TIFF", "--screenshot-running", "run.png",
+               "--quit-when-done"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    const DeveloperOptions& options = command_line.options;
+    EXPECT_EQ(options.batch_folder, QStringLiteral("in"));
+    EXPECT_EQ(options.batch_to, QStringLiteral("out"));
+    EXPECT_TRUE(options.batch_tiff);
+    EXPECT_EQ(options.running_screenshot_path, QStringLiteral("run.png"));
+    EXPECT_TRUE(options.quit_when_done);
+    EXPECT_FALSE(options.show_batch_dialog);
+    EXPECT_FALSE(parse({"--export-batch", "in", "--to", "out", "--preset", "jpeg"}).options.batch_tiff);
+    EXPECT_TRUE(parse({"--export-batch", "in", "--to", "out", "--show-batch-dialog"}).options.show_batch_dialog);
+
+    EXPECT_EQ(parse({"--export-batch", "in"}).action, CommandLine::Action::Error);  // no --to
+    EXPECT_EQ(parse({"--to", "out"}).action, CommandLine::Action::Error);
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--preset", "png"}).action, CommandLine::Action::Error);
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--screenshot-running", "a.jpg"}).action,
+              CommandLine::Action::Error);
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--show-batch-dialog", "--quit-when-done"}).action,
+              CommandLine::Action::Error);
+}
+
 }  // namespace
 }  // namespace lucent::ui

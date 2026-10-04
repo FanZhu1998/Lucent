@@ -1,5 +1,7 @@
 # lucent_export: output profiles (Little CMS), JPEG/TIFF encoders, write verification and
-# no-clobber publication (W2). Namespace lucent::exporter (`export` is a C++ keyword).
+# no-clobber publication (W2); EXIF metadata written by Lucent's own EXIF/TIFF code and libtiff's
+# custom directories, with no third-party EXIF library (W7). Namespace lucent::exporter (`export`
+# is a C++ keyword).
 #
 # Layout
 #   include/lucent/export/   public headers (no third-party types)
@@ -18,10 +20,16 @@ lucent_add_library(export
     SOURCES
         include/lucent/export/encode.hpp
         include/lucent/export/export.hpp
+        include/lucent/export/metadata.hpp
         include/lucent/export/output_profile.hpp
         include/lucent/export/thumbnail.hpp
         src/codecs.hpp
         src/encode.cpp
+        src/exif_format.hpp
+        src/exif_reader.cpp
+        src/exif_reader.hpp
+        src/exif_writer.cpp
+        src/exif_writer.hpp
         src/export.cpp
         src/fault_injection.hpp
         src/file_util.cpp
@@ -31,6 +39,7 @@ lucent_add_library(export
         src/jpeg_codec.cpp
         src/lcms_support.cpp
         src/lcms_support.hpp
+        src/metadata.cpp
         src/output_profile.cpp
         src/thumbnail.cpp
         src/tiff_codec.cpp
@@ -51,6 +60,7 @@ lucent_add_test(lucent_export_tests
         tests/export_test_support.hpp
         tests/encode_tests.cpp
         tests/export_tests.cpp
+        tests/metadata_tests.cpp
         tests/output_profile_tests.cpp
         tests/thumbnail_tests.cpp
     DEPS

@@ -44,6 +44,9 @@ QtObject {
     readonly property color unsupported: "#e2736b"
     readonly property color attention: "#dcaa52"
 
+    // Background of attention banners (W7: a batch the service paused); primary text keeps 4.5:1.
+    readonly property color attentionBackground: "#3a3020"
+
     // Scrim behind labels drawn on top of images.
     readonly property color scrim: "#b3141414"
 
@@ -100,6 +103,25 @@ QtObject {
             return accent
         case "removable":
             return unverified
+        }
+        return textTertiary
+    }
+
+    // Batch states (presentation::batch_state_key) and report outcomes (presentation::outcome_key).
+    function batchStateColor(key) {
+        switch (key) {
+        case "completed":
+        case "exported":
+            return verified
+        case "failed":
+            return unsupported
+        case "partial":
+        case "attention":
+            return attention
+        case "running":
+        case "waiting":
+            // Text: the focus-ring blue keeps 4.5:1 on surface and surfaceRaised (accent does not).
+            return focusRing
         }
         return textTertiary
     }

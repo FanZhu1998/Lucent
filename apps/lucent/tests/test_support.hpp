@@ -121,6 +121,63 @@ public:
     bool busy = false;
 };
 
+// A BatchService that records every call and emits what the test asks (view-model tests).
+class RecordingBatchService final : public BatchService {
+    Q_OBJECT
+
+public:
+    [[nodiscard]] bool is_available() const override { return available; }
+    [[nodiscard]] QString unavailable_reason() const override { return available ? QString() : reason; }
+    quint64 request_plan(const BatchSetup& setup) override {
+        plans.push_back(setup);
+        return ++last_token;
+    }
+    quint64 submit(const BatchSetup& setup) override {
+        submissions.push_back(setup);
+        return ++last_token;
+    }
+    void cancel_submit(quint64 token) override { cancelled_submissions.push_back(token); }
+    void pause(BatchId batch) override { commands.push_back({QStringLiteral("pause"), batch}); }
+    void resume(BatchId batch) override { commands.push_back({QStringLiteral("resume"), batch}); }
+    void use_replaced_folder(BatchId batch) override { commands.push_back({QStringLiteral("use_folder"), batch}); }
+    void load_older() override { ++older_loads; }
+    void cancel(BatchId batch) override { commands.push_back({QStringLiteral("cancel"), batch}); }
+    void retry_failed(BatchId batch) override { commands.push_back({QStringLiteral("retry"), batch}); }
+    void refresh() override { ++refreshes; }
+    void request_report(BatchId batch) override { reports.push_back(batch); }
+    void request_report_file(BatchId batch) override { report_files.push_back(batch); }
+    [[nodiscard]] bool is_busy() const override { return busy; }
+
+    void answer_plan(quint64 token, const BatchPlanInfo& plan) { emit plan_ready(token, plan); }
+    void progress(quint64 token, const QString& text, double fraction) {
+        emit submit_progress(token, text, fraction);
+    }
+    void finish_submit(quint64 token, BatchId batch, const QString& error = {}) {
+        emit submitted(token, batch, error);
+    }
+    void list(const QList<BatchSnapshot>& batches) { emit batches_listed(batches); }
+    void older(bool more) { emit older_batches(more); }
+    void change(const BatchSnapshot& batch) { emit batch_changed(batch); }
+    void answer_report(BatchId batch, const BatchReportInfo& report) { emit report_ready(batch, report); }
+    void answer_report_file(BatchId batch, const QString& path, const QString& error = {}) {
+        emit report_file_ready(batch, path, error);
+    }
+    void fail_command(BatchId batch, const QString& message) { emit command_failed(batch, message); }
+
+    bool available = true;
+    QString reason = QStringLiteral("Not available");
+    bool busy = false;
+    quint64 last_token = 0;
+    std::vector<BatchSetup> plans;
+    std::vector<BatchSetup> submissions;
+    std::vector<quint64> cancelled_submissions;
+    std::vector<std::pair<QString, BatchId>> commands;
+    int refreshes = 0;
+    int older_loads = 0;
+    std::vector<BatchId> reports;
+    std::vector<BatchId> report_files;
+};
+
 // An EditService that records every call and emits what the test asks (view-model tests).
 class RecordingEditService final : public EditService {
     Q_OBJECT
@@ -138,7 +195,9 @@ public:
 
     void open(ItemId item) override { record({"open", item}); }
     void close(ItemId item) override { record({"close", item}); }
-    void set_full_resolution(ItemId item, bool full) override { record({"set_full_resolution", item, 0, {}, 0, 0, full}); }
+    void set_full_resolution(ItemId item, bool full) override {
+        record({"set_full_resolution", item, 0, {}, 0, 0, full});
+    }
     void set_comparison(ItemId item, bool wanted) override { record({"set_comparison", item, 0, {}, 0, 0, wanted}); }
     void set_clipping(bool wanted) override { record({"set_clipping", 0, 0, {}, 0, 0, wanted}); }
     quint64 set_transient(ItemId item, const EditSettings& settings) override {
@@ -246,6 +305,7 @@ struct ScriptedServices {
     RecordingExportService* exports = nullptr;
     std::shared_ptr<ManualImageSource> images;
     RecordingEditService* edits = nullptr;
+    RecordingBatchService* batches = nullptr;
 };
 
 [[nodiscard]] ScriptedServices make_scripted_services();

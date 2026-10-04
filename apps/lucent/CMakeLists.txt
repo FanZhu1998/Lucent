@@ -25,6 +25,7 @@ qt_standard_project_setup(REQUIRES 6.11)
 # --- Service interfaces --------------------------------------------------------------------------
 
 add_library(lucent_ui_services STATIC
+    src/services/batch_service.hpp
     src/services/edit_service.cpp
     src/services/edit_service.hpp
     src/services/export_service.hpp
@@ -44,6 +45,8 @@ set_target_properties(lucent_ui_services PROPERTIES FOLDER "apps/lucent")
 # --- Adapters over the application services -----------------------------------------------------
 
 add_library(lucent_ui_adapters STATIC
+    src/adapters/app_batch_service.cpp
+    src/adapters/app_batch_service.hpp
     src/adapters/app_edit_service.cpp
     src/adapters/app_edit_service.hpp
     src/adapters/app_export_service.cpp
@@ -56,6 +59,8 @@ add_library(lucent_ui_adapters STATIC
     src/adapters/application_services.hpp
     src/adapters/backend.cpp
     src/adapters/backend.hpp
+    src/adapters/batch_conversions.cpp
+    src/adapters/batch_conversions.hpp
     src/adapters/conversions.cpp
     src/adapters/conversions.hpp
     src/adapters/edit_conversions.cpp
@@ -76,6 +81,9 @@ set(_lucent_qml_files
     qml/AdjustPanel.qml
     qml/AppHeader.qml
     qml/Badge.qml
+    qml/BatchExportDialog.qml
+    qml/BatchReportPane.qml
+    qml/BatchRow.qml
     qml/CopySettingsDialog.qml
     qml/EditView.qml
     qml/ExportDialog.qml
@@ -128,6 +136,14 @@ qt_add_qml_module(lucent_ui
         src/imaging/image_provider.hpp
         src/imaging/tone_curve_plot.cpp
         src/imaging/tone_curve_plot.hpp
+        src/models/batch_list_model.cpp
+        src/models/batch_list_model.hpp
+        src/models/batch_presentation.cpp
+        src/models/batch_presentation.hpp
+        src/models/batch_report_model.cpp
+        src/models/batch_report_model.hpp
+        src/models/batch_setup.cpp
+        src/models/batch_setup.hpp
         src/models/current_item.cpp
         src/models/current_item.hpp
         src/models/edit_history_model.cpp

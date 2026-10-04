@@ -67,6 +67,20 @@ lucent_add_library(application
         src/recipe_store.cpp
         src/recipe_service.cpp
         src/develop_preview.cpp
+
+        # Durable batch export (W7, ADR 0012): destinations and names, the batch service (journal,
+        # scheduler over lucent-worker processes, publication, recovery) and its reports.
+        include/lucent/application/batch_destination.hpp
+        include/lucent/application/batch_service.hpp
+        src/batch_destination.cpp
+        src/batch_documents.hpp
+        src/batch_documents.cpp
+        src/batch_service_impl.hpp
+        src/batch_service.cpp
+        src/batch_scheduler.cpp
+        src/batch_report.cpp
+        src/output_publication.hpp
+        src/output_publication.cpp
     PUBLIC_DEPS
         Lucent::core
         Lucent::image
@@ -74,6 +88,7 @@ lucent_add_library(application
         Lucent::engine
         Lucent::export
         Lucent::catalog
+        Lucent::workers
     PRIVATE_DEPS
         nlohmann_json::nlohmann_json
 )
@@ -119,6 +134,63 @@ if(TARGET lucent_application_tests)
     target_include_directories(lucent_application_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_SOURCE_DIR}/src/raw/tests")
+endif()
+
+# Durable batches (W7, ADR 0012) with real lucent-worker processes over synthetic DNGs, and the
+# helper coordinator process the recovery tests start and kill between publication steps.
+if(LUCENT_BUILD_TESTS)
+    add_executable(lucent_batch_test_coordinator tests/batch_coordinator_main.cpp)
+    target_link_libraries(lucent_batch_test_coordinator PRIVATE Lucent::compiler_options Lucent::application)
+    target_compile_definitions(lucent_batch_test_coordinator PRIVATE
+        LUCENT_WORKER_EXE="$<TARGET_FILE:lucent-worker>")
+    set_target_properties(lucent_batch_test_coordinator PROPERTIES FOLDER "tests")
+
+    lucent_add_test(lucent_batch_tests
+        SOURCES
+            tests/batch_test_support.hpp
+            tests/batch_destination_test.cpp
+            tests/output_publication_test.cpp
+            tests/batch_service_test.cpp
+            tests/batch_recovery_test.cpp
+        DEPS
+            Lucent::application
+            nlohmann_json::nlohmann_json
+        LABELS
+            application workers integration
+    )
+    target_include_directories(lucent_batch_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/raw/tests")
+    target_compile_definitions(lucent_batch_tests PRIVATE
+        LUCENT_WORKER_EXE="$<TARGET_FILE:lucent-worker>"
+        LUCENT_BATCH_COORDINATOR_EXE="$<TARGET_FILE:lucent_batch_test_coordinator>")
+    add_dependencies(lucent_batch_tests lucent-worker lucent_batch_test_coordinator)
+
+    # The smoke fixtures through real workers: full-resolution renders, so they hold the render lock.
+    add_executable(lucent_batch_fixture_tests
+        tests/batch_test_support.hpp
+        tests/batch_fixture_test.cpp
+    )
+    target_link_libraries(lucent_batch_fixture_tests PRIVATE
+        Lucent::compiler_options
+        GTest::gtest
+        GTest::gtest_main
+        Lucent::application
+    )
+    target_compile_definitions(lucent_batch_fixture_tests PRIVATE
+        LUCENT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        LUCENT_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/fixtures"
+        LUCENT_WORKER_EXE="$<TARGET_FILE:lucent-worker>")
+    target_include_directories(lucent_batch_fixture_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/raw/tests")
+    set_target_properties(lucent_batch_fixture_tests PROPERTIES FOLDER "tests")
+    add_dependencies(lucent_batch_fixture_tests lucent-worker)
+    gtest_discover_tests(lucent_batch_fixture_tests
+        DISCOVERY_MODE PRE_TEST
+        PROPERTIES
+            LABELS "application;workers;fixtures"
+            RESOURCE_LOCK lucent_full_resolution_render)
 endif()
 
 # Camera-fixture tests (skipped when fixtures/cache is absent): import of the smoke fixtures,

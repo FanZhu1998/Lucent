@@ -8,7 +8,11 @@ import Lucent
 
 // Library: the contact sheet (blueprint section 2, "Import and organize"). Arrow keys move the
 // selection, Enter opens the selected photo in Edit, Home/End jump to the first/last photo. The
-// toolbar offers Relink when photos are missing, and the Library menu backs up the catalog.
+// toolbar offers Relink when photos are missing, and the Library menu backs up the catalog. W7:
+// Ctrl+click adds or removes a photo, Shift+click selects a range, Ctrl+A selects every photo, and
+// Export batch exports the selection, every listed photo or a folder. From the keyboard,
+// Shift+Arrow / Home / End / Page Up / Page Down extend the selection from its anchor, Ctrl+Arrow
+// moves without changing it and Ctrl+Space adds or removes the current photo.
 FocusScope {
     id: root
 
@@ -55,6 +59,14 @@ FocusScope {
                 Label {
                     text: grid.count === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(grid.count)
                     color: Theme.textSecondary
+                    font.pixelSize: Theme.fontBody
+                }
+
+                Label {
+                    objectName: "selectionSummary"
+                    visible: root.controller.library.selectedCount > 1
+                    text: qsTr("· %1 selected").arg(root.controller.library.selectedCount)
+                    color: Theme.accent
                     font.pixelSize: Theme.fontBody
                 }
 
@@ -109,7 +121,23 @@ FocusScope {
                             text: qsTr("Relink missing photos…")
                             onTriggered: relinkPicker.open()
                         }
+                        MenuItem {
+                            objectName: "exportFolderBatchItem"
+                            enabled: root.controller.batchesAvailable
+                            text: qsTr("Export a folder…")
+                            onTriggered: batchFolderPicker.open()
+                        }
                     }
+                }
+
+                StyledButton {
+                    objectName: "exportBatchButton"
+                    visible: root.controller.batchesAvailable
+                    text: qsTr("Export batch…")
+                    onClicked: root.controller.openBatchExport()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Export the selected photos, all photos or a folder into a folder you choose (Ctrl+Shift+E)")
+                    ToolTip.delay: 600
                 }
 
                 StyledButton {
@@ -147,6 +175,26 @@ FocusScope {
                 highlightFollowsCurrentItem: false
                 currentIndex: -1
 
+                // True while a Ctrl or Shift click or key moves the current photo: the selection is theirs.
+                property bool keepSelection: false
+
+                // Moves the current photo for a navigation key without touching the selection.
+                function moveFor(key) {
+                    const page = columns * Math.max(1, Math.floor(height / cellHeight))
+                    keepSelection = true
+                    switch (key) {
+                    case Qt.Key_Left: moveCurrentIndexLeft(); break
+                    case Qt.Key_Right: moveCurrentIndexRight(); break
+                    case Qt.Key_Up: moveCurrentIndexUp(); break
+                    case Qt.Key_Down: moveCurrentIndexDown(); break
+                    case Qt.Key_Home: currentIndex = 0; break
+                    case Qt.Key_End: currentIndex = count - 1; break
+                    case Qt.Key_PageUp: currentIndex = Math.max(0, currentIndex - page); break
+                    case Qt.Key_PageDown: currentIndex = Math.min(count - 1, currentIndex + page); break
+                    }
+                    keepSelection = false
+                }
+
                 readonly property int columns: Math.max(1, Math.floor(width / 230))
                 cellWidth: Math.floor(width / columns)
                 // Image well (3:2 inside the frame margins) plus four lines of text.
@@ -165,8 +213,24 @@ FocusScope {
                     height: grid.cellHeight
                     selected: GridView.isCurrentItem
                     showFocus: GridView.isCurrentItem && grid.activeFocus
+                    multipleSelected: root.controller.library.selectedCount > 1
                     onClicked: {
                         grid.currentIndex = index
+                        root.controller.library.selectOnly(index)
+                        grid.forceActiveFocus(Qt.MouseFocusReason)
+                    }
+                    onToggleRequested: {
+                        grid.keepSelection = true
+                        grid.currentIndex = index
+                        grid.keepSelection = false
+                        root.controller.library.toggleSelected(index)
+                        grid.forceActiveFocus(Qt.MouseFocusReason)
+                    }
+                    onRangeRequested: {
+                        grid.keepSelection = true
+                        grid.currentIndex = index
+                        grid.keepSelection = false
+                        root.controller.library.selectRange(index)
                         grid.forceActiveFocus(Qt.MouseFocusReason)
                     }
                     onActivated: root.controller.openItem(index)
@@ -179,6 +243,9 @@ FocusScope {
                         positionViewAtIndex(currentIndex, GridView.Contain)
                     if (currentIndex !== root.controller.currentIndex)
                         root.controller.currentIndex = currentIndex
+                    // Moving with the keyboard (or opening another photo) selects just that photo.
+                    if (!keepSelection && currentIndex >= 0)
+                        root.controller.library.selectOnly(currentIndex)
                 }
                 onActiveFocusChanged: {
                     if (activeFocus && currentIndex < 0 && count > 0)
@@ -188,11 +255,32 @@ FocusScope {
                 Keys.onReturnPressed: root.controller.openItem(currentIndex)
                 Keys.onEnterPressed: root.controller.openItem(currentIndex)
                 Keys.onPressed: event => {
+                    const navigation = [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Home, Qt.Key_End,
+                                        Qt.Key_PageUp, Qt.Key_PageDown]
+                    const shift = (event.modifiers & Qt.ShiftModifier) !== 0
+                    const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+                    if ((shift || ctrl) && navigation.includes(event.key) && count > 0) {
+                        if (currentIndex < 0)
+                            currentIndex = 0
+                        moveFor(event.key)
+                        if (shift)
+                            root.controller.library.selectRange(currentIndex)  // from the anchor
+                        event.accepted = true
+                        return
+                    }
+                    if (ctrl && event.key === Qt.Key_Space && currentIndex >= 0) {
+                        root.controller.library.toggleSelected(currentIndex)
+                        event.accepted = true
+                        return
+                    }
                     if (event.key === Qt.Key_Home && count > 0) {
                         currentIndex = 0
                         event.accepted = true
                     } else if (event.key === Qt.Key_End && count > 0) {
                         currentIndex = count - 1
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier)) {
+                        root.controller.library.selectAll()
                         event.accepted = true
                     }
                 }
@@ -202,9 +290,21 @@ FocusScope {
                 target: root.controller
 
                 function onCurrentIndexChanged() {
-                    if (grid.currentIndex !== root.controller.currentIndex)
+                    if (grid.currentIndex !== root.controller.currentIndex) {
+                        // Another photo opened elsewhere (the Edit filmstrip): a selection of several
+                        // photos stays as it is.
+                        grid.keepSelection = root.controller.library.selectedCount > 1
                         grid.currentIndex = root.controller.currentIndex
+                        grid.keepSelection = false
+                    }
                 }
+            }
+
+            FolderDialog {
+                id: batchFolderPicker
+
+                title: qsTr("Choose the folder of photos to export")
+                onAccepted: root.controller.openFolderBatchExport(selectedFolder)
             }
 
             FolderDialog {
@@ -223,6 +323,7 @@ FocusScope {
                 controller: root.controller
                 onAddPhotosRequested: root.addPhotosRequested()
                 onAddFolderRequested: root.addFolderRequested()
+                onExportFolderRequested: batchFolderPicker.open()
             }
         }
     }

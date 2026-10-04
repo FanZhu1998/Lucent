@@ -7,6 +7,7 @@ AbstractButton {
     id: control
 
     property string badgeText  // e.g. a count of running exports; empty for none
+    property bool badgeAttention: false  // something there needs the user (W7: a paused batch)
 
     checkable: false  // "checked" is bound to the current view by the header
     focusPolicy: Qt.StrongFocus
@@ -14,7 +15,8 @@ AbstractButton {
     implicitHeight: Theme.toolbarHeight
 
     Accessible.role: Accessible.PageTab
-    Accessible.name: badgeText.length > 0 ? text + ", " + badgeText : text
+    Accessible.name: (badgeText.length > 0 ? text + ", " + badgeText : text)
+                     + (badgeAttention ? ", " + qsTr("needs attention") : "")
 
     contentItem: Item {
         Row {
@@ -31,19 +33,22 @@ AbstractButton {
             }
 
             Rectangle {
+                objectName: "navBadge"
                 anchors.verticalCenter: parent.verticalCenter
-                visible: control.badgeText.length > 0
+                visible: control.badgeText.length > 0 || control.badgeAttention
                 implicitWidth: badgeLabel.implicitWidth + 10
                 implicitHeight: 16
                 radius: 8
-                color: Theme.accentMuted
+                color: control.badgeAttention ? Theme.attention : Theme.accentMuted
 
                 Text {
                     id: badgeLabel
                     anchors.centerIn: parent
-                    text: control.badgeText
-                    color: Theme.textPrimary
+                    text: control.badgeAttention ? "! " + control.badgeText : control.badgeText
+                    // Dark text on the amber attention badge keeps 4.5:1.
+                    color: control.badgeAttention ? Theme.window : Theme.textPrimary
                     font.pixelSize: Theme.fontSmall
+                    font.weight: control.badgeAttention ? Font.DemiBold : Font.Normal
                 }
             }
         }

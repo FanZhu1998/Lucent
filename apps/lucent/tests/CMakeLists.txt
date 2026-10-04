@@ -11,6 +11,7 @@
 find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
 
 add_library(lucent_ui_fakes STATIC
+    fakes/fake_batch_service.cpp
     fakes/fake_edit_service.cpp
     fakes/fake_export_service.cpp
     fakes/fake_image_source.cpp
@@ -30,6 +31,8 @@ add_executable(lucent_ui_tests
     app_controller_tests.cpp
     app_edit_service_tests.cpp
     application_adapters_tests.cpp
+    batch_adapter_tests.cpp
+    batch_models_tests.cpp
     application_shell_tests.cpp
     catalog_adapters_tests.cpp
     developer_options_tests.cpp
@@ -49,7 +52,8 @@ target_include_directories(lucent_ui_tests PRIVATE
     "${CMAKE_SOURCE_DIR}/src/raw/tests")
 target_compile_definitions(lucent_ui_tests PRIVATE
     LUCENT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-    LUCENT_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/fixtures")
+    LUCENT_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/fixtures"
+    LUCENT_WORKER_EXE="$<TARGET_FILE:lucent-worker>")
 target_link_libraries(lucent_ui_tests PRIVATE
     Lucent::compiler_options
     GTest::gtest
@@ -59,7 +63,8 @@ target_link_libraries(lucent_ui_tests PRIVATE
     lucent_ui_adapters
     Qt6::Test)
 set_target_properties(lucent_ui_tests PROPERTIES FOLDER "tests")
-add_dependencies(lucent_ui_tests lucent_ui_runtime)
+# The batch adapter tests run the real durable batches, which start lucent-worker.exe processes.
+add_dependencies(lucent_ui_tests lucent_ui_runtime lucent-worker)
 
 gtest_discover_tests(lucent_ui_tests
     DISCOVERY_MODE PRE_TEST

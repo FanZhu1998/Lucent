@@ -2,19 +2,25 @@
 #include <array>
 #include <condition_variable>
 #include <exception>
+#include <chrono>
 #include <format>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include <lucent/application/batch_destination.hpp>
+#include <lucent/application/batch_service.hpp>
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/recipe_service.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/export/encode.hpp>
+#include <lucent/export/metadata.hpp>
 
 #include "win32_paths.hpp"
 
@@ -34,20 +40,6 @@ constexpr std::uint64_t kFileOverheadBytes = std::uint64_t{1} << 20;
 
 double seconds_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-}
-
-bool is_reserved_device_name(std::wstring_view stem) {
-    const std::wstring base = detail::fold_case(stem.substr(0, stem.find(L'.')));
-    static constexpr std::array<std::wstring_view, 4> kPlain = {L"CON", L"PRN", L"AUX", L"NUL"};
-    if (std::find(kPlain.begin(), kPlain.end(), base) != kPlain.end()) {
-        return true;
-    }
-    if (base.size() == 4 && (base.starts_with(L"COM") || base.starts_with(L"LPT"))) {
-        const wchar_t digit = base[3];
-        // Windows also reserves the superscript digits 1-3 after COM / LPT.
-        return (digit >= L'0' && digit <= L'9') || digit == L'¹' || digit == L'²' || digit == L'³';
-    }
-    return false;
 }
 
 // Overall progress fraction for a render that is `done` (0..1) complete.
@@ -86,6 +78,41 @@ std::string reasons_text(const SupportAssessment& support) {
         text += text.empty() ? reason.message : "; " + reason.message;
     }
     return text;
+}
+
+// ---- Exports through a batch of one (W7) --------------------------------------------------------
+
+ExportStage export_stage_of(workers::JobStage stage) {
+    switch (stage) {
+        case workers::JobStage::Preparing:
+            return ExportStage::Preparing;
+        case workers::JobStage::Rendering:
+            return ExportStage::Rendering;
+        case workers::JobStage::Encoding:
+            return ExportStage::Encoding;
+        case workers::JobStage::Writing:
+        case workers::JobStage::Verifying:
+            return ExportStage::Writing;
+    }
+    return ExportStage::Preparing;
+}
+
+bool batch_finished(const catalog::BatchRecord& record) {
+    return record.state == catalog::BatchState::Completed ||
+           (record.state == catalog::BatchState::Cancelled && record.counts.leased() == 0);
+}
+
+// The settings can be reproduced from the catalog after a restart: a recipe revision, or as shot.
+bool reproducible(const ExportRequest& request) {
+    if (!request.settings) {
+        return false;
+    }
+    if (request.recipe_revision) {
+        return true;
+    }
+    auto given = write_recipe(*request.settings);
+    auto as_shot = write_recipe(engine::DevelopSettings{});
+    return given && as_shot && given->sha256 == as_shot->sha256;
 }
 
 }  // namespace
@@ -363,18 +390,238 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
                 std::string(kWhereName));
 }
 
+namespace {
+
+Expected<ExportRecord> export_through_batch(BatchService& batches, Library& library, const SourceItem& item,
+                                            const ExportRequest& request, const ExportProgressCallback& progress,
+                                            const core::CancellationToken& cancel) {
+    using namespace std::chrono_literals;
+    const auto start = std::chrono::steady_clock::now();
+    ProgressReporter reporter(item.id, progress);
+    reporter.report(ExportStage::Preparing, 0.0);
+    if (!request.settings) {
+        return fail(ErrorCode::InvalidArgument, "the export's recipe was not resolved", "app.export.recipe");
+    }
+    auto identity = recipe_identity(*request.settings, request.recipe_revision, request.recipe_revision_number);
+    if (!identity) {
+        return Unexpected(std::move(identity.error()));
+    }
+    if (auto valid = request.output.validate(); !valid) {
+        return Unexpected(std::move(valid.error()));
+    }
+    if (request.output_directory.empty()) {
+        return fail(ErrorCode::InvalidArgument, "no output directory was given", std::string(kWhereDestination));
+    }
+    // The checks of export_item(), with its errors, before anything is written.
+    if (item.support.status == SupportStatus::Unsupported && !request.allow_unsupported) {
+        return fail(ErrorCode::Unsupported,
+                    std::format("'{}' is not supported: {}", core::path_to_utf8_lossy(item.path),
+                                reasons_text(item.support)),
+                    std::string(kWhereSupport));
+    }
+    if (!detail::is_directory(request.output_directory)) {
+        return fail(ErrorCode::NotFound,
+                    std::format("the output directory '{}' does not exist",
+                                core::path_to_utf8_lossy(request.output_directory)),
+                    std::string(kWhereDestination));
+    }
+    if (item.source_state == SourceState::Missing) {
+        return fail(ErrorCode::NotFound, std::format("'{}' is missing", core::path_to_utf8_lossy(item.path)),
+                    "app.export.source");
+    }
+    if (item.source_state == SourceState::Changed) {
+        return fail(ErrorCode::SourceChanged,
+                    std::format("'{}' changed after it was added; add it again", core::path_to_utf8_lossy(item.path)),
+                    "app.export.source");
+    }
+
+    BatchRequest batch;
+    batch.name = "Export of " + core::path_to_utf8_lossy(item.path.filename());
+    batch.items.push_back(BatchItem{item.id, FrozenRecipe{*request.settings, request.recipe_revision,
+                                                          request.recipe_revision_number}});
+    batch.destination.folder = request.output_directory;
+    batch.destination.name_pattern = std::string(kSingleExportNamePattern);
+    batch.destination.collisions = CollisionPolicy::UniqueName;
+    batch.output = request.output;
+    batch.existing_outputs = ExistingOutputs::ExportAgain;
+    batch.allow_unsupported = request.allow_unsupported;
+    batch.write_report_files = false;
+    batch.single_export = true;
+
+    struct Shared {
+        std::mutex mutex;
+        std::condition_variable changed;
+        std::optional<catalog::BatchId> id;
+        bool finished = false;
+        std::optional<ExportProgress> progress;
+        std::optional<Error> attention;
+    };
+    auto shared = std::make_shared<Shared>();
+    Subscription subscription = batches.subscribe([shared, item_id = item.id](const BatchEvent& event) {
+        {
+            std::lock_guard lock(shared->mutex);
+            if (!shared->id || event.batch != *shared->id) {
+                return;
+            }
+            switch (event.kind) {
+                case BatchEventKind::JobProgress:
+                    shared->progress =
+                        ExportProgress{item_id, export_stage_of(event.worker_stage), 0.02 + 0.95 * event.fraction};
+                    break;
+                case BatchEventKind::Attention:
+                    shared->attention = event.error.value_or(
+                        Error{ErrorCode::IoError, "the destination cannot be used", "app.export.destination", 0});
+                    break;
+                case BatchEventKind::Finished:
+                    shared->finished = true;
+                    break;
+                default:
+                    return;
+            }
+        }
+        shared->changed.notify_all();
+    });
+    auto submitted = batches.submit(batch, {}, cancel);
+    if (!submitted) {
+        return Unexpected(std::move(submitted.error()));
+    }
+    const catalog::BatchId id = submitted->id;
+    {
+        std::lock_guard lock(shared->mutex);
+        shared->id = id;
+    }
+    bool cancel_sent = false;
+    std::optional<Error> attention;
+    for (std::uint32_t tick = 1;; ++tick) {
+        std::optional<ExportProgress> step;
+        bool finished = false;
+        {
+            std::unique_lock lock(shared->mutex);
+            shared->changed.wait_for(lock, 200ms, [&] {
+                return shared->finished || shared->progress || (shared->attention && !attention) ||
+                       (cancel.is_cancelled() && !cancel_sent);
+            });
+            finished = shared->finished;
+            step = std::exchange(shared->progress, std::nullopt);
+            if (shared->attention && !attention) {
+                attention = shared->attention;
+            }
+        }
+        if (step) {
+            reporter.report(step->stage, step->fraction);
+        }
+        if (finished) {
+            break;
+        }
+        if ((cancel.is_cancelled() || attention) && !cancel_sent) {
+            // A single export does not wait for a full disk or a reconnected drive: it fails, as in W3.
+            // The reason is recorded on the cancelled job, so the Exports view and the report say why.
+            cancel_sent = true;
+            if (Status cancelled = batches.cancel(id, attention); !cancelled) {
+                core::log_warn(kWhere, "cannot cancel batch {}: {}", id.value, cancelled.error().describe());
+            }
+        }
+        if (tick % 10 == 0) {  // a backstop for a missed event
+            if (auto status = batches.status(id); status && batch_finished(status->record)) {
+                break;
+            }
+        }
+    }
+    subscription.reset();
+    auto report = batches.report(id);
+    if (!report) {
+        return Unexpected(std::move(report.error()));
+    }
+    const ReportEntry* entry = nullptr;
+    for (const ReportEntry& candidate : report->entries) {
+        if (candidate.item == item.id) {
+            entry = &candidate;
+            break;
+        }
+    }
+    if (entry == nullptr || entry->outcome != ReportOutcome::Exported || !entry->output || !entry->details) {
+        if (attention) {
+            return Unexpected(std::move(*attention));
+        }
+        if (cancel.is_cancelled() || (entry != nullptr && entry->outcome == ReportOutcome::Cancelled)) {
+            return fail(ErrorCode::Cancelled, "the export was cancelled", std::string(kWhere));
+        }
+        if (entry != nullptr && entry->error) {
+            return Unexpected(*entry->error);
+        }
+        return fail(ErrorCode::Internal, "the export's batch ended without a result", std::string(kWhere));
+    }
+    const ReceiptDetails& details = *entry->details;
+    ExportRecord record;
+    record.item = item.id;
+    record.source_path = item.path;
+    record.subimage = item.subimage;
+    record.source_identity = item.identity;
+    record.source_sha256 = item.sha256;
+    if (std::optional<SourceItem> now = library.find(item.id); now && now->sha256) {
+        record.source_sha256 = now->sha256;  // hashed for the batch when it had no hash yet
+    }
+    record.settings_revision = request.settings_revision;
+    record.settings = *request.settings;
+    record.recipe = std::move(*identity);
+    record.support = item.support.status;
+    exporter::ExportReceipt& receipt = record.receipt;
+    receipt.path = *entry->output;
+    receipt.format = details.format;
+    receipt.profile = details.profile;
+    receipt.bit_depth = details.bit_depth;
+    receipt.width = static_cast<std::int32_t>(details.width);
+    receipt.height = static_cast<std::int32_t>(details.height);
+    receipt.byte_size = entry->size_bytes;
+    receipt.sha256 = entry->sha256.value_or(core::Digest256{});
+    receipt.icc_sha256 = details.icc_sha256;
+    receipt.settings = details.settings;
+    receipt.chroma_subsampling = details.chroma_subsampling.value_or(exporter::ChromaSubsampling::Yuv444);
+    receipt.encoder = details.encoder;
+    if (auto metadata = exporter::read_export_metadata(receipt.path)) {
+        receipt.metadata = std::move(*metadata);
+    }
+    receipt.metadata_notes = details.metadata_notes;
+    record.name_index = details.name_index;
+    record.publication_attempts = details.attempt;
+    RenderSummary& render = record.render;
+    render.pipeline_version = details.pipeline_version;
+    render.look = details.look;
+    render.look_version = details.look_version;
+    render.interpretation = details.interpretation;
+    render.warnings = details.warnings;
+    render.rendered_size =
+        image::Size{static_cast<std::int32_t>(details.width), static_cast<std::int32_t>(details.height)};
+    render.demosaic = details.demosaic;
+    render.camera_color = details.camera_color;
+    render.clipped_raw_samples = details.clipped_raw_samples;
+    render.limited_display_pixels = details.limited_display_pixels;
+    render.estimated_peak_bytes = details.estimated_peak_bytes;
+    render.render_seconds = details.render_seconds;
+    record.render_seconds = details.render_seconds;
+    record.encode_seconds = details.encode_seconds;
+    record.write_seconds = details.write_seconds + details.verify_seconds;
+    record.total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    record.finished_at = std::chrono::system_clock::now();
+    reporter.report(ExportStage::Finished, 1.0);
+    return record;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------------------------
 // ExportService
 // ---------------------------------------------------------------------------------------------
 
 struct ExportService::State {
-    State(Library& l, TaskExecutor& e, std::shared_ptr<const SourceRenderer> r, RecipeService* rs)
-        : library(l), executor(e), renderer(std::move(r)), recipes(rs) {}
+    State(Library& l, TaskExecutor& e, std::shared_ptr<const SourceRenderer> r, RecipeService* rs, BatchService* b)
+        : library(l), executor(e), renderer(std::move(r)), recipes(rs), batches(b) {}
 
     Library& library;
     TaskExecutor& executor;
     std::shared_ptr<const SourceRenderer> renderer;
     RecipeService* recipes;
+    BatchService* batches;
 
     std::mutex mutex;
     std::condition_variable idle;
@@ -388,8 +635,12 @@ struct ExportService::State {
         Expected<ExportRecord> result =
             fail(ErrorCode::Cancelled, "the export was cancelled", std::string(kWhere));
         try {
-            result = export_item(item, request, *renderer, &context.admission(), context.lane(), progress,
-                                 context.cancel());
+            if (batches != nullptr && library.capabilities().persistent && reproducible(request)) {
+                result = export_through_batch(*batches, library, item, request, progress, context.cancel());
+            } else {
+                result = export_item(item, request, *renderer, &context.admission(), context.lane(), progress,
+                                     context.cancel());
+            }
         } catch (const std::bad_alloc&) {
             result = fail(ErrorCode::OutOfMemory, "the export ran out of memory", std::string(kWhere));
         } catch (const std::exception& e) {
@@ -416,8 +667,9 @@ struct ExportService::State {
 };
 
 ExportService::ExportService(Library& library, TaskExecutor& executor,
-                             std::shared_ptr<const SourceRenderer> renderer, RecipeService* recipes)
-    : state_(std::make_shared<State>(library, executor, std::move(renderer), recipes)) {}
+                             std::shared_ptr<const SourceRenderer> renderer, RecipeService* recipes,
+                             BatchService* batches)
+    : state_(std::make_shared<State>(library, executor, std::move(renderer), recipes, batches)) {}
 
 ExportService::~ExportService() {
     std::unique_lock lock(state_->mutex);

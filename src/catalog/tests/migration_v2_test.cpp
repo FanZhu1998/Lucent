@@ -21,7 +21,18 @@ namespace {
 
 using namespace test;
 
-static_assert(kSchemaVersion == 2, "these tests describe the v1 -> v2 migration");
+// Written for schema v2; later builds migrate a v1 catalog through v2 to kSchemaVersion, and the
+// v2 expectations below hold for every later (additive) version.
+static_assert(kSchemaVersion >= 2, "these tests describe the v1 -> v2 migration");
+
+// The versions a v1 catalog passes through when this build opens it: 2, 3, ..., kSchemaVersion.
+std::vector<std::int32_t> versions_after_v1() {
+    std::vector<std::int32_t> versions;
+    for (std::int32_t v = 2; v <= kSchemaVersion; ++v) {
+        versions.push_back(v);
+    }
+    return versions;
+}
 
 // The migrations of a schema-v1 (W4) build.
 std::span<const detail::Migration> v1_build() {
@@ -163,13 +174,13 @@ TEST(CatalogSchemaV2, MigratesAPopulatedV1CatalogAfterABackup) {
 
     std::filesystem::path backup_path;
     {
-        std::unique_ptr<Catalog> catalog = open_or_fail(path);  // this build: v2
+        std::unique_ptr<Catalog> catalog = open_or_fail(path);  // this build: v2 or later
         ASSERT_NE(catalog, nullptr);
         const SchemaStatus& schema = catalog->schema();
         EXPECT_EQ(schema.found_version, 1);
-        EXPECT_EQ(schema.version, 2);
+        EXPECT_EQ(schema.version, kSchemaVersion);
         EXPECT_FALSE(schema.created);
-        EXPECT_EQ(schema.migrations_applied, std::vector<std::int32_t>{2});
+        EXPECT_EQ(schema.migrations_applied, versions_after_v1());
         ASSERT_TRUE(schema.pre_migration_backup.has_value());
         EXPECT_EQ(schema.pre_migration_backup->kind, BackupKind::PreMigration);
         EXPECT_EQ(schema.pre_migration_backup->schema_version, 1);
@@ -212,7 +223,7 @@ TEST(CatalogSchemaV2, MigratesAPopulatedV1CatalogAfterABackup) {
     {
         std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
         ASSERT_NE(raw, nullptr);
-        EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), 2);
+        EXPECT_EQ(query_int(*raw, "PRAGMA user_version"), kSchemaVersion);
         EXPECT_EQ(dump_v1_table(*raw, "sources"), before[0]);
         EXPECT_EQ(dump_v1_table(*raw, "items"), before[1]);
         EXPECT_EQ(dump_v1_table(*raw, "imports"), before[2]);
@@ -221,11 +232,9 @@ TEST(CatalogSchemaV2, MigratesAPopulatedV1CatalogAfterABackup) {
                             "f_number IS NULL AND focal_length_mm IS NULL AND image_count IS NULL"),
                   41);
         EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM items WHERE current_revision_id IS NOT NULL"), 1);
-        EXPECT_EQ(query_text(*raw,
-                             "SELECT group_concat(version, ',') FROM (SELECT version FROM schema_history "
-                             "ORDER BY version)"),
-                  "1,2");
-        EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"), "2");
+        EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM schema_history"), kSchemaVersion);
+        EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"),
+                  std::to_string(kSchemaVersion));
         EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "2");
         EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM pragma_foreign_key_check"), 0);
         EXPECT_EQ(query_text(*raw, "PRAGMA integrity_check"), "ok");
@@ -248,7 +257,7 @@ TEST(CatalogSchemaV2, MigratesAPopulatedV1CatalogAfterABackup) {
     EXPECT_EQ(restored->restored_schema_version, 1);
     std::unique_ptr<Catalog> again = open_or_fail(path);
     ASSERT_NE(again, nullptr);
-    EXPECT_EQ(again->schema().migrations_applied, std::vector<std::int32_t>{2});
+    EXPECT_EQ(again->schema().migrations_applied, versions_after_v1());
     Expected<std::uint64_t> count =
         again->query([](ReadTransaction& tx) { return tx.count_items(ItemFilter{}); });
     LUCENT_ASSERT_OK(count);
@@ -407,9 +416,10 @@ TEST(CatalogSchemaV2, AnUnknownRevisionOriginIsListedAsUnknownInEveryCatalog) {
         std::unique_ptr<detail::Connection> raw = raw_connection(path);
         ASSERT_NE(raw, nullptr);
         LUCENT_ASSERT_OK(
-            raw->exec("PRAGMA user_version = 3;"
-                      "UPDATE catalog_meta SET value = '3' WHERE key = 'schema_version';"
-                      "UPDATE catalog_meta SET value = '9.0.0' WHERE key = 'written_by';",
+            raw->exec(std::format("PRAGMA user_version = {0};"
+                                  "UPDATE catalog_meta SET value = '{0}' WHERE key = 'schema_version';"
+                                  "UPDATE catalog_meta SET value = '9.0.0' WHERE key = 'written_by';",
+                                  kSchemaVersion + 1),
                       "test"));
     }
     std::unique_ptr<Catalog> newer = open_or_fail(path);

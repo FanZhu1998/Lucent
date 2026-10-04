@@ -7,7 +7,7 @@ import Lucent
 
 // The application window: Library, Edit and Exports are three views of one window (blueprint
 // section 2). Global keys: Ctrl+O add photos, Ctrl+Shift+O add a folder, Ctrl+Alt+1/2/3 switch
-// views, Esc goes back (Edit to Library, Exports to the previous view).
+// views, Ctrl+Shift+E export a batch, Esc goes back (Edit to Library, Exports to the previous view).
 ApplicationWindow {
     id: window
 
@@ -179,5 +179,18 @@ ApplicationWindow {
         id: importDialog
 
         controller: window.controller
+    }
+
+    // W7: opens on AppController.batchExportRequested (Export batch in the Library, Ctrl+Shift+E).
+    BatchExportDialog {
+        id: batchExportDialog
+
+        controller: window.controller
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+E"
+        enabled: window.controller.batchesAvailable && window.controller.library.count > 0
+        onActivated: window.controller.openBatchExport()
     }
 }

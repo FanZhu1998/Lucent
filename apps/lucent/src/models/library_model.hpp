@@ -6,6 +6,10 @@
 // registry is updated before rows are inserted or dataChanged is emitted, so an image URL the
 // model hands out is always current in the registry.
 //
+// W7: the photos selected for a batch (Ctrl+click toggles, Shift+click selects a range, Ctrl+A all)
+// are kept here by item id, in row order when read; a plain click or keyboard move selects the
+// current photo only.
+//
 // QML-facing members use QML naming (lowerCamelCase); C++-only members use snake_case.
 //
 // Thread-safety: UI thread only (like every QAbstractItemModel). The registry it writes is
@@ -14,6 +18,8 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+#include <QSet>
 
 #include <QAbstractListModel>
 #include <QHash>
@@ -32,6 +38,8 @@ class LibraryModel : public QAbstractListModel {
     Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
     // Items whose file is missing (the Relink action applies to them).
     Q_PROPERTY(int missingCount READ missing_count NOTIFY missingCountChanged FINAL)
+    // W7. Photos selected for a batch export.
+    Q_PROPERTY(int selectedCount READ selected_count NOTIFY selectionChanged FINAL)
 
 public:
     enum Role {
@@ -73,6 +81,7 @@ public:
         MissingRole,           // bool: the file is missing
         FlagBadgesRole,        // QVariantList of {key, label, detail} maps, one per flag key
         EditedRole,            // bool: the photo has develop settings other than as shot (W6)
+        InSelectionRole,       // bool: selected for a batch export (W7)
     };
     Q_ENUM(Role)
 
@@ -89,6 +98,21 @@ public:
     // Ids of the items whose file is missing, in row order.
     [[nodiscard]] QList<ItemId> missing_items() const;
 
+    // --- Selection (W7) ---------------------------------------------------------------------------
+    // Selects only the photo at `row` (nothing for an invalid row) and makes it the range anchor.
+    Q_INVOKABLE void selectOnly(int row);
+    // Adds or removes the photo at `row`; it becomes the range anchor.
+    Q_INVOKABLE void toggleSelected(int row);
+    // Selects the rows from the anchor to `row` (only `row` without an anchor).
+    Q_INVOKABLE void selectRange(int row);
+    Q_INVOKABLE void selectAll();
+    Q_INVOKABLE void clearSelection();
+    [[nodiscard]] int selected_count() const noexcept { return static_cast<int>(selected_.size()); }
+    // The selected photos in row order.
+    [[nodiscard]] QList<ItemId> selected_items() const;
+    // Every listed photo in row order.
+    [[nodiscard]] QList<ItemId> all_items() const;
+
     // The item at `row`, or nullptr when out of range. Valid until the model next changes.
     [[nodiscard]] const LibraryItem* item_at(int row) const noexcept;
     [[nodiscard]] std::optional<int> row_of(ItemId id) const;
@@ -99,18 +123,22 @@ public:
 signals:
     void countChanged();
     void missingCountChanged();
+    void selectionChanged();
 
 private:
     void add_items(const QList<LibraryItem>& items);
     void update_item(const LibraryItem& item);
     void record_generations(const LibraryItem& item);
     void set_missing(int missing);
+    void set_selection(QSet<ItemId> selection);
 
     std::shared_ptr<GenerationRegistry> registry_;
     std::vector<LibraryItem> items_;
     QHash<ItemId, int> rows_;
     QLocale locale_;
     int missing_ = 0;
+    QSet<ItemId> selected_;
+    ItemId anchor_ = 0;
 };
 
 }  // namespace lucent::ui

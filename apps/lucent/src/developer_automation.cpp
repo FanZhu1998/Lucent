@@ -195,7 +195,8 @@ CommandLine parse_command_line(const QStringList& arguments) {
                                                            "milliseconds (default 60000)."),
                                             QStringLiteral("ms"));
     const QCommandLineOption format_option(QStringLiteral("export-format"),
-                                           QStringLiteral("Export format: jpeg or tiff16."), QStringLiteral("format"));
+                                           QStringLiteral("Export format: jpeg or tiff16."),
+                                           QStringLiteral("format"));
     const QCommandLineOption color_option(QStringLiteral("export-color-space"),
                                           QStringLiteral("Export colour space: srgb or display-p3."),
                                           QStringLiteral("space"));
@@ -235,13 +236,32 @@ CommandLine parse_command_line(const QStringList& arguments) {
                                            QStringLiteral("With --open-first, scroll the Edit view's side panel to "
                                                           "this fraction (0 top, 1 bottom) before the screenshot."),
                                            QStringLiteral("fraction"));
+    const QCommandLineOption batch_option(QStringLiteral("export-batch"),
+                                          QStringLiteral("Export every photo of <folder> as one batch once imports "
+                                                         "finish (needs --to)."),
+                                          QStringLiteral("folder"));
+    const QCommandLineOption to_option(QStringLiteral("to"), QStringLiteral("The output folder of --export-batch."),
+                                       QStringLiteral("folder"));
+    const QCommandLineOption preset_option(QStringLiteral("preset"),
+                                           QStringLiteral("The preset of --export-batch: jpeg (default) or tiff."),
+                                           QStringLiteral("preset"));
+    const QCommandLineOption batch_dialog_option(QStringLiteral("show-batch-dialog"),
+                                                 QStringLiteral("With --export-batch, open the Export batch dialog "
+                                                                "instead of starting."));
+    const QCommandLineOption running_option(QStringLiteral("screenshot-running"),
+                                            QStringLiteral("With --export-batch, also save the window while the "
+                                                           "batch runs."),
+                                            QStringLiteral("file.png"));
+    const QCommandLineOption done_option(QStringLiteral("quit-when-done"),
+                                         QStringLiteral("With --export-batch, exit when the batch has finished."));
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
     parser.addOptions({import_option, subfolders_option, open_first_option, view_option, export_option,
                        screenshot_option, quit_option, timeout_option, format_option, color_option,
                        quality_option, zoom_option, measure_option, dialog_option, data_root_option, set_option,
-                       drag_option, drag_steps_option, compare_option, clipping_option, scroll_option});
+                       drag_option, drag_steps_option, compare_option, clipping_option, scroll_option,
+                       batch_option, to_option, preset_option, batch_dialog_option, running_option, done_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -395,6 +415,40 @@ CommandLine parse_command_line(const QStringList& arguments) {
         !options.open_first) {
         return fail(QStringLiteral("--set, --drag, --compare, --clipping and --scroll-panel need --open-first."));
     }
+    if (parser.isSet(batch_option)) {
+        options.batch_folder = parser.value(batch_option).trimmed();
+        if (options.batch_folder.isEmpty()) {
+            return fail(QStringLiteral("--export-batch needs a folder."));
+        }
+        options.batch_to = parser.value(to_option).trimmed();
+        if (options.batch_to.isEmpty()) {
+            return fail(QStringLiteral("--export-batch needs --to <folder>."));
+        }
+    } else if (parser.isSet(to_option) || parser.isSet(preset_option) || parser.isSet(batch_dialog_option) ||
+               parser.isSet(running_option) || parser.isSet(done_option)) {
+        return fail(QStringLiteral("--to, --preset, --show-batch-dialog, --screenshot-running and --quit-when-done "
+                                   "need --export-batch."));
+    }
+    if (parser.isSet(preset_option)) {
+        const QString preset = parser.value(preset_option).trimmed().toLower();
+        if (preset == u"tiff" || preset == u"tiff16") {
+            options.batch_tiff = true;
+        } else if (preset != u"jpeg" && preset != u"jpg") {
+            return fail(QStringLiteral("Unknown preset '%1': use jpeg or tiff.").arg(preset));
+        }
+    }
+    options.show_batch_dialog = parser.isSet(batch_dialog_option);
+    options.quit_when_done = parser.isSet(done_option);
+    if (parser.isSet(running_option)) {
+        options.running_screenshot_path = parser.value(running_option);
+        if (!options.running_screenshot_path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) {
+            return fail(QStringLiteral("--screenshot-running needs a .png file name."));
+        }
+    }
+    if (options.show_batch_dialog && (options.quit_when_done || !options.running_screenshot_path.isEmpty())) {
+        return fail(QStringLiteral("--show-batch-dialog does not start the batch: --screenshot-running and "
+                                   "--quit-when-done need it to run."));
+    }
     if (parser.isSet(timeout_option)) {
         bool ok = false;
         const int timeout = parser.value(timeout_option).toInt(&ok);
@@ -444,6 +498,30 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
                     --imports_pending_;
                 }
             });
+    connect(&controller_.batch_service(), &BatchService::submitted, this,
+            [this](quint64 token, BatchId batch, const QString& error) {
+                if (token == 0 || token != batch_token_) {
+                    return;
+                }
+                if (batch == 0) {
+                    report(QStringLiteral("batch not created: %1").arg(error));
+                    batch_failed_to_start_ = true;
+                    finish_when_done();
+                    return;
+                }
+                batch_id_ = batch;
+                report(QStringLiteral("batch %1 created").arg(batch));
+                if (const auto row = controller_.batches()->row_of(batch)) {
+                    on_batch_changed(*controller_.batches()->batch_at(*row));
+                }
+            });
+    connect(&controller_.batch_service(), &BatchService::submit_progress, this,
+            [this](quint64 token, const QString& text, double) {
+                if (token != 0 && token == batch_token_) {
+                    report(QStringLiteral("batch preparing: %1").arg(text));
+                }
+            });
+    connect(&controller_.batch_service(), &BatchService::batch_changed, this, &DeveloperAutomation::on_batch_changed);
     connect(&controller_.export_service(), &ExportService::job_changed, this, [](const ExportJob& job) {
         if (job.state == ExportJobState::Completed) {
             report(QStringLiteral("export completed: %1 -> %2 (%3)")
@@ -663,7 +741,8 @@ void DeveloperAutomation::poll() {
             take_screenshot(false);
             return;
         }
-        if (controller_.busy()) {
+        if (controller_.busy() || batch_pending() || controller_.batch_report()->loading() ||
+            (options_.show_batch_dialog && controller_.batch_setup()->planning())) {
             stable_frames_ = 0;
             return;
         }
@@ -684,6 +763,9 @@ void DeveloperAutomation::poll() {
         return;
     }
     case Stage::Done:
+        if (!options_.batch_folder.isEmpty() && options_.screenshot_path.isEmpty()) {
+            return;  // the batch's own signals finish the run (--quit-when-done)
+        }
         if (options_.measure && options_.screenshot_path.isEmpty()) {
             // Without a screenshot, --measure reports once the services are idle.
             if (!controller_.busy() && !has_loading_images(window_)) {
@@ -698,6 +780,133 @@ void DeveloperAutomation::poll() {
     }
 }
 
+void DeveloperAutomation::start_batch() {
+    const QString folder = QDir::cleanPath(QDir::current().absoluteFilePath(options_.batch_folder));
+    const QString to = QDir::cleanPath(QDir::current().absoluteFilePath(options_.batch_to));
+    BatchSetupModel& setup = *controller_.batch_setup();
+    const auto configure = [&] {
+        setup.setIncludeSubfolders(options_.include_subfolders);
+        setup.setOutputFolder(QUrl::fromLocalFile(to));
+        setup.setPreset(options_.batch_tiff ? BatchSetupModel::Tiff16 : BatchSetupModel::Jpeg);
+        setup.setDisplayP3(options_.export_options.color_space == ExportColorSpace::DisplayP3);
+    };
+    if (options_.show_batch_dialog) {
+        // As the Library's "Export a folder" does: the dialog opens with the folder, then the options.
+        if (!controller_.openFolderBatchExport(QUrl::fromLocalFile(folder))) {
+            report(QStringLiteral("--show-batch-dialog: batches are unavailable: %1")
+                       .arg(controller_.batch_service().unavailable_reason()));
+            return;
+        }
+        configure();
+        return;
+    }
+    setup.prepare(controller_.library()->selected_items(), controller_.library()->all_items());
+    setup.prepare_folder(QUrl::fromLocalFile(folder), options_.include_subfolders);
+    configure();
+    if (!controller_.startBatch()) {
+        report(QStringLiteral("--export-batch: the batch cannot start: %1").arg(setup.start_hint()));
+        batch_failed_to_start_ = true;
+        finish_when_done();
+        return;
+    }
+    batch_token_ = controller_.last_batch_token();
+    report(QStringLiteral("batch started: %1 -> %2 (%3)")
+               .arg(QDir::toNativeSeparators(folder), QDir::toNativeSeparators(to),
+                    options_.batch_tiff ? QStringLiteral("16-bit TIFF") : QStringLiteral("JPEG sRGB q95")));
+}
+
+void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
+    if (batch_id_ == 0 || batch.id != batch_id_) {
+        return;
+    }
+    const qint64 done = batch.completed + batch.failed + batch.skipped + batch.cancelled;
+    if (done != batch_last_done_) {
+        batch_last_done_ = done;
+        report(QStringLiteral("batch %1: %2 of %3 done (%4 exported, %5 failed, %6 skipped), %7 remaining")
+                   .arg(batch.id)
+                   .arg(done)
+                   .arg(batch.total)
+                   .arg(batch.completed)
+                   .arg(batch.failed)
+                   .arg(batch.skipped)
+                   .arg(batch.remaining()));
+    }
+    if (batch.attention != BatchAttention::None) {
+        report(QStringLiteral("batch %1 needs attention: %2").arg(batch.id).arg(batch.attention_message));
+    }
+    if (batch.finished_state()) {
+        batch_finished_ = true;
+        if (batch.review >= 0 && !batch_reported_) {
+            batch_reported_ = true;
+            report(QStringLiteral("batch %1 finished (%2): %3 exported, %4 skipped, %5 failed, %6 cancelled, %7 "
+                                  "recommended for review; output folder %8")
+                       .arg(batch.id)
+                       .arg(batch.state == BatchState::Cancelled ? QStringLiteral("cancelled")
+                                                                 : QStringLiteral("completed"))
+                       .arg(batch.completed)
+                       .arg(batch.skipped)
+                       .arg(batch.failed)
+                       .arg(batch.cancelled)
+                       .arg(batch.review)
+                       .arg(batch.folder));
+            if (!batch.report_path.isEmpty()) {
+                report(QStringLiteral("batch %1 report: %2").arg(batch.id).arg(batch.report_path));
+            }
+        }
+    }
+    if (!running_shot_taken_ && !options_.running_screenshot_path.isEmpty() && batch.completed >= 1 &&
+        batch.remaining() >= 1 && batch.state == BatchState::Running) {
+        take_running_screenshot();
+    }
+    finish_when_done();
+}
+
+bool DeveloperAutomation::batch_pending() const {
+    if (options_.batch_folder.isEmpty() || options_.show_batch_dialog || batch_failed_to_start_) {
+        return false;
+    }
+    if (batch_id_ == 0) {
+        return true;  // still being prepared
+    }
+    if (!batch_reported_) {
+        return true;  // running, or its final review count is still being read
+    }
+    return controller_.batch_report()->loading();
+}
+
+void DeveloperAutomation::take_running_screenshot() {
+    running_shot_taken_ = true;
+    const QString path = QFileInfo(options_.running_screenshot_path).absoluteFilePath();
+    const QImage image = grab();
+    if (image.isNull() || !QDir().mkpath(QFileInfo(path).absolutePath()) || !image.save(path, "PNG")) {
+        report(QStringLiteral("could not save the running screenshot %1").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    report(QStringLiteral("running screenshot saved: %1 (%2 x %3 px)")
+               .arg(QDir::toNativeSeparators(path))
+               .arg(image.width())
+               .arg(image.height()));
+}
+
+void DeveloperAutomation::finish_when_done() {
+    if (!options_.quit_when_done) {
+        return;
+    }
+    if (!batch_failed_to_start_ && (!batch_finished_ || !batch_reported_)) {
+        return;
+    }
+    if (!options_.screenshot_path.isEmpty() && !screenshot_done_) {
+        return;  // the screenshot quits (or finishes) first
+    }
+    int code = 0;
+    if (batch_failed_to_start_) {
+        code = 5;
+    } else if (const auto row = controller_.batches()->row_of(batch_id_)) {
+        code = controller_.batches()->batch_at(*row)->failed > 0 ? 4 : 0;
+    }
+    emit quitRequested(code);
+}
+
 void DeveloperAutomation::after_imports() {
     settle_clock_.start();
     if (options_.open_first) {
@@ -709,6 +918,9 @@ void DeveloperAutomation::after_imports() {
     }
     if (options_.view) {
         controller_.showView(*options_.view);
+    }
+    if (!options_.batch_folder.isEmpty()) {
+        start_batch();
     }
     if (!options_.export_folder.isEmpty()) {
         QList<ItemId> items;
@@ -953,7 +1165,7 @@ void DeveloperAutomation::report_drag() {
 void DeveloperAutomation::start_settling() {
     if (options_.screenshot_path.isEmpty()) {
         stage_ = Stage::Done;
-        if (!options_.measure) {
+        if (!options_.measure && options_.batch_folder.isEmpty()) {
             poll_timer_.stop();
         }
         return;
@@ -998,10 +1210,13 @@ void DeveloperAutomation::take_screenshot(bool settled) {
                    .arg(image.height()));
     }
     last_frame_ = QImage();
+    screenshot_done_ = true;
     emit screenshotTaken(saved, path);
     if (options_.quit_after_screenshot) {
         emit quitRequested(!saved ? 1 : (settled ? 0 : 3));
+        return;
     }
+    finish_when_done();
 }
 
 }  // namespace lucent::ui

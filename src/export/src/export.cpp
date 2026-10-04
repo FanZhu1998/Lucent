@@ -11,6 +11,8 @@
 #include <lucent/core/text.hpp>
 
 #include "codecs.hpp"
+#include "exif_reader.hpp"
+#include "exif_writer.hpp"
 #include "fault_injection.hpp"
 #include "file_util.hpp"
 #include "lcms_support.hpp"
@@ -198,7 +200,8 @@ std::string encoder_description(ExportFormat format) {
 }
 
 Expected<ExportReceipt> write_verified_impl(const OutputImage& image, const std::filesystem::path& destination,
-                                            const ExportSettings& settings, const core::CancellationToken& cancel) {
+                                            const ExportSettings& settings, const ExportMetadata& metadata,
+                                            const core::CancellationToken& cancel) {
     if (auto status = settings.validate(); !status) {
         return Unexpected(std::move(status.error()));
     }
@@ -221,11 +224,18 @@ Expected<ExportReceipt> write_verified_impl(const OutputImage& image, const std:
         return Unexpected(std::move(status.error()));
     }
 
+    PreparedMetadata prepared = prepare_metadata(metadata, settings.metadata);
+    const detail::ExifImageInfo exif_image{image.width, image.height, image.profile};
+
     // JPEG is encoded into memory before any file exists, so the written file can be compared
     // byte for byte with the encoder's output.
     std::vector<std::uint8_t> jpeg_stream;
     if (settings.format == ExportFormat::Jpeg) {
-        auto encoded = detail::encode_jpeg(image, settings.jpeg, *icc, cancel);
+        auto app1 = detail::build_exif_app1(prepared.metadata, exif_image);
+        if (!app1) {
+            return Unexpected(std::move(app1.error()));
+        }
+        auto encoded = detail::encode_jpeg(image, settings.jpeg, *icc, cancel, *app1);
         if (!encoded) {
             return Unexpected(std::move(encoded.error()));
         }
@@ -247,7 +257,9 @@ Expected<ExportReceipt> write_verified_impl(const OutputImage& image, const std:
             return Unexpected(std::move(status.error()));
         }
     } else {
-        if (auto status = detail::write_tiff(temp.path(), image, settings.tiff, *icc, cancel); !status) {
+        if (auto status =
+                detail::write_tiff(temp.path(), image, settings.tiff, *icc, cancel, &prepared.metadata, exif_image);
+            !status) {
             return Unexpected(std::move(status.error()));
         }
         if (auto status = detail::flush_to_disk(temp.path()); !status) {
@@ -275,6 +287,9 @@ Expected<ExportReceipt> write_verified_impl(const OutputImage& image, const std:
         return Unexpected(std::move(decoded.error()));
     }
     if (auto status = verify_decoded(*decoded, image, settings, *icc); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    if (auto status = detail::verify_metadata(temp.path(), settings.format, prepared.metadata, exif_image); !status) {
         return Unexpected(std::move(status.error()));
     }
     if (auto status = detail::run_fault_hook(detail::ExportStage::Verified, temp.path()); !status) {
@@ -315,24 +330,38 @@ Expected<ExportReceipt> write_verified_impl(const OutputImage& image, const std:
     receipt.settings = settings;
     receipt.chroma_subsampling = jpeg_chroma_subsampling(settings.jpeg.quality);
     receipt.encoder = encoder_description(settings.format);
+    receipt.metadata = std::move(prepared.metadata);
+    receipt.metadata_notes = std::move(prepared.notes);
     return receipt;
 }
 
 }  // namespace
 
 Expected<ExportReceipt> write_verified(const OutputImage& image, const std::filesystem::path& destination,
-                                       const ExportSettings& settings, core::CancellationToken cancel) {
+                                       const ExportSettings& settings, const ExportMetadata& metadata,
+                                       core::CancellationToken cancel) {
     try {
-        return write_verified_impl(image, destination, settings, cancel);
+        return write_verified_impl(image, destination, settings, metadata, cancel);
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "out of memory while writing " + core::path_to_utf8_lossy(destination),
                     "export.write");
     }
 }
 
+Expected<ExportReceipt> write_verified(const OutputImage& image, const std::filesystem::path& destination,
+                                       const ExportSettings& settings, core::CancellationToken cancel) {
+    return write_verified(image, destination, settings, ExportMetadata{}, std::move(cancel));
+}
+
 Expected<ExportReceipt> export_image(image::ConstImageView<float> rgb, const image::ColorEncoding& source,
                                      const std::filesystem::path& destination, const ExportSettings& settings,
                                      core::CancellationToken cancel) {
+    return export_image(rgb, source, destination, settings, ExportMetadata{}, std::move(cancel));
+}
+
+Expected<ExportReceipt> export_image(image::ConstImageView<float> rgb, const image::ColorEncoding& source,
+                                     const std::filesystem::path& destination, const ExportSettings& settings,
+                                     const ExportMetadata& metadata, core::CancellationToken cancel) {
     if (auto status = settings.validate(); !status) {
         return Unexpected(std::move(status.error()));
     }
@@ -344,7 +373,7 @@ Expected<ExportReceipt> export_image(image::ConstImageView<float> rgb, const ima
     if (!encoded) {
         return Unexpected(std::move(encoded.error()));
     }
-    return write_verified(*encoded, destination, settings, std::move(cancel));
+    return write_verified(*encoded, destination, settings, metadata, std::move(cancel));
 }
 
 }  // namespace lucent::exporter

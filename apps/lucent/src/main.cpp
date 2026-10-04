@@ -87,6 +87,26 @@ int main(int argc, char* argv[]) {
                      [settings = settings.get(), &controller, destination_key] {
                          settings->setValue(destination_key, controller.copy_destination());
                      });
+    // W7: the Export batch dialog remembers the output folder, name pattern, preset and the artist and
+    // copyright text (never the GPS choice or a decision to replace files).
+    lucent::ui::BatchSetupModel& batch_setup = *controller.batch_setup();
+    batch_setup.restore(settings->value(QStringLiteral("batch/outputFolder")).toUrl(),
+                        settings->value(QStringLiteral("batch/namePattern")).toString(),
+                        settings->value(QStringLiteral("batch/preset")).toInt() == lucent::ui::BatchSetupModel::Tiff16
+                            ? lucent::ui::BatchSetupModel::Tiff16
+                            : lucent::ui::BatchSetupModel::Jpeg,
+                        settings->value(QStringLiteral("batch/displayP3")).toBool(),
+                        settings->value(QStringLiteral("batch/artist")).toString(),
+                        settings->value(QStringLiteral("batch/copyright")).toString());
+    QObject::connect(&batch_setup, &lucent::ui::BatchSetupModel::rememberedChanged, &controller,
+                     [settings = settings.get(), &batch_setup] {
+                         settings->setValue(QStringLiteral("batch/outputFolder"), batch_setup.output_folder());
+                         settings->setValue(QStringLiteral("batch/namePattern"), batch_setup.name_pattern());
+                         settings->setValue(QStringLiteral("batch/preset"), static_cast<int>(batch_setup.preset()));
+                         settings->setValue(QStringLiteral("batch/displayP3"), batch_setup.display_p3());
+                         settings->setValue(QStringLiteral("batch/artist"), batch_setup.artist());
+                         settings->setValue(QStringLiteral("batch/copyright"), batch_setup.copyright());
+                     });
     QQmlApplicationEngine engine;
     QQuickWindow* window = lucent::ui::load_main_window(engine, controller);
     if (window == nullptr) {

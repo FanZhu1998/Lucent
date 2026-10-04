@@ -32,7 +32,7 @@ constexpr std::string_view kWhereMigrate = "catalog.migrate";
 //   * items_by_capture_time orders unknown capture times last with the sentinel '~' (U+007E),
 //     which sorts after every valid capture time ("YYYY-..." starts with a digit). A single
 //     expression column lets keyset paging seek in the index instead of scanning from the start.
-// Later migrations add W6 recipes (v2) and W7 job tables; they reference items/sources by id.
+// Later migrations add W6 recipes (v2) and the W7 batch journal (v3); they reference items by id.
 // ---------------------------------------------------------------------------------------------
 constexpr std::string_view kSchemaV1 = R"sql(
 CREATE TABLE catalog_meta (
@@ -216,9 +216,224 @@ Status migrate_to_v2(Connection& connection) {
     return connection.exec(kSchemaV2, kWhereMigrate);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Version 3 (W7): the durable batch journal (blueprint section 7; jobs.hpp). It only adds tables,
+// indexes and triggers and changes nothing about what renders of items mean, so a schema-v2
+// build may still read the catalog (read-only): min_reader_version stays 2.
+//
+// batches: one export run. destination_json, export_settings_json and policy_json are the
+//   application's documents (valid JSON); export_settings_sha256 is the SHA-256 of
+//   export_settings_json's bytes (part of every job identity). job_count is fixed at creation;
+//   per-stage counts are computed from jobs, never stored, so they cannot drift.
+// jobs: one item of a batch.
+//   * item_id / revision_id: ON DELETE SET NULL, so removing an item (which removes its
+//     revisions) keeps the job and its report; the frozen settings_sha256, source_sha256,
+//     subimage and identity_sha256 remain.
+//   * ordinal: dispatch order within the batch (unique per batch).
+//   * attempts counts claims; transient_failures / deterministic_failures count failures by
+//     class (the retry policy's inputs). last_* hold the latest failure or skip reason
+//     (last_error_code is the numeric lucent::ErrorCode).
+//   * lease_owner / lease_expires_at / heartbeat_at are set exactly while the stage is
+//     rendering, verifying or publishing (trigger jobs_lease_matches_stage).
+//   * not_before: a queued job is not claimed earlier (retry back-off).
+//   * The identity columns never change (trigger jobs_identity_is_immutable).
+// job_events: append-only stage transitions (from_stage NULL for creation); deleted only with
+//   their job.
+// publication_journal: append-only steps of publishing one attempt's output, unique per
+//   (job, attempt, step); deleted only with their job.
+// receipts: one per job at most, immutable; deleted only with their job.
+// ---------------------------------------------------------------------------------------------
+constexpr std::string_view kSchemaV3 = R"sql(
+CREATE TABLE batches (
+    id                     INTEGER PRIMARY KEY,
+    name                   TEXT    NOT NULL,
+    selection_description  TEXT    NOT NULL,
+    destination_json       TEXT    NOT NULL CHECK (json_valid(destination_json)),
+    export_settings_json   TEXT    NOT NULL CHECK (json_valid(export_settings_json)),
+    export_settings_sha256 BLOB    NOT NULL CHECK (length(export_settings_sha256) = 32),
+    policy_json            TEXT    NOT NULL CHECK (json_valid(policy_json)),
+    renderer_version       TEXT    NOT NULL CHECK (length(renderer_version) > 0),
+    state                  TEXT    NOT NULL,
+    job_count              INTEGER NOT NULL CHECK (job_count >= 0),
+    created_at             INTEGER NOT NULL,
+    updated_at             INTEGER NOT NULL,
+    started_at             INTEGER,
+    finished_at            INTEGER
+) STRICT;
+
+CREATE INDEX batches_by_state ON batches (state);
+
+CREATE TABLE jobs (
+    id                     INTEGER PRIMARY KEY,
+    batch_id               INTEGER NOT NULL REFERENCES batches (id) ON DELETE CASCADE,
+    ordinal                INTEGER NOT NULL CHECK (ordinal >= 0),
+    item_id                INTEGER REFERENCES items (id) ON DELETE SET NULL,
+    subimage               INTEGER NOT NULL CHECK (subimage >= 0),
+    revision_id            INTEGER REFERENCES recipe_revisions (id) ON DELETE SET NULL,
+    settings_sha256        BLOB    NOT NULL CHECK (length(settings_sha256) = 32),
+    source_sha256          BLOB    NOT NULL CHECK (length(source_sha256) = 32),
+    assets_json            TEXT    NOT NULL CHECK (json_valid(assets_json)),
+    identity_sha256        BLOB    NOT NULL CHECK (length(identity_sha256) = 32),
+    stage                  TEXT    NOT NULL,
+    attempts               INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    transient_failures     INTEGER NOT NULL DEFAULT 0 CHECK (transient_failures >= 0),
+    deterministic_failures INTEGER NOT NULL DEFAULT 0 CHECK (deterministic_failures >= 0),
+    last_failure_class     TEXT,
+    last_error_code        INTEGER,
+    last_error_where       TEXT,
+    last_error_message     TEXT,
+    last_error_native      INTEGER,
+    last_error_at          INTEGER,
+    lease_owner            TEXT,
+    lease_expires_at       INTEGER,
+    heartbeat_at           INTEGER,
+    not_before             INTEGER NOT NULL DEFAULT 0,
+    temp_path              TEXT,
+    final_path             TEXT,
+    created_at             INTEGER NOT NULL,
+    updated_at             INTEGER NOT NULL,
+    CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL))
+) STRICT;
+
+CREATE UNIQUE INDEX jobs_by_batch ON jobs (batch_id, ordinal);
+-- Dispatch: queued jobs of a batch in ordinal order.
+CREATE INDEX jobs_queued ON jobs (batch_id, ordinal) WHERE stage = 'queued';
+-- Reconciliation: leased jobs by expiry.
+CREATE INDEX jobs_leased ON jobs (lease_expires_at) WHERE lease_owner IS NOT NULL;
+CREATE INDEX jobs_by_stage ON jobs (batch_id, stage);
+CREATE INDEX jobs_by_identity ON jobs (identity_sha256);
+-- Foreign-key lookups when items and revisions are deleted.
+CREATE INDEX jobs_by_item ON jobs (item_id);
+CREATE INDEX jobs_by_revision ON jobs (revision_id);
+
+CREATE TRIGGER jobs_identity_is_immutable
+BEFORE UPDATE OF batch_id, ordinal, subimage, settings_sha256, source_sha256, assets_json,
+                 identity_sha256, created_at ON jobs
+BEGIN
+    SELECT RAISE(ABORT, 'the identity of a job never changes');
+END;
+
+CREATE TRIGGER jobs_lease_matches_stage BEFORE UPDATE OF stage, lease_owner ON jobs
+WHEN (NEW.lease_owner IS NOT NULL) IS NOT (NEW.stage IN ('rendering', 'verifying', 'publishing'))
+BEGIN
+    SELECT RAISE(ABORT, 'a job has a lease owner exactly while it is rendering, verifying or publishing');
+END;
+
+CREATE TABLE job_events (
+    id            INTEGER PRIMARY KEY,
+    job_id        INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+    batch_id      INTEGER NOT NULL,
+    at            INTEGER NOT NULL,
+    from_stage    TEXT,
+    to_stage      TEXT    NOT NULL,
+    attempt       INTEGER NOT NULL CHECK (attempt >= 0),
+    lease_owner   TEXT,
+    failure_class TEXT,
+    error_code    INTEGER,
+    error_where   TEXT,
+    error_message TEXT,
+    error_native  INTEGER
+) STRICT;
+
+CREATE INDEX job_events_by_job ON job_events (job_id, id);
+CREATE INDEX job_events_by_batch ON job_events (batch_id, id);
+
+CREATE TRIGGER job_events_are_immutable BEFORE UPDATE ON job_events
+BEGIN
+    SELECT RAISE(ABORT, 'job events are append-only');
+END;
+
+CREATE TRIGGER job_events_are_kept BEFORE DELETE ON job_events
+WHEN EXISTS (SELECT 1 FROM jobs WHERE id = OLD.job_id)
+BEGIN
+    SELECT RAISE(ABORT, 'job events are kept while their job exists');
+END;
+
+CREATE TABLE publication_journal (
+    id            INTEGER PRIMARY KEY,
+    job_id        INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+    attempt       INTEGER NOT NULL CHECK (attempt >= 1),
+    step          TEXT    NOT NULL,
+    at            INTEGER NOT NULL,
+    temp_path     TEXT,
+    final_path    TEXT,
+    output_sha256 BLOB    CHECK (output_sha256 IS NULL OR length(output_sha256) = 32),
+    output_size   INTEGER CHECK (output_size IS NULL OR output_size >= 0)
+) STRICT;
+
+CREATE UNIQUE INDEX publication_journal_by_attempt ON publication_journal (job_id, attempt, step);
+CREATE INDEX publication_journal_latest ON publication_journal (job_id, attempt, id);
+
+CREATE TRIGGER publication_journal_is_immutable BEFORE UPDATE ON publication_journal
+BEGIN
+    SELECT RAISE(ABORT, 'the publication journal is append-only');
+END;
+
+CREATE TRIGGER publication_journal_is_kept BEFORE DELETE ON publication_journal
+WHEN EXISTS (SELECT 1 FROM jobs WHERE id = OLD.job_id)
+BEGIN
+    SELECT RAISE(ABORT, 'publication journal entries are kept while their job exists');
+END;
+
+CREATE TABLE receipts (
+    id              INTEGER PRIMARY KEY,
+    job_id          INTEGER NOT NULL UNIQUE REFERENCES jobs (id) ON DELETE CASCADE,
+    identity_sha256 BLOB    NOT NULL CHECK (length(identity_sha256) = 32),
+    final_path      TEXT    NOT NULL,
+    size_bytes      INTEGER NOT NULL CHECK (size_bytes >= 0),
+    output_sha256   BLOB    NOT NULL CHECK (length(output_sha256) = 32),
+    settings_json   TEXT    NOT NULL CHECK (json_valid(settings_json)),
+    created_at      INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX receipts_by_identity ON receipts (identity_sha256, id);
+
+CREATE TRIGGER receipts_are_immutable BEFORE UPDATE ON receipts
+BEGIN
+    SELECT RAISE(ABORT, 'receipts are immutable');
+END;
+
+CREATE TRIGGER receipts_are_kept BEFORE DELETE ON receipts
+WHEN EXISTS (SELECT 1 FROM jobs WHERE id = OLD.job_id)
+BEGIN
+    SELECT RAISE(ABORT, 'receipts are kept while their job exists');
+END;
+)sql";
+
+Status migrate_to_v3(Connection& connection) {
+    return connection.exec(kSchemaV3, kWhereMigrate);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Version 4 (W7, closing review): two columns the coordinator's recovery needs. Adds only, so
+// min_reader_version stays 2.
+//
+// jobs.interruptions: how often an attempt of the job ended without an outcome (Lucent stopped,
+//   or its lease expired while the computer slept or a step took too long). Counted separately
+//   from transient_failures, so interruptions neither use up the retry budget of genuine worker
+//   failures nor go unbounded (the coordinator fails the job after its own bound).
+// batches.reported_at: when the batch's completion was handled (its report files written, or
+//   none were wanted) after it finished; NULL while not finished, or finished but not reported
+//   yet (the coordinator stopped in between: the next start writes the report). Batches already
+//   finished when the catalog is migrated count as reported.
+// ---------------------------------------------------------------------------------------------
+constexpr std::string_view kSchemaV4 = R"sql(
+ALTER TABLE jobs ADD COLUMN interruptions INTEGER NOT NULL DEFAULT 0 CHECK (interruptions >= 0);
+ALTER TABLE batches ADD COLUMN reported_at INTEGER;
+UPDATE batches SET reported_at = finished_at WHERE finished_at IS NOT NULL;
+CREATE INDEX batches_unreported ON batches (id) WHERE finished_at IS NOT NULL AND reported_at IS NULL;
+)sql";
+
+Status migrate_to_v4(Connection& connection) {
+    return connection.exec(kSchemaV4, kWhereMigrate);
+}
+
 constexpr Migration kBuiltinMigrations[] = {
     {1, 1, "catalog metadata, imports, sources and items (W4)", &migrate_to_v1},
     {2, 2, "recipe revisions and capture settings (W6)", &migrate_to_v2},
+    {3, 2, "durable batch journal: batches, jobs, events, publication journal, receipts (W7)",
+     &migrate_to_v3},
+    {4, 2, "job interruption counts and batch report emission (W7)", &migrate_to_v4},
 };
 static_assert(std::size(kBuiltinMigrations) == static_cast<std::size_t>(kSchemaVersion),
               "every schema version needs exactly one migration");
