@@ -1,8 +1,10 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <format>
 #include <span>
 #include <string>
@@ -10,6 +12,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <lucent/raw/decoded_raw.hpp>
 #include <lucent/raw/raw_decoder.hpp>
@@ -339,6 +342,112 @@ image::CfaPattern cfa_at_visible_origin(const RawMetadata& metadata) {
                                                metadata.geometry.visible_area.y);
 }
 
+std::optional<DngBayerPhase> bayer_phase_of(const image::CfaPattern& cfa) noexcept {
+    if (cfa.empty() || !cfa.is_bayer() || cfa.width() != 2 || cfa.height() != 2) {
+        return std::nullopt;
+    }
+    const image::CfaColor first = cfa.color_at(0, 0);
+    if (first == image::CfaColor::Red) {
+        return DngBayerPhase::Red;
+    }
+    if (first == image::CfaColor::Blue) {
+        return DngBayerPhase::Blue;
+    }
+    return cfa.color_at(0, 1) == image::CfaColor::Red ? DngBayerPhase::GreenRedRow : DngBayerPhase::GreenBlueRow;
+}
+
+DngOpcodeFrame dng_opcode_frame(const RawMetadata& metadata, DngOpcodeListId list) {
+    DngOpcodeFrame frame;
+    DngOpcodeImage& image = frame.image;
+    image.list = list;
+    if (!metadata.dng) {
+        image.list_unavailable = "the DNG raw IFD was not identified, so its opcodes cannot be located";
+        return frame;
+    }
+    const TiffIfdSummary& ifd = metadata.dng->raw_ifd;
+    const RepresentationInfo& rep = metadata.representation;
+    const SensorGeometry& geo = metadata.geometry;
+    const std::uint32_t ifd_width = ifd.width.value_or(0);
+    const std::uint32_t ifd_height = ifd.height.value_or(0);
+    const bool mosaic = rep.kind == RawRepresentation::Mosaic;
+    image.mosaic = mosaic && list != DngOpcodeListId::List3;
+    image.integer_samples = rep.sample_encoding == SampleEncoding::UInt16;
+
+    if (list == DngOpcodeListId::List1) {
+        image.width = ifd_width;
+        image.height = ifd_height;
+        image.planes = ifd.samples_per_pixel.value_or(1);
+        if (mosaic) {
+            image.bayer_phase = bayer_phase_of(rep.cfa);
+        }
+        if (ifd_width != geo.raw_width || ifd_height != geo.raw_height) {
+            image.list_unavailable =
+                std::format("the decoded {} x {} frame is not the {} x {} raw IFD that OpcodeList1 processes",
+                            geo.raw_width, geo.raw_height, ifd_width, ifd_height);
+        } else if (metadata.has_prior_processing(PriorProcessingKind::LinearizationApplied)) {
+            image.list_unavailable = "the decoder applied the LinearizationTable while unpacking, so OpcodeList1 "
+                                     "can no longer see the stored values";
+        } else if (metadata.has_prior_processing(PriorProcessingKind::ToneCurveApplied)) {
+            image.list_unavailable = "the decoder mapped the lossy samples through a tone curve while unpacking, "
+                                     "so OpcodeList1 can no longer see the stored values";
+        }
+        return frame;
+    }
+
+    // Lists 2 and 3: the ActiveArea (the whole image without one).
+    DngRect area{0, 0, ifd_height, ifd_width};
+    if (ifd.active_area) {
+        area = *ifd.active_area;
+    }
+    image.width = area.right - area.left;
+    image.height = area.bottom - area.top;
+    frame.offset_x = geo.visible_area.x - static_cast<std::int32_t>(area.left);
+    frame.offset_y = geo.visible_area.y - static_cast<std::int32_t>(area.top);
+    const image::PixelRect stage{static_cast<std::int32_t>(area.left), static_cast<std::int32_t>(area.top),
+                                 static_cast<std::int32_t>(image.width), static_cast<std::int32_t>(image.height)};
+    if (ifd_width != geo.raw_width || ifd_height != geo.raw_height || !stage.contains(geo.visible_area)) {
+        image.list_unavailable = std::format(
+            "the visible area {}x{}+{}+{} of the {} x {} frame is not inside the DNG ActiveArea {}x{}+{}+{} of the "
+            "{} x {} raw IFD",
+            geo.visible_area.width, geo.visible_area.height, geo.visible_area.x, geo.visible_area.y, geo.raw_width,
+            geo.raw_height, image.width, image.height, area.left, area.top, ifd_width, ifd_height);
+        return frame;
+    }
+
+    if (list == DngOpcodeListId::List2) {
+        image.planes = ifd.samples_per_pixel.value_or(1);
+        if (mosaic) {
+            image.bayer_phase = bayer_phase_of(
+                rep.cfa.shifted(static_cast<std::int32_t>(area.left), static_cast<std::int32_t>(area.top)));
+        }
+        const bool decoder_ran_list2 =
+            std::any_of(metadata.required_operations.begin(), metadata.required_operations.end(),
+                        [](const RequiredOperation& op) {
+                            return op.kind == RequiredOperationKind::DngOpcode && op.applied_by_decoder &&
+                                   op.stage == OperationStage::LinearRaw;
+                        });
+        if (decoder_ran_list2) {
+            image.list_unavailable = "the decoder applied opcodes of OpcodeList2 while unpacking, before black "
+                                     "subtraction; Lucent cannot run the list in its specified order";
+        }
+        return frame;
+    }
+
+    // List 3: the demosaiced colour planes (Lucent's channels R, G, B or the monochrome plane).
+    if (rep.kind == RawRepresentation::Monochrome) {
+        image.planes = 1;
+    } else {
+        image.planes = 3;
+        const std::vector<std::uint8_t>& plane_colors = ifd.cfa_plane_color;
+        if (mosaic && !plane_colors.empty() && plane_colors != std::vector<std::uint8_t>{0, 1, 2}) {
+            image.list_unavailable = "the CFA colour planes are not red, green, blue in that order";
+        } else if (!mosaic && ifd.samples_per_pixel.value_or(1) != 3) {
+            image.list_unavailable = "the full-colour image does not have 3 planes";
+        }
+    }
+    return frame;
+}
+
 PixelsShape shape_of(const RawPixels& pixels) noexcept {
     return std::visit(
         [](const auto& buffer) {
@@ -356,6 +465,105 @@ PixelsShape shape_of(const RawPixels& pixels) noexcept {
 
 const RawPixels& pixels_of(const RawImage& image) noexcept {
     return std::visit([](const auto& frame) -> const RawPixels& { return frame.pixels; }, image);
+}
+
+OperationStage operation_stage_of(DngOpcodeListId list) noexcept {
+    switch (list) {
+        case DngOpcodeListId::List1:
+            return OperationStage::StoredRaw;
+        case DngOpcodeListId::List2:
+            return OperationStage::LinearRaw;
+        case DngOpcodeListId::List3:
+            return OperationStage::AfterDemosaic;
+    }
+    return OperationStage::StoredRaw;
+}
+
+RequiredOperation required_operation_for(const DngOpcode& opcode) {
+    RequiredOperation op;
+    op.kind = RequiredOperationKind::DngOpcode;
+    op.stage = operation_stage_of(opcode.list);
+    op.name = std::string(opcode.name());
+    op.opcode_id = opcode.id;
+    op.index = opcode.index;
+    op.min_dng_version = opcode.min_dng_version;
+    op.flags = opcode.flags;
+    op.mandatory = opcode.is_mandatory();
+    op.preview_skippable = opcode.is_preview_skippable();
+    op.follows_optional_warp_rectilinear2 = opcode.follows_optional_warp_rectilinear2;
+    return op;
+}
+
+void assess_dng_opcode_operations(RawMetadata& m) {
+    std::array<std::optional<DngOpcodeFrame>, 3> frames;
+    const auto frame_of = [&](DngOpcodeListId list) -> const DngOpcodeImage& {
+        std::optional<DngOpcodeFrame>& frame = frames[static_cast<std::size_t>(list) - 1];
+        if (!frame) {
+            frame = dng_opcode_frame(m, list);
+        }
+        return frame->image;
+    };
+    for (RequiredOperation& op : m.required_operations) {
+        if (op.kind != RequiredOperationKind::DngOpcode) {
+            continue;
+        }
+        op.supported_by_lucent = false;
+        op.superseded_by_warp_rectilinear2 = false;
+        const DngOpcodeListId list = op.stage == OperationStage::StoredRaw   ? DngOpcodeListId::List1
+                                     : op.stage == OperationStage::LinearRaw ? DngOpcodeListId::List2
+                                                                             : DngOpcodeListId::List3;
+        const DngOpcode* opcode = nullptr;
+        if (m.dng) {
+            for (const DngOpcode& candidate : m.dng->raw_ifd.opcodes) {
+                if (candidate.list == list && candidate.index == op.index && candidate.id == op.opcode_id) {
+                    opcode = &candidate;
+                    break;
+                }
+            }
+        }
+        const std::string label = std::format("OpcodeList{}[{}] {} (id {}, DNG {}{})", static_cast<int>(list),
+                                              op.index, op.name, op.opcode_id, op.min_dng_version.to_string(),
+                                              is_known_dng_opcode(op.opcode_id) ? "" : ", unknown to this build");
+        if (op.applied_by_decoder) {
+            op.lucent_note = "the decoder applied it while unpacking; Lucent does not apply it again";
+        } else if (opcode == nullptr) {
+            op.lucent_note = "the opcode is not in the identified DNG raw IFD";
+        } else if (const DngOpcodeSupport support = assess_dng_opcode(*opcode, frame_of(list)); support.supported) {
+            op.supported_by_lucent = true;
+            op.lucent_note.clear();
+        } else {
+            op.lucent_note = support.reason;
+        }
+        // Skip rule: a WarpRectilinear/WarpFisheye right after an optional WarpRectilinear2 that
+        // Lucent applies is skipped (the operation before it in the same list is that opcode).
+        if (op.follows_optional_warp_rectilinear2 && op.index > 0) {
+            const auto previous = std::find_if(m.required_operations.begin(), m.required_operations.end(),
+                                               [&](const RequiredOperation& other) {
+                                                   return other.kind == RequiredOperationKind::DngOpcode &&
+                                                          other.stage == op.stage && other.index == op.index - 1;
+                                               });
+            if (previous != m.required_operations.end() && previous->supported_by_lucent) {
+                op.supported_by_lucent = false;
+                op.superseded_by_warp_rectilinear2 = true;
+                op.lucent_note = "skipped: it follows an optional WarpRectilinear2 that Lucent applies (DNG 1.7.1.0 "
+                                 "chapter 7)";
+                continue;
+            }
+        }
+        if (op.supported_by_lucent) {
+            continue;
+        }
+        if (op.mandatory) {
+            m.interpretation.issues.push_back(
+                InterpretationIssue{InterpretationIssueKind::MandatoryOperationUnsupported,
+                                    std::format("{} is mandatory and Lucent cannot apply it: {}", label, op.lucent_note)});
+        } else {
+            m.interpretation.issues.push_back(
+                InterpretationIssue{InterpretationIssueKind::OptionalOperationUnsupported,
+                                    std::format("{} is optional and will be skipped: {}", label, op.lucent_note)});
+        }
+    }
+    m.interpretation.status = derive_interpretation_status(m.interpretation.issues);
 }
 
 Status check_consistency(const DecodedRaw& decoded) {
@@ -514,6 +722,28 @@ Status check_consistency(const DecodedRaw& decoded) {
     }
     if (m.interpretation.status != derive_interpretation_status(m.interpretation.issues)) {
         return contract_violation("interpretation status does not match its issues");
+    }
+    // Every operation marked supported is one the engine can apply: a decoded DNG opcode that
+    // assess_dng_opcode accepts at its stage.
+    for (const RequiredOperation& op : m.required_operations) {
+        if (!op.supported_by_lucent) {
+            continue;
+        }
+        if (op.applied_by_decoder || op.superseded_by_warp_rectilinear2 ||
+            op.kind != RequiredOperationKind::DngOpcode || !m.dng) {
+            return contract_violation(std::format("operation {} is marked supported but cannot be applied", op.name));
+        }
+        const DngOpcodeListId list = op.stage == OperationStage::StoredRaw   ? DngOpcodeListId::List1
+                                     : op.stage == OperationStage::LinearRaw ? DngOpcodeListId::List2
+                                                                             : DngOpcodeListId::List3;
+        const auto& opcodes = m.dng->raw_ifd.opcodes;
+        const auto found = std::find_if(opcodes.begin(), opcodes.end(), [&](const DngOpcode& opcode) {
+            return opcode.list == list && opcode.index == op.index && opcode.id == op.opcode_id;
+        });
+        if (found == opcodes.end() || !assess_dng_opcode(*found, dng_opcode_frame(m, list).image).supported) {
+            return contract_violation(std::format("OpcodeList{}[{}] {} is marked supported but Lucent cannot apply it",
+                                                  static_cast<int>(list), op.index, op.name));
+        }
     }
     return ok();
 }

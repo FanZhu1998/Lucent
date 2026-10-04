@@ -73,10 +73,22 @@ TEST(DecodedRawContract, PersistedEnumValuesNeverChange) {
     EXPECT_EQ(static_cast<int>(InterpretationIssueKind::UnrepresentedBlackLevelCorrection), 13);
     EXPECT_EQ(static_cast<int>(Lossiness::Unknown), 0);
     EXPECT_EQ(static_cast<int>(Lossiness::Lossy), 2);
-    // 1.1 added fields (subimage role, projection, compression provenance) and 1.2 the black
-    // deltas: minor changes.
+    // 1.1 added fields (subimage role, projection, compression provenance), 1.2 the black
+    // deltas and 1.3 the decoded opcode parameters and Lucent's opcode support: minor changes.
     EXPECT_EQ(kDecodedRawContractVersion.major, 1u);
-    EXPECT_EQ(kDecodedRawContractVersion.minor, 2u);
+    EXPECT_EQ(kDecodedRawContractVersion.minor, 3u);
+    EXPECT_EQ(static_cast<int>(DngBayerPhase::Red), 0);
+    EXPECT_EQ(static_cast<int>(DngBayerPhase::Blue), 3);
+}
+
+TEST(DecodedRawContract, BayerPhaseFollowsTheDngDefinition) {
+    using image::BayerLayout;
+    using image::CfaPattern;
+    EXPECT_EQ(bayer_phase_of(CfaPattern::bayer(BayerLayout::Rggb)), DngBayerPhase::Red);
+    EXPECT_EQ(bayer_phase_of(CfaPattern::bayer(BayerLayout::Grbg)), DngBayerPhase::GreenRedRow);
+    EXPECT_EQ(bayer_phase_of(CfaPattern::bayer(BayerLayout::Gbrg)), DngBayerPhase::GreenBlueRow);
+    EXPECT_EQ(bayer_phase_of(CfaPattern::bayer(BayerLayout::Bggr)), DngBayerPhase::Blue);
+    EXPECT_FALSE(bayer_phase_of(CfaPattern{}));
 }
 
 TEST(DecodedRawContract, DefaultsSayNothingIsKnown) {
@@ -412,6 +424,34 @@ TEST(DecodedRawContract, PriorProcessingLookup) {
     m.prior_processing.push_back({PriorProcessingKind::Demosaiced, "linear DNG"});
     EXPECT_TRUE(m.has_prior_processing(PriorProcessingKind::Demosaiced));
     EXPECT_FALSE(m.has_prior_processing(PriorProcessingKind::WhiteBalanceApplied));
+}
+
+TEST(DecodedRawContract, SupportedOperationsMustBeApplicable) {
+    // A DNG opcode marked supported without decoded parameters violates the contract.
+    DecodedRaw d = make_mosaic();
+    DngMetadata dng;
+    dng.raw_ifd.width = d.metadata.geometry.raw_width;
+    dng.raw_ifd.height = d.metadata.geometry.raw_height;
+    DngOpcode opcode;
+    opcode.list = DngOpcodeListId::List3;
+    opcode.id = 3;
+    opcode.min_dng_version = DngVersion{{1, 3, 0, 0}};
+    dng.raw_ifd.opcodes.push_back(opcode);
+    d.metadata.dng = dng;
+    RequiredOperation op = required_operation_for(opcode);
+    op.supported_by_lucent = true;
+    d.metadata.required_operations.push_back(op);
+    const Status bad = check_consistency(d);
+    ASSERT_FALSE(bad);
+    EXPECT_EQ(bad.error().code, ErrorCode::Internal);
+    // With its parameters decoded, the assessment agrees and the data is consistent.
+    d.metadata.dng->raw_ifd.opcodes[0].parameters = DngFixVignetteRadial{{0.1, 0, 0, 0, 0}, 0.5, 0.5};
+    d.metadata.required_operations.clear();
+    d.metadata.required_operations.push_back(required_operation_for(d.metadata.dng->raw_ifd.opcodes[0]));
+    assess_dng_opcode_operations(d.metadata);
+    EXPECT_TRUE(d.metadata.required_operations[0].supported_by_lucent);
+    EXPECT_EQ(d.metadata.interpretation.status, InterpretationStatus::Complete);
+    EXPECT_TRUE(check_consistency(d)) << check_consistency(d).error().describe();
 }
 
 }  // namespace

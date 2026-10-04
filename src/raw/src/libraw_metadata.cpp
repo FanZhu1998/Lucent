@@ -178,18 +178,6 @@ std::pair<double, double> value_range(const std::vector<double>& values) {
     return {*low, *high};
 }
 
-OperationStage stage_of(DngOpcodeListId list) noexcept {
-    switch (list) {
-        case DngOpcodeListId::List1:
-            return OperationStage::StoredRaw;
-        case DngOpcodeListId::List2:
-            return OperationStage::LinearRaw;
-        case DngOpcodeListId::List3:
-            return OperationStage::AfterDemosaic;
-    }
-    return OperationStage::StoredRaw;
-}
-
 // Representation from LibRaw's state. After unpack the buffer LibRaw filled decides; before, the
 // same rules LibRaw's unpack() uses to choose that buffer (filters or a single colour give the
 // one-sample raw_image, anything else a multi-channel image).
@@ -483,52 +471,6 @@ void apply_dng(const ExtractionContext& context, std::string_view unpacker, RawM
     }
 
     const bool lossy_dng_decoder = unpacker == "lossy_dng_load_raw()";
-    for (const DngOpcode& opcode : ifd.opcodes) {
-        RequiredOperation op;
-        op.kind = RequiredOperationKind::DngOpcode;
-        op.stage = stage_of(opcode.list);
-        op.name = std::string(opcode.name());
-        op.opcode_id = opcode.id;
-        op.index = opcode.index;
-        op.min_dng_version = opcode.min_dng_version;
-        op.flags = opcode.flags;
-        op.mandatory = opcode.is_mandatory();
-        op.preview_skippable = opcode.is_preview_skippable();
-        op.follows_optional_warp_rectilinear2 = opcode.follows_optional_warp_rectilinear2;
-        op.supported_by_lucent = false;
-        // LibRaw's lossy_dng_load_raw() maps samples through MapPolynomial opcodes of
-        // OpcodeList2 (LibRaw 0.22.2 src/decoders/dng.cpp:200-231).
-        op.applied_by_decoder = lossy_dng_decoder && opcode.list == DngOpcodeListId::List2 &&
-                                opcode.id == static_cast<std::uint32_t>(DngOpcodeId::MapPolynomial);
-        const std::string label =
-            std::format("OpcodeList{}[{}] {} (id {}, DNG {}{})", static_cast<int>(opcode.list), opcode.index,
-                        op.name, opcode.id, opcode.min_dng_version.to_string(),
-                        opcode.is_known() ? "" : ", unknown to this build");
-        if (op.mandatory) {
-            add_issue(m.interpretation, InterpretationIssueKind::MandatoryOperationUnsupported,
-                      std::format("{} is mandatory and Lucent cannot apply it", label));
-        } else {
-            add_issue(m.interpretation, InterpretationIssueKind::OptionalOperationUnsupported,
-                      std::format("{} is optional and will be skipped", label));
-        }
-        m.required_operations.push_back(std::move(op));
-    }
-    const auto add_gain_table = [&](std::string_view name) {
-        RequiredOperation op;
-        op.kind = RequiredOperationKind::ProfileGainTableMap;
-        op.stage = OperationStage::ProfileRendering;
-        op.name = std::string(name);
-        op.mandatory = false;
-        m.required_operations.push_back(op);
-        add_issue(m.interpretation, InterpretationIssueKind::OptionalOperationUnsupported,
-                  std::format("{} (camera-profile local tone map) will not be applied", name));
-    };
-    if (ifd.profile_gain_table_map) {
-        add_gain_table("ProfileGainTableMap");
-    }
-    if (dng.info.profile_gain_table_map2) {
-        add_gain_table("ProfileGainTableMap2");
-    }
 
     // NoiseProfile of the raw IFD, else the copy in IFD 0 that some writers store instead (both
     // are verified against the colour planes by the inspector).
@@ -558,7 +500,35 @@ void apply_dng(const ExtractionContext& context, std::string_view unpacker, RawM
                                                          "OpcodeList2 MapPolynomial curves, or through its "
                                                          "own sRGB-like curve when there are none"});
     }
+
+    for (const DngOpcode& opcode : ifd.opcodes) {
+        RequiredOperation op = required_operation_for(opcode);
+        // LibRaw's lossy_dng_load_raw() maps samples through MapPolynomial opcodes of
+        // OpcodeList2 (LibRaw 0.22.2 src/decoders/dng.cpp:200-231).
+        op.applied_by_decoder = lossy_dng_decoder && opcode.list == DngOpcodeListId::List2 &&
+                                opcode.id == static_cast<std::uint32_t>(DngOpcodeId::MapPolynomial);
+        m.required_operations.push_back(std::move(op));
+    }
     m.dng = std::move(dng);
+    assess_dng_opcode_operations(m);
+
+    const auto add_gain_table = [&](std::string_view name) {
+        RequiredOperation op;
+        op.kind = RequiredOperationKind::ProfileGainTableMap;
+        op.stage = OperationStage::ProfileRendering;
+        op.name = std::string(name);
+        op.mandatory = false;
+        op.lucent_note = "camera-profile gain table maps are not implemented";
+        m.required_operations.push_back(op);
+        add_issue(m.interpretation, InterpretationIssueKind::OptionalOperationUnsupported,
+                  std::format("{} (camera-profile local tone map) will not be applied", name));
+    };
+    if (ifd.profile_gain_table_map) {
+        add_gain_table("ProfileGainTableMap");
+    }
+    if (m.dng->info.profile_gain_table_map2) {
+        add_gain_table("ProfileGainTableMap2");
+    }
 }
 
 bool has_nonzero(const std::vector<double>& values) noexcept {

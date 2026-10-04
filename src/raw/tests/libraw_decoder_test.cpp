@@ -346,8 +346,8 @@ TEST_F(LibRawAdapter, FloatingPointDngKeepsFloatSamples) {
 
 TEST_F(LibRawAdapter, MandatoryDngOpcodeRequiresUnsupportedOperation) {
     SyntheticDngSpec spec;
-    spec.opcode_list3 = ts::opcode_list({{9, 0x01030000, 0, ts::filler(76)}});  // GainMap, mandatory
-    spec.opcode_list1 = ts::opcode_list({{4, 0x01030000, 1, ts::filler(8)}});   // optional
+    spec.opcode_list3 = ts::opcode_list({{2, 0x01030000, 0, ts::filler(52)}});  // WarpFisheye, mandatory
+    spec.opcode_list1 = ts::opcode_list({{4, 0x01030000, 1, ts::filler(8)}});   // optional, malformed
     const auto path = write_dng(spec);
     const ProbeResult probe = probe_ok(path);
     const RawMetadata& m = probe.metadata;
@@ -358,14 +358,17 @@ TEST_F(LibRawAdapter, MandatoryDngOpcodeRequiresUnsupportedOperation) {
     EXPECT_EQ(list1.stage, OperationStage::StoredRaw);
     EXPECT_EQ(list1.name, "FixBadPixelsConstant");
     EXPECT_FALSE(list1.mandatory);
-    const RequiredOperation& gain = m.required_operations[1];
-    EXPECT_EQ(gain.stage, OperationStage::AfterDemosaic);
-    EXPECT_EQ(gain.name, "GainMap");
-    EXPECT_EQ(gain.opcode_id, 9u);
-    EXPECT_EQ(gain.min_dng_version.to_string(), "1.3.0.0");
-    EXPECT_TRUE(gain.mandatory);
-    EXPECT_FALSE(gain.supported_by_lucent);
-    EXPECT_FALSE(gain.applied_by_decoder);
+    EXPECT_FALSE(list1.supported_by_lucent);
+    EXPECT_NE(list1.lucent_note.find("malformed"), std::string::npos) << list1.lucent_note;
+    const RequiredOperation& fisheye = m.required_operations[1];
+    EXPECT_EQ(fisheye.stage, OperationStage::AfterDemosaic);
+    EXPECT_EQ(fisheye.name, "WarpFisheye");
+    EXPECT_EQ(fisheye.opcode_id, 2u);
+    EXPECT_EQ(fisheye.min_dng_version.to_string(), "1.3.0.0");
+    EXPECT_TRUE(fisheye.mandatory);
+    EXPECT_FALSE(fisheye.supported_by_lucent);
+    EXPECT_FALSE(fisheye.applied_by_decoder);
+    EXPECT_EQ(fisheye.lucent_note, "WarpFisheye is not implemented");
     const auto count_kind = [&](InterpretationIssueKind kind) {
         return std::count_if(m.interpretation.issues.begin(), m.interpretation.issues.end(),
                              [kind](const InterpretationIssue& i) { return i.kind == kind; });
@@ -377,6 +380,62 @@ TEST_F(LibRawAdapter, MandatoryDngOpcodeRequiresUnsupportedOperation) {
     const DecodedRaw decoded = decode_ok(path);
     EXPECT_EQ(decoded.metadata.interpretation.status, InterpretationStatus::RequiresUnsupportedOperation);
     expect_mosaic_samples(std::get<MosaicFrame>(decoded.image).pixels, 64, 48);
+}
+
+TEST_F(LibRawAdapter, ImplementedDngOpcodesAreSupportedAndCarryTheirParameters) {
+    SyntheticDngSpec spec;
+    spec.opcode_list1 = ts::opcode_list({{4, 0x01030000, 0, ts::bad_pixels_constant_parameters(0, 0)}});
+    spec.opcode_list2 = ts::opcode_list(
+        {{9, 0x01030000, 0, ts::gain_map_parameters({0, 0, 48, 64}, 2, 2, 1, 1, 0, 0, 1, {1.0f, 1.1f, 1.2f, 1.3f})}});
+    spec.opcode_list3 = ts::opcode_list({
+        {14, 0x01060000, 1, ts::warp_rectilinear2_parameters({ts::Warp2Set{}})},  // optional
+        {1, 0x01030000, 0, ts::warp_rectilinear_parameters({{0.99, 0, 0, 0, 0, 0}})},
+        {3, 0x01030000, 0, ts::vignette_parameters({0.2, 0, 0, 0, 0})},
+    });
+    const auto path = write_dng(spec);
+    for (const RawMetadata& m : {probe_ok(path).metadata, decode_ok(path).metadata}) {
+        EXPECT_EQ(m.interpretation.status, InterpretationStatus::Complete);
+        EXPECT_TRUE(m.interpretation.issues.empty());
+        ASSERT_EQ(m.required_operations.size(), 5u);
+        for (std::size_t i : {0u, 1u, 2u, 4u}) {
+            EXPECT_TRUE(m.required_operations[i].supported_by_lucent) << m.required_operations[i].name;
+            EXPECT_TRUE(m.required_operations[i].lucent_note.empty());
+        }
+        // The WarpRectilinear after the optional WarpRectilinear2 Lucent applies is skipped.
+        EXPECT_FALSE(m.required_operations[3].supported_by_lucent);
+        EXPECT_TRUE(m.required_operations[3].superseded_by_warp_rectilinear2);
+        ASSERT_TRUE(m.dng);
+        const auto& opcodes = m.dng->raw_ifd.opcodes;
+        ASSERT_EQ(opcodes.size(), 5u);
+        const auto* gains = std::get_if<DngGainMap>(&opcodes[1].parameters);
+        ASSERT_NE(gains, nullptr);
+        EXPECT_EQ(gains->gains, (std::vector<float>{1.0f, 1.1f, 1.2f, 1.3f}));
+        // Where Lucent's buffers lie in the stage images: no ActiveArea, the whole frame.
+        const DngOpcodeFrame frame = dng_opcode_frame(m, DngOpcodeListId::List2);
+        EXPECT_TRUE(frame.image.list_unavailable.empty()) << frame.image.list_unavailable;
+        EXPECT_EQ(frame.image.width, 64u);
+        EXPECT_EQ(frame.image.bayer_phase, DngBayerPhase::Red);
+    }
+    const DecodedRaw decoded = decode_ok(path);
+    EXPECT_TRUE(check_consistency(decoded));
+}
+
+TEST_F(LibRawAdapter, MalformedMandatoryOpcodeParametersLeaveTheFileUnsupported) {
+    SyntheticDngSpec spec;
+    spec.opcode_list3 = ts::opcode_list({{9, 0x01030000, 0, ts::filler(76)}});  // GainMap, mandatory
+    const ProbeResult probe = probe_ok(write_dng(spec));
+    const RawMetadata& m = probe.metadata;
+    EXPECT_EQ(m.interpretation.status, InterpretationStatus::RequiresUnsupportedOperation);
+    ASSERT_EQ(m.interpretation.issues.size(), 1u);
+    EXPECT_EQ(m.interpretation.issues[0].kind, InterpretationIssueKind::MandatoryOperationUnsupported);
+    EXPECT_NE(m.interpretation.issues[0].message.find("malformed"), std::string::npos) << m.interpretation.issues[0].message;
+    // The rest of the DNG is still read.
+    ASSERT_TRUE(m.dng);
+    EXPECT_TRUE(m.dng->info.color.color_matrix[0].has_value());
+    ASSERT_EQ(m.required_operations.size(), 1u);
+    EXPECT_FALSE(m.required_operations[0].supported_by_lucent);
+    EXPECT_NE(m.required_operations[0].lucent_note.find("(corrupt)"), std::string::npos)
+        << m.required_operations[0].lucent_note;
 }
 
 TEST_F(LibRawAdapter, OptionalOpcodesOnlySkipOptionalOperations) {

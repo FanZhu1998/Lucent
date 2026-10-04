@@ -96,8 +96,10 @@ private:
 // values, such as long bad-pixel lists, are legitimate but must not be loaded without bound.
 //
 // Memory accounting: every tag value that is read is charged its in-memory size, which is the
-// larger of its stored byte size and 8 bytes per decoded number. Tags reported only by location
-// (LinearizationTable, ProfileGainTableMap, IlluminantData) are not read and cost nothing. Peak
+// larger of its stored byte size and 8 bytes per decoded number. An opcode list is charged twice
+// its byte size: the payload read, and the decoded opcode parameters kept in the summary (which
+// are at most about as large). Tags reported only by location (LinearizationTable,
+// ProfileGainTableMap, IlluminantData) are not read and cost nothing. Peak
 // memory is therefore about max_total_value_bytes plus the IFD entry tables, whose size is
 // bounded by max_ifds and max_entries_per_ifd (about 56 bytes per entry, one IFD at a time).
 struct TiffInspectLimits {
@@ -305,6 +307,9 @@ struct TiffIfdSummary {
     std::array<std::optional<TiffValueLocation>, 3> opcode_lists;
     // Opcodes of all present lists, list 1 first, each list in processing order. The absolute
     // offset of an opcode's parameters is opcode_lists[list - 1]->offset + parameter_offset.
+    // Parameters are decoded (decode_dng_opcode_parameters); a malformed parameter area is
+    // recorded in DngOpcode::parameter_error (a Corrupt error at "raw.dng.opcode_parameters"),
+    // and that opcode cannot be applied.
     std::vector<DngOpcode> opcodes;
 
     [[nodiscard]] bool has_mandatory_opcodes() const noexcept;
@@ -396,7 +401,8 @@ struct TiffSummary {
 //                  including TIFF-like vendor variants such as ORF or RW2 (raw.tiff.header)
 //   Corrupt        truncated or inconsistent structure or a malformed interpreted tag
 //                  (raw.tiff.header, raw.tiff.ifd, raw.tiff.ifd_tree, raw.tiff.entry,
-//                  raw.tiff.tag, raw.dng.opcode_list, raw.dng.color)
+//                  raw.tiff.tag, raw.dng.opcode_list, raw.dng.color); malformed opcode
+//                  parameters are recorded per opcode instead (DngOpcode::parameter_error)
 //   LimitExceeded  a tag value exceeds max_value_bytes or max_total_value_bytes (raw.tiff.limits),
 //                  or an opcode list exceeds max_opcodes_per_list (raw.dng.opcode_list)
 //   InvalidArgument  `limits` violates its documented minimums (raw.tiff.limits)
