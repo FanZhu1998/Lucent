@@ -24,6 +24,7 @@ product authority. The current module structure is described in
 | [0008](0008-catalog-and-source-identity.md) | Persistent library: catalog, source identity, duplicates, relinking and thumbnail cache | Accepted | 2026-10-03 | W4 |
 | [0009](0009-windows-packaging.md) | Windows packaging: installed layout, dependency audit and per-user Inno Setup installer | Accepted | 2026-10-03 | W5 |
 | [0010](0010-develop-pipeline-and-recipes.md) | Develop pipeline, recipes and interactive previews | Accepted | 2026-10-03 | W6 |
+| [0011](0011-natural-v1-automatic-settings.md) | Natural v1 automatic settings: metric contract, proposals, bounded search and confidence | Accepted | 2026-10-03 | W8 |
 
 ## Conventions
 

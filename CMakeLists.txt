@@ -69,6 +69,7 @@ add_subdirectory(apps/lucent-worker)
 if(LUCENT_BUILD_TOOLS)
     add_subdirectory(apps/lucent-probe)
     add_subdirectory(apps/lucent-render)
+    add_subdirectory(apps/lucent-auto)
 endif()
 
 if(LUCENT_BUILD_UI)
