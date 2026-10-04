@@ -26,6 +26,7 @@ product authority. The current module structure is described in
 | [0010](0010-develop-pipeline-and-recipes.md) | Develop pipeline, recipes and interactive previews | Accepted | 2026-10-03 | W6 |
 | [0011](0011-natural-v1-automatic-settings.md) | Natural v1 automatic settings: metric contract, proposals, bounded search and confidence | Accepted | 2026-10-03 | W8 |
 | [0012](0012-durable-batch-and-workers.md) | Durable batch export: worker processes, memory-budgeted scheduling, journaled publication and recovery | Accepted | 2026-10-04 | W7 |
+| [0013](0013-automatic-settings-integration.md) | Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches | Accepted | 2026-10-04 | W8 application wiring |
 
 ## Conventions
 
