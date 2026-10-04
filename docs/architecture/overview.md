@@ -20,8 +20,8 @@ workflows (see `docs/development/roadmap.md`).
 | catalog | `lucent_catalog` | SQLite catalog (local disk only, WAL, one writer), migrations, verified backups and restore, source identity, relinking, import records (W4, ADR 0008); recipes (W6), job journal (W7) | SQLite (private) | W4 |
 | analysis | `lucent_analysis` | Metrics, deterministic proposals, optimiser, optional learned inference | ONNX Runtime (private, later) | Planned |
 | assets | `lucent_assets` | Versioned camera/lens profiles, models, manifests, licences | — | Planned |
-| workers | `lucent_workers` | Worker process lifecycle, protocol, memory admission, job isolation | Qt Core (later) | Planned |
-| application | `lucent_application` | Import (discovery, exclusions, refresh of changed files), session library, task executor with memory admission, preview and camera-preview service, single-item export (W3, ADR 0007); catalog-backed library, verified copies into a library folder, source maintenance (hashing, presence checks, relinking) in the background, disk thumbnail cache (W4, ADR 0008); recipe documents ("lucent.develop", canonical JSON), revision stores and the recipe service (gesture coalescing, undo/redo with branches, reset, revert, locks, copy/paste by category across cameras), edit sessions with a cached stage one, quick-then-refine previews, histograms and clipping masks, retained memory admission, recipe-aware previews, Lucent-rendered thumbnails and exports with recorded recipe identity (W6, ADR 0010) | nlohmann-json (private); no Qt | W3 |
+| workers | `lucent_workers` | Isolated worker processes (W7, ADR 0012): the versioned protocol "lucent.worker" over inherited anonymous pipes, the host (Job Objects with kill-on-close and commit limits, heartbeats, cooperative cancel then termination, crash classification, restarts), the worker-side server and the job's output files; `lucent-worker.exe` (apps) runs the develop render and verified export of one job | nlohmann-json (private); Win32 | W7 |
+| application | `lucent_application` | Import (discovery, exclusions, refresh of changed files), session library, task executor with memory admission, preview and camera-preview service, single-item export (W3, ADR 0007); catalog-backed library, verified copies into a library folder, source maintenance (hashing, presence checks, relinking) in the background, disk thumbnail cache (W4, ADR 0008); recipe documents ("lucent.develop", canonical JSON), revision stores and the recipe service (gesture coalescing, undo/redo with branches, reset, revert, locks, copy/paste by category across cameras), edit sessions with a cached stage one, quick-then-refine previews, histograms and clipping masks, retained memory admission, recipe-aware previews, Lucent-rendered thumbnails and exports with recorded recipe identity (W6, ADR 0010); durable batch export: destinations and Windows-safe names, the batch service (catalog job journal, memory-budgeted scheduler over `lucent-worker` processes, handle-held verification and no-clobber publication with receipts, restart reconciliation), completion reports, single exports as batches of one (W7, ADR 0012) | nlohmann-json (private); no Qt | W3 |
 | ui | `Lucent.exe`, `lucent_ui_adapters` | Qt Quick Library / Edit / Exports views, view models, UI-side service interfaces, and the adapters that bind them to `lucent_application` (ADR 0007); Import dialog, Missing/Duplicate/Removable badges, relink, catalog backup, re-checks when a volume arrives or leaves (W4, ADR 0008) | Qt Quick | W3 |
 
 Executables live in `apps/`: `Lucent.exe` (GUI, WIN32 subsystem), `lucent-worker.exe` (isolated
@@ -38,8 +38,9 @@ processing worker) and developer tools such as `lucent-probe.exe` and `lucent-re
   Its callbacks run on its own executor threads; the UI adapters (`apps/lucent/src/adapters`)
   post them to the UI thread.
 - The UI never decodes or renders on its thread; it talks to application services, which
-  dispatch work to background threads: in W3 an in-process executor (ADR 0007), from W7 isolated
-  worker processes behind the same service interfaces.
+  dispatch work to background threads: an in-process executor for previews and editing (ADR 0007),
+  and from W7 isolated `lucent-worker` processes for every export and batch (ADR 0012), driven by
+  `lucent_application` through `lucent_workers`; pixels never cross the process boundary.
 
 ## Build and dependency management
 
