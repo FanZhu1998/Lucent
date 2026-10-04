@@ -117,19 +117,26 @@ QString summary_message(const ImportSummary& summary) {
 AppController::AppController(Services services, QObject* parent)
     : QObject(parent), services_(std::move(services)), registry_(std::make_shared<GenerationRegistry>()) {
     if (!services_.complete()) {
-        throw std::invalid_argument("lucent::ui::AppController needs a library, image and export service");
+        throw std::invalid_argument(
+            "lucent::ui::AppController needs a library, image, export, edit and batch service");
     }
     library_model_ = std::make_unique<LibraryModel>(*services_.library, registry_);
     export_model_ = std::make_unique<ExportJobModel>(*services_.exports);
     current_ = std::make_unique<CurrentItem>(*library_model_);
     frame_store_ = std::make_shared<FrameStore>();
     edit_ = std::make_unique<EditSession>(*services_.edits, frame_store_);
+    batch_list_ = std::make_unique<BatchListModel>(*services_.batches);
+    batch_setup_ = std::make_unique<BatchSetupModel>(*services_.batches);
+    batch_report_ = std::make_unique<BatchReportModel>(*services_.batches);
     // Owned here, never by the QML engine's garbage collector.
     QQmlEngine::setObjectOwnership(library_model_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(export_model_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(current_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(edit_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(edit_->history(), QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(batch_list_.get(), QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(batch_setup_.get(), QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(batch_report_.get(), QQmlEngine::CppOwnership);
 
     url_opener_ = [](const QUrl& url) { return QDesktopServices::openUrl(url); };
 
@@ -149,6 +156,34 @@ AppController::AppController(Services services, QObject* parent)
     connect(&library, &LibraryService::items_added, this, &AppController::on_items_added);
     connect(current_.get(), &CurrentItem::changed, this, &AppController::on_current_changed);
     connect(this, &AppController::exportOptionsChanged, this, &AppController::update_suggested_export_name);
+
+    BatchService& batches = *services_.batches;
+    connect(&batches, &BatchService::busy_changed, this, &AppController::busyChanged);
+    connect(&batches, &BatchService::submitted, this, &AppController::on_batch_submitted);
+    connect(&batches, &BatchService::batch_changed, this, &AppController::on_batch_changed);
+    connect(&batches, &BatchService::command_failed, this,
+            [this](BatchId, const QString& message) { set_status_message(message); });
+    connect(&batches, &BatchService::report_file_ready, this,
+            [this](BatchId batch, const QString& path, const QString& error) {
+                if (batch != report_requested_) {
+                    return;
+                }
+                report_requested_ = 0;
+                if (path.isEmpty()) {
+                    set_status_message(tr_controller("The report could not be written: %1").arg(error));
+                } else if (!url_opener_(QUrl::fromLocalFile(path))) {
+                    set_status_message(tr_controller("Could not open %1").arg(native(path)));
+                }
+            });
+    const auto update_active = [this] {
+        const int active = active_export_count();
+        if (active != last_active_exports_) {
+            last_active_exports_ = active;
+            emit activeExportCountChanged();
+        }
+    };
+    connect(batch_list_.get(), &BatchListModel::summaryChanged, this, update_active);
+    connect(export_model_.get(), &ExportJobModel::countsChanged, this, update_active);
 }
 
 AppController::~AppController() {
@@ -384,6 +419,148 @@ void AppController::on_verification_progress(const VerificationProgress& progres
     }
 }
 
+int AppController::active_export_count() const {
+    if (services_.batches->is_available()) {
+        return batch_list_->remaining_photos();
+    }
+    return export_model_->active_count();
+}
+
+bool AppController::openBatchExport() {
+    if (library_model_->count() == 0) {
+        set_status_message(tr_controller("Add photos to the library first."));
+        return false;
+    }
+    if (!services_.batches->is_available()) {
+        set_status_message(services_.batches->unavailable_reason());
+        return false;
+    }
+    QList<ItemId> selection = library_model_->selected_items();
+    if (selection.isEmpty() && current_->valid()) {
+        selection << current_->item_id();
+    }
+    batch_setup_->prepare(selection, library_model_->all_items());
+    emit batchExportRequested();
+    return true;
+}
+
+bool AppController::openFolderBatchExport(const QUrl& folder) {
+    if (!folder.isLocalFile()) {
+        set_status_message(tr_controller("Choose a folder on this computer or the network."));
+        return false;
+    }
+    if (!services_.batches->is_available()) {
+        set_status_message(services_.batches->unavailable_reason());
+        return false;
+    }
+    batch_setup_->prepare(library_model_->selected_items(), library_model_->all_items());
+    batch_setup_->prepare_folder(folder, true);
+    emit batchExportRequested();
+    return true;
+}
+
+bool AppController::startBatch() {
+    const QString label = batch_setup_->batch_label();
+    const quint64 token = batch_setup_->start();
+    if (token == 0) {
+        const QString hint = batch_setup_->start_hint();
+        set_status_message(hint.isEmpty() ? tr_controller("The batch cannot start.") : hint);
+        return false;
+    }
+    last_batch_token_ = token;
+    batch_list_->track_submission(token, label);
+    batch_submissions_.insert(token, label);
+    const QUrl output = batch_setup_->output_folder();
+    if (output != last_output_folder_) {
+        last_output_folder_ = output;
+        emit lastOutputFolderChanged();
+    }
+    set_status_message(tr_controller("Preparing %1…").arg(label));
+    set_current_view(Exports);
+    return true;
+}
+
+bool AppController::openBatchFolder(int row) {
+    const BatchSnapshot* batch = batch_list_->batch_at(row);
+    if (batch == nullptr || batch->folder.isEmpty()) {
+        return false;
+    }
+    if (!url_opener_(QUrl::fromLocalFile(batch->folder))) {
+        set_status_message(tr_controller("Could not open %1").arg(native(batch->folder)));
+        return false;
+    }
+    return true;
+}
+
+void AppController::openBatchReport(int row) {
+    const BatchSnapshot* batch = batch_list_->batch_at(row);
+    if (batch == nullptr) {
+        return;
+    }
+    report_requested_ = batch->id;
+    services_.batches->request_report_file(batch->id);
+}
+
+void AppController::showBatchReport(int row) {
+    batch_report_->show(batch_list_->batchIdAt(row));
+}
+
+bool AppController::showFileInFolder(const QString& path) {
+    if (path.isEmpty()) {
+        return false;
+    }
+    const QString folder = QFileInfo(path).absolutePath();
+    if (!url_opener_(QUrl::fromLocalFile(folder))) {
+        set_status_message(tr_controller("Could not open %1").arg(native(folder)));
+        return false;
+    }
+    return true;
+}
+
+void AppController::on_batch_submitted(quint64 token, BatchId batch, const QString& error) {
+    const auto found = batch_submissions_.find(token);
+    if (found == batch_submissions_.end()) {
+        return;  // not started from the dialog
+    }
+    const QString label = found.value();
+    batch_submissions_.erase(found);
+    if (batch == 0) {
+        set_status_message(tr_controller("Could not start %1: %2").arg(label, error));
+        return;
+    }
+    watched_batches_.insert(batch, label);
+    set_status_message(tr_controller("Started %1").arg(label));
+    // A batch can be finished already (every photo exported before, so all skipped).
+    if (const auto row = batch_list_->row_of(batch)) {
+        on_batch_changed(*batch_list_->batch_at(*row));
+    }
+}
+
+void AppController::on_batch_changed(const BatchSnapshot& batch) {
+    const auto found = watched_batches_.find(batch.id);
+    // Reported once its outcome is complete: the review count and the photos left out at the start
+    // are read from its report right after it finished.
+    if (found == watched_batches_.end() || !batch.finished_state() || batch.review < 0) {
+        return;
+    }
+    const QString name = batch.name.isEmpty() ? found.value() : batch.name;
+    watched_batches_.erase(found);
+    QString message = batch.state == BatchState::Cancelled
+                          ? tr_controller("%1 was cancelled: %2 of %3 exported")
+                          : tr_controller("%1 finished: %2 of %3 exported");
+    message = message.arg(name).arg(batch.completed).arg(batch.total);
+    if (const qint64 skipped = batch.skipped + std::max<qint64>(0, batch.excluded); skipped > 0) {
+        message += QStringLiteral(" · ") + tr_controller("%1 skipped").arg(skipped);
+    }
+    if (batch.failed > 0) {
+        message += QStringLiteral(" · ") + tr_controller("%1 failed").arg(batch.failed);
+    }
+    if (batch.review > 0) {
+        message += QStringLiteral(" · ") + tr_controller("%1 for review").arg(batch.review);
+    }
+    set_status_message(message);
+}
+
 bool AppController::openItem(int row) {
     if (library_model_->item_at(row) == nullptr) {
         return false;
@@ -521,7 +698,7 @@ void AppController::set_current_index(int row) {
 
 bool AppController::busy() const {
     return importing_ || services_.library->is_busy() || services_.exports->is_busy() ||
-           services_.edits->is_busy();
+           services_.edits->is_busy() || services_.batches->is_busy();
 }
 
 void AppController::set_include_subfolders(bool include) {

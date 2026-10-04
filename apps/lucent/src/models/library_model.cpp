@@ -1,5 +1,6 @@
 #include "models/library_model.hpp"
 
+#include <algorithm>
 #include <utility>
 
 #include <QSet>
@@ -33,6 +34,93 @@ QList<ItemId> LibraryModel::missing_items() const {
         }
     }
     return ids;
+}
+
+QList<ItemId> LibraryModel::selected_items() const {
+    QList<ItemId> ids;
+    for (const LibraryItem& item : items_) {
+        if (selected_.contains(item.id)) {
+            ids << item.id;
+        }
+    }
+    return ids;
+}
+
+QList<ItemId> LibraryModel::all_items() const {
+    QList<ItemId> ids;
+    ids.reserve(static_cast<qsizetype>(items_.size()));
+    for (const LibraryItem& item : items_) {
+        ids << item.id;
+    }
+    return ids;
+}
+
+void LibraryModel::set_selection(QSet<ItemId> selection) {
+    if (selection == selected_) {
+        return;
+    }
+    const QSet<ItemId> before = std::exchange(selected_, std::move(selection));
+    // Only the rows whose state changed.
+    for (std::size_t row = 0; row < items_.size(); ++row) {
+        const ItemId id = items_[row].id;
+        if (before.contains(id) != selected_.contains(id)) {
+            const QModelIndex changed = index(static_cast<int>(row));
+            emit dataChanged(changed, changed, {InSelectionRole});
+        }
+    }
+    emit selectionChanged();
+}
+
+void LibraryModel::selectOnly(int row) {
+    const LibraryItem* item = item_at(row);
+    if (item == nullptr) {
+        return;
+    }
+    anchor_ = item->id;
+    set_selection({item->id});
+}
+
+void LibraryModel::toggleSelected(int row) {
+    const LibraryItem* item = item_at(row);
+    if (item == nullptr) {
+        return;
+    }
+    anchor_ = item->id;
+    QSet<ItemId> selection = selected_;
+    if (!selection.remove(item->id)) {
+        selection.insert(item->id);
+    }
+    set_selection(std::move(selection));
+}
+
+void LibraryModel::selectRange(int row) {
+    const LibraryItem* item = item_at(row);
+    if (item == nullptr) {
+        return;
+    }
+    const std::optional<int> anchor = anchor_ != 0 ? row_of(anchor_) : std::nullopt;
+    if (!anchor) {
+        selectOnly(row);
+        return;
+    }
+    QSet<ItemId> selection;
+    for (int r = std::min(*anchor, row); r <= std::max(*anchor, row); ++r) {
+        selection.insert(items_[static_cast<std::size_t>(r)].id);
+    }
+    set_selection(std::move(selection));
+}
+
+void LibraryModel::selectAll() {
+    QSet<ItemId> selection;
+    for (const LibraryItem& item : items_) {
+        selection.insert(item.id);
+    }
+    set_selection(std::move(selection));
+}
+
+void LibraryModel::clearSelection() {
+    anchor_ = 0;
+    set_selection({});
 }
 
 void LibraryModel::set_missing(int missing) {
@@ -128,6 +216,8 @@ QVariant LibraryModel::data(const QModelIndex& index, int role) const {
         return is_missing(*item);
     case EditedRole:
         return item->edited;
+    case InSelectionRole:
+        return selected_.contains(item->id);
     case FlagBadgesRole: {
         QVariantList badges;
         for (const QString& key : p::flag_keys(item->flags)) {
@@ -182,6 +272,7 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {MissingRole, "missing"},
         {FlagBadgesRole, "flagBadges"},
         {EditedRole, "edited"},
+        {InSelectionRole, "inSelection"},
     };
 }
 

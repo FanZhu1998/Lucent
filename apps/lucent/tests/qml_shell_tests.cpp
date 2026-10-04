@@ -264,7 +264,18 @@ TEST_F(QmlShellTest, AnIncompleteRenderIsMarkedOnTheImage) {
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 
-TEST_F(QmlShellTest, ExportsViewListsTheJobs) {
+// A session without batches (the library is not saved) lists its in-process export jobs.
+TEST_F(QmlShellTest, ExportsViewListsTheJobsWithoutBatches) {
+    engine.reset();
+    controller = std::make_unique<AppController>(
+        fakes::create_fake_services(fakes::FakeTimings::immediate(), /*batches=*/false));
+    controller->set_url_opener([this](const QUrl& url) {
+        opened.push_back(url);
+        return true;
+    });
+    engine = std::make_unique<QQmlApplicationEngine>();
+    window = load_main_window(*engine, *controller);
+    ASSERT_NE(window, nullptr);
     write_photos(2, 1);
     import_folder();
     QList<ItemId> items;
@@ -275,6 +286,9 @@ TEST_F(QmlShellTest, ExportsViewListsTheJobs) {
     controller->showView(AppController::Exports);
     ASSERT_TRUE(settle());
     EXPECT_EQ(child("exportJobs")->property("count").toInt(), 3);
+    EXPECT_TRUE(child<QQuickItem>("exportJobs")->isVisible());
+    EXPECT_FALSE(child<QQuickItem>("batchList")->isVisible());
+    EXPECT_TRUE(child<QQuickItem>("batchesUnavailable")->isVisible());
     EXPECT_EQ(child("exportSummary")->property("text").toString(), QStringLiteral("2 exported · 1 failed"));
     EXPECT_TRUE(child("openLastOutputFolder")->property("enabled").toBool());
     EXPECT_TRUE(controller->openOutputFolder(-1));
@@ -461,6 +475,107 @@ TEST_F(QmlShellTest, TheImportDialogConfirmsAnImportAndCardsShowSourceBadges) {
         EXPECT_TRUE(
             QTest::qWaitFor([this] { return !visual_items("badge_duplicate", true).isEmpty(); }, kWaitMs));
     }
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+}  // namespace
+}  // namespace lucent::ui
+
+namespace lucent::ui {
+namespace {
+
+// W7: Export batch from the Library (Ctrl+click selection, the dialog with its live example paths
+// and the explicit confirmation to replace files), then the Exports view: the batch with its counts
+// and the selected batch's report, without a warning.
+TEST_F(QmlShellTest, TheBatchDialogShowsExamplesAndTheExportsViewListsTheBatchWithItsReport) {
+    write_photos(3, 1);
+    import_folder();
+    auto* grid = child<QQuickItem>("contactSheet");
+    ASSERT_NE(grid, nullptr);
+    controller->library()->selectOnly(0);
+    controller->library()->toggleSelected(2);
+    EXPECT_EQ(controller->library()->selected_count(), 2);
+    ASSERT_TRUE(settle());
+    EXPECT_EQ(visual_items("selectionMark", true).size(), 2);
+
+    auto* dialog = child("batchExportDialog");
+    ASSERT_NE(dialog, nullptr);
+    QTest::keyClick(window, Qt::Key_E, Qt::ControlModifier | Qt::ShiftModifier);
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    BatchSetupModel& setup = *controller->batch_setup();
+    EXPECT_TRUE(setup.active());
+    EXPECT_EQ(setup.scope(), BatchSetupModel::Selection);
+    EXPECT_FALSE(child("batchStart")->property("enabled").toBool());  // no output folder yet
+    setup.setOutputFolder(QUrl::fromLocalFile(folder.filePath(QStringLiteral("out"))));
+    setup.setScope(BatchSetupModel::AllPhotos);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return setup.plan_valid() && !setup.planning(); }, kWaitMs));
+    EXPECT_EQ(setup.examples().size(), 3);  // the first three
+    EXPECT_EQ(setup.outputs(), 3);
+    EXPECT_EQ(setup.excluded_count(), 1);  // the Unsupported photo, with its reason
+    EXPECT_TRUE(child("batchStart")->property("enabled").toBool());
+    EXPECT_FALSE(child<QQuickItem>("batchAutomaticSettings")->isEnabled());
+    EXPECT_FALSE(child("batchIncludeGps")->property("checked").toBool());
+
+    // Replacing files asks first; keeping them changes nothing.
+    auto* overwrite = child("batchOverwrite");
+    auto* confirm = child("batchOverwriteConfirm");
+    ASSERT_NE(overwrite, nullptr);
+    ASSERT_NE(confirm, nullptr);
+    ASSERT_TRUE(QMetaObject::invokeMethod(overwrite, "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([confirm] { return confirm->property("opened").toBool(); }, kWaitMs));
+    EXPECT_FALSE(setup.overwrite());
+    EXPECT_FALSE(overwrite->property("checked").toBool());
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("batchOverwriteKeep"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([confirm] { return !confirm->property("visible").toBool(); }, kWaitMs));
+    EXPECT_FALSE(setup.overwrite());
+    ASSERT_TRUE(QMetaObject::invokeMethod(overwrite, "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([confirm] { return confirm->property("opened").toBool(); }, kWaitMs));
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("batchOverwriteReplace"), "clicked"));
+    EXPECT_TRUE(setup.overwrite());
+    EXPECT_TRUE(overwrite->property("checked").toBool());
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("batchUniqueNames"), "clicked"));
+    EXPECT_FALSE(setup.overwrite());
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("batchStart"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return !dialog->property("visible").toBool(); }, kWaitMs));
+    EXPECT_EQ(controller->current_view(), AppController::Exports);
+    ASSERT_TRUE(QTest::qWaitFor([this] { return controller->batches()->count() == 1; }, kWaitMs));
+    ASSERT_TRUE(settle());
+    const BatchSnapshot* batch = controller->batches()->batch_at(0);
+    ASSERT_NE(batch, nullptr);
+    EXPECT_EQ(batch->total, 4);  // three photos and the Unsupported one, which the simulation fails
+    EXPECT_EQ(batch->completed, 3);
+    EXPECT_EQ(batch->failed, 1);
+    EXPECT_TRUE(child<QQuickItem>("batchList")->isVisible());
+    EXPECT_EQ(child("batchList")->property("count").toInt(), 1);
+    EXPECT_FALSE(child<QQuickItem>("exportJobs")->isVisible());
+    ASSERT_TRUE(QTest::qWaitFor([this] { return controller->batch_report()->has_report(); }, kWaitMs));
+    EXPECT_EQ(controller->batch_report()->count(), 4);
+    EXPECT_EQ(child("reportEntries")->property("count").toInt(), 4);
+    EXPECT_TRUE(controller->status_message().contains(QStringLiteral("finished")));
+    EXPECT_FALSE(visual_items("batchRetry", true).isEmpty());  // a failed photo can be retried
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// An attention is shown on the batch with the service's text and a Resume button.
+TEST_F(QmlShellTest, AnAttentionBannerOffersResume) {
+    controller->showView(AppController::Exports);
+    BatchSnapshot batch;
+    batch.id = 3;
+    batch.name = QStringLiteral("Export of 4 photos");
+    batch.folder = QStringLiteral("E:\\Out");
+    batch.state = BatchState::Paused;
+    batch.total = 4;
+    batch.completed = 1;
+    batch.queued = 3;
+    batch.attention = BatchAttention::DestinationUnavailable;
+    batch.attention_message = QStringLiteral("E:\\Out is not available: its drive may have been disconnected, so "
+                                             "the batch is paused. Reconnect it, then choose Resume.");
+    emit controller->batch_service().batch_changed(batch);
+    ASSERT_TRUE(settle());
+    ASSERT_TRUE(QTest::qWaitFor([this] { return visual_items("batchAttention", true).size() == 1; }, kWaitMs));
+    EXPECT_EQ(visual_items("batchAttentionResume", true).size(), 1);
+    EXPECT_EQ(child("exportSummary")->property("text").toString(), QStringLiteral("1 needs attention"));
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

@@ -1,0 +1,136 @@
+#pragma once
+
+// BatchReportModel: the report of the batch selected in the Exports view (blueprint section 2
+// step 5: "a report of exported, skipped, failed, and review-recommended items"): its counts and
+// notes, and one row per photo with its outcome, output, reason, suggested action and review notes,
+// filtered by outcome ("all", "exported", "skipped", "failed", "review").
+//
+// The report is read by the BatchService off the UI thread. While the shown batch changes (photos
+// finish), the report is read again at most once per refresh interval (2 s, or 2 ms per photo for
+// large batches, at most 15 s), so a large running batch does not re-read its report for every
+// photo.
+//
+// QML-facing members use QML naming (lowerCamelCase); C++-only members use snake_case.
+//
+// Thread-safety: UI thread only.
+
+#include <chrono>
+#include <vector>
+
+#include <QAbstractListModel>
+#include <QElapsedTimer>
+#include <QLocale>
+#include <QStringList>
+#include <QTimer>
+#include <QtQmlIntegration/qqmlintegration.h>
+
+#include "services/batch_service.hpp"
+
+namespace lucent::ui {
+
+class BatchReportModel : public QAbstractListModel {
+    Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("BatchReportModel is provided by AppController.batchReport.")
+    Q_PROPERTY(qulonglong batchId READ batch_id NOTIFY reportChanged FINAL)
+    Q_PROPERTY(bool loading READ loading NOTIFY reportChanged FINAL)
+    Q_PROPERTY(bool hasReport READ has_report NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QString error READ error NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QString name READ name NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QString folder READ folder NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QString format READ format NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QString timesLabel READ times_label NOTIFY reportChanged FINAL)
+    Q_PROPERTY(bool finished READ finished NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int exported READ exported NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int skipped READ skipped NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int failed READ failed NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int cancelled READ cancelled NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int pending READ pending NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int review READ review NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int total READ total NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QStringList notes READ notes NOTIFY reportChanged FINAL)
+    Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged FINAL)
+    Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
+
+public:
+    enum Role {
+        SourceNameRole = Qt::UserRole + 1,
+        SourcePathRole,
+        OutcomeKeyRole,   // presentation::outcome_key
+        OutcomeLabelRole,
+        OutputRole,       // full path; may be empty
+        OutputNameRole,   // file name of OutputRole
+        ReasonRole,
+        ActionRole,
+        ReviewRole,       // QStringList
+        HasReviewRole,
+        AttemptsRole,
+        AccessibleLabelRole,
+    };
+    Q_ENUM(Role)
+
+    // `service` must outlive the model.
+    explicit BatchReportModel(BatchService& service, QObject* parent = nullptr);
+
+    [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
+    [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
+    [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
+
+    // Shows the report of `batch` (0 clears). Showing the batch already shown reads it again.
+    Q_INVOKABLE void show(qulonglong batch);
+    Q_INVOKABLE void clear() { show(0); }
+    Q_INVOKABLE void reload();
+
+    [[nodiscard]] qulonglong batch_id() const noexcept { return static_cast<qulonglong>(batch_); }
+    [[nodiscard]] bool loading() const noexcept { return loading_; }
+    [[nodiscard]] bool has_report() const noexcept { return report_.ok && report_.id == batch_ && batch_ != 0; }
+    [[nodiscard]] QString error() const { return report_.error; }
+    [[nodiscard]] QString name() const { return report_.name; }
+    [[nodiscard]] QString folder() const { return report_.folder; }
+    [[nodiscard]] QString format() const { return report_.format; }
+    [[nodiscard]] QString times_label() const;
+    [[nodiscard]] bool finished() const noexcept {
+        return report_.state == BatchState::Completed || report_.state == BatchState::Cancelled;
+    }
+    [[nodiscard]] int exported() const noexcept { return static_cast<int>(report_.exported); }
+    [[nodiscard]] int skipped() const noexcept { return static_cast<int>(report_.skipped); }
+    [[nodiscard]] int failed() const noexcept { return static_cast<int>(report_.failed); }
+    [[nodiscard]] int cancelled() const noexcept { return static_cast<int>(report_.cancelled); }
+    [[nodiscard]] int pending() const noexcept { return static_cast<int>(report_.pending); }
+    [[nodiscard]] int review() const noexcept { return static_cast<int>(report_.review); }
+    [[nodiscard]] int total() const noexcept { return static_cast<int>(report_.entries.size()); }
+    [[nodiscard]] QStringList notes() const { return report_.notes; }
+    [[nodiscard]] QString filter() const { return filter_; }
+    void setFilter(const QString& filter);
+    [[nodiscard]] int count() const noexcept { return static_cast<int>(rows_.size()); }
+
+    [[nodiscard]] const BatchReportEntry* entry_at(int row) const noexcept;
+    void set_refresh_interval(std::chrono::milliseconds interval);
+    void set_locale(const QLocale& locale) { locale_ = locale; }
+
+signals:
+    void reportChanged();
+    void filterChanged();
+    void countChanged();
+
+private:
+    void on_report(BatchId batch, const BatchReportInfo& report);
+    void on_batch_changed(const BatchSnapshot& batch);
+    void rebuild_rows();
+    [[nodiscard]] bool matches(const BatchReportEntry& entry) const;
+
+    BatchService& service_;
+    BatchId batch_ = 0;
+    BatchReportInfo report_;
+    std::vector<int> rows_;  // indices into report_.entries that pass the filter
+    QString filter_ = QStringLiteral("all");
+    bool loading_ = false;
+    bool reload_pending_ = false;  // a change arrived while a read was in flight
+    QTimer refresh_timer_;
+    QElapsedTimer last_read_;  // since the last report was requested
+    int refresh_interval_ms_ = 2000;  // set_refresh_interval
+    QLocale locale_;
+    BatchSnapshot last_seen_;
+};
+
+}  // namespace lucent::ui

@@ -127,13 +127,14 @@ LibraryItem make_fake_item(ItemId id, const QString& path, qint64 size_bytes, co
     return item;
 }
 
-Services create_fake_services(FakeTimings timings) {
+Services create_fake_services(FakeTimings timings, bool batches) {
     auto catalog = std::make_shared<FakeCatalog>();
     Services services;
     services.library = std::make_unique<FakeLibraryService>(catalog, timings);
     services.images = std::make_shared<FakeImageSource>(catalog, timings);
     services.exports = std::make_unique<FakeExportService>(catalog, timings);
     services.edits = std::make_unique<FakeEditService>(catalog, timings);
+    services.batches = std::make_unique<FakeBatchService>(catalog, timings, batches);
     services.simulation_notice = tr_fake("Simulated services");
     return services;
 }

@@ -1,9 +1,9 @@
 #pragma once
 
-// The shell's services bound to the application services (docs/adr/0007, 0010): one Backend shared
-// by AppLibraryService, AppImageSource, AppExportService and AppEditService. Lucent.exe gets them through
-// service_factory.cpp; tests create them with their own options (for example a scripted
-// renderer).
+// The shell's services bound to the application services (docs/adr/0007, 0010, 0012): one Backend
+// shared by AppLibraryService, AppImageSource, AppExportService, AppEditService and AppBatchService.
+// Lucent.exe gets them through service_factory.cpp; tests create them with their own options (for
+// example a scripted renderer).
 //
 // Ownership: the returned Services own the adapters; the adapters share the Backend, which is
 // released with the last of them. Destroy the Services (and so the AppController holding them)

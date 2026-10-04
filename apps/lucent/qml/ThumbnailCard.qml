@@ -6,8 +6,9 @@ import Lucent
 // support status, a "Camera preview" label while the thumbnail is the camera's embedded JPEG
 // (blueprint section 2), an "Edited" badge for photos with develop settings (W6: their thumbnail
 // is Lucent's render of the recipe), badges for the file (Missing, Changed, Duplicate, Removable) and the pick,
-// file name, camera, capture time and flags. The properties marked required are LibraryModel
-// roles.
+// file name, camera, capture time and flags. W7: photos selected for a batch (Ctrl+click toggles,
+// Shift+click selects a range) are outlined, with a check mark while several are selected. The
+// properties marked required are LibraryModel roles.
 Item {
     id: card
 
@@ -31,24 +32,39 @@ Item {
     required property string pickLabel
     required property bool missing
     required property bool edited
+    required property bool inSelection
 
-    property bool selected: false
+    property bool selected: false  // the current photo
     property bool showFocus: false
+    property bool multipleSelected: false
 
     signal clicked()
     signal activated()
+    signal toggleRequested()  // Ctrl+click
+    signal rangeRequested()   // Shift+click
 
     Accessible.role: Accessible.ListItem
     Accessible.name: accessibleLabel
-    Accessible.selected: selected
+    Accessible.selected: selected || inSelection
 
     HoverHandler {
         id: hover
     }
 
     TapHandler {
+        acceptedModifiers: Qt.NoModifier
         onTapped: card.clicked()
         onDoubleTapped: card.activated()
+    }
+
+    TapHandler {
+        acceptedModifiers: Qt.ControlModifier
+        onTapped: card.toggleRequested()
+    }
+
+    TapHandler {
+        acceptedModifiers: Qt.ShiftModifier
+        onTapped: card.rangeRequested()
     }
 
     Rectangle {
@@ -57,8 +73,9 @@ Item {
         anchors.fill: parent
         anchors.margins: 6
         radius: Theme.radius
-        color: card.selected ? Theme.surfaceRaised : (hover.hovered ? Theme.surfaceHover : Theme.surface)
-        border.width: card.selected ? 2 : 0
+        color: card.selected || card.inSelection ? Theme.surfaceRaised
+                                                 : (hover.hovered ? Theme.surfaceHover : Theme.surface)
+        border.width: card.selected || card.inSelection ? 2 : 0
         border.color: Theme.accent
 
         Rectangle {
@@ -199,13 +216,36 @@ Item {
             anchors.topMargin: 8
             spacing: 2
 
-            Text {
+            Row {
                 width: parent.width
-                text: card.fileName
-                color: Theme.textPrimary
-                font.pixelSize: Theme.fontBody
-                font.weight: Font.Medium
-                elide: Text.ElideMiddle
+                spacing: 6
+
+                Rectangle {
+                    objectName: "selectionMark"
+                    visible: card.inSelection && card.multipleSelected
+                    width: 16
+                    height: 16
+                    radius: 8
+                    color: Theme.accentStrong
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "✓"
+                        color: Theme.textOnAccent
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    width: parent.width - (card.inSelection && card.multipleSelected ? 22 : 0)
+                    text: card.fileName
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontBody
+                    font.weight: Font.Medium
+                    elide: Text.ElideMiddle
+                }
             }
 
             Text {

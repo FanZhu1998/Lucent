@@ -58,6 +58,8 @@ ScriptedServices make_scripted_services() {
     auto library = std::make_unique<ScriptedLibraryService>();
     auto exports = std::make_unique<RecordingExportService>();
     auto edits = std::make_unique<RecordingEditService>();
+    auto batches = std::make_unique<RecordingBatchService>();
+    scripted.batches = batches.get();
     scripted.library = library.get();
     scripted.exports = exports.get();
     scripted.edits = edits.get();
@@ -66,6 +68,7 @@ ScriptedServices make_scripted_services() {
     scripted.services.exports = std::move(exports);
     scripted.services.images = scripted.images;
     scripted.services.edits = std::move(edits);
+    scripted.services.batches = std::move(batches);
     return scripted;
 }
 

@@ -60,7 +60,7 @@ Rectangle {
         NavButton {
             objectName: "exportsTab"
             text: qsTr("Exports")
-            badgeText: header.controller.exports.activeCount > 0 ? String(header.controller.exports.activeCount) : ""
+            badgeText: header.controller.activeExportCount > 0 ? String(header.controller.activeExportCount) : ""
             checked: header.controller.currentView === AppController.Exports
             onClicked: header.controller.showView(AppController.Exports)
             ToolTip.visible: hovered

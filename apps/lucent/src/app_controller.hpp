@@ -4,7 +4,9 @@
 // `controller`). It owns the services, the view models and the generation registry, and turns user
 // intents (add photos, open a photo, export, open the output folder) into service calls. W6: its
 // EditSession (`edit`) follows the photo while the Edit view shows it, and the frame image
-// providers (imaging/frame_store.hpp) serve that session's frames.
+// providers (imaging/frame_store.hpp) serve that session's frames. W7: the Export batch dialog's
+// state (`batchSetup`), the Exports view's batches (`batches`) and the selected batch's report
+// (`batchReport`), over the durable BatchService.
 //
 // Blueprint section 2 ("Library, Edit and Exports are three views of one application") and
 // section 4 (the UI calls application services and never decodes on its thread).
@@ -21,6 +23,7 @@
 #include <functional>
 #include <memory>
 
+#include <QHash>
 #include <QObject>
 #include <QStringList>
 #include <QUrl>
@@ -28,6 +31,9 @@
 
 #include "imaging/frame_store.hpp"
 #include "imaging/generation_registry.hpp"
+#include "models/batch_list_model.hpp"
+#include "models/batch_report_model.hpp"
+#include "models/batch_setup.hpp"
 #include "models/current_item.hpp"
 #include "models/edit_session.hpp"
 #include "models/export_job_model.hpp"
@@ -85,6 +91,15 @@ class AppController : public QObject {
     Q_PROPERTY(QString libraryNotice READ library_notice CONSTANT FINAL)
     // Background verification of the library's files ("Verifying photos… 12 of 340"); empty when idle.
     Q_PROPERTY(QString backgroundActivity READ background_activity NOTIFY backgroundActivityChanged FINAL)
+    // W7. Durable batch exports (blueprint section 2, "Automatic batch development").
+    Q_PROPERTY(lucent::ui::BatchListModel* batches READ batches CONSTANT FINAL)
+    Q_PROPERTY(lucent::ui::BatchSetupModel* batchSetup READ batch_setup CONSTANT FINAL)
+    Q_PROPERTY(lucent::ui::BatchReportModel* batchReport READ batch_report CONSTANT FINAL)
+    // False when this session cannot keep batches (the library is not saved): the Exports view then
+    // lists the session's in-process export jobs.
+    Q_PROPERTY(bool batchesAvailable READ batches_available CONSTANT FINAL)
+    // Exports still to do (the Exports tab's badge): photos of active batches, or queued jobs.
+    Q_PROPERTY(int activeExportCount READ active_export_count NOTIFY activeExportCountChanged FINAL)
 
 public:
     enum View { Library = 0, Edit = 1, Exports = 2 };
@@ -153,6 +168,26 @@ public:
     Q_INVOKABLE void backUpCatalog();
     Q_INVOKABLE bool openBackupFolder();
 
+    // --- W7: batch export ------------------------------------------------------------------------
+
+    // Prepares the Export batch dialog with the Library's selection and every listed photo, and asks
+    // the window to open it (batchExportRequested). False when the library is empty.
+    Q_INVOKABLE bool openBatchExport();
+    // The same for a folder of photos (imported first when the batch starts).
+    Q_INVOKABLE bool openFolderBatchExport(const QUrl& folder);
+    // Starts the batch the dialog describes; the Exports view shows it while it is prepared. False
+    // when the setup cannot start (batchSetup.startHint says why).
+    Q_INVOKABLE bool startBatch();
+    // Opens the output folder of the batch at `row` of `batches`.
+    Q_INVOKABLE bool openBatchFolder(int row);
+    // Opens the readable HTML report of the batch at `row` (written into its output folder when it
+    // finished; written now when it is missing).
+    Q_INVOKABLE void openBatchReport(int row);
+    // Shows the report of the batch at `row` in batchReport (-1 clears).
+    Q_INVOKABLE void showBatchReport(int row);
+    // Opens the folder of an exported file (a report row's output).
+    Q_INVOKABLE bool showFileInFolder(const QString& path);
+
     // --- C++ API ---------------------------------------------------------------------------------
 
     // Starts one import request for the non-empty paths among `paths` (made absolute against the
@@ -183,6 +218,14 @@ public:
     [[nodiscard]] CurrentItem* current() const noexcept { return current_.get(); }
     [[nodiscard]] EditSession* edit() const noexcept { return edit_.get(); }
     [[nodiscard]] EditService& edit_service() const noexcept { return *services_.edits; }
+    [[nodiscard]] BatchService& batch_service() const noexcept { return *services_.batches; }
+    [[nodiscard]] BatchListModel* batches() const noexcept { return batch_list_.get(); }
+    [[nodiscard]] BatchSetupModel* batch_setup() const noexcept { return batch_setup_.get(); }
+    [[nodiscard]] BatchReportModel* batch_report() const noexcept { return batch_report_.get(); }
+    [[nodiscard]] bool batches_available() const { return services_.batches->is_available(); }
+    [[nodiscard]] int active_export_count() const;
+    // The submission token of the most recent startBatch() (0 when none).
+    [[nodiscard]] quint64 last_batch_token() const noexcept { return last_batch_token_; }
     [[nodiscard]] LibraryService& library_service() const noexcept { return *services_.library; }
     [[nodiscard]] ExportService& export_service() const noexcept { return *services_.exports; }
 
@@ -237,6 +280,9 @@ signals:
     void importOptionsChanged();
     void pendingImportChanged();
     void backgroundActivityChanged();
+    void activeExportCountChanged();
+    // The window should open the Export batch dialog (openBatchExport, openFolderBatchExport).
+    void batchExportRequested();
 
 private:
     bool import_urls(const QList<QUrl>& urls, bool include_subfolders);
@@ -255,6 +301,8 @@ private:
     bool relink(const QUrl& folder, const QList<ItemId>& items);
     // The edit session follows the photo while the Edit view shows it.
     void update_edit_item();
+    void on_batch_submitted(quint64 token, BatchId batch, const QString& error);
+    void on_batch_changed(const BatchSnapshot& batch);
 
     Services services_;  // declared first: destroyed after the models that observe it
     std::shared_ptr<GenerationRegistry> registry_;
@@ -263,6 +311,9 @@ private:
     std::unique_ptr<CurrentItem> current_;
     std::shared_ptr<FrameStore> frame_store_;  // shared with the frame image providers
     std::unique_ptr<EditSession> edit_;
+    std::unique_ptr<BatchListModel> batch_list_;
+    std::unique_ptr<BatchSetupModel> batch_setup_;
+    std::unique_ptr<BatchReportModel> batch_report_;
 
     View view_ = Library;
     View previous_view_ = Library;
@@ -280,6 +331,13 @@ private:
     QUrl copy_destination_;
     QStringList pending_import_;
     QString background_activity_;
+    // Batches started from the dialog in this session, by submission token, then by batch id: their
+    // completion is reported in the status line (single exports report through their jobs).
+    QHash<quint64, QString> batch_submissions_;
+    QHash<BatchId, QString> watched_batches_;
+    BatchId report_requested_ = 0;  // openBatchReport() waiting for its file
+    quint64 last_batch_token_ = 0;
+    int last_active_exports_ = 0;
 };
 
 }  // namespace lucent::ui

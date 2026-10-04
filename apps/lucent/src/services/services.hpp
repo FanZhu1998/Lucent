@@ -7,6 +7,7 @@
 
 #include <QString>
 
+#include "services/batch_service.hpp"
 #include "services/edit_service.hpp"
 #include "services/export_service.hpp"
 #include "services/image_source.hpp"
@@ -21,11 +22,14 @@ struct Services {
     std::unique_ptr<ExportService> exports;
     // W6: detailed editing (recipes, revisions, edit sessions).
     std::unique_ptr<EditService> edits;
+    // W7: durable batch exports (BatchService::is_available() is false when the session cannot
+    // keep them; exports then run in-process through `exports` only).
+    std::unique_ptr<BatchService> batches;
     // Short user-visible note shown in the window header when the services are simulated (for
     // example "Simulated services"); empty for the real services.
     QString simulation_notice;
 
-    [[nodiscard]] bool complete() const noexcept { return library && images && exports && edits; }
+    [[nodiscard]] bool complete() const noexcept { return library && images && exports && edits && batches; }
 };
 
 }  // namespace lucent::ui

@@ -257,7 +257,63 @@ private:
     int pending_ = 0;
 };
 
-// The complete simulated service set, with simulation_notice set.
-[[nodiscard]] Services create_fake_services(FakeTimings timings = {});
+// Simulated batches: plans name the outputs from the pattern without touching the folder, and a
+// submitted batch completes one photo per ten export steps without writing any file (Unsupported
+// photos fail with their reason; folder batches are not simulated and fail at once).
+class FakeBatchService final : public BatchService {
+    Q_OBJECT
+
+public:
+    // `available` false simulates a session without a saved library (no batches).
+    FakeBatchService(std::shared_ptr<const FakeCatalog> catalog, FakeTimings timings, bool available = true,
+                     QObject* parent = nullptr);
+    ~FakeBatchService() override;
+
+    [[nodiscard]] bool is_available() const override { return available_; }
+    [[nodiscard]] QString unavailable_reason() const override;
+    quint64 request_plan(const BatchSetup& setup) override;
+    quint64 submit(const BatchSetup& setup) override;
+    void cancel_submit(quint64) override {}
+    void pause(BatchId batch) override;
+    void resume(BatchId batch) override;
+    void cancel(BatchId batch) override;
+    void retry_failed(BatchId batch) override;
+    void refresh() override;
+    void request_report(BatchId batch) override;
+    void request_report_file(BatchId batch) override;
+    [[nodiscard]] bool is_busy() const override;
+
+private:
+    struct Job {
+        ItemId item = 0;
+        QString source;
+        QString output;
+        BatchOutcome outcome = BatchOutcome::Pending;
+        QString reason;
+        double fraction = 0.0;
+    };
+    struct Batch {
+        BatchSnapshot snapshot;
+        std::vector<Job> jobs;
+    };
+
+    void step();
+    void publish(Batch& batch);
+    void later(std::function<void()> work);
+    void update_busy();
+
+    std::shared_ptr<const FakeCatalog> catalog_;
+    FakeTimings timings_;
+    bool available_ = true;
+    std::map<BatchId, Batch> batches_;
+    BatchId next_id_ = 1;
+    quint64 next_token_ = 0;
+    QTimer timer_;
+    bool busy_ = false;
+};
+
+// The complete simulated service set, with simulation_notice set. `batches` false: a session
+// without durable batches (exports are listed as in-process jobs).
+[[nodiscard]] Services create_fake_services(FakeTimings timings = {}, bool batches = true);
 
 }  // namespace lucent::ui::fakes

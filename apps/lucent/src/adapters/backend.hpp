@@ -25,7 +25,8 @@
 // previous session, continues running batches with lucent-worker.exe processes, and the export
 // service sends single exports through it (batches of one). It pauses admission while interactive
 // editing waits for a render (InteractiveActivity). When it cannot be opened, exports stay
-// in-process and batches() is null. The batch user interface is phase 3's.
+// in-process and batches() is null. The shell reaches it through AppBatchService
+// (app_batch_service.hpp).
 //
 // Destruction order is the reverse: the maintenance, export and preview services cancel their
 // outstanding work and wait for its callbacks, the executor shuts down (queued tasks run once with

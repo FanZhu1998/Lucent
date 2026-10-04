@@ -77,7 +77,7 @@ TEST_F(LibraryModelTest, AddsItemsInOrderAndExposesPresentationRoles) {
 TEST_F(LibraryModelTest, RoleNamesAreUniqueAndCoverEveryRole) {
     const QHash<int, QByteArray> names = model.roleNames();
     std::set<QByteArray> unique;
-    for (int id = LibraryModel::FileNameRole; id <= LibraryModel::EditedRole; ++id) {
+    for (int id = LibraryModel::FileNameRole; id <= LibraryModel::InSelectionRole; ++id) {
         ASSERT_TRUE(names.contains(id)) << id;
         unique.insert(names.value(id));
     }
