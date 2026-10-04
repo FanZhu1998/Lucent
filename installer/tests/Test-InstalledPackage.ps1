@@ -241,6 +241,9 @@ $exitCode = Invoke-Setup -Directory $appDir -LogPath $installLog
 Add-Check 'Setup exit code 0' ($exitCode -eq 0) "exit code $exitCode, $([int]$installTimer.Elapsed.TotalSeconds) s"
 $exe = Join-Path $appDir 'Lucent.exe'
 Add-Check 'Lucent.exe installed into the chosen folder' (Test-Path -LiteralPath $exe) $exe
+# W7 (ADR 0012): exports and batches run in lucent-worker.exe, which Lucent.exe starts from its own folder.
+$workerExe = Join-Path $appDir 'lucent-worker.exe'
+Add-Check 'lucent-worker.exe installed next to Lucent.exe' (Test-Path -LiteralPath $workerExe) $workerExe
 $installText = if (Test-Path -LiteralPath $installLog) { Get-Content -LiteralPath $installLog -Raw } else { '' }
 $runtimeLine = ($installText -split "`r?`n" | Where-Object { $_ -match 'VC\+\+ runtime:' }) -join ' | '
 Add-Check 'Runtime check logged' ($runtimeLine -ne '') $runtimeLine

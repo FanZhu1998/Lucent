@@ -6,20 +6,22 @@
     1. Builds the release preset with tools\build.ps1 (optionally from scratch, optionally with tests).
        Outputs of an earlier run for the same version (installer, checksum, manifest, SBOM copy) are
        then deleted, so they can never be paired with a different layout.
-    2. Lays out the installation folder with `cmake --install`: Lucent.exe, Qt deployed by windeployqt,
+    2. Lays out the installation folder with `cmake --install`: Lucent.exe, lucent-worker.exe (the
+       isolated export worker it starts, W7 / ADR 0012), Qt deployed by windeployqt,
        every other runtime DLL and an installed-layout qt.conf (cmake/LucentPackaging.cmake).
     3. Audits that folder with dumpbin: every import of every DLL and executable must resolve to the
        folder, to Windows or to the Visual C++ runtime installed by Microsoft's redistributable, every
        DLL in the folder must be imported, the required Qt plugins and every QML module Lucent uses
        (with its plugin DLL) must be present, and every file must be Lucent's build output or an
-       unmodified file of a vcpkg port. Then it starts the staged Lucent.exe with a Windows-only PATH
-       (smoke run): Qt loads plugins and QML modules by name, which no import table shows. Any
-       error stops the packaging.
-    4. Signs Lucent.exe when signing is configured (see NOTES; off by default).
+       unmodified file of a vcpkg port; the only executables are Lucent.exe and lucent-worker.exe,
+       both GUI-subsystem programs identical to the build. Then it starts the staged Lucent.exe with a
+       Windows-only PATH (smoke run): Qt loads plugins and QML modules by name, which no import
+       table shows. Any error stops the packaging.
+    4. Signs Lucent.exe and lucent-worker.exe when signing is configured (see NOTES; off by default).
     5. Writes licenses\: Lucent's licence, the copyright file of every shipped vcpkg port, licence
        texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, LGPL-NOTICE.txt, THIRD-PARTY-NOTICES.txt
        (including the third-party code inside Qt from Qt's own SBOM and the libraries linked
-       statically into Lucent.exe), then Lucent-files.txt (the installed-file list that the next
+       statically into Lucent's executables), then Lucent-files.txt (the installed-file list that the next
        version's Setup uses to upgrade) and the SBOM Lucent.spdx.json (SPDX 2.3, checked
        structurally, and with pyspdxtools when it is available).
     6. Compiles installer\lucent.iss with Inno Setup 6 (unless -StageOnly) and writes the package
@@ -206,7 +208,7 @@ Write-Host "    Exit code 0, screenshot $($smoke.Screenshot), no Qt or QML loadi
 
 $fileIndex = Get-VcpkgFileIndex -InstalledDir ($info.vcpkgInstalledDir.Replace('/', '\')) -Triplet $info.vcpkgTriplet
 $staticLibraries = @(Get-StaticVcpkgLibraries -Info $info -FileIndex $fileIndex)
-Write-Host ("    Static vcpkg libraries linked into {0}: {1}" -f $info.executable, $(if ($staticLibraries.Count) { ($staticLibraries | ForEach-Object { "$($_.Path) ($($_.Port))" }) -join ', ' } else { 'none' }))
+Write-Host ("    Static vcpkg libraries linked into {0}: {1}" -f (Get-LucentExecutablesText $info), $(if ($staticLibraries.Count) { ($staticLibraries | ForEach-Object { "$($_.Path) ($($_.Port))" }) -join ', ' } else { 'none' }))
 
 # --- 4. Optional signing of Lucent.exe -----------------------------------------------------------
 
@@ -220,11 +222,14 @@ if ($env:LUCENT_SIGN_CERT_SHA1) {
         $found.Source
     }
     $signArgs = @('sign', '/fd', 'sha256', '/sha1', $env:LUCENT_SIGN_CERT_SHA1, '/tr', $env:LUCENT_SIGN_TIMESTAMP_URL, '/td', 'sha256')
-    $exe = Join-Path $stage $info.executable
-    Write-Step "Signing $($info.executable)"
-    $signed = Invoke-NativeCommand -FilePath $signTool -Arguments ($signArgs + @('/d', 'Lucent', $exe))
-    if ($signed.ExitCode -ne 0) { $signed.Output | ForEach-Object { Write-Host $_ }; throw 'signtool failed.' }
-    if ((Get-AuthenticodeSignature -LiteralPath $exe).Status -ne 'Valid') { throw "$exe has no valid signature after signing." }
+    # Lucent.exe and its helper executables (lucent-worker.exe): every program Lucent ships.
+    foreach ($name in @(@($info.executable) + @($info.helperExecutables) | Where-Object { $_ })) {
+        $exe = Join-Path $stage $name
+        Write-Step "Signing $name"
+        $signed = Invoke-NativeCommand -FilePath $signTool -Arguments ($signArgs + @('/d', 'Lucent', $exe))
+        if ($signed.ExitCode -ne 0) { $signed.Output | ForEach-Object { Write-Host $_ }; throw 'signtool failed.' }
+        if ((Get-AuthenticodeSignature -LiteralPath $exe).Status -ne 'Valid') { throw "$exe has no valid signature after signing." }
+    }
     # Inno Setup signs Setup and the uninstaller with the same command ($q = quote, $f = file).
     $signCommand = '$q' + $signTool + '$q ' + ($signArgs -join ' ') + ' /d $qLucent Setup$q $f'
 }

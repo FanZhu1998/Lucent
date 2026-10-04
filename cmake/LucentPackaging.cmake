@@ -5,6 +5,9 @@
 # produces the folder the installer ships:
 #
 #   Lucent.exe                 the application (WIN32 subsystem)
+#   lucent-worker.exe          the isolated processing worker Lucent.exe starts for exports and
+#                              batches (W7, ADR 0012; WIN32 subsystem, no window); it must sit next to
+#                              Lucent.exe (workers::default_worker_executable)
 #   *.dll                      Qt and every other runtime DLL, unmodified from the vcpkg installation
 #   plugins\<type>\*.dll       Qt plugins (platform, image formats, icon engines)
 #   qml\...                    the QML modules Lucent imports, deployed by windeployqt
@@ -16,7 +19,8 @@
 #      plugins Lucent cannot run without (LUCENT_PACKAGE_REQUIRED_PLUGINS) must be among them.
 #   2. QML modules Lucent never loads are removed (the unused Qt Quick Controls styles).
 #   3. qt.conf is written with paths relative to the executable only.
-#   4. file(GET_RUNTIME_DEPENDENCIES) resolves the imports of Lucent.exe and every plugin against
+#   4. file(GET_RUNTIME_DEPENDENCIES) resolves the imports of Lucent.exe, the helper executables
+#      (lucent-worker.exe) and every plugin against
 #      the folder and the vcpkg bin directory. Missing DLLs (zlib, FreeType, LibRaw, ...) are copied
 #      from vcpkg; DLLs that nothing imports any more (those of the removed styles) are deleted.
 #      Windows system DLLs and the Visual C++ runtime are never copied: the runtime is installed by
@@ -68,7 +72,8 @@ endfunction()
 
 # Install time. See the header for the steps.
 #
-# lucent_deploy_runtime(EXECUTABLE <installed exe> WINDEPLOYQT <windeployqt.exe> DUMPBIN <dumpbin.exe>
+# lucent_deploy_runtime(EXECUTABLE <installed exe> [HELPERS <installed exe>...]
+#                       WINDEPLOYQT <windeployqt.exe> DUMPBIN <dumpbin.exe>
 #                       QML_SOURCE_DIR <dir> LOG_FILE <file>
 #                       SEARCH_DIRECTORIES <dir>... SKIPPED_PLUGIN_TYPES <type>...
 #                       REQUIRED_PLUGINS <plugins-relative file>...
@@ -76,13 +81,13 @@ endfunction()
 function(lucent_deploy_runtime)
     cmake_parse_arguments(ARG ""
         "EXECUTABLE;WINDEPLOYQT;DUMPBIN;QML_SOURCE_DIR;LOG_FILE"
-        "SEARCH_DIRECTORIES;SKIPPED_PLUGIN_TYPES;REQUIRED_PLUGINS;UNUSED_QML_MODULES;VC_RUNTIME_DLLS" ${ARGN})
+        "HELPERS;SEARCH_DIRECTORIES;SKIPPED_PLUGIN_TYPES;REQUIRED_PLUGINS;UNUSED_QML_MODULES;VC_RUNTIME_DLLS" ${ARGN})
     foreach(required EXECUTABLE WINDEPLOYQT DUMPBIN QML_SOURCE_DIR LOG_FILE SEARCH_DIRECTORIES)
         if(NOT ARG_${required})
             message(FATAL_ERROR "lucent_deploy_runtime: ${required} is not set")
         endif()
     endforeach()
-    foreach(tool "${ARG_WINDEPLOYQT}" "${ARG_DUMPBIN}" "${ARG_EXECUTABLE}")
+    foreach(tool "${ARG_WINDEPLOYQT}" "${ARG_DUMPBIN}" "${ARG_EXECUTABLE}" ${ARG_HELPERS})
         if(NOT EXISTS "${tool}")
             message(FATAL_ERROR "lucent_deploy_runtime: ${tool} does not exist")
         endif()
@@ -171,7 +176,7 @@ QmlImports = qml
         RESOLVED_DEPENDENCIES_VAR resolved
         UNRESOLVED_DEPENDENCIES_VAR unresolved
         CONFLICTING_DEPENDENCIES_PREFIX conflicting
-        EXECUTABLES "${ARG_EXECUTABLE}"
+        EXECUTABLES "${ARG_EXECUTABLE}" ${ARG_HELPERS}
         MODULES ${modules}
         DIRECTORIES "${prefix}" ${ARG_SEARCH_DIRECTORIES}
         PRE_EXCLUDE_REGEXES ${pre_exclude}
@@ -220,7 +225,7 @@ QmlImports = qml
     string(REPLACE ";" ", " copied_text "${copied}")
     message(STATUS "Copied runtime DLLs: ${copied_text}")
 
-    # DLLs in the folder that neither the executable nor any remaining plugin imports.
+    # DLLs in the folder that neither the executables nor any remaining plugin imports.
     file(GLOB root_dlls LIST_DIRECTORIES false "${prefix}/*.dll")
     set(removed "")
     foreach(dll IN LISTS root_dlls)
@@ -253,7 +258,7 @@ QmlImports = qml
     file(GET_RUNTIME_DEPENDENCIES
         RESOLVED_DEPENDENCIES_VAR resolved
         UNRESOLVED_DEPENDENCIES_VAR unresolved
-        EXECUTABLES "${ARG_EXECUTABLE}"
+        EXECUTABLES "${ARG_EXECUTABLE}" ${ARG_HELPERS}
         MODULES ${modules}
         DIRECTORIES "${prefix}"
         PRE_EXCLUDE_REGEXES ${pre_exclude}
@@ -345,11 +350,18 @@ set(LUCENT_PACKAGE_REQUIRED_PLUGINS platforms/qwindows.dll imageformats/qjpeg.dl
 # the plugin DLL its qmldir names and the modules that qmldir imports in turn.
 set(LUCENT_PACKAGE_REQUIRED_QML_MODULES QtQuick.Controls.Fusion)
 
+# Executables installed next to the application (W7, ADR 0012): Lucent.exe starts lucent-worker.exe
+# from its own folder for every export and batch, and the two must be the same build (the worker
+# protocol's handshake refuses a mixed pair). Building the application builds them too, so a build
+# tree's Lucent.exe always finds its worker.
+set(LUCENT_PACKAGE_HELPER_TARGETS lucent-worker)
+
 # lucent_install_application(<target> QML_SOURCE_DIR <dir> COMPONENT <component>)
 #
-# Installs <target> at the root of the prefix and, with LUCENT_INSTALL_RUNTIME, deploys its runtime
-# (see the header). Writes <build dir>/packaging/lucent-package.json, which tools/package.ps1 reads.
-# Must be called where the Qt6 package has been found.
+# Installs <target> and the helper executables (LUCENT_PACKAGE_HELPER_TARGETS) at the root of the
+# prefix and, with LUCENT_INSTALL_RUNTIME, deploys their runtime (see the header). Writes
+# <build dir>/packaging/lucent-package.json, which tools/package.ps1 reads. Must be called where the
+# Qt6 package has been found.
 function(lucent_install_application target)
     cmake_parse_arguments(ARG "" "QML_SOURCE_DIR;COMPONENT" "" ${ARGN})
     if(NOT ARG_QML_SOURCE_DIR OR NOT ARG_COMPONENT)
@@ -360,6 +372,24 @@ function(lucent_install_application target)
     endif()
 
     install(TARGETS ${target} RUNTIME DESTINATION . COMPONENT ${ARG_COMPONENT})
+    set(helper_installed "")
+    set(helper_names_json "")
+    set(helper_built_json "")
+    foreach(helper IN LISTS LUCENT_PACKAGE_HELPER_TARGETS)
+        if(NOT TARGET ${helper})
+            message(FATAL_ERROR "lucent_install_application: the helper executable target ${helper} does not exist")
+        endif()
+        install(TARGETS ${helper} RUNTIME DESTINATION . COMPONENT ${ARG_COMPONENT})
+        add_dependencies(${target} ${helper})
+        list(APPEND helper_installed "\${CMAKE_INSTALL_PREFIX}/$<TARGET_FILE_NAME:${helper}>")
+        if(helper_names_json)
+            string(APPEND helper_names_json ", ")
+            string(APPEND helper_built_json ", ")
+        endif()
+        string(APPEND helper_names_json "\"$<TARGET_FILE_NAME:${helper}>\"")
+        string(APPEND helper_built_json "\"$<TARGET_FILE:${helper}>\"")
+    endforeach()
+    list(JOIN helper_installed "\" \"" helper_installed_text)
 
     set(qt_bin_dir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
     set(packaging_dir "${CMAKE_BINARY_DIR}/packaging")
@@ -372,6 +402,7 @@ function(lucent_install_application target)
             include(\"${CMAKE_CURRENT_FUNCTION_LIST_FILE}\")
             lucent_deploy_runtime(
                 EXECUTABLE \"\${CMAKE_INSTALL_PREFIX}/$<TARGET_FILE_NAME:${target}>\"
+                HELPERS \"${helper_installed_text}\"
                 WINDEPLOYQT \"$<TARGET_FILE:Qt6::windeployqt>\"
                 DUMPBIN \"${LUCENT_DUMPBIN}\"
                 QML_SOURCE_DIR \"${ARG_QML_SOURCE_DIR}\"
@@ -387,6 +418,8 @@ function(lucent_install_application target)
 
     # Facts about this build for tools/package.ps1 (forward slashes: no JSON escaping needed).
     set(LUCENT_PACKAGE_TARGET "${target}")
+    set(LUCENT_PACKAGE_HELPERS_JSON "${helper_names_json}")
+    set(LUCENT_PACKAGE_BUILT_HELPERS_JSON "${helper_built_json}")
     set(LUCENT_PACKAGE_COMPONENT "${ARG_COMPONENT}")
     set(LUCENT_PACKAGE_VCPKG_INSTALLED "${VCPKG_INSTALLED_DIR}")
     set(LUCENT_PACKAGE_TRIPLET "${VCPKG_TARGET_TRIPLET}")
@@ -420,7 +453,7 @@ function(lucent_install_application target)
         string(APPEND LUCENT_PACKAGE_REQUIRED_QML_JSON "\"${name}\"")
     endforeach()
     file(CONFIGURE OUTPUT "${packaging_dir}/lucent-package.json.in" CONTENT [[{
-  "schema": 2,
+  "schema": 3,
   "name": "Lucent",
   "version": "@CMAKE_PROJECT_VERSION@",
   "versionMajor": @CMAKE_PROJECT_VERSION_MAJOR@,
@@ -435,6 +468,8 @@ function(lucent_install_application target)
   "installComponent": "@LUCENT_PACKAGE_COMPONENT@",
   "executable": "$<TARGET_FILE_NAME:@LUCENT_PACKAGE_TARGET@>",
   "builtExecutable": "$<TARGET_FILE:@LUCENT_PACKAGE_TARGET@>",
+  "helperExecutables": [@LUCENT_PACKAGE_HELPERS_JSON@],
+  "builtHelperExecutables": [@LUCENT_PACKAGE_BUILT_HELPERS_JSON@],
   "runtimeDeployed": @LUCENT_PACKAGE_RUNTIME_DEPLOYED@,
   "qtVersion": "@Qt6_VERSION@",
   "vcpkgInstalledDir": "@LUCENT_PACKAGE_VCPKG_INSTALLED@",

@@ -9,7 +9,8 @@
                                   (dumpbin), required Qt plugins, QML modules and their plugin DLLs,
                                   architecture, subsystem, qt.conf, forbidden files.
     - Invoke-SmokeRun             starts the staged Lucent.exe with a Windows-only PATH and checks it.
-    - Get-StaticVcpkgLibraries    vcpkg libraries linked statically into Lucent.exe (build.ninja, lib).
+    - Get-StaticVcpkgLibraries    vcpkg libraries linked statically into Lucent.exe and its helper
+                                  executables (lucent-worker.exe, W7) (build.ninja, lib).
     - New-LicenseBundle           writes licenses\ (Lucent's licence, each shipped port's copyright
                                   file, licence texts missing from vcpkg, the third-party code inside
                                   Qt from Qt's own SBOM, LGPL notice, notices file).
@@ -155,12 +156,25 @@ function Read-LucentPackageInfo {
         throw "$path is missing: configure the build with the release preset first (tools\build.ps1 -Preset release)."
     }
     $info = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($info.schema -ne 2) { throw "$path has schema $($info.schema); this script understands schema 2. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    if ($info.schema -ne 3) { throw "$path has schema $($info.schema); this script understands schema 3. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
     if ($info.version -notmatch '^\d+\.\d+\.\d+$') { throw "Unexpected version '$($info.version)' in $path." }
     foreach ($field in 'builtExecutable', 'vcpkgInstalledDir', 'dumpbin', 'qmlSourceDir') {
         $value = $info.$field
         if (-not $value -or -not (Test-Path -LiteralPath (ConvertTo-NativePath $value))) {
             throw "$path names a missing $field ('$value')."
+        }
+    }
+    # Helper executables installed next to the application (lucent-worker.exe, W7): built, and named
+    # once each.
+    $helpers = @($info.helperExecutables)
+    $builtHelpers = @($info.builtHelperExecutables)
+    if ($helpers.Count -ne $builtHelpers.Count) { throw "$path lists $($helpers.Count) helper executables but $($builtHelpers.Count) built ones." }
+    for ($i = 0; $i -lt $helpers.Count; ++$i) {
+        if ([System.IO.Path]::GetFileName((ConvertTo-NativePath $builtHelpers[$i])) -ine $helpers[$i]) {
+            throw "$path pairs helper $($helpers[$i]) with $($builtHelpers[$i])."
+        }
+        if (-not (Test-Path -LiteralPath (ConvertTo-NativePath $builtHelpers[$i]))) {
+            throw "The helper executable $($builtHelpers[$i]) has not been built."
         }
     }
     return $info
@@ -263,12 +277,17 @@ function Get-VcpkgFileIndex {
 function Get-StagedFileOrigins {
     <#
     .SYNOPSIS
-        Classifies every staged file: Lucent's executable, a generated file, or a file of a vcpkg port
-        (compared byte for byte with the vcpkg installation). Anything else is 'unknown'.
+        Classifies every staged file: Lucent's executable or one of its helper executables
+        (lucent-worker.exe), a generated file, or a file of a vcpkg port (compared byte for byte with
+        the vcpkg installation). Anything else is 'unknown'.
     #>
     param([Parameter(Mandatory)][string]$StageDir, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)][hashtable]$FileIndex)
     $tripletDir = Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet
     $origins = New-Object System.Collections.Generic.List[object]
+    $helperSources = @{}
+    $helperNames = @($Info.helperExecutables)
+    $helperBuilt = @($Info.builtHelperExecutables)
+    for ($i = 0; $i -lt $helperNames.Count; ++$i) { $helperSources[$helperNames[$i].ToLowerInvariant()] = ConvertTo-NativePath $helperBuilt[$i] }
     foreach ($file in Get-ChildItem -LiteralPath $StageDir -Recurse -File) {
         $relative = Get-RelativePathText -Root $StageDir -Path $file.FullName
         $segments = $relative.Split('\')
@@ -279,6 +298,11 @@ function Get-StagedFileOrigins {
         if ($segments.Count -eq 1 -and $relative -ieq $Info.executable) {
             $entry.Origin = 'lucent'
             $entry.Source = ConvertTo-NativePath $Info.builtExecutable
+            $entry.Identical = ($entry.Sha256 -eq (Get-Sha256 $entry.Source))
+        }
+        elseif ($segments.Count -eq 1 -and $helperSources.ContainsKey($relative.ToLowerInvariant())) {
+            $entry.Origin = 'lucent'
+            $entry.Source = $helperSources[$relative.ToLowerInvariant()]
             $entry.Identical = ($entry.Sha256 -eq (Get-Sha256 $entry.Source))
         }
         elseif ($segments.Count -eq 1 -and ($relative -ieq 'qt.conf' -or $relative -ieq $script:InstalledFileListName)) {
@@ -420,9 +444,10 @@ function Invoke-LayoutAudit {
     .SYNOPSIS
         Audits the installed layout. Returns a report; its Errors list must be empty to package.
     .DESCRIPTION
-        - Exactly one executable (Lucent.exe, GUI subsystem); every PE file is x64.
+        - Exactly the executables Lucent ships: Lucent.exe and its helpers (lucent-worker.exe, W7),
+          each a GUI-subsystem program identical to the build output; every PE file is x64.
         - No debug or build artefacts (pdb, lib, exp, ilk, obj); no port listed as never shipped.
-        - Every file is Lucent.exe (identical to the build output), a generated file, or a file of a
+        - Every file is one of those executables (identical to the build output), a generated file, or a file of a
           vcpkg port that is byte-identical to the vcpkg installation.
         - Every import and delay-load import of every PE file resolves to a DLL in the folder, an API
           set, a Windows DLL (System32, signed by Microsoft Windows), or one of the Visual C++ runtime
@@ -447,9 +472,11 @@ function Invoke-LayoutAudit {
     $origins = Get-StagedFileOrigins -StageDir $StageDir -Info $Info -FileIndex $index
 
     # Layout and provenance.
-    $executables = @($origins | Where-Object { $_.Path -like '*.exe' })
-    if ($executables.Count -ne 1 -or $executables[0].Path -ine $Info.executable) {
-        $errors.Add("Expected exactly one executable ($($Info.executable)); found: $(($executables | ForEach-Object Path) -join ', ')")
+    $executables = @($origins | Where-Object { $_.Path -like '*.exe' } | ForEach-Object { $_.Path.ToLowerInvariant() } | Sort-Object)
+    $expectedExecutables = @(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ } |
+        ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+    if (($executables -join '|') -ne ($expectedExecutables -join '|')) {
+        $errors.Add("Expected exactly the executables $($expectedExecutables -join ', '); found: $($executables -join ', ')")
     }
     foreach ($origin in $origins) {
         if ($origin.Path -match '\.(pdb|lib|exp|ilk|obj|iobj|ipdb)$') {
@@ -491,7 +518,7 @@ function Invoke-LayoutAudit {
         $full = Join-Path $StageDir $pe.Path
         $header = Get-PeHeader -Path $full
         if ($header.Machine -ne 'x64' -or -not $header.Pe32Plus) { $errors.Add("$($pe.Path) is not an x64 image ($($header.Machine))") }
-        if ($pe.Path -ieq $Info.executable -and $header.Subsystem -ne 'WindowsGui') {
+        if ($pe.Path -like '*.exe' -and $header.Subsystem -ne 'WindowsGui') {
             $errors.Add("$($pe.Path) is not a Windows GUI program (subsystem $($header.Subsystem))")
         }
         $deps = $dependencies[$full.ToLowerInvariant()]
@@ -676,31 +703,49 @@ function Invoke-SmokeRun {
 
 # --- Static libraries linked into the executable -------------------------------------------------
 
+function Get-LucentExecutablesText {
+    <#
+    .SYNOPSIS
+        "Lucent.exe and lucent-worker.exe": the executables Lucent ships (the application and its
+        helpers), for licence texts and messages.
+    #>
+    param([Parameter(Mandatory)]$Info)
+    $names = @(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ })
+    if ($names.Count -le 1) { return [string]$names[0] }
+    return (($names[0..($names.Count - 2)] -join ', ') + ' and ' + $names[-1])
+}
+
 function Get-StaticVcpkgLibraries {
     <#
     .SYNOPSIS
-        vcpkg libraries linked statically into the executable: the vcpkg .lib files on its link line
-        (build.ninja) whose members are object files rather than DLL imports (lib /list).
+        vcpkg libraries linked statically into the shipped executables (Lucent.exe and its helpers):
+        the vcpkg .lib files on their link lines (build.ninja) whose members are object files rather
+        than DLL imports (lib /list).
     #>
     param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)][hashtable]$FileIndex)
     $binaryDir = ConvertTo-NativePath $Info.binaryDir
     $ninja = Join-Path $binaryDir 'build.ninja'
     if (-not (Test-Path -LiteralPath $ninja)) { throw "$ninja is missing: the statically linked libraries cannot be determined (the presets use Ninja)." }
-    $output = Get-RelativePathText -Root $binaryDir -Path (ConvertTo-NativePath $Info.builtExecutable)
-    $libraries = $null
-    $inside = $false
+    $outputs = @{}
+    foreach ($built in @(@($Info.builtExecutable) + @($Info.builtHelperExecutables) | Where-Object { $_ })) {
+        $outputs[(Get-RelativePathText -Root $binaryDir -Path (ConvertTo-NativePath $built)).ToLowerInvariant()] = $null
+    }
+    $current = $null
     foreach ($line in [System.IO.File]::ReadLines($ninja)) {
         if ($line -match '^build (.+?): CXX_EXECUTABLE_LINKER__') {
-            $target = $Matches[1] -replace '\$ ', ' ' -replace '\$:', ':' -replace '\$\$', '$'
-            $inside = ($target -ieq $output)
+            $target = ($Matches[1] -replace '\$ ', ' ' -replace '\$:', ':' -replace '\$\$', '$').ToLowerInvariant()
+            $current = if ($outputs.ContainsKey($target)) { $target } else { $null }
             continue
         }
-        if ($inside) {
-            if ($line -notmatch '^\s') { $inside = $false; continue }
-            if ($line -match '^\s+LINK_LIBRARIES = (.*)$') { $libraries = $Matches[1]; break }
+        if ($current) {
+            if ($line -notmatch '^\s') { $current = $null; continue }
+            if ($line -match '^\s+LINK_LIBRARIES = (.*)$') { $outputs[$current] = $Matches[1]; $current = $null }
         }
     }
-    if ($null -eq $libraries) { throw "No link statement for $output was found in $ninja." }
+    foreach ($output in @($outputs.Keys)) {
+        if ($null -eq $outputs[$output]) { throw "No link statement for $output was found in $ninja." }
+    }
+    $libraries = ($outputs.Values -join ' ')
     $tripletDir = [System.IO.Path]::GetFullPath((Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet)).TrimEnd('\') + '\'
     $lib = Join-Path (Split-Path -Parent (ConvertTo-NativePath $Info.dumpbin)) 'lib.exe'
     if (-not (Test-Path -LiteralPath $lib)) { throw "lib.exe was not found next to dumpbin ($lib)." }
@@ -1064,10 +1109,10 @@ function New-LicenseBundle {
             $review = $null
             if ($reviewedStatic -and ($reviewedStatic.PSObject.Properties.Name -contains $library.Path)) { $review = $reviewedStatic.($library.Path) }
             if (-not $review) {
-                throw "$($Info.executable) links $($library.Path) of port $port statically ($($library.Members -join ', ')); installer\license-policy.json has no reviewed entry for it (ports.$port.staticLibraries)."
+                throw "$(Get-LucentExecutablesText $Info) link $($library.Path) of port $port statically ($($library.Members -join ', ')); installer\license-policy.json has no reviewed entry for it (ports.$port.staticLibraries)."
             }
             if ($review.concluded -match 'GPL') {
-                throw "$($library.Path) is used under $($review.concluded) but is linked statically into $($Info.executable); LGPL and GPL code must stay in replaceable DLLs (ADR 0003)."
+                throw "$($library.Path) is used under $($review.concluded) but is linked statically into $(Get-LucentExecutablesText $Info); LGPL and GPL code must stay in replaceable DLLs (ADR 0003)."
             }
             $statics.Add([pscustomobject]@{
                 Path = $library.Path; File = $library.Name; Name = $review.name; LicenseDeclared = $review.declared; LicenseConcluded = $review.concluded
@@ -1151,7 +1196,7 @@ function New-LicenseBundle {
     $allStatics = @($components | ForEach-Object { $_.StaticLibraries } | Where-Object { $_ })
     if ($allStatics.Count -gt 0) {
         $staticNote = "`n" + (@($allStatics | ForEach-Object {
-            Format-Paragraph "$($Info.executable) contains $($_.Name), $($_.File), linked statically. It is offered under $($_.LicenseDeclared), and Lucent uses it under $($_.LicenseConcluded) (THIRD-PARTY-NOTICES.txt)."
+            Format-Paragraph "$(Get-LucentExecutablesText $Info) contain $($_.Name), $($_.File), linked statically. It is offered under $($_.LicenseDeclared), and Lucent uses it under $($_.LicenseConcluded) (THIRD-PARTY-NOTICES.txt)."
         }) -join "`n`n") + "`n"
     }
     $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'LGPL-NOTICE.txt.in'))
@@ -1176,10 +1221,10 @@ function New-LicenseBundle {
             if ($other -gt 0) { $listLines.Add("  Other files: $other (QML module definitions and type information)") }
         }
         elseif ($component.Linkage -eq 'compiled-in') {
-            $listLines.Add("  $($kind): part of $($Info.executable)")
+            $listLines.Add("  $($kind): part of $(Get-LucentExecutablesText $Info)")
         }
         foreach ($static in $component.StaticLibraries) {
-            $listLines.Add("  Linked statically into $($Info.executable): $($static.Name) ($($static.File)), $($static.LicenseConcluded)")
+            $listLines.Add("  Linked statically into $(Get-LucentExecutablesText $Info): $($static.Name) ($($static.File)), $($static.LicenseConcluded)")
             foreach ($line in ($static.Copyright -split "`r?`n")) { if ($line.Trim()) { $listLines.Add("    $($line.Trim())") } }
             if ($static.Comment) { $listLines.Add("    $($static.Comment)") }
         }
@@ -1328,7 +1373,7 @@ function New-PackageSbom {
             fileName = './' + $file.Relative.Replace('\', '/'); SPDXID = "SPDXRef-Lucent-file-$counter"
             checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $sha1 },
                           [ordered]@{ algorithm = 'SHA256'; checksumValue = (Get-Sha256 $file.Full) })
-            licenseConcluded = $(if ($file.Relative -ieq $Info.executable) { 'MIT' } else { 'NOASSERTION' })
+            licenseConcluded = $(if ($file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative) { 'MIT' } else { 'NOASSERTION' })
             copyrightText = 'NOASSERTION' })
     }
     $packages.Add([ordered]@{
@@ -1436,7 +1481,7 @@ function New-PackageSbom {
                 filesAnalyzed = $false
                 licenseConcluded = $static.LicenseConcluded; licenseDeclared = $static.LicenseDeclared
                 copyrightText = $static.Copyright
-                comment = "Static library $($static.Path) of the vcpkg port $($component.Port), linked into $($Info.executable). $($static.Comment)" })
+                comment = "Static library $($static.Path) of the vcpkg port $($component.Port), linked into $(Get-LucentExecutablesText $Info). $($static.Comment)" })
             $ids[$staticId] = $true
             foreach ($id in (Get-LicenseIds "$($static.LicenseConcluded) $($static.LicenseDeclared)")) { if ($id -like 'LicenseRef-*') { $usedExtracted[$id] = $component } }
             if ($map.ContainsKey('SPDXRef-binary')) { Add-Relationship $map['SPDXRef-binary'] 'CONTAINS' $staticId }
@@ -1627,6 +1672,6 @@ function Get-FileInventory {
 }
 
 Export-ModuleMember -Function Read-LucentPackageInfo, Get-PeHeader, Get-PeDependencies, Get-VcpkgFileIndex,
-    Get-StagedFileOrigins, Invoke-LayoutAudit, Write-AuditReport, Invoke-SmokeRun, Get-StaticVcpkgLibraries,
+    Get-StagedFileOrigins, Invoke-LayoutAudit, Write-AuditReport, Invoke-SmokeRun, Get-StaticVcpkgLibraries, Get-LucentExecutablesText,
     New-LicenseBundle, New-PackageSbom, Write-InstalledFileList, Test-InstalledFileList, Find-InnoSetupCompiler, Get-FileInventory,
     Write-TextFile, Write-JsonFile, Get-Sha256, Get-Sha1, Get-RelativePathText, Invoke-NativeCommand
