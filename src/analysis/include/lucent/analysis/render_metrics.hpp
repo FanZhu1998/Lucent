@@ -24,7 +24,14 @@
 //     noise into display luminance and the lightness slope l'(Y) into L* units:
 //         sigma_L = 100 l'(Y) k sigma(x)        (native-resolution noise, not the proxy's average);
 //     the secant gain is exact for the scene-linear gains of exposure, local tone and white balance
-//     and a first-order estimate through the base look and curves.
+//     and a first-order estimate through the base look and curves;
+//   * the local contrast at the scale of the local-tone operator (blueprint section 6, shadows:
+//     "Reject ... flat, unnatural local contrast"): with L = log2(max(Y, 2^-12)) (the operator's own
+//     floor) and r = max(1, round(long edge / 64)) (its guided-filter radius at this resolution),
+//     the mean over every pixel of |box_r(L) - box_4r(L)|, box_k the mean over the (2k + 1)^2
+//     window clipped to the image: the structure between r and 4r that the guided filter's base
+//     layer carries. Exposure leaves it unchanged (L shifts by a constant) except where the base
+//     look's toe and shoulder bend; shadow lift and highlight compression reduce it.
 // Masks (all relative to the baseline's own features, so candidates are compared on the same
 // pixels): shadows 0.02 < l_base < 0.35 with no saturated site and x > 0; chromatic C*_base >= 8 and
 // 0.25 < l_base < 0.95, unclipped in both renders; neutral: the white-balance evidence's neutral
@@ -58,6 +65,12 @@ inline constexpr double kChromaticChroma = 8.0;
 inline constexpr double kChromaticLightnessLow = 0.25;
 inline constexpr double kNeutralChroma = 5.0;
 inline constexpr float kSaturatedCoverage = 0.5f;
+// Local contrast: log-luminance floor (EV below display white) and the outer box's radius factor.
+inline constexpr double kLocalContrastFloorEv = -12.0;
+inline constexpr std::int32_t kLocalContrastOuterFactor = 4;
+
+// The local-contrast radius r of a render of `size` (see the file comment).
+[[nodiscard]] std::int32_t local_contrast_radius(image::Size size) noexcept;
 
 // Linear sRGB levels of the 8-bit code boundaries (sRGB curve decoded at codes 254.5 and 0.5).
 [[nodiscard]] double clip_high_linear() noexcept;
@@ -147,6 +160,10 @@ struct RenderStats {
     double mean_chroma = 0.0;           // mean C*ab of every pixel
     std::uint64_t neutral_pixels = 0;
     double neutral_shift_de = 0.0;  // |mean (Delta a*, Delta b*)| over near-neutral baseline pixels
+
+    // Local contrast (see the file comment), EV, and the radius r it was measured at.
+    double local_contrast_ev = 0.0;
+    std::int32_t local_contrast_radius = 0;
 
     // Noise.
     bool noise_model_available = false;  // the context's noise model (shadow_noise_lstar is 0 without one)

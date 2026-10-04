@@ -3,6 +3,7 @@
 #include <format>
 
 #include <lucent/analysis/objective.hpp>
+#include <lucent/engine/develop_operations.hpp>
 
 namespace lucent::analysis {
 
@@ -10,6 +11,17 @@ namespace {
 
 double sq(double v) noexcept {
     return v * v;
+}
+
+double huber(double x) noexcept {
+    return x <= 1.0 ? x * x : 2.0 * x - 1.0;
+}
+
+// Interquartile range of log2 display luminance (EV).
+double log_range(const LightnessQuantiles& q) noexcept {
+    const double lo = engine::display_lightness_inverse(std::max(q.p25, 0.001));
+    const double hi = engine::display_lightness_inverse(std::max(q.p75, 0.001));
+    return lo > 0.0 && hi > 0.0 ? std::log2(hi / lo) : 0.0;
 }
 
 constexpr double kChangeEpsilon = 1e-9;
@@ -47,8 +59,10 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
 
     // Brightness.
     if (tone.evidence) {
-        const double p50 = c.quantiles.p50;
-        t.brightness = sq((std::max(0.0, tone.band_low - p50) + std::max(0.0, p50 - tone.band_high)) / 0.06);
+        if (!ctx.exposure_locked) {
+            const ToneDeficit d = tone_deficit(c.quantiles, tone);
+            t.brightness = huber((d.deficit_ev + d.excess_ev) / kBrightnessScaleEv);
+        }
     } else {
         t.brightness = kMissingEvidencePenalty * (std::abs(edit.exposure_ev) / kExposureRangeEv +
                                                   std::abs(edit.shadows_ev) / kShadowsRangeEv);
@@ -60,9 +74,9 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
                    sq(c.fraction(c.new_highlight_clipped) / 0.0025) +
                    std::min(1.0, saturated / 0.02) * sq(c.saturated_greying / 0.05);
 
-    // Shadows.
+    // Shadows: new blocking, and near-black area the candidate adds.
     t.shadows = sq(c.fraction(c.new_shadow_blocked) / 0.0025) +
-                0.5 * (1.0 - tone.low_key) * sq(c.fraction(c.dark) / 0.30);
+                0.5 * (1.0 - tone.low_key) * sq(std::max(0.0, c.fraction(c.dark) - base.fraction(base.dark)) / 0.30);
 
     // Noise (predicted from the sensor model).
     if (c.shadow_pixels < kMinShadowPixels) {
@@ -77,9 +91,16 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
                1.0);
     }
 
-    // Contrast.
-    if (base.iqr() >= 0.02 && c.iqr() > 0.0) {
-        t.contrast = sq(std::max(0.0, std::abs(std::log(c.iqr() / base.iqr())) - 0.10) / 0.15);
+    // Contrast: the tonal range in log luminance (exposure-invariant), both directions.
+    const double range_base = log_range(base.quantiles);
+    const double range = log_range(c.quantiles);
+    if (range_base >= 0.1 && range > 0.0) {
+        t.contrast = sq(std::max(0.0, std::abs(std::log(range / range_base)) - kContrastDeadZone) / kContrastScale);
+    }
+    // Local contrast at the local-tone scale: flattening only.
+    if (base.local_contrast_ev >= 0.01 && c.local_contrast_ev > 0.0) {
+        t.local_contrast = sq(std::max(0.0, -std::log(c.local_contrast_ev / base.local_contrast_ev) - kContrastDeadZone) /
+                              kContrastScale);
     }
 
     // Colour. The saturation control scales linear-light chroma by exactly its factor (the measured
@@ -103,7 +124,7 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
 
     // Native crops (recheck only).
     if (native != nullptr && native->available) {
-        t.native = native->edge_samples >= kMinEdgeSamples ? sq(native->halo_lstar / 1.5) : 0.0;
+        t.native = native->halo_applies && native->edge_samples >= kMinEdgeSamples ? sq(native->halo_lstar / 1.5) : 0.0;
         if (native->shadow_available) {
             t.native +=
                 sq(std::max(0.0, native->shadow_texture_lstar -
@@ -114,6 +135,9 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
             // Only flattening counts: more local detail is usually texture the tone change reveals
             // (out of the shoulder or the toe); amplified noise is the shadow texture's concern.
             t.native += sq(std::max(0.0, 0.85 - native->detail_ratio) / 0.15);
+        }
+        if (native->highlight_available) {
+            t.native += sq(native->highlight_new_clip_fraction / kNativeClipScale);
         }
         if (native->edge_samples < kMinEdgeSamples && changes_local_tone(edit)) {
             t.native += kMissingEvidencePenalty * (std::abs(edit.shadows_ev) + std::abs(edit.highlights_ev)) /
@@ -127,8 +151,8 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
 }
 
 double objective_total(const ObjectiveTerms& t) noexcept {
-    return t.brightness + t.highlights + t.shadows + t.noise + t.contrast + t.color + t.white_balance +
-           t.native + t.edit + t.consistency;
+    return t.brightness + t.highlights + t.shadows + t.noise + t.contrast + t.local_contrast + t.color +
+           t.white_balance + t.native + t.edit + t.consistency;
 }
 
 CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& base, const EditVector& edit,
@@ -225,6 +249,7 @@ CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& 
         m.id = MetricId::TonalDistribution;
         m.valid_samples = c.signal_pixels;
         const LightnessQuantiles& q = c.quantiles;
+        const ToneDeficit d = tone_deficit(q, ctx.tone);
         m.values = {{"p01", q.p01},
                     {"p05", q.p05},
                     {"p10", q.p10},
@@ -243,7 +268,20 @@ CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& 
                     {"scene_headroom_ev", ctx.tone.headroom_ev},
                     {"band_low", ctx.tone.band_low},
                     {"band_high", ctx.tone.band_high},
+                    {"bright_floor", ctx.tone.bright_floor},
                     {"low_key", ctx.tone.low_key},
+                    {"dimness", ctx.tone.dimness},
+                    {"high_key", ctx.tone.high_key},
+                    {"median_deficit_ev", d.median_ev},
+                    {"bright_deficit_ev", d.bright_ev},
+                    {"deficit_ev", d.deficit_ev},
+                    {"excess_ev", d.excess_ev},
+                    {"log_range_ev", log_range(q)},
+                    {"baseline_log_range_ev", log_range(base.quantiles)},
+                    {"local_contrast_ev", c.local_contrast_ev},
+                    {"baseline_local_contrast_ev", base.local_contrast_ev},
+                    {"dark_fraction", c.fraction(c.dark)},
+                    {"baseline_dark_fraction", base.fraction(base.dark)},
                     {"signal_fraction", c.fraction(c.signal_pixels)}};
         if (c.signal_pixels < kMinSignalPixels || !ctx.tone.evidence) {
             m.status = MetricStatus::InsufficientEvidence;
@@ -326,6 +364,7 @@ CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& 
         } else {
             m.valid_samples = native->edge_samples;
             m.values = {{"halo_lstar", native->halo_lstar},
+                        {"halo_applies", native->halo_applies ? 1.0 : 0.0},
                         {"edge_samples", static_cast<double>(native->edge_samples)},
                         {"detail_ratio", native->detail_ratio},
                         {"shadow_texture_lstar", native->shadow_texture_lstar},
@@ -339,13 +378,19 @@ CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& 
                 m.detail = std::format("{} non-finite samples in native crops", native->nonfinite_samples);
                 out.feasible = false;
                 out.failures.push_back(std::format("native_detail: {}", m.detail));
-            } else if (native->edge_samples >= kMinEdgeSamples && native->halo_lstar > kMaxHaloLStar) {
+            } else if (native->halo_applies && native->edge_samples >= kMinEdgeSamples &&
+                       native->halo_lstar > kMaxHaloLStar) {
                 fail_with(m, std::format("halo of {:.2f} L* next to strong edges (limit {:.2f})",
                                          native->halo_lstar, kMaxHaloLStar));
             } else if (native->shadow_available && native->shadow_texture_lstar > kMaxNativeNoiseLStar &&
                        native->shadow_texture_ratio > kMaxNativeNoiseAmplification) {
                 fail_with(m, std::format("native shadow texture {:.2f} L* ({:.2f} x the baseline)",
                                          native->shadow_texture_lstar, native->shadow_texture_ratio));
+            } else if (native->highlight_available &&
+                       native->highlight_new_clip_fraction > kMaxNativeNewClipFraction) {
+                fail_with(m, std::format("{:.2f} % of the native highlight crop newly clipped (limit {:.2f} %)",
+                                         100.0 * native->highlight_new_clip_fraction,
+                                         100.0 * kMaxNativeNewClipFraction));
             } else if (native->edge_samples < kMinEdgeSamples) {
                 m.status = MetricStatus::InsufficientEvidence;
                 m.detail = std::format("{} edge samples (at least {} needed): halos not verified",
@@ -386,17 +431,29 @@ CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& 
     return out;
 }
 
-bool better(const RankKey& a, const RankKey& b) noexcept {
-    if (a.feasible != b.feasible) {
-        return a.feasible;
+std::size_t select_best(std::span<const RankKey> keys) noexcept {
+    const bool any_feasible = std::any_of(keys.begin(), keys.end(), [](const RankKey& k) { return k.feasible; });
+    const auto considered = [&](const RankKey& k) { return k.feasible || !any_feasible; };
+    double lowest = 0.0;
+    bool first = true;
+    for (const RankKey& k : keys) {
+        if (considered(k) && (first || k.total < lowest)) {
+            lowest = k.total;
+            first = false;
+        }
     }
-    if (std::abs(a.total - b.total) > kTieTolerance) {
-        return a.total < b.total;
+    std::size_t best = keys.size();
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        const RankKey& k = keys[i];
+        if (!considered(k) || k.total > lowest + kTieTolerance) {
+            continue;
+        }
+        if (best == keys.size() || k.edit_size < keys[best].edit_size ||
+            (k.edit_size == keys[best].edit_size && k.index < keys[best].index)) {
+            best = i;
+        }
     }
-    if (a.edit_size != b.edit_size) {
-        return a.edit_size < b.edit_size;
-    }
-    return a.index < b.index;
+    return best;
 }
 
 }  // namespace lucent::analysis

@@ -41,8 +41,11 @@
 //                   are not). Per edge, the largest |(near - near_base) - (far - far_base)| over its
 //                   plateau sides: how much more (or less) the edit changed the lightness next to the
 //                   edge than away from it. Averaged over edges, in L* units. It is 0 for the
-//                   baseline and close to 0 for any per-pixel tone change (a plateau side's near and
-//                   far lightness differ by at most kPlateauTolerance), and sensor noise cancels
+//                   baseline and small for a per-pixel tone change (a plateau side's near and far
+//                   lightness differ by at most kPlateauTolerance, but a large exposure change
+//                   through the base look's toe bends them differently: 1.4-1.7 L* for +0.75 EV on
+//                   the dark R5 crops, so the controller does not score the halo of a candidate
+//                   without local tone, NativeComparison::halo_applies), and sensor noise cancels
 //                   because both renders share the pixels; local tone (guided filter) halos and
 //                   gradient reversals show as a positive value;
 //   clipping        pixels at output code 255 (metric_contract.hpp), and newly clipped vs baseline.
@@ -158,12 +161,18 @@ struct NativeComparison {
     bool available = false;          // at least one crop measured
     std::uint64_t edge_samples = 0;  // over every crop
     double halo_lstar = 0.0;         // the largest crop halo (crops with kMinCropEdgeSamples edges)
+    // Whether the halo counts (objective.hpp): the controller sets false for a candidate whose stage
+    // two is per pixel (no local tone), which cannot create a halo; the measured value then only
+    // reflects how a per-pixel tone change bends near and far lightness differently (up to about
+    // 2 L* for a large exposure change in the base look's toe) and is reported, not scored.
+    bool halo_applies = true;
     bool detail_available = false;
     double detail_ratio = 1.0;  // texture, candidate / baseline
     bool shadow_available = false;
     double shadow_texture_lstar = 0.0;
     double baseline_shadow_texture_lstar = 0.0;
     double shadow_texture_ratio = 1.0;
+    bool highlight_available = false;  // a highlight crop with kMinCropPixels pixels
     double highlight_new_clip_fraction = 0.0;
     std::uint64_t nonfinite_samples = 0;
 };

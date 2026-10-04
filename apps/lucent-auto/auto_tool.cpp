@@ -200,6 +200,7 @@ std::string relative(const std::string& folder, const std::string& file) {
 struct Pending {
     std::optional<exporter::OutputImage> as_shot;
     std::optional<exporter::OutputImage> auto_image;
+    engine::DevelopSettings as_shot_settings;
     engine::DevelopSettings auto_settings;
 };
 
@@ -424,7 +425,7 @@ int run(const Arguments& args, const core::CancellationToken& cancel) {
         return usage_error("no RAW files found in the inputs");
     }
     const fs::path& out = args.out_dir;
-    for (const char* sub : {"", "items", "previews", "pairs", "blind"}) {
+    for (const char* sub : {"", "items", "previews", "pairs", "blind", "key"}) {
         if (auto created = render_tool::create_directories(*sub ? out / sub : out); !created) {
             return failed(created.error());
         }
@@ -479,6 +480,7 @@ int run(const Arguments& args, const core::CancellationToken& cancel) {
         }
         pending[i].as_shot = std::move(*a);
         pending[i].auto_image = std::move(*b);
+        pending[i].as_shot_settings = ind.candidates.at(0).settings;
         pending[i].auto_settings = r.settings;
     };
     callbacks.final = [&](std::size_t i, const an::RelatedItemResult& r, an::AutoSession* session) {
@@ -529,6 +531,8 @@ int run(const Arguments& args, const core::CancellationToken& cancel) {
             reports[i].as_shot_jpg = as_shot_rel;
             reports[i].auto_jpg = auto_rel;
             reports[i].pair_jpg = pair_rel;
+            reports[i].unchanged =
+                r.settings == p.as_shot_settings || visibly_identical(*p.as_shot, *p.auto_image);
         } else {
             reports[i].preview_error = status.error();
         }
@@ -574,7 +578,7 @@ int run(const Arguments& args, const core::CancellationToken& cancel) {
         {L"summary.tsv", summary_tsv(reports)},
         {L"sheet.html", sheet_html(args, *result, reports, out, read_jpeg)},
         {fs::path(L"blind") / L"sheet.html", blind_html(args, reports, out, read_jpeg)},
-        {fs::path(L"blind") / L"key.json",
+        {fs::path(L"key") / L"blind-key.json",
          blind_key(args, reports).dump(2, ' ', false, Json::error_handler_t::replace) + "\n"},
         {L"run.json",
          run_json(args, *discovery, *result, reports, seconds).dump(2, ' ', false, Json::error_handler_t::replace) +

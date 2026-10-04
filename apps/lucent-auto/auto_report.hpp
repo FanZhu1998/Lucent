@@ -44,7 +44,17 @@ struct ItemReport {
     std::string auto_jpg;
     std::string pair_jpg;
     std::optional<Error> preview_error;
+    // No visible change: the automatic settings equal as shot, or the two 8-bit previews differ by
+    // at most kUnchangedCodeValues anywhere. Such pairs are left out of the blind sheet (they would
+    // only dilute a preference count) and listed as unchanged in the key.
+    bool unchanged = false;
 };
+
+inline constexpr int kUnchangedCodeValues = 1;
+
+// True when the two 8-bit images have the same size and no sample differs by more than
+// kUnchangedCodeValues.
+[[nodiscard]] bool visibly_identical(const exporter::OutputImage& a, const exporter::OutputImage& b);
 
 // "<NNN>-<name>" of an item.
 [[nodiscard]] std::string item_stem(std::size_t index, const std::string& name);

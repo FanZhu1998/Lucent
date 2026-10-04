@@ -37,11 +37,13 @@ constexpr std::array<MetricThreshold, 3> kNoiseThresholds{{
     {"predicted_sigma_lstar", kVisibleNoiseLStar, "preference: increases above this level are penalised"},
 }};
 
-constexpr std::array<MetricThreshold, 3> kNativeThresholds{{
+constexpr std::array<MetricThreshold, 4> kNativeThresholds{{
     {"halo_lstar", kMaxHaloLStar,
      "fail: mean lightness change next to strong edges beyond the change away from them"},
     {"shadow_texture_lstar", kMaxNativeNoiseLStar, "fail when exceeded together with the amplification"},
     {"shadow_texture_ratio", kMaxNativeNoiseAmplification, "fail when exceeded together with the level"},
+    {"highlight_new_clip_fraction", kMaxNativeNewClipFraction,
+     "fail: pixels of the native highlight crop newly clipped relative to the baseline's crop"},
 }};
 
 constexpr std::array<MetricThreshold, 2> kColorThresholds{{
@@ -78,10 +80,15 @@ constexpr std::array<MetricSpec, 9> kSpecs{{
      false,
      true,
      "display lightness L*/100 of the luminance of the display-linear Rec.2020 render (Y = BT.2020 "
-     "coefficients); scene headroom from stage one's balanced camera RGB against the stage-two clip level",
-     "every pixel for the quantiles; evidence = pixels whose scene signal exceeds 3 sigma of the noise model",
-     "L*/100 quantiles (p01 .. p99.5), fractions, EV",
-     "the baseline's quantiles and a key-aware band",
+     "coefficients); log2 of that luminance for the tonal range (quartiles) and the local contrast (mean "
+     "|box_r - box_4r| of log2 max(Y, 2^-12), r = long edge / 64, the local-tone operator's scale); scene "
+     "headroom from stage one's balanced camera RGB against the stage-two clip level; scene luminance "
+     "(EV) from the exposure metadata",
+     "every pixel for the quantiles and the local contrast; evidence = pixels whose scene signal exceeds 3 "
+     "sigma of the noise model",
+     "L*/100 quantiles (p01 .. p99.5), fractions, EV (deficits, log range, local contrast)",
+     "the baseline's quantiles and local contrast; a key-aware band for the median and a floor for the "
+     "bright content (p90)",
      {},
      kMinSignalPixels,
      "insufficient signal: the brightness term becomes a penalty on exposure and shadow edits, confidence "
@@ -90,7 +97,8 @@ constexpr std::array<MetricSpec, 9> kSpecs{{
      "residual camera multipliers relative to as shot (the route's neutral representation); CIELAB a*b* "
      "(D65) of the baseline's near-neutral pixels in the render",
      "the surfaces the white-balance evidence treats as neutral (camera log ratios within 0.08 of the "
-     "estimated cast), else near-neutral baseline pixels (C*ab < 5); 0.15 < L*/100 < 0.9, unclipped",
+     "estimated cast) when the proposal's confidence is at least 0.3, else near-neutral baseline pixels "
+     "(C*ab < 5); 0.15 < L*/100 < 0.9, unclipped",
      "residual log gains; Delta E*ab; estimator confidence [0, 1]", "as shot (white balance of the baseline)",
      kWhiteBalanceThresholds, kMinNeutralPixels,
      "no neutral evidence: the proposal is as shot (no residual), any residual is penalised and the "
@@ -107,9 +115,10 @@ constexpr std::array<MetricSpec, 9> kSpecs{{
     {MetricId::NativeDetail, "native_detail", true, true,
      "display lightness of stage two rendered on deterministic native-resolution crops (with the local "
      "tone halo), evaluated on each crop's central region",
-     "detail crop (texture), shadow crop (texture as noise indicator), every crop's strong step edges with a "
-     "baseline plateau on at least one side (halos)",
-     "halo and texture in L* units, texture ratios", "the baseline's crops", kNativeThresholds,
+     "detail crop (texture), shadow crop (texture as noise indicator), highlight crop (new clipping), every "
+     "crop's strong step edges with a baseline plateau on at least one side (halos; scored and checked only "
+     "for candidates with local tone, the only spatial operation of stage two)",
+     "halo and texture in L* units, texture ratios, fractions", "the baseline's crops", kNativeThresholds,
      kMinEdgeSamples,
      "no crops (small image, option off): not applicable and the confidence drops; too few edge samples: "
      "the halo check is insufficient and local tone edits are penalised"},

@@ -201,6 +201,44 @@ TEST(LucentAutoBlind, OrderIsFixedPerSeedAndBalanced) {
     EXPECT_NE(a, b);
 }
 
+TEST(LucentAutoBlind, UnchangedPairsStayOutOfTheSheetAndTheKeyIsSeparate) {
+    exporter::OutputImage a;
+    a.width = 4;
+    a.height = 2;
+    a.bit_depth = exporter::BitDepth::Eight;
+    a.samples8.assign(a.row_samples() * 2, 100);
+    exporter::OutputImage b = a;
+    EXPECT_TRUE(visibly_identical(a, b));
+    b.samples8[5] = 101;  // one code value: below any visible difference
+    EXPECT_TRUE(visibly_identical(a, b));
+    b.samples8[5] = 102;
+    EXPECT_FALSE(visibly_identical(a, b));
+    exporter::OutputImage c = a;
+    c.width = 2;
+    EXPECT_FALSE(visibly_identical(a, c));
+
+    // Two items with previews, one of them unchanged: the sheet shows one, the key lists both.
+    std::vector<ItemReport> items(2);
+    for (std::size_t i = 0; i < 2; ++i) {
+        items[i].index = i;
+        items[i].input.name = i == 0 ? "changed" : "same";
+        items[i].as_shot_jpg = "previews/x-as-shot.jpg";
+        items[i].auto_jpg = "previews/x-auto.jpg";
+    }
+    items[1].unchanged = true;
+    Arguments args;
+    const auto no_jpeg = [](const fs::path&, const std::string&) { return std::vector<std::uint8_t>{}; };
+    const std::string sheet = blind_html(args, items, fs::path("."), no_jpeg);
+    EXPECT_NE(sheet.find("data-name=\"changed\""), std::string::npos);
+    EXPECT_EQ(sheet.find("data-name=\"same\""), std::string::npos);
+    EXPECT_NE(sheet.find("1 photograph without a visible difference"), std::string::npos);
+    const auto key = blind_key(args, items);
+    ASSERT_EQ(key["items"].size(), 1u);
+    EXPECT_EQ(key["items"][0]["name"], "changed");
+    ASSERT_EQ(key["unchanged"].size(), 1u);
+    EXPECT_EQ(key["unchanged"][0]["name"], "same");
+}
+
 TEST(LucentAutoReport, Base64AndEscaping) {
     const auto b64 = [](const std::string& s) {
         return base64(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(s.data()), s.size()));
@@ -318,7 +356,7 @@ TEST(LucentAutoTool, WritesTheEvaluationSetForASmokeFixture) {
     ASSERT_EQ(run_tool({L"--tier", L"smoke", L"--preview", L"480", L"--out", out.wstring(), source.wstring()}), 0u);
     const std::string stem = "000-dji-fc4382-dng";
     for (const fs::path& p : {fs::path("run.json"), fs::path("summary.tsv"), fs::path("sheet.html"),
-                              fs::path("blind") / "sheet.html", fs::path("blind") / "key.json",
+                              fs::path("blind") / "sheet.html", fs::path("key") / "blind-key.json",
                               fs::path("items") / (stem + ".json"), fs::path("previews") / (stem + "-as-shot.jpg"),
                               fs::path("previews") / (stem + "-auto.jpg"), fs::path("pairs") / (stem + ".jpg")}) {
         EXPECT_TRUE(fs::is_regular_file(out / p)) << p.string();
@@ -358,16 +396,25 @@ TEST(LucentAutoTool, WritesTheEvaluationSetForASmokeFixture) {
     EXPECT_NE(sheet.find("Natural v1 automatic"), std::string::npos);
     EXPECT_EQ(sheet.find("src=\"previews/"), std::string::npos);
     const std::string blind = read_text(out / "blind" / "sheet.html");
-    EXPECT_NE(blind.find("data:image/jpeg;base64,"), std::string::npos);
     for (const char* leak : {"As shot", "as_shot", "automatic</figcaption>", "Exposure", "auto.jpg"}) {
         EXPECT_EQ(blind.find(leak), std::string::npos) << leak;
     }
-    const Json key = read_json(out / "blind" / "key.json");
+    // The key lies outside the folder handed to reviewers; an image without a visible change is
+    // listed as unchanged instead of being shown.
+    EXPECT_FALSE(fs::exists(out / "blind" / "key.json"));
+    const Json key = read_json(out / "key" / "blind-key.json");
     EXPECT_EQ(key["schema"], kBlindKeySchema);
-    ASSERT_EQ(key["items"].size(), 1u);
-    const bool first = auto_first(kDefaultSeed, 0);
-    EXPECT_EQ(key["items"][0]["A"], first ? "auto" : "as_shot");
-    EXPECT_EQ(key["items"][0]["B"], first ? "as_shot" : "auto");
+    const bool unchanged = item["previews"]["unchanged"].get<bool>();
+    ASSERT_EQ(key["items"].size() + key["unchanged"].size(), 1u);
+    if (unchanged) {
+        EXPECT_EQ(key["unchanged"][0]["item"], 0);
+        EXPECT_EQ(blind.find("data-item="), std::string::npos);
+    } else {
+        const bool first = auto_first(kDefaultSeed, 0);
+        EXPECT_EQ(key["items"][0]["A"], first ? "auto" : "as_shot");
+        EXPECT_EQ(key["items"][0]["B"], first ? "as_shot" : "auto");
+        EXPECT_NE(blind.find("data:image/jpeg;base64,"), std::string::npos);
+    }
 
     // Nothing was written into or changed in the source folder; a second run never overwrites.
     EXPECT_EQ(listing(source), before);

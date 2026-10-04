@@ -1,7 +1,8 @@
 #pragma once
 
-// lucent-auto (developer tool, not shipped; W8 phase 2, ADR 0011): runs Natural v1 automatic
-// settings with related-shot consistency over RAW files and folders and writes an evaluation set.
+// lucent-auto (developer tool, not shipped; W8, ADR 0011): runs Natural v1 automatic settings
+// (policy "natural" version 2) with related-shot consistency over RAW files and folders and writes
+// an evaluation set.
 //
 //   lucent-auto [--group-by time|none] [--out <dir>] [--tier smoke|all] [--max-gap <seconds>]
 //               [--preview <px>] [--seed <n>] <files/folders...>
@@ -42,8 +43,12 @@
 //                             image, as shot and auto side by side with settings and flags
 //   blind/sheet.html          the blind variant: per image the two renders as A and B in an order
 //                             drawn from --seed, nothing else that tells them apart, with a
-//                             preference form that exports lucent.blind-choices JSON
-//   blind/key.json            lucent.blind-key v1: which of A and B is the automatic render
+//                             preference form that exports lucent.blind-choices JSON; images
+//                             without a visible change (settings as shot, or 8-bit previews within
+//                             one code value) are left out and only counted
+//   key/blind-key.json        lucent.blind-key v1: which of A and B is the automatic render, and the
+//                             unchanged images; kept outside blind/ so the folder handed to
+//                             reviewers holds no key
 // <name> is the fixture id when known, else the file stem (characters outside [A-Za-z0-9._-]
 // replaced by '_'); NNN is the item's input index.
 //

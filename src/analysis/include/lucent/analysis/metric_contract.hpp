@@ -22,8 +22,8 @@
 // reported separately. Propagated sensor masks support interpretation (source saturation, the
 // greying of clipped areas) but never exempt pixels from the render-induced checks.
 //
-// The thresholds and scales below are Natural v1 engineering defaults (policy version 1). They are
-// UNCALIBRATED: blueprint section 10 requires calibration on a qualification corpus (blind
+// The thresholds and scales below are Natural v1 engineering defaults (policy "natural" version 2).
+// They are UNCALIBRATED: blueprint section 10 requires calibration on a qualification corpus (blind
 // preference and correction-effort tests, split by camera and trip) before they are frozen; ADR
 // 0011 records the plan. Do not cite them as measured limits.
 //
@@ -38,8 +38,10 @@
 
 namespace lucent::analysis {
 
-// Version of the metric definitions below (bump when a metric is measured differently).
-inline constexpr std::uint32_t kMetricContractVersion = 1;
+// Version of the metric definitions below (bump when a metric is measured differently). Version 2:
+// the tonal distribution adds the log-luminance range and the local contrast at the local-tone
+// scale (render_metrics.hpp), and the native crops check new clipping of the highlight crop.
+inline constexpr std::uint32_t kMetricContractVersion = 2;
 
 // ---- Declared output encoding ------------------------------------------------------------------
 
@@ -67,6 +69,9 @@ inline constexpr double kMaxShadowNoiseAmplification = 1.5;    //   more than th
 inline constexpr double kMaxHaloLStar = 4.0;                   // native-crop halo next to strong edges, L*
 inline constexpr double kMaxNativeNoiseLStar = 4.0;            // native-crop shadow texture, L* units, AND
 inline constexpr double kMaxNativeNoiseAmplification = 1.5;    //   more than this times the baseline's
+// Pixels of the native highlight crop newly at code 255: area averaging hides small specular
+// clipping in the proxy and the analysis image that appears at export resolution.
+inline constexpr double kMaxNativeNewClipFraction = 0.02;
 
 // Report thresholds (review flags; they never change a candidate's feasibility).
 inline constexpr double kSourceSaturationFlagFraction = 0.001;  // any sensor channel
@@ -89,7 +94,7 @@ enum class MetricId : std::uint8_t {
     SourceSaturation = 2,   // per-sensor-channel saturation before reconstruction
     RenderClipping = 3,     // highlight clipping in the output encoding: source, total, newly induced
     ShadowBlocking = 4,     // pixels blocked to code 0: total and newly induced
-    TonalDistribution = 5,  // luminance quantiles, headroom, near-white crowding, key
+    TonalDistribution = 5,  // luminance quantiles, headroom, key, log range, local contrast
     WhiteBalance = 6,       // residual neutral change and evidence confidence
     ShadowNoise = 7,        // predicted noise amplification from the sensor noise model
     NativeDetail = 8,       // halos, local detail and shadow texture on native-resolution crops

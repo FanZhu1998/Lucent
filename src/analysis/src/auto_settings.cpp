@@ -234,7 +234,12 @@ private:
     Status finish(std::size_t chosen);
     void add_flags();
     [[nodiscard]] ConfidenceBreakdown confidence_of(const CandidateRecord& c) const;
+    // select_best() over the candidates `indices` at resolution `r` (candidates.size() when empty).
+    [[nodiscard]] std::size_t select(std::span<const std::size_t> indices, Resolution r) const;
     [[nodiscard]] std::size_t best_stage_point() const;
+    // Adds (or finds) the fallback candidate of `settings` derived from `source` and returns its
+    // index; candidates.size() when `source` has no search point to derive one from.
+    std::size_t add_fallback(std::size_t source, const engine::DevelopSettings& settings);
 
     engine::DevelopSettings current_;
     AutoOptions options_;
@@ -261,6 +266,7 @@ private:
     std::vector<CropMeasurement> crop_base_;
     NaturalV1Context policy_;
     WhiteBalanceAxis axis_;
+    bool fallback_ = false;  // the last recheck fell back (step 6)
     std::uint32_t stage_budget_ = 0;
     std::uint32_t stage_evaluations_ = 0;
     std::vector<std::vector<MetricResult>> analysis_metrics_;
@@ -677,9 +683,10 @@ Status AutoSession::Impl::propose_white_balance_first() {
         policy_.white_balance_confidence = wb->confidence;
         policy_.red_target = wb->red_gain;
         policy_.blue_target = wb->blue_gain;
-        if (wb->evidence) {
+        if (wb->evidence && wb->confidence >= kNeutralEvidenceMinConfidence) {
             // The surfaces the evidence treats as neutral, for the white-balance hard check of every
-            // render (the baseline's included, so the masks precede it).
+            // render (the baseline's included, so the masks precede it). A cast the estimators do
+            // not agree on names arbitrary surfaces: the check then uses near-neutral pixels.
             auto mask_p = neutral_evidence_mask(proxy_, ctx_p_, clip, wb->cast_log_rg, wb->cast_log_bg);
             if (!mask_p) {
                 return Unexpected(std::move(mask_p.error()));
@@ -713,8 +720,9 @@ Status AutoSession::Impl::propose_tone_after_baseline() {
     if (!scene) {
         return Unexpected(std::move(scene.error()));
     }
-    result_.tone = propose_tone(stats_a_, *scene);
+    result_.tone = propose_tone(stats_a_, *scene, result_.shot.scene_ev);
     policy_.tone = result_.tone;
+    policy_.exposure_locked = locked(engine::DevelopControl::Exposure);
     result_.timing.proposals_seconds += seconds_since(t);
     return ok();
 }
@@ -776,6 +784,8 @@ Expected<CandidateScore> AutoSession::Impl::evaluate(Resolution r, std::size_t i
             }
         }
         native = compare_native(measured, crop_base_);
+        // Stage two without local tone is per pixel: it cannot create a halo (native_crops.hpp).
+        native->halo_applies = has_local_tone(c.settings);
     }
     const NativeComparison* native_ptr = native ? &*native : nullptr;
     CandidateEvaluation evaluation = evaluate_candidate(stats, base, c.edit, policy_, native_ptr, is_baseline,
@@ -840,15 +850,26 @@ Expected<std::optional<std::size_t>> AutoSession::Impl::add_proxy_candidate(
     return std::optional<std::size_t>{index};
 }
 
+std::size_t AutoSession::Impl::select(std::span<const std::size_t> indices, Resolution r) const {
+    std::vector<RankKey> keys;
+    keys.reserve(indices.size());
+    for (const std::size_t i : indices) {
+        keys.push_back(rank(i, r));
+    }
+    const std::size_t at = select_best(keys);
+    return at < indices.size() ? indices[at] : result_.candidates.size();
+}
+
 std::size_t AutoSession::Impl::best_stage_point() const {
-    std::size_t best = result_.candidates.size();
-    for (std::size_t i = 0; i < result_.candidates.size(); ++i) {
-        if (i < stage_points_.size() && stage_points_[i] &&
-            (best == result_.candidates.size() || better(rank(i, Resolution::Proxy), rank(best, Resolution::Proxy)))) {
-            best = i;
+    // Points a recheck already found infeasible at analysis resolution are not searched around.
+    std::vector<std::size_t> points;
+    for (std::size_t i = 0; i < result_.candidates.size() && i < stage_points_.size(); ++i) {
+        const CandidateScore& a = result_.candidates[i].analysis;
+        if (stage_points_[i] && !(a.evaluated && !a.feasible)) {
+            points.push_back(i);
         }
     }
-    return best;
+    return select(points, Resolution::Proxy);
 }
 
 Status AutoSession::Impl::coordinate_search(std::size_t best, std::array<double, 6> steps,
@@ -857,7 +878,7 @@ Status AutoSession::Impl::coordinate_search(std::size_t best, std::array<double,
     for (std::uint32_t pass = 0; pass < passes && budget_left(); ++pass) {
         for (std::size_t k = 0; k < kOrder.size() && budget_left(); ++k) {
             const Coordinate coordinate = kOrder[k];
-            if (!searchable(coordinate)) {
+            if (!searchable(coordinate) || best >= stage_points_.size() || !stage_points_[best]) {
                 continue;
             }
             const SearchPoint origin = *stage_points_[best];
@@ -905,9 +926,7 @@ Status AutoSession::Impl::coordinate_search(std::size_t best, std::array<double,
                     if (target_ != nullptr && !stage_points_[i]) {
                         stage_points_[i] = p;
                     }
-                    if (stage_points_[i] && better(rank(i, Resolution::Proxy), rank(best, Resolution::Proxy))) {
-                        best = i;
-                    }
+                    best = best_stage_point();
                 }
             }
         }
@@ -988,13 +1007,18 @@ Status AutoSession::Impl::consistency_search() {
         rescore(c.proxy);
         rescore(c.analysis);
     }
-    // The start: the best re-ranked candidate of the search space.
-    std::size_t start_index = 0;
-    for (std::size_t i = 1; i < result_.candidates.size(); ++i) {
-        if (result_.candidates[i].point &&
-            better(rank(i, Resolution::Proxy), rank(start_index, Resolution::Proxy))) {
-            start_index = i;
+    // The start: the best re-ranked candidate of the search space that the independent recheck did
+    // not find infeasible at analysis resolution (the baseline always qualifies).
+    std::vector<std::size_t> eligible;
+    for (std::size_t i = 0; i < result_.candidates.size(); ++i) {
+        const CandidateRecord& c = result_.candidates[i];
+        if (c.point && (i == 0 || !(c.analysis.evaluated && !c.analysis.feasible))) {
+            eligible.push_back(i);
         }
+    }
+    std::size_t start_index = select(eligible, Resolution::Proxy);
+    if (start_index >= result_.candidates.size()) {
+        start_index = 0;
     }
     const SearchPoint start_independent = *result_.candidates[start_index].point;
 
@@ -1140,6 +1164,11 @@ Expected<std::size_t> AutoSession::Impl::recheck(std::span<const std::size_t> al
         return a < b;
     });
     std::vector<std::size_t> pool;
+    const auto add = [&](std::size_t i) {
+        if (i < result_.candidates.size() && std::find(pool.begin(), pool.end(), i) == pool.end()) {
+            pool.push_back(i);
+        }
+    };
     for (const std::size_t i : order) {
         if (pool.size() >= options_.recheck_count) {
             break;
@@ -1148,32 +1177,101 @@ Expected<std::size_t> AutoSession::Impl::recheck(std::span<const std::size_t> al
             pool.push_back(i);
         }
     }
-    if (std::find(pool.begin(), pool.end(), std::size_t{0}) == pool.end()) {
-        pool.push_back(0);  // the baseline is always a fallback
+    const std::size_t leader = pool.empty() ? result_.candidates.size() : pool.front();
+    // Diversity: the best feasible candidate without local tone, so the native checks can trade
+    // the leaders' local tone against an edit that has none.
+    std::vector<std::size_t> global;
+    for (std::size_t i = 1; i < result_.candidates.size(); ++i) {
+        const CandidateRecord& c = result_.candidates[i];
+        if (rank(i, Resolution::Proxy).feasible && !changes_local_tone(c.edit) && !is_identity_edit(c.edit)) {
+            global.push_back(i);
+        }
     }
+    add(select(global, Resolution::Proxy));
+    add(0);  // the baseline is always the last resort
     for (const std::size_t i : always) {
-        if (i < result_.candidates.size() && std::find(pool.begin(), pool.end(), i) == pool.end()) {
-            pool.push_back(i);
+        add(i);
+    }
+    const auto evaluate_pool = [&]() -> Status {
+        for (const std::size_t i : pool) {
+            if (result_.candidates[i].analysis.evaluated) {
+                continue;  // rechecked by the independent stage (and re-ranked)
+            }
+            auto score = evaluate(Resolution::Analysis, i, &analysis_metrics_[i]);
+            if (!score) {
+                return Unexpected(std::move(score.error()));
+            }
+            result_.candidates[i].analysis = std::move(*score);
+            ++result_.timing.analysis_candidates;
+        }
+        return ok();
+    };
+    if (auto status = evaluate_pool(); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    // Bounded conservative fallback (blueprint section 6 step 7, at analysis resolution): when every
+    // rechecked candidate but the baseline failed a hard check, the proxy leader's conservative
+    // variants are rechecked before the baseline is accepted.
+    const bool rejected = std::none_of(pool.begin(), pool.end(), [&](std::size_t i) {
+        return i != 0 && result_.candidates[i].analysis.evaluated && result_.candidates[i].analysis.feasible;
+    });
+    fallback_ = false;
+    if (rejected && leader < result_.candidates.size() && leader != 0) {
+        fallback_ = true;
+        std::uint32_t added = 0;
+        for (const engine::DevelopSettings& s :
+             conservative_fallbacks(result_.candidates[leader].settings, baseline_)) {
+            if (added >= kMaxFallbackRechecks) {
+                break;
+            }
+            const std::size_t f = add_fallback(leader, s);
+            if (f < result_.candidates.size()) {
+                add(f);
+                ++added;
+            }
+        }
+        if (auto status = evaluate_pool(); !status) {
+            return Unexpected(std::move(status.error()));
         }
     }
-    for (const std::size_t i : pool) {
-        if (result_.candidates[i].analysis.evaluated) {
-            continue;  // rechecked by the independent stage (and re-ranked)
-        }
-        auto score = evaluate(Resolution::Analysis, i, &analysis_metrics_[i]);
-        if (!score) {
-            return Unexpected(std::move(score.error()));
-        }
-        result_.candidates[i].analysis = std::move(*score);
-        ++result_.timing.analysis_candidates;
-    }
-    std::size_t chosen = 0;
-    for (const std::size_t i : pool) {
-        if (better(rank(i, Resolution::Analysis), rank(chosen, Resolution::Analysis))) {
-            chosen = i;
-        }
+    std::size_t chosen = select(pool, Resolution::Analysis);
+    if (chosen >= result_.candidates.size() || !rank(chosen, Resolution::Analysis).feasible) {
+        chosen = 0;
     }
     return chosen;
+}
+
+std::size_t AutoSession::Impl::add_fallback(std::size_t source, const engine::DevelopSettings& settings) {
+    for (std::size_t i = 0; i < result_.candidates.size(); ++i) {
+        if (result_.candidates[i].settings == settings) {
+            return i;
+        }
+    }
+    const CandidateRecord& from = result_.candidates[source];
+    if (!from.point) {
+        return result_.candidates.size();
+    }
+    CandidateRecord c;
+    c.index = static_cast<std::uint32_t>(result_.candidates.size());
+    c.origin = CandidateOrigin::Fallback;
+    c.settings = settings;
+    c.edit = edit_of(settings);
+    c.edit_size = edit_size(c.edit);
+    c.note = std::format("fallback of {}: exposure {:+.3f}, shadows {:.3f}, highlights {:.3f}", source,
+                         c.edit.exposure_ev, c.edit.shadows_ev, c.edit.highlights_ev);
+    // The point in the search's coordinates (the white balance is the source's).
+    SearchPoint p = *from.point;
+    p.exposure_ev = c.edit.exposure_ev;
+    p.shadows_ev = c.edit.shadows_ev;
+    p.highlights_ev = c.edit.highlights_ev;
+    p.contrast = c.edit.contrast;
+    p.saturation = c.edit.saturation;
+    c.point = p;
+    c.source = static_cast<std::uint32_t>(source);
+    result_.candidates.push_back(std::move(c));
+    analysis_metrics_.emplace_back();
+    stage_points_.emplace_back();
+    return result_.candidates.size() - 1;
 }
 
 ConfidenceBreakdown AutoSession::Impl::confidence_of(const CandidateRecord& c) const {
@@ -1194,10 +1292,10 @@ ConfidenceBreakdown AutoSession::Impl::confidence_of(const CandidateRecord& c) c
                                            100.0 * result_.source.max_channel_fraction()));
     }
     if (std::abs(e.exposure_ev) > 0.05 || std::abs(e.shadows_ev) > 0.05) {
-        b.brightness = result_.tone.evidence ? result_.tone.confidence : 0.0;
+        b.brightness = result_.tone.evidence ? result_.tone.signal_evidence : 0.0;
         if (b.brightness < 1.0) {
             b.reasons.push_back(
-                std::format("brightness evidence {:.2f}: {}", b.brightness, result_.tone.reason));
+                std::format("signal evidence {:.2f}: {}", b.brightness, result_.tone.reason));
         }
     }
     if (changes_white_balance_materially(e)) {
@@ -1230,9 +1328,16 @@ Status AutoSession::Impl::finish(std::size_t chosen) {
     result_.diagnostics.clear();
     result_.flags.clear();
     result_.restrained = false;
-    // Confidence and restraint.
-    ConfidenceBreakdown confidence = confidence_of(result_.candidates[chosen]);
-    const CandidateRecord winner = result_.candidates[chosen];
+    result_.fallback = fallback_;
+    // Confidence and restraint, always from an unrestrained point: a restrained winner (the
+    // independent result entering the consistency stage) is restrained again from its source.
+    std::size_t unrestrained = chosen;
+    if (result_.candidates[chosen].origin == CandidateOrigin::Restrained && result_.candidates[chosen].source &&
+        *result_.candidates[chosen].source < result_.candidates.size()) {
+        unrestrained = *result_.candidates[chosen].source;
+    }
+    ConfidenceBreakdown confidence = confidence_of(result_.candidates[unrestrained]);
+    const CandidateRecord winner = result_.candidates[unrestrained];
     // Each group of controls is restrained by the evidence that governs it: tone and colour by the
     // source, brightness, noise and native-crop confidences; white balance by the source and the
     // white-balance evidence.
@@ -1281,6 +1386,7 @@ Status AutoSession::Impl::finish(std::size_t chosen) {
             c.edit = edit_of(settings);
             c.edit_size = edit_size(c.edit);
             c.point = p;
+            c.source = winner.index;
             result_.candidates.push_back(std::move(c));
             analysis_metrics_.emplace_back();
             stage_points_.emplace_back();
@@ -1295,7 +1401,36 @@ Status AutoSession::Impl::finish(std::size_t chosen) {
         }
         // The reported confidence stays the winner's: it is why the edit was restrained.
         chosen = result_.candidates[restrained].analysis.feasible ? restrained : 0;
+    } else if (unrestrained != chosen && result_.candidates[unrestrained].analysis.evaluated &&
+               result_.candidates[unrestrained].analysis.feasible) {
+        // A restrained winner whose source now needs no restraint (a group target's white-balance
+        // confidence): the source itself.
+        chosen = unrestrained;
     }
+
+    // The policy confidence (auto_settings.hpp, step 7): reported, never restraining.
+    const EditVector& e = result_.candidates[chosen].edit;
+    const bool large = std::abs(e.exposure_ev) >= kLargeExposureEv ||
+                       std::abs(e.shadows_ev) + std::abs(e.highlights_ev) >= kLargeLocalToneEv;
+    if (large) {
+        confidence.policy = result_.tone.key_ambiguous ? kAmbiguousLargeEditConfidence : kLargeEditConfidence;
+        confidence.reasons.push_back(std::format(
+            "large edit (exposure {:+.2f} EV, shadows {:+.2f} EV, highlights {:+.2f} EV){}", e.exposure_ev,
+            e.shadows_ev, e.highlights_ev,
+            result_.tone.key_ambiguous ? ": the key cues reduced the correction, so its size rests on the policy" : ""));
+    }
+    if (fallback_) {
+        const CandidateScore& base = result_.candidates[0].analysis;
+        const bool unmet = chosen == 0 && base.evaluated && base.terms.brightness > 1.0;
+        confidence.policy = std::min(confidence.policy, unmet ? kUnmetFallbackConfidence : kFallbackConfidence);
+        confidence.reasons.push_back(
+            unmet ? std::format("every rechecked candidate and conservative fallback failed a hard check: as shot is "
+                                "kept although its brightness term is {:.2f}",
+                                base.terms.brightness)
+                  : std::string("the leading candidates failed a hard check at analysis resolution: a conservative "
+                                "fallback was chosen"));
+    }
+    confidence.overall = std::min(confidence.overall, confidence.policy);
     result_.chosen = chosen;
     result_.settings = result_.candidates[chosen].settings;
     result_.confidence = confidence.overall;
@@ -1430,6 +1565,27 @@ void AutoSession::Impl::add_flags() {
         flags.push_back({ReviewFlagCode::RecheckRejected, std::nullopt,
                          "every rechecked candidate failed a hard check at analysis resolution"});
     }
+    if (result_.fallback) {
+        const CandidateRecord& c = result_.candidates[result_.chosen];
+        flags.push_back({ReviewFlagCode::ConservativeFallback, std::nullopt,
+                         c.origin == CandidateOrigin::Baseline
+                             ? std::string("the leading candidates and their conservative fallbacks failed a hard "
+                                           "check at analysis resolution: as shot is kept")
+                             : std::format("the leading candidates failed a hard check at analysis resolution: "
+                                           "conservative fallback {} ({}) chosen",
+                                           c.index, c.note)});
+    }
+    {
+        const EditVector& e = result_.candidates[result_.chosen].edit;
+        if (std::abs(e.exposure_ev) >= kLargeExposureEv ||
+            std::abs(e.shadows_ev) + std::abs(e.highlights_ev) >= kLargeLocalToneEv) {
+            flags.push_back({ReviewFlagCode::LargeEdit, MetricId::TonalDistribution,
+                             std::format("large automatic edit: exposure {:+.2f} EV, shadows {:+.2f} EV, highlights "
+                                         "{:+.2f} EV{}",
+                                         e.exposure_ev, e.shadows_ev, e.highlights_ev,
+                                         result_.tone.key_ambiguous ? " (the key was ambiguous)" : "")});
+        }
+    }
     if (!result_.warnings.empty()) {
         std::string text;
         for (const std::string& w : result_.warnings) {
@@ -1484,6 +1640,13 @@ Expected<AutoResult> AutoSession::Impl::regularise(const ConsistencyTarget& targ
     if (auto valid = validate_target(target); !valid) {
         return Unexpected(std::move(valid.error()));
     }
+    if (target.camera_white_balance && target.domain != independent_.shot.calibration_domain) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("the consistency target's camera white balance belongs to calibration domain '{}', "
+                                "not this image's '{}': camera gains are never compared across domains",
+                                target.domain, independent_.shot.calibration_domain),
+                    kWhere);
+    }
     const auto start = Clock::now();
     cancel_ = &cancel;
     target_ = &target;
@@ -1520,7 +1683,11 @@ Expected<AutoResult> AutoSession::Impl::regularise(const ConsistencyTarget& targ
 
     auto status = consistency_search();
     if (status) {
-        const std::array<std::size_t, 1> always{independent_chosen};
+        // The independent winner enters unrestrained: restraint is applied once, to the stage's winner.
+        const CandidateRecord& w = result_.candidates[independent_chosen];
+        const std::size_t unrestrained =
+            w.origin == CandidateOrigin::Restrained && w.source ? std::size_t{*w.source} : independent_chosen;
+        const std::array<std::size_t, 1> always{unrestrained};
         auto chosen = recheck(always);
         if (!chosen) {
             status = Unexpected(std::move(chosen.error()));
@@ -1648,6 +1815,8 @@ std::string_view to_string(CandidateOrigin origin) noexcept {
             return "consistency_proposal";
         case CandidateOrigin::ConsistencyStep:
             return "consistency_step";
+        case CandidateOrigin::Fallback:
+            return "fallback";
     }
     return "invalid";
 }
@@ -1678,6 +1847,10 @@ std::string_view to_string(ReviewFlagCode code) noexcept {
             return "recheck_rejected";
         case ReviewFlagCode::ConsistencyLimited:
             return "consistency_limited";
+        case ReviewFlagCode::LargeEdit:
+            return "large_edit";
+        case ReviewFlagCode::ConservativeFallback:
+            return "conservative_fallback";
     }
     return "invalid";
 }
@@ -1847,6 +2020,37 @@ Expected<AutoResult> auto_develop_file(const raw::DecoderRegistry& registry,
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "out of memory during the automatic settings", kWhere);
     }
+}
+
+std::vector<engine::DevelopSettings> conservative_fallbacks(const engine::DevelopSettings& chosen,
+                                                           const engine::DevelopSettings& baseline) {
+    std::vector<engine::DevelopSettings> out;
+    const auto push = [&](const engine::DevelopSettings& s) {
+        if (s == chosen || s == baseline) {
+            return;
+        }
+        if (std::none_of(out.begin(), out.end(), [&](const engine::DevelopSettings& o) { return o == s; })) {
+            out.push_back(s);
+        }
+    };
+    const auto half = [](double c, double b) { return snap(b + 0.5 * (c - b)); };
+    if (chosen.shadows != baseline.shadows || chosen.highlights != baseline.highlights) {
+        engine::DevelopSettings halved = chosen;
+        halved.shadows = half(chosen.shadows, baseline.shadows);
+        halved.highlights = half(chosen.highlights, baseline.highlights);
+        push(halved);
+        engine::DevelopSettings none = chosen;
+        none.shadows = baseline.shadows;
+        none.highlights = baseline.highlights;
+        push(none);
+    } else {
+        engine::DevelopSettings halved = chosen;
+        halved.exposure_ev = half(chosen.exposure_ev, baseline.exposure_ev);
+        halved.contrast = half(chosen.contrast, baseline.contrast);
+        halved.saturation = half(chosen.saturation, baseline.saturation);
+        push(halved);
+    }
+    return out;
 }
 
 Expected<std::uint64_t> estimate_auto_memory(const raw::RawMetadata& metadata, const AutoOptions& options) {

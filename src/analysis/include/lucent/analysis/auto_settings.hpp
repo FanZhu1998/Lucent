@@ -14,13 +14,15 @@
 //      (proxy_long_edge, 512) with engine::make_proxy, and the deterministic native crops
 //      (native_crops.hpp) cut from the full-resolution image twice, with the local-tone halo and
 //      halo-free (NativeCrop::measured), which is then released. One decode.
-//   3. The white-balance proposal on the proxy (proposals.hpp) and, with evidence, the masks of the
-//      surfaces it treats as neutral (the white-balance hard check measures them in every render).
+//   3. The white-balance proposal on the proxy (proposals.hpp) and, with evidence of at least
+//      kNeutralEvidenceMinConfidence, the masks of the surfaces it treats as neutral (the
+//      white-balance hard check measures them in every render).
 //   4. The baseline (as shot for every unlocked searched control; locked controls at their current
 //      values; tone curve, vibrance and base look carried over from the current settings) rendered
 //      on the proxy, the analysis image and the crops: the reference of every relative metric; then
-//      the exposure/headroom proposal from its tones and the scene headroom, and the shot features
-//      that grouping compares (consistency.hpp).
+//      the shot features that grouping compares (consistency.hpp, scene luminance included), and the
+//      key-aware exposure/headroom proposal from the baseline's tones, the scene headroom and the
+//      scene luminance. With exposure locked the brightness term is 0 (objective.hpp).
 //   5. Candidates on the proxy: the baseline and the identity (the current settings unchanged) are
 //      always evaluated; then the exposure, white-balance, global (exposure and white balance) and
 //      combined (with the local-tone proposals) proposals; then a bounded deterministic coordinate
@@ -30,20 +32,36 @@
 //      AutoOptions::candidate_budget proxy renders (32) are used. Locked controls never move.
 //      Already evaluated settings are not rendered again. Hard checks gate feasibility; the
 //      Natural v1 objective ranks (objective.hpp).
-//   6. The leading recheck_count (3) feasible proxy candidates, and the baseline, are rendered at
-//      analysis resolution and on the native crops and evaluated again (native metrics included);
-//      the best feasible one wins (ties to the smaller edit). A candidate without local tone
-//      (highlights and shadows 0) is rendered on the halo-free crops: stage two is then per pixel
-//      and every crop measurement reads only NativeCrop::measured, so the result is the same as
-//      with the halo (native_crops.hpp).
+//   6. Recheck: the leading recheck_count (3) feasible proxy candidates, the best feasible proxy
+//      candidate WITHOUT local tone (the leaders are often near-duplicates sharing one local-tone
+//      family, so the native checks could otherwise only pass or fail that family) and the
+//      baseline are rendered at analysis resolution and on the native crops and evaluated again
+//      (native metrics included); select_best() picks among the feasible ones (ties to the smaller
+//      edit). When every rechecked candidate but the baseline fails a hard check, a bounded
+//      conservative fallback follows (blueprint section 6 step 7, at analysis resolution): the
+//      proxy leader's conservative_fallbacks() - local tone halved, local tone removed, or for a
+//      leader without local tone every change halved - at most two more analysis renders
+//      (CandidateOrigin::Fallback), then the baseline; the result is flagged ConservativeFallback.
+//      A candidate without local tone (highlights and shadows 0) is rendered on the halo-free
+//      crops: stage two is then per pixel and every crop measurement reads only
+//      NativeCrop::measured, so the result is the same as with the halo (native_crops.hpp).
 //   7. Confidence: the smallest of the evidence confidences that apply to what the winner changes
-//      (source interpretation, brightness evidence, white-balance evidence, noise model, native
-//      crops). Each group of controls is restrained by the evidence that governs it: when the
-//      smallest of the source, brightness, noise and native confidences is below
-//      kRestrainConfidence, exposure, shadows, highlights, contrast and saturation move towards the
-//      baseline by the factor max(0.25, confidence / kRestrainConfidence); when the smaller of the
-//      source and white-balance confidences is, the white-balance residual does. The restrained
-//      candidate is re-verified and flagged; if it fails a hard check the baseline is chosen.
+//      (source interpretation, the signal evidence for brightness, white-balance evidence, noise
+//      model, native crops) and of the policy confidence. Each group of controls is restrained by
+//      the evidence that governs it: when the smallest of the source, brightness, noise and native
+//      confidences is below kRestrainConfidence, exposure, shadows, highlights, contrast and
+//      saturation move towards the baseline by the factor max(0.25, confidence /
+//      kRestrainConfidence); when the smaller of the source and white-balance confidences is, the
+//      white-balance residual does. Restraint always starts from an unrestrained point (a
+//      restrained winner is restrained again from its source, never compounded). The restrained
+//      candidate is re-verified and flagged; if it fails a hard check the baseline is chosen. The
+//      policy confidence does not restrain (the objective already decided the edit's size); it
+//      reports how much the decision rests on the policy's interpretation: kLargeEditConfidence
+//      (or kAmbiguousLargeEditConfidence when the tone proposal's key was ambiguous) for a large
+//      edit (|exposure| >= kLargeExposureEv or |shadows| + |highlights| >= kLargeLocalToneEv,
+//      flagged LargeEdit), kFallbackConfidence after a conservative fallback, and
+//      kUnmetFallbackConfidence when the fallback ended at the baseline with a brightness term
+//      above 1 (the objective's own target is unmet).
 //   8. Review flags with reasons, per-metric diagnostics of the chosen settings at analysis
 //      resolution, every evaluated candidate, timings and memory figures.
 //
@@ -53,8 +71,11 @@
 // nothing can rank above it for consistency, and the independent result stands (with its record);
 // otherwise:
 //   a. Every evaluated candidate is ranked again with the consistency term added to its objective
-//      (proxy and analysis scores, from the appearance stored with each; no render).
-//   b. White-balance axis of the stage: from the gains of the best re-ranked candidate (strength 0)
+//      (proxy and analysis scores, from the appearance stored with each; no render). A target
+//      carrying a camera white balance of another calibration domain than the member's is
+//      InvalidArgument (camera gains are never compared across domains).
+//   b. White-balance axis of the stage: from the gains of the best re-ranked candidate that the
+//      independent recheck did not find infeasible at analysis resolution (strength 0)
 //      to the consistency gains (strength 1): within the member's own calibration domain, the gains
 //      that give the domain target's camera multipliers; across domains (colour target only), the
 //      gains that move the rendered mid-tone u'v' to the target, solved from two probe renders
@@ -64,10 +85,14 @@
 //      white-balance move, and the white-balance move alone; then coordinate steps
 //      (ConsistencyStep) from the best point at half the initial step sizes, at most two passes,
 //      within AutoOptions::consistency_budget (16) new proxy renders.
-//   d. Recheck (revalidation): the leading recheck_count feasible proxy candidates, the baseline and
-//      the independent winner at analysis resolution and on the crops, ranked with the term.
-//   e. Restraint as in 7, except that a white-balance residual is governed by the larger of the
-//      image's white-balance evidence and the target's white_balance_confidence; then flags. The
+//   d. Recheck (revalidation) as in 6 - the leading recheck_count feasible proxy candidates, the best
+//      one without local tone, the baseline, the conservative fallback when the leaders fail - plus
+//      the independent winner (unrestrained), at analysis resolution and on the crops, ranked with
+//      the term.
+//   e. Restraint as in 7 (the independent winner enters d. unrestrained, so restraint is applied
+//      once, to the stage's winner), except that a white-balance residual is governed by the
+//      larger of the image's white-balance evidence and the target's white_balance_confidence;
+//      then flags. The
 //      result records the independent choice, both consistency terms and the adjustment
 //      (ConsistencyRecord). Locks and hard checks apply exactly as in the independent search: the
 //      term only ranks feasible candidates.
@@ -85,10 +110,14 @@
 // Monochrome data has no white balance or saturation coordinate.
 //
 // Determinism: the same decoded input, current settings and options (and target) give the same
-// result (every render and reduction is schedule independent; candidates are generated and ranked
-// in a fixed order; no randomness); regularise() always starts from the independent result, so a
-// session reopened from the file regularises exactly like one kept in memory. Timings differ
-// between runs and are not part of the decision.
+// result with the same binary on the same CPU feature set (every render and reduction is schedule
+// independent, serial or parallel; candidates are generated and ranked in a fixed order; no
+// randomness); regularise() always starts from the independent result, so a session reopened from
+// the file regularises exactly like one kept in memory. Across machines the MSVC x64 runtime picks
+// FMA3 or SSE2 code for cbrt, log and exp at run time (_set_FMA3_enable), so a measurement can
+// differ in the last bit and a near-tie can then resolve differently; a process that replays
+// results across machines must disable FMA3 in the CRT before analysing. Timings differ between
+// runs and are not part of the decision.
 //
 // Errors: InvalidArgument (analysis.auto) for invalid options or current settings
 // (DevelopSettings::validate()); the source analysis', stage one's and proxies' errors unchanged
@@ -124,9 +153,13 @@ namespace lucent::analysis {
 
 // ---- Versions ----------------------------------------------------------------------------------
 
+// Policy "natural" version 2 (ADR 0011, "Amendment: W8 core closure"): the key-aware tone policy,
+// the exposure-invariant contrast terms, the local-contrast term, relative near-black, the policy
+// confidence. Search version 2: the diverse recheck pool, the conservative fallback, the two-step
+// tie rule (select_best), single restraint.
 inline constexpr std::string_view kNaturalPolicyId = "natural";
-inline constexpr std::uint32_t kNaturalPolicyVersion = 1;  // thresholds, scales, proposals' policy
-inline constexpr std::uint32_t kSearchVersion = 1;         // candidate generation, steps, ranking
+inline constexpr std::uint32_t kNaturalPolicyVersion = 2;  // thresholds, scales, proposals' policy
+inline constexpr std::uint32_t kSearchVersion = 2;         // candidate generation, steps, ranking
 
 struct AutoVersions {
     std::string policy{kNaturalPolicyId};
@@ -148,6 +181,14 @@ inline constexpr std::uint32_t kDefaultCandidateBudget = 32;
 inline constexpr std::uint32_t kDefaultRecheckCount = 3;
 inline constexpr std::uint32_t kDefaultConsistencyBudget = 16;
 inline constexpr double kRestrainConfidence = 0.5;
+// The policy confidence (step 7 above; uncalibrated).
+inline constexpr double kLargeExposureEv = 1.0;
+inline constexpr double kLargeLocalToneEv = 0.4;
+inline constexpr double kLargeEditConfidence = 0.75;
+inline constexpr double kAmbiguousLargeEditConfidence = 0.6;
+inline constexpr double kFallbackConfidence = 0.6;
+inline constexpr double kUnmetFallbackConfidence = 0.5;
+inline constexpr std::uint32_t kMaxFallbackRechecks = 2;
 
 struct AutoOptions {
     std::int32_t analysis_long_edge = kDefaultAnalysisLongEdge;  // [256, 8192]
@@ -189,6 +230,7 @@ enum class CandidateOrigin : std::uint8_t {
     GlobalProposal = 8,        // exposure and white-balance proposals, no local tone
     ConsistencyProposal = 9,   // a seed (or white-balance probe) of the consistency stage
     ConsistencyStep = 10,      // a coordinate step of the consistency stage
+    Fallback = 11,             // a conservative fallback of the proxy leader (recheck only)
 };
 
 [[nodiscard]] std::string_view to_string(CandidateOrigin origin) noexcept;
@@ -212,8 +254,10 @@ struct CandidateRecord {
     EditVector edit;
     double edit_size = 0.0;
     std::optional<SearchPoint> point;  // not for an identity outside the search space
-    CandidateScore proxy;              // on the search proxy (not for a restrained candidate)
-    CandidateScore analysis;           // at analysis resolution with native crops (recheck)
+    // A restrained or fallback candidate: the candidate it was derived from.
+    std::optional<std::uint32_t> source;
+    CandidateScore proxy;     // on the search proxy (not for restrained and fallback candidates)
+    CandidateScore analysis;  // at analysis resolution with native crops (recheck)
 };
 
 // ---- Flags and confidence ----------------------------------------------------------------------
@@ -232,6 +276,8 @@ enum class ReviewFlagCode : std::uint16_t {
     InterpretationLimited = 10,   // the decode/stage one reported limitations
     RecheckRejected = 11,         // every rechecked candidate failed at analysis resolution
     ConsistencyLimited = 12,      // the group's look was not reached within the checks and locks
+    LargeEdit = 13,               // a large automatic edit: review (step 7)
+    ConservativeFallback = 14,    // the leaders failed the recheck: a conservative fallback was chosen
 };
 
 [[nodiscard]] std::string_view to_string(ReviewFlagCode code) noexcept;
@@ -245,10 +291,15 @@ struct ReviewFlag {
 struct ConfidenceBreakdown {
     double overall = 1.0;
     double source = 1.0;
-    double brightness = 1.0;     // 1 when exposure and shadows are unchanged
+    // The signal evidence for a brightness edit (ToneProposal::signal_evidence): whether the frame
+    // carries a measurable signal, not how certain the edit's size is. 1 when exposure and shadows
+    // are unchanged.
+    double brightness = 1.0;
     double white_balance = 1.0;  // 1 when white balance is unchanged
     double noise = 1.0;          // 1 unless shadows are lifted or exposure raised
     double native = 1.0;         // 1 when native crops were checked (or nothing local changed)
+    // How much the decision rests on the policy's interpretation (step 7); not used for restraint.
+    double policy = 1.0;
     std::vector<std::string> reasons;
 };
 
@@ -314,6 +365,7 @@ struct AutoResult {
     double confidence = 0.0;
     ConfidenceBreakdown confidence_detail;
     bool restrained = false;
+    bool fallback = false;  // the leaders failed the recheck (step 6)
     std::vector<ReviewFlag> flags;
     // Source saturation, then every metric of the chosen settings at analysis resolution.
     std::vector<MetricResult> diagnostics;
@@ -354,6 +406,19 @@ struct AutoResult {
                                                      const engine::DevelopSettings& current,
                                                      const AutoOptions& options = {},
                                                      const core::CancellationToken& cancel = {});
+
+// The bounded conservative fallbacks of blueprint section 6 step 7 for `chosen` (an automatic
+// result's settings) relative to `baseline` (its as-shot baseline, AutoResult::candidates[0]), in
+// order: local tone (shadows, highlights) halved towards the baseline; local tone at the
+// baseline's; then, when `chosen` has no local tone, exposure, contrast and saturation halved
+// towards the baseline. The white balance, the tone curve, vibrance, the base look and the locks
+// stay `chosen`'s (a locked control equals the baseline's, so it never moves). Settings equal to
+// `chosen`, to `baseline` or to an earlier entry are left out; the baseline itself is the last
+// resort and not listed. The recheck uses it at analysis resolution (step 6); W7's final
+// full-resolution check (render once, measure_render() and evaluate_candidate() against the
+// full-resolution baseline) is meant to walk the same ladder and record each attempt.
+[[nodiscard]] std::vector<engine::DevelopSettings> conservative_fallbacks(const engine::DevelopSettings& chosen,
+                                                                         const engine::DevelopSettings& baseline);
 
 // Estimated peak pixel memory of auto_develop() for `metadata` (probe or decode metadata): the
 // full-resolution stage one's peak, or the full image with its proxies and crops if larger.

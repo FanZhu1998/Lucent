@@ -1,10 +1,16 @@
 # ADR 0011: Natural v1 automatic settings: metric contract, proposals, bounded search and confidence
 
-- **Status:** Accepted (amended 2026-10-04 for phase 2)
+- **Status:** Accepted (amended 2026-10-04 for phase 2, and again for the W8 core closure: policy
+  "natural" version 2, see the last amendment)
 - **Date:** 2026-10-03
 - **Workflow:** W8 (Natural v1 optimiser), phase 1 of 3 (core) and phase 2 of 3 (related-shot
-  consistency, recheck speed-ups, evaluation tooling: see "Amendment: phase 2" below); the
-  application's "Auto" and batch flows are wired once W7's worker lands
+  consistency, recheck speed-ups, evaluation tooling: see "Amendment: phase 2" below), closed by
+  the review fixes and tuning of "Amendment: W8 core closure"; the application's "Auto" and batch
+  flows are wired once W7's worker lands
+
+Sections 1-9 and the phase-2 amendment describe policy version 1 as it was decided. Where the
+review of the core found them wrong or superseded, the text is corrected in place with a note, and
+the last amendment records what replaced them.
 
 ## Context
 
@@ -52,7 +58,8 @@ records what it is and how it will be calibrated.
    (`objective.hpp`), native crops (`native_crops.hpp`) and the controller (`auto_settings.hpp`:
    `auto_develop()`, `auto_develop_file()`, `estimate_auto_memory()`). Results carry the policy
    ("natural" version 1), search version 1, metric-contract version 1 and the develop pipeline and
-   settings versions.
+   settings versions. (Now policy version 2, search version 2, metric-contract version 2 and
+   consistency version 2: see the W8 core closure.)
 
 2. **One decode, three scales.** The decoded samples are measured first (per-channel saturation,
    saturation coverage of the analysis and proxy grids, the noise model), then consumed by one
@@ -96,10 +103,12 @@ records what it is and how it will be calibrated.
 4. **Proposals** (`proposals.hpp`). *Exposure/headroom:* the median luminance lightness is moved into
    a key-aware band [0.40 - 0.38 low_key, 0.85], low_key = clamp((p99 - 0.75) / 0.15) x
    clamp((0.30 - p50) / 0.15) (bright content near white with a dark median: silhouettes, night,
-   low key), exactly in display luminance, limited by the scene headroom (p99.5 of the value norm
-   against the stage-two clip level) minus 0.3 EV; what headroom withholds becomes half as much
-   shadow lift; a brightening of an image with highlights near white proposes -0.25/-0.5 EV of
-   highlight compression. *White balance:* three estimators on the proxy (area averaging attenuates
+   low key), exactly in display luminance; the *proposal* is limited by the scene headroom (p99.5
+   of the value norm against the stage-two clip level) minus 0.3 EV, the search was not (corrected:
+   the R5 still life was searched to +1.5 EV with 1.63 EV of headroom); what headroom withholds
+   becomes half as much shadow lift; a brightening of an image with highlights near white proposes
+   -0.25/-0.5 EV of highlight compression. (Version 2 replaces the band and the low-key rule: W8
+   core closure, item 19.) *White balance:* three estimators on the proxy (area averaging attenuates
    demosaicing artefacts): first-order grey edge with p = 6 on a 3x3 binomial smoothing, bright
    neutral (median log ratios of the brightest 20 % within a +-0.5 log cast window) and a grey world
    restricted to that window. The cast is their median; agreement exp(-(spread / (0.05 + 0.25
@@ -134,9 +143,13 @@ records what it is and how it will be calibrated.
    detail loss below 0.85 / 0.15) and edit size (normalised L1 over the search ranges). Only
    increases over the baseline count where the scene itself is the cause (crowded highlights of
    snow, colour outside sRGB): absolute terms pushed high-key and colourful scenes darker and less
-   saturated in testing. Totals within 0.02 are ties, won by the smaller edit, then the earlier
-   candidate. Missing evidence replaces a term by a penalty proportional to the edit it governs, so
-   a candidate never scores better for lack of evidence.
+   saturated in testing. (Corrected: the near-black part of the shadows term was absolute in
+   version 1, so a scene's own deep shadows were penalised; version 2 counts only added near-black
+   area.) Totals within 0.02 are ties, won by the smaller edit, then the earlier candidate
+   (corrected: applied pairwise in a scan, ties chained and the winner could lie more than 0.02
+   above the best; version 2 selects in two steps, item 23). Missing evidence replaces a term by a
+   penalty proportional to the edit it governs, so a candidate never scores better for lack of
+   evidence.
 
 7. **Confidence, restraint and flags.** Confidence is the smallest of the evidence confidences that
    apply to what the winner changes: source interpretation (unbalanced data 0.6, incomplete
@@ -154,10 +167,12 @@ records what it is and how it will be calibrated.
    the versions, confidence and its breakdown, flags with reasons, per-metric diagnostics of the
    chosen settings at analysis resolution (source saturation first), the source diagnostics, both
    proposals, the crops, every evaluated candidate with its proxy and analysis scores and failures,
-   timings and memory figures. The same decoded input, settings and options give the same result:
-   renders and reductions are schedule independent (fixed row bands merged in order, integer
-   histograms), candidates are generated and ranked in a fixed order, there is no randomness; a test
-   compares two runs and serial with parallel execution exactly.
+   timings and memory figures. The same decoded input, settings and options give the same result
+   with the same binary on the same CPU feature set: renders and reductions are schedule
+   independent (fixed row bands merged in order, integer histograms), candidates are generated and
+   ranked in a fixed order, there is no randomness; a test compares two runs and serial with
+   parallel execution exactly (since the W8 core closure: every proxy and analysis term, the
+   appearances and the diagnostics). Across machines, see item 28.
 
 9. **Errors.** Invalid options or current settings are `InvalidArgument` (`analysis.auto`); the
    decoder's, stage one's and proxies' errors pass through; a numerically invalid baseline is
@@ -182,10 +197,12 @@ analysed twice with identical results.
 The peak working set is that of a test process analysing one file (decode included); the estimate is
 `estimate_auto_memory()` from the probe, which the controller's own figure matches. After the crops
 are cut, the controller holds about 76-85 MiB (analysis image, proxy, crops, contexts and baseline
-features); the full-resolution stage one dominates the peak. A rendering of the R5 file with the
+features); the full-resolution stage one dominates the peak. ~~A rendering of the R5 file with the
 chosen settings was inspected against the as-shot rendering: the dim indoor still life (median
 L* 19.6) is brightened naturally, the lemon's highlights stay unclipped and the dark table still
-reads as dark.
+reads as dark.~~ Withdrawn: the phase-2 inspection of the same settings (+1.5 EV, shadows
++0.66 EV) found the near-black table lifted to a dull grey and the low-key mood lost, and the W8
+core review traced it to the policy (W8 core closure).
 
 Synthetic scenes (`lucent_analysis_tests`, 960 x 640, about 0.5-1 s each): a chart 2.5 EV under is
 brightened by the exposure bound (+1.5 EV) and 0.375 EV of shadow lift; a silhouette and high-key
@@ -200,10 +217,14 @@ brightening is restrained from +1.5 to +0.9 EV and flagged.
 
 - Natural v1 is reproducible and inspectable: every candidate, term and failed check is in the
   result, so a reviewer can see why a photograph was brightened or left alone.
-- On the five smoke fixtures the three white-balance estimators disagree (spreads 0.24-0.40 log; the
-  grey edge leans blue on scenes with large coloured areas), so white balance stays as shot with a
-  `WhiteBalanceUncertain` flag: the camera's white balance remains the default, as the blueprint
-  wants until a calibrated estimator exists. Synthetic scenes exercise the correction path.
+- On the five smoke fixtures the three white-balance estimators disagree (spreads 0.24-0.40 log),
+  so white balance stays as shot with a `WhiteBalanceUncertain` flag: the camera's white balance
+  remains the default, as the blueprint wants until a calibrated estimator exists. Synthetic scenes
+  exercise the correction path. (Corrected: the disagreement is not explained by large coloured
+  areas. The grey edge leans blue systematically - log(b/g) > 0 on 24 of the 30 colour files of the
+  cache, including the X-T4 colour-checker frame whose as-shot neutral patches render neutral - so
+  the bias is the estimator's; it is an investigation item of the calibration, W8 core closure,
+  ANA-12.)
 - Without semantics a backlit subject in front of a bright sky reads as low key and is not
   brightened beyond the bounded shadow lift; this is the documented price of preserving
   silhouettes.
@@ -242,9 +263,11 @@ Appendix D4:
    finished settings. Term scales and weights are fitted to the pairwise preferences (for example a
    Bradley-Terry model over the objective's terms) subject to the defect budget; hard thresholds are
    set from annotated defects (visible new clipping, halos, noise).
-4. *Freeze and test.* Freeze the scales, thresholds, confidence rules and search bounds as policy
-   version 2, record them, and report preference, correction effort, defects and confidence by camera
-   and scene on the held-out split before any claim of quality.
+4. *Freeze and test.* Freeze the scales, thresholds, confidence rules and search bounds as a new
+   policy version (version 2 is now the uncalibrated tuning of the W8 core closure, so the first
+   calibrated policy will be version 3 or later), record them, and report preference, correction
+   effort, defects and confidence by camera and scene on the held-out split before any claim of
+   quality.
 
 ## Alternatives considered
 
@@ -427,7 +450,8 @@ restrained; the recheck dominates the time on 45 MP files; backlit subjects read
     - `blind/sheet.html`, the **blind** variant: per image the two renders shown as A and B in an
       order drawn by splitmix64 from a fixed seed, nothing else that distinguishes them, and a form
       that exports `lucent.blind-choices` JSON;
-    - `blind/key.json` (`lucent.blind-key`), which holds the key separately.
+    - `blind/key.json` (`lucent.blind-key`), which holds the key separately (moved to
+      `key/blind-key.json` by the W8 core closure, item 29).
 
     Safety rules:
     - The output directory must be empty and may not be, or lie inside, a source folder or the
@@ -504,7 +528,10 @@ author of this phase:
   exposure", but a photographer would probably add contrast back.
 - R5 crop frame (+1.5 EV, shadows +0.63, highlights -0.31): the least natural of the set. The
   three moves together compress the tonal range into a flat, slightly chalky look (the potatoes
-  pale, the backdrop grey). Nothing is clipped or haloed, but it reads as over-processed.
+  pale, the backdrop grey). ~~Nothing is clipped or haloed~~ (corrected: nothing is clipped, but the
+  chosen settings measure a 3.83 L* halo on the native crops, 96 % of the 4 L* hard limit and the
+  largest objective term, 6.53; the 960-pixel previews cannot show a native-resolution halo, so
+  they cannot validate one), and it reads as over-processed.
 - X-T4 pair (colour checker in anemones): both automatic renders are brighter and now look alike,
   which is the consistency stage's purpose, and the checker's neutral patches stay neutral. Both are
   flatter than the as-shot renders: the dark foliage turns greyish green. The -0.25 EV highlight
@@ -580,3 +607,310 @@ enough".
 - **Rendering crops for the halo-free path from the halo crop at measurement time.** It would save
   the extra 1-1.3 MB per crop of memory, but it needs a second copy per render. Cutting both crops
   once is simpler and the memory is small.
+
+## Amendment: W8 core closure (2026-10-04) - review fixes and policy "natural" version 2
+
+### Context
+
+An independent review of the W8 core reported eighteen findings (ANA-01 to ANA-18, listed with
+their resolution below), and the phase-2 visual assessment above found that small edits look
+natural but large ones do not: the R5 still life (+1.5 EV, shadows +0.66 EV) loses its low-key
+mood, the R5 crop frame (with highlights -0.31 EV as well) looks flat and chalky, and the X-T4
+colour-checker pair and the overcast ducks are a little flat and washed out. The review traced
+these to the policy, not to calibration alone:
+
+- **Low key almost never fired** (ANA-01). It needed near-white highlights (p99 > 0.75) together
+  with a dark median, so it was non-zero for 1 of 32 files. The band's lower edge therefore stayed
+  at L* 40 for dim, evenly lit and overcast scenes, and the uncapped quadratic brightness term
+  (98 % of the R5 baseline's total) drove exposure to the +1.5 EV bound and then local tone.
+- **The contrast term measured the IQR in L*** (ANA-02). A pure exposure change of E EV scales a
+  mid-tone L* IQR by 2^(E/3), so brightening read as harshening, and the cheapest repair was to
+  lift shadows and compress highlights - the flat look.
+- **The recheck pool held near-duplicate local-tone leaders** (ANA-03): a halo just under the
+  limit was accepted (R5 crop, 3.83 L*), or every leader failed and the result fell straight back
+  to as shot (R5 dual-pixel crop), while an exposure-only candidate was never rechecked.
+- **Confidence reported evidence availability, not decision certainty** (ANA-04).
+
+Blueprint section 6 asks for "small plausible corrections", to "preserve ... deep shadows, and
+deliberate silhouettes instead of forcing every image toward a middle-bright neutral look", for
+"Source uncertainty reduces edit strength", "Prefer the smaller edit", for shadows "Reject harmful
+noise amplification or flat, unnatural local contrast", and (step 7) for "a bounded conservative
+fallback".
+
+### Decision
+
+19. **Key-aware tone policy** (`proposals.hpp`). Three cues, none of them semantic:
+    - *low key* as before (near-white content over a dark median: silhouettes, night with lights);
+    - *dimness* = clamp((10 - scene_ev) / 8): the scene luminance of the median in EV100
+      (`ShotFeatures::scene_ev`, already computed for grouping), 0 for daylight, 1 at 2 EV (night),
+      0 without exposure metadata. An ND filter reads as dim, which errs on the safe side;
+    - *high key* = clamp((p50 - 0.70) / 0.15) x clamp((0.20 - IQR) / 0.10): bright, low-contrast
+      frames (snow, fog).
+
+    band_low = max(0.02, 0.40 - 0.38 low_key - 0.15 dimness), band_high = 0.85 + 0.08 high_key.
+    The deficit is measured in EV of display luminance and is the **smaller** of the median's
+    distance below band_low and the bright content's (p90) distance below L* 62: a frame counts as
+    too dark only when its median *and* its bright content are dark. A dark ground under a lit
+    subject is a low-key composition and keeps its key without depending on near-white highlights.
+    The floor sits at the lower end of the p90 of the cache's well-exposed frames (0.57-0.84 for the
+    files whose median is in the band): an observation on this cache, not a calibration. The
+    proposal keeps its structure (headroom limit, half the withheld EV as shadow lift for normal
+    key, highlight compression for crowded highlights). `key_ambiguous` records that a cue reduced
+    the correction a plain [0.40, 0.85] band would ask for by at least 0.25 EV.
+
+20. **Exposure-invariant contrast and local contrast** (`render_metrics.hpp`, `objective.hpp`).
+    The contrast term compares the interquartile range of log2 display luminance,
+    log2(Y(p75) / Y(p25)), with the baseline's (dead zone 5 %, scale 10 % in log ratio, both
+    directions). A new local-contrast term measures, on every render (proxy included), the mean
+    |box_r(L) - box_4r(L)| of L = log2 max(Y, 2^-12) with r = long edge / 64, the local-tone
+    operator's own floor and radius, and penalises only flattening (same dead zone and scale). On
+    the proxy it is the search's surrogate for what local tone costs before the native crops are
+    checked. A pure exposure change leaves both unchanged in the base look's linear segment; the
+    base look's toe and shoulder, which exposure also moves, do compress the range (the dark R5
+    table rises out of the toe faster than the mid-tones), and that now costs, as it should: it is
+    the same flattening a shadow lift causes.
+
+21. **Other objective changes.** The brightness term is huber(x) (x^2 up to 1, 2x - 1 beyond) with
+    x = (deficit + excess) / 0.5 EV, so a large deficit cannot outweigh every other term. The
+    near-black part of the shadows term counts only near-black area the candidate adds. With
+    exposure locked the brightness term is 0: the locked exposure is the user's key, and local tone
+    is not used to get around the lock (blueprint: "Do not change locked controls to make an
+    automatic score look better"). The native highlight crop is now checked: more than 2 % of it
+    newly clipped fails, and (fraction / 1 %)^2 is a preference term. The halo of a candidate
+    without local tone is reported but not scored or checked (`NativeComparison::halo_applies`):
+    stage two is then per pixel and cannot create a halo, but the measure read 1.4-1.7 L* on the
+    dark R5 crops for +0.75 EV of exposure (the toe bends near and far lightness differently), a
+    false cost the review did not list.
+
+22. **Recheck pool and bounded conservative fallback** (blueprint section 6 steps 4 and 7). The
+    pool is the three proxy leaders, the best feasible candidate without local tone, and the
+    baseline. When every rechecked candidate but the baseline fails a hard check, at most two
+    conservative variants of the proxy leader are rechecked (`conservative_fallbacks()`: local tone
+    halved, local tone removed, or for a leader without local tone exposure, contrast and saturation
+    halved; `CandidateOrigin::Fallback`), and only then is the baseline accepted; the result is
+    flagged `ConservativeFallback` (14). This is step 7 at analysis resolution. The final
+    full-resolution render, its checks and the frozen fallback revisions belong to W7's worker; the
+    interface it needs exists: render the chosen settings and the baseline once at full
+    resolution, `make_image_context()`, `measure_render()` and `evaluate_candidate()` with the same
+    metric contract, and walk `conservative_fallbacks()` on failure, recording each attempt as a new
+    revision with its reason (deferred to W7 and the W8 application wiring).
+
+23. **Selection rule** (`select_best()`, replacing the pairwise `better()`): among feasible
+    candidates, those within 0.02 of the lowest total are tied and the smallest edit wins, then the
+    lowest index. The winner never lies more than 0.02 above the best total, whatever the order;
+    the recheck, the stage points and the coordinate search use it.
+
+24. **Confidence, restraint and flags.** `ToneProposal::confidence` is renamed `signal_evidence`
+    (it says whether the frame carries a measurable signal, not how certain an edit is), and
+    `ConfidenceBreakdown::brightness` is documented as that. A new **policy confidence** reports how
+    much the decision rests on the policy's interpretation: 0.75 for a large edit (|exposure| >=
+    1 EV or |shadows| + |highlights| >= 0.4 EV), 0.6 when the key was ambiguous as well, 0.6 after
+    a conservative fallback, 0.5 when the fallback ended at the baseline with a brightness term
+    above 1 (the objective's own target unmet). It enters the overall confidence but never
+    restrains (the objective already sized the edit); a large edit is flagged `LargeEdit` (13).
+    Restraint is applied once, from an unrestrained point: a restrained winner is restrained again
+    from its source (`CandidateRecord::source`), and the consistency stage rechecks the independent
+    winner unrestrained (ANA-06).
+
+25. **Consistency, version 2.** The camera white-balance part's dead zone and scale are the colour
+    part's 0.002 and 0.004 u'v' converted to log gains (a D65 neutral moves about 0.19 u'v' per unit
+    log red gain, 0.09 per unit log blue gain; the larger is used): 0.01 and 0.02, instead of 0.005
+    and 0.015, which counted invisible camera AWB jitter. A target carrying a camera white balance
+    of another calibration domain is `InvalidArgument`. The stage's start and its coordinate steps
+    skip candidates the independent recheck found infeasible.
+
+26. **Neutral evidence.** The white-balance hard check measures the evidence's neutral surfaces
+    only when the proposal's confidence is at least 0.3; otherwise the baseline's near-neutral
+    pixels (C* < 5) (ANA-13: the R5's mask came from a cast of confidence 1e-13).
+
+27. **Versions.** Policy "natural" version 2, search version 2, metric contract version 2,
+    consistency version 2. The identifiers (`natural_v1_objective`, `NaturalV1Context`) keep the
+    blueprint's name for the policy family.
+
+28. **Determinism scope.** Results are bit-identical for the same input with the same binary on
+    the same CPU feature set, serial or parallel (the test now compares every analysis term,
+    appearance and diagnostic, not only proxy terms). Across machines the MSVC x64 runtime chooses
+    FMA3 or SSE2 code for cbrt, log and exp at run time (`_set_FMA3_enable`), so a measurement can
+    differ in its last bit and a near-tie can resolve differently. W7's worker must call
+    `_set_FMA3_enable(0)` before analysing if journal replay across machines is to reproduce
+    choices exactly (recorded for W7; not done in the library, which does not own the process).
+
+29. **`lucent-auto`.** The blind sheet leaves out pairs without a visible change (settings as
+    shot, or 8-bit previews within one code value) and counts them; the key moved to
+    `key/blind-key.json`, outside the folder handed to reviewers, and lists the unchanged items.
+    Item JSON carries the new tone fields (baseline quantiles, scene luminance, cues, deficits), the
+    local-contrast term, the policy confidence, `fallback` and candidate sources.
+
+### Worked example: the R5 still life
+
+Baseline median L* 19.6, p90 45.3, scene luminance 4.1 EV (dim interior), no near-white content.
+Policy 1: band [0.40, 0.85], deficit 1.96 EV, brightness term 11.6 at as shot: +1.5 EV and
+shadows +0.66 EV. Policy 2: dimness 0.74, band_low 0.289; the median lies 1.01 EV and the bright
+content 1.04 EV below their marks, so the deficit is 1.01 EV (a plain band would ask 1.96: key
+ambiguous). At +0.77 EV the residual brightness term is 0.12, the contrast term 0.22 (log range
+1.70 against 1.88 EV, the toe and shoulder), the edit term 0.08; +1.0 EV costs 0.39 in contrast,
+and any shadow lift costs more than it gains (+1.0 EV with shadows +0.25 EV: contrast 2.41, local
+contrast 0.14). Chosen: +0.77 EV, no local tone.
+
+### Measurements (W8 core closure)
+
+`lucent-auto --tier all --out build\w8-fix\auto-all fixtures\cache`, same machine as before
+(Ryzen 5 5500U, `dev-core`), with another agent building and testing W7 at the same time: 34 files,
+77 s in all (phase 2: 90 s); per-image median 2.0 s, p95 4.0 s, maximum 5.2 s (GFX 50S II). The
+two Nikon Z 8 HE files fail as before (LibRaw). Three runs across the last changes of this amendment
+(which did not alter any decision) gave identical settings, and the smoke-fixture test analyses each
+file twice with identical results. The local-contrast measurement adds three float planes per measured render
+(19 MB at the 1536-pixel analysis size, released after the measurement); the kept sessions peaked
+at 0.94 GiB (phase 2: 0.96 GiB).
+
+| # | Fixture | Phase 2 (policy 1) | Policy 2 | Median L* as shot / phase 2 / policy 2 | Confidence phase 2 / policy 2 |
+|---|---|---|---|---|---|
+| 000 | Canon 5D Mk III linear DNG | WB 0.987/1.034 | WB 0.987/1.034 | 43.5 / 42.7 / 42.7 | 0.52 / 0.52 |
+| 001 | Canon 5D Mk IV CR2 | +0.46 EV | as shot | 33.8 / 39.4 / 33.8 | 0.70 / 1.00 |
+| 002 | Canon 5D Mk IV sRAW | +0.22 EV | as shot | 36.6 / 39.4 / 36.6 | 1.00 / 1.00 |
+| 003 | Canon 7D Mk II (ducks) | +0.61 EV, S +0.19 | +0.12 EV | 31.6 / 39.0 / 32.9 | 1.00 / 1.00 |
+| 004 | Canon R5 CRAW crop, dual pixel | as shot (recheck rejected) | +0.78 EV | 20.4 / 20.4 / 28.1 | 1.00 / 0.70 |
+| 005 | Canon R5 CRAW | +1.50 EV, S +0.60 | +0.63 EV | 21.0 / 38.0 / 27.3 | 0.90 / 0.90 |
+| 006 | Canon R5 RAW crop | +1.50 EV, S +0.63, H -0.31 | +0.75 EV | 20.6 / 37.5 / 28.0 | 0.70 / 0.70 |
+| 007 | Canon R5 RAW (still life) | +1.50 EV, S +0.66 | +0.77 EV | 19.6 / 36.4 / 27.1 | 0.90 / 0.90 |
+| 008 | DJI FC220 | as shot | as shot | 47.9 (all) | 0.70 / 0.70 |
+| 009 | DJI FC4382 (castle) | +0.25 EV, H -0.12 | as shot | 25.7 / 28.2 / 25.7 | 0.70 / 0.70 |
+| 010 | DJI FC7303 | +0.09 EV, WB 1.006/0.999 | WB 1.006/0.999 | 38.9 / 40.0 / 38.9 | 0.22 / 0.22 |
+| 011 | Fujifilm GFX 50S II | as shot | as shot | 40.0 (all) | 1.00 / 1.00 |
+| 012 | Fujifilm X-T4 compressed (checker) | +0.37 EV, S +0.15, H -0.25, WB 0.999/1.004 | +0.14 EV, WB 0.999/1.004 | 33.1 / 37.6 / 34.7 | 0.70 / 1.00 |
+| 013 | Fujifilm X-T4 lossless (checker) | +0.01 EV, S +0.41, WB 1.001/0.996 | S +0.12, WB 1.001/0.996 | 32.9 / 34.1 / 33.2 | 0.70 / 0.70 |
+| 014 | Hasselblad L2D-20c | as shot | as shot | 45.5 (all) | 0.70 / 0.70 |
+| 015 | Hasselblad X1D II | as shot | as shot | 45.1 (all) | 1.00 / 1.00 |
+| 016 | Insta360 One X | as shot | as shot | 38.1 (all) | 0.70 / 0.70 |
+| 017 | Leica M Monochrom 246 | +0.54 EV | +0.42 EV | 31.9 / 38.2 / 36.8 | 0.70 / 0.70 |
+| 018 | Leica M10 | as shot | as shot | 42.1 (all) | 0.85 / 0.85 |
+| 019, 020 | Nikon Z 6 pair | as shot | as shot | 42.8, 42.6 (all) | 1.00 / 1.00 |
+| 023 | OM System OM-1 | as shot | as shot | 45.7 (all) | 1.00 / 1.00 |
+| 024 | Panasonic S5 II | as shot | as shot | 45.1 (all) | 1.00 / 1.00 |
+| 025 | Pentax K-3 III Monochrome | as shot | as shot | 49.9 (all) | 1.00 / 1.00 |
+| 026 | Pentax K-3 III | WB 1.000/0.998 | WB 1.000/0.998 | 75.0 (all) | 0.14 / 0.14 |
+| 027 | Sony 7M4 APS-C | +0.12 EV | as shot | 37.3 / 38.8 / 37.3 | 1.00 / 1.00 |
+| 028-032 | Sony 7M4 group and uncompressed | as shot to +0.09 EV, WB within 0.2 % | as shot | 38.2-39.4 | 1.00 / 1.00 |
+| 033 | Sony 7RM5 | as shot | as shot | 44.5 (all) | 1.00 / 1.00 |
+
+Summary: 18 of 32 files were changed in phase 2, 11 now; 23 of the 32 pairs are without a visible
+change (the blind sheet now shows 9). No chosen candidate uses more than 0.13 EV of local tone
+(phase 2: six with 0.15-0.66 EV of shadows, three with highlight compression), no edit is large
+enough for `LargeEdit`, no conservative fallback was needed, and the R5 frames (004-007) now agree
+with each other (+0.63 to +0.78 EV) where phase 2 gave three of them +1.5 EV with a shadow lift and
+the fourth nothing. The flags besides white balance, interpretation and source saturation are
+unchanged. Regularisation: the X-T4 pair's consistency term fell from 0.11 to 0.02 (camera gains
+0.4 % towards each other; the remaining white-balance difference, 1.6 % in blue, lies just above
+the new dead zone); the other groups were within their dead zones.
+
+Visual inspection of the side-by-side pairs (`pairs/`, as shot left, policy 2 right), by the author
+of this amendment, on the 960-pixel previews (they cannot show native-resolution halos or noise):
+- R5 still life (007, +0.77 EV): the fruit is brighter and pleasant; the table stays a dark
+  charcoal and the cloth dark blue-grey, so the low-key mood survives. The lift of the table is
+  visible but modest. A photographer might go a little brighter on the fruit; it does not look flat.
+- R5 crop frame (006, +0.75 EV): brighter potatoes and lemon with their texture, the backdrop dark
+  grey, no chalky look; the dual-pixel and CRAW siblings (004, 005) look alike.
+- X-T4 colour-checker pair (012 +0.14 EV, 013 shadows +0.12 EV): almost indistinguishable from as
+  shot; the foliage stays dark green and the checker's neutral patches stay neutral. Not flat.
+- 7D Mk II ducks (003, +0.12 EV): practically as shot; the overcast mood is kept.
+- Leica M Monochrom (017, +0.42 EV): a brighter street scene that keeps its contrast; natural.
+- The as-shot files (most of the cache): unchanged by design, since their medians lie in the
+  key-aware band or their bright content is well exposed.
+
+Overall the large-edit failure is gone and nothing looks processed, at the price of doing little:
+policy 2 is a conservative baseline that corrects clear underexposure and otherwise leaves the
+camera's rendering alone. Whether photographers prefer it to as shot, or to phase 2 on the scenes
+phase 2 brightened plausibly (5D Mk IV 001, Monochrom), is what the blind test must measure.
+
+Synthetic scenes (`lucent_analysis_tests`, 81 tests): the underexposed chart is still brightened
+to the +1.5 EV bound (a contrast of +0.13 restores the range the shoulder compresses; flagged
+`LargeEdit`); a lit subject on a near-black ground, a dim interior at about 4 EV, fog and snow keep
+their key; with exposure locked no shadow lift is used; a noisy frame 4 EV under without a noise
+model exercises the fallback (both fallbacks fail the native shadow-texture check, as shot is kept
+with `ConservativeFallback`, `RecheckRejected` and policy confidence 0.5); restraint inside the
+consistency stage is applied once; a cross-domain camera target is refused.
+
+### Review findings and their resolution
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| ANA-01 low key, fixed band, uncapped brightness | high | Fixed: items 19 and 21; tests for a lit subject on a dark ground, a dim interior, fog, snow, the deficit rule and the Huber term |
+| ANA-02 contrast in L* | high | Fixed: item 20; a test that a pure exposure change costs nothing and a flattening lift does |
+| ANA-03 recheck pool, cliff to as shot | high | Fixed: items 20 (proxy surrogate) and 22; tests for the pool and the fallback |
+| ANA-04 confidence is evidence, not certainty | medium | Fixed: item 24 (policy confidence, `LargeEdit`, `ConservativeFallback`, the rename); tested |
+| ANA-05 ADR contradictions | medium | Fixed: corrected in place above (phase-1 visual claim withdrawn, the halo quoted, the headroom sentence, the grey-edge bias, near-black, the tie rule) and step 7 recorded (item 22) |
+| ANA-06 double restraint | medium | Fixed: item 24; test `Consistency.RestrainsOnceInsideTheStage` |
+| ANA-07 absolute near-black | medium | Fixed: item 21; tested |
+| ANA-08 no local-contrast metric | medium | Fixed: item 20; tested |
+| ANA-09 step 7 missing | medium | Analysis-resolution part fixed (item 22); the full-resolution render, check and frozen fallback revisions are deferred to W7 (worker) and the W8 application wiring, with the interface named in item 22 |
+| ANA-10 native highlight clipping unchecked | low | Fixed: item 21; tested |
+| ANA-11 non-transitive ties | low | Fixed: item 23; tested (chain and order) |
+| ANA-12 grey-edge blue lean | low | Confirmed (log(b/g) > 0 on 24 of 30 colour files; white-balance confidence >= 0.5 on 1) and deferred to the white-balance step of the calibration (item 5 of the plan below). Candidate causes: channel noise amplified by the white-balance multipliers dominating the p = 6 norm, gated only on the green gradient, and demosaicing or chromatic-aberration energy. The remedy (per-channel noise gates, a lower p, clipped outliers) must be validated on the checker frames' measured neutral patches before it can enable white-balance edits |
+| ANA-13 neutral mask from a meaningless cast | low | Fixed: item 26 |
+| ANA-14 determinism claim | low | Fixed: the test is extended and the scope documented (item 28); disabling CRT FMA3 is W7's (the worker owns the process) |
+| ANA-15 consistency start, cross-domain target | low | Fixed: item 25; tested |
+| ANA-16 white-balance consistency dead zone | low | Fixed: item 25 (consistency version 2); the X-T4 pair's white-balance term fell from 0.61 to 0.11 |
+| ANA-17 blind sheet duplicates, key beside it | low | Fixed: item 29; tested |
+| ANA-18 shadows lifted around a locked exposure | low | Fixed: item 21; `HonoursLocksEverywhere` now expects no shadow lift |
+| (new) halo of per-pixel edits | - | Fixed: item 21 (`halo_applies`); tested |
+
+### Consequences (W8 core closure)
+
+- Natural v1 (policy 2) is conservative: on this cache it changes a third of the files, never by
+  more than 0.78 EV or 0.13 EV of local tone, and the large, flattening edits are gone. It is still
+  uncalibrated; "conservative" is a property of these rules on these 32 files, not a measured
+  preference.
+- A backlit subject before a bright sky is no longer brightened at all: its bright content (the
+  sky) satisfies the floor, so there is no deficit and no shadow lift. Phase 1 documented a bounded
+  lift for this case; policy 2 trades it for the silhouettes and low-key compositions it protects.
+  Telling the two apart needs a subject cue the blueprint does not allow without validation.
+- Large exposure corrections now pay for the base look's toe and shoulder (the contrast term), so a
+  frame whose shadows sit in the toe is brightened by less than its median deficit; a strongly
+  underexposed chart still reaches the +1.5 EV bound, with a small contrast increase that restores
+  its tonal range.
+- The contrast and local-contrast scales, the dimness mapping, the bright-content floor, the
+  high-key rule, the Huber scale, the policy confidences and the native clipping limit are new
+  uncalibrated constants.
+- W7 should persist, with each automatic result, the policy confidence, `fallback`, the new flags
+  (`LargeEdit` 13, `ConservativeFallback` 14), the tone proposal's cues and the four versions, and
+  owns the full-resolution final check (item 22) and the FMA3 setting (item 28).
+
+### What is uncalibrated, and the blind test (W8 core closure)
+
+Everything listed for phases 1 and 2 remains uncalibrated, plus the constants of items 19-26. The
+calibration plan of phase 1 stands; the blind test is its next step and is specified here so that
+a first run can be made with the current tool:
+
+1. *Material.* The qualification corpus of blueprint section 10, split by camera and trip; until
+   it exists, a pilot on the fixture cache plus the reviewers' own RAW sets, kept out of any later
+   calibration split.
+2. *Arms.* As shot and Natural v1 policy 2, plus policy 1 (the phase-2 binary) where the two
+   differ; later the shared-preset and LUT-only arms of section 10. Pairs come from the same
+   analysis image (the tool's previews) at 960 and 1536 pixels, with 100 % crops for files that use
+   local tone.
+3. *Protocol.* One `blind/sheet.html` per reviewer with its own `--seed`; unchanged pairs are left
+   out and counted; at least five photographers; each pair judged twice in different sessions;
+   "no preference" allowed. The key stays in `key/` and is not handed out.
+4. *Analysis.* Per arm, preference rate with a binomial interval, by camera and scene type; a
+   Bradley-Terry fit over the objective's terms once there are enough pairs; correction effort as
+   the slider distance from each arm to the reviewer's own finished edit of a subset.
+5. *White balance first.* The checker frames' measured neutral patches give each estimator's
+   angular error; the grey-edge bias (ANA-12) is resolved there before white-balance edits are
+   allowed beyond the current confidence restraint.
+6. *Freeze.* Only then does a calibrated policy version (3 or later) freeze its constants.
+
+### Alternatives considered (W8 core closure)
+
+- **A stronger edit-size cost for large moves** (a quadratic term beyond half the search range).
+  Against the brightness term's slope it moved the R5 by about 0.04 EV: the band and the floor make
+  the decision, so the edit term stays at 0.15.
+- **Scaling the brightness term by an evidence strength.** It double-counts the key cues that
+  already move the band and is harder to explain per file than a band.
+- **The exposure-only prediction through the base look as the contrast reference.** It would stop
+  charging exposure for the toe and shoulder; but that flattening is real (the R5 table), charging
+  it is what keeps large brightenings modest, and it would need the base look in the objective.
+- **Keeping the L* contrast with a wider dead zone.** Still harshening under exposure, only later.
+- **Removing local tone from the search.** Backlit, headroom-limited frames that really are
+  underexposed still need it; the flattening terms and the recheck pool bound it instead.
+- **Changing the grey-edge estimator now.** Without the checker-frame validation it would turn
+  white-balance edits on across the cache on unproven evidence.

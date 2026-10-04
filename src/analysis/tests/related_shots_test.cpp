@@ -337,7 +337,7 @@ TEST(ConsistencyTerm, DeadZonesAndScales) {
     EXPECT_EQ(consistency_term(a, t).total, 0.0);
     a.lightness = 0.55;  // (0.05 - 0.01) / 0.04 = 1
     a.u = 0.206;         // (0.006 - 0.002) / 0.004 = 1
-    a.log_red = 0.72;    // (0.02 - 0.005) / 0.015 = 1
+    a.log_red = 0.73;    // (0.03 - 0.01) / 0.02 = 1
     const ConsistencyTerms terms = consistency_term(a, t);
     EXPECT_NEAR(terms.lightness, 1.0, 1e-9);
     EXPECT_NEAR(terms.colour, 1.0, 1e-9);
@@ -545,9 +545,10 @@ TEST(Consistency, NeverOverridesLocks) {
     }
     EXPECT_EQ(r->settings.exposure_ev, 0.0);
     EXPECT_EQ(r->settings.contrast, 0.05);
-    // The unlocked white balance follows the target; the locked exposure cannot reach the lightness.
+    // The unlocked white balance follows the target (part of the way: the per-image white-balance
+    // plausibility term weighs against it); the locked exposure cannot reach the lightness.
     EXPECT_EQ(r->consistency->white_balance_axis, "camera");
-    EXPECT_GT(r->appearance.log_red, independent.appearance.log_red + 0.02);
+    EXPECT_GT(r->appearance.log_red, independent.appearance.log_red + 0.01);
     EXPECT_LT(r->consistency->terms.white_balance, r->consistency->independent_terms.white_balance);
     EXPECT_GT(r->consistency->terms.lightness, 1.0);
     EXPECT_TRUE(r->has_flag(ReviewFlagCode::ConsistencyLimited));
@@ -719,6 +720,52 @@ TEST(Consistency, IsDeterministicAndIndependentOfTheSession) {
     auto refused = a->regularise(bad);
     ASSERT_FALSE(refused);
     EXPECT_EQ(refused.error().code, ErrorCode::InvalidArgument);
+}
+
+// Restraint inside the consistency stage is applied once, from an unrestrained point (ANA-06): a
+// member without a noise model is restrained by 0.6 in the independent analysis; regularised, its
+// result is again 0.6 times an unrestrained candidate, never 0.6 x 0.6.
+TEST(Consistency, RestrainsOnceInsideTheStage) {
+    SceneOptions o = related_options("2026-10-03T10:00:00");
+    o.iso.reset();  // no ISO, no noise profile, no optical black: no noise model
+    auto s = open(chart_scene(std::exp2(-2.5)), o);
+    ASSERT_TRUE(s);
+    const AutoResult& independent = s->independent();
+    trace("independent", independent);
+    ASSERT_TRUE(independent.restrained);
+    const auto restrained_once = [](const AutoResult& r) {
+        const CandidateRecord& c = r.candidates[r.chosen];
+        ASSERT_EQ(c.origin, CandidateOrigin::Restrained);
+        ASSERT_TRUE(c.source.has_value());
+        const CandidateRecord& from = r.candidates[*c.source];
+        EXPECT_NE(from.origin, CandidateOrigin::Restrained);
+        ASSERT_TRUE(from.point.has_value());
+        const double f = std::clamp(r.confidence_detail.noise / kRestrainConfidence, 0.25, 1.0);
+        EXPECT_NEAR(c.edit.exposure_ev, f * from.point->exposure_ev, 1e-5);
+        EXPECT_NEAR(c.edit.shadows_ev, f * from.point->shadows_ev, 1e-5);
+    };
+    restrained_once(independent);
+    ConsistencyTarget t;
+    t.group_id = "restraint";
+    t.lightness = independent.appearance.lightness + 0.06;
+    auto r = s->regularise(t);
+    ASSERT_TRUE(r) << r.error().describe();
+    trace("regularised", *r);
+    dump(*r);
+    restrained_once(*r);
+}
+
+TEST(Consistency, RefusesACameraTargetOfAnotherDomain) {
+    auto s = open(chart_scene(1.0), related_options("2026-10-03T10:00:00"));
+    ASSERT_TRUE(s);
+    ConsistencyTarget t;
+    t.group_id = "foreign";
+    t.lightness = s->independent().appearance.lightness + 0.1;
+    t.camera_white_balance = true;
+    t.domain = "Another camera|decoder_matrix|0000000000000000";
+    auto r = s->regularise(t);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().code, ErrorCode::InvalidArgument);
 }
 
 TEST(Consistency, WithoutPressureTheIndependentResultStands) {

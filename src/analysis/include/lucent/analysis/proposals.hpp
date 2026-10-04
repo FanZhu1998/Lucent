@@ -8,21 +8,38 @@
 // Scene measurements use the analysis image's stage one: white-balanced (as shot) camera RGB,
 // scene-linear, highlights not clipped (StageOneKind::Interactive), upright.
 //
-// Exposure / headroom (ToneProposal):
+// Exposure / headroom (ToneProposal), the Natural tone policy (policy version 2):
 //   * evidence: pixels whose scene signal exceeds 3 sigma of the noise model; at least
-//     kMinSignalPixels and 10 % of the image, else no exposure proposal and confidence 0;
-//   * key: low_key = clamp((p99 - 0.75) / 0.15) x clamp((0.30 - p50) / 0.15) of the baseline's
-//     luminance lightness - bright content near white together with a dark median (silhouettes,
-//     night scenes, low-key portraits) - widens the band downwards: band_low = 0.40 - 0.38 low_key
-//     (a fully low-key composition is not brightened at all), band_high = 0.85 (snow, fog and white
-//     backgrounds keep most of their key);
-//   * the exposure that moves the median lightness into the band, exactly in display luminance
-//     (log2 of the ratio of display_lightness_inverse values: the base look's mid-tones are a pure
-//     gain), limited upwards by the scene headroom minus 0.3 EV (p99.5 of the value norm against
-//     the stage-two clip level) and downwards to -1 EV; what the headroom withholds becomes half
-//     as much shadow lift (up to 0.75 EV, not for low-key scenes); a brightening (more than
-//     0.25 EV) of an image with highlights near white (more than 1 % / 3 % of pixels) proposes
-//     -0.25 / -0.5 EV of local highlight compression to protect them.
+//     kMinSignalPixels and 10 % of the image, else no exposure proposal and signal evidence 0.
+//     The signal evidence (clamp((signal fraction - 0.10) / 0.30)) says whether the frame carries a
+//     measurable signal at all; it is NOT a certainty about the key or the size of the edit;
+//   * the key, from the baseline's luminance lightness quantiles and the scene luminance, without
+//     semantics:
+//       low_key  = clamp((p99 - 0.75) / 0.15) x clamp((0.30 - p50) / 0.15): bright content near
+//                  white with a dark median (silhouettes, night scenes with lights);
+//       dimness  = clamp((10 - scene_ev) / 8) from ShotFeatures::scene_ev (consistency.hpp), the
+//                  luminance of the scene's median in EV100: 0 for daylight (10 EV and above), 1 for
+//                  night (2 EV and below); 0 without exposure metadata. Dim scenes are rendered
+//                  darker than daylight ones (an ND filter reads as dim: the safe direction);
+//       high_key = clamp((p50 - 0.70) / 0.15) x clamp((0.20 - IQR) / 0.10): a bright, low-contrast
+//                  frame (snow, fog, white backgrounds);
+//     band_low = max(0.02, 0.40 - 0.38 low_key - 0.15 dimness), band_high = 0.85 + 0.08 high_key;
+//   * the deficit (tone_deficit()), in EV of display luminance (display_lightness_inverse: the base
+//     look's mid-tones are a pure gain, so an exposure change moves it one to one): the SMALLER of
+//     the median's distance below band_low and the bright content's (p90) distance below
+//     kBrightContentFloor. A frame counts as too dark only when its median AND its bright content
+//     are dark: a dark median under well-exposed bright content is a low-key composition (a lit
+//     subject before a dark ground), not underexposure, and keeps its key without depending on
+//     near-white highlights. The excess is the median's distance above band_high;
+//   * the exposure that removes the deficit (or the excess), limited upwards by the scene headroom
+//     minus 0.3 EV (p99.5 of the value norm against the stage-two clip level) and downwards to
+//     -1 EV; what the headroom withholds becomes half as much shadow lift (up to 0.75 EV, not for
+//     low-key scenes); a brightening (more than 0.25 EV) of an image with highlights near white
+//     (more than 1 % / 3 % of pixels) proposes -0.25 / -0.5 EV of local highlight compression;
+//   * key_ambiguous: a key cue (low key, dimness, high key, the bright-content floor) reduced the
+//     correction a plain [0.40, 0.85] median band would ask for by at least kKeyAmbiguityEv (half a
+//     brightness scale unit) - the interpretation of the key, not the measurement, decides the
+//     edit's size (the controller's policy confidence, auto_settings.hpp).
 //
 // White balance (WhiteBalanceProposal), in the as-shot balanced camera RGB of the image it is given
 // (the controller passes the search proxy: area averaging attenuates demosaicing artefacts), on
@@ -54,6 +71,7 @@
 // Thread-safety: reentrant.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -93,13 +111,34 @@ struct SceneStats {
 
 // ---- Exposure / headroom -----------------------------------------------------------------------
 
+// The tone policy's constants (see the file comment; uncalibrated).
+inline constexpr double kBandLow = 0.40;             // darkest accepted median, normal key, daylight
+inline constexpr double kBandHigh = 0.85;            // brightest accepted median, normal key
+inline constexpr double kLowKeyBandDrop = 0.38;      // band_low drop at low_key 1
+inline constexpr double kDimBandDrop = 0.15;         // band_low drop at dimness 1
+inline constexpr double kDaylightSceneEv = 10.0;     // dimness 0 at and above
+inline constexpr double kNightSceneEv = 2.0;         // dimness 1 at and below
+inline constexpr double kHighKeyBandRise = 0.08;     // band_high rise at high_key 1
+inline constexpr double kBrightContentFloor = 0.62;  // p90 lightness below which bright content is dark
+inline constexpr double kKeyAmbiguityEv = 0.25;
+
 struct ToneProposal {
     bool evidence = false;
-    double confidence = 0.0;
+    double signal_evidence = 0.0;  // [0, 1]: scene signal above the noise (see the file comment)
+    LightnessQuantiles baseline;   // the baseline render's quantiles (analysis image)
+    std::optional<double> scene_ev;
     double low_key = 0.0;
-    double band_low = 0.40;  // key-aware band of the median luminance lightness
-    double band_high = 0.85;
-    double needed_ev = 0.0;  // to reach the band, before the headroom limit
+    double dimness = 0.0;
+    double high_key = 0.0;
+    double band_low = kBandLow;  // key-aware band of the median luminance lightness
+    double band_high = kBandHigh;
+    double bright_floor = kBrightContentFloor;
+    // The baseline's distances (EV, positive when on the wrong side; tone_deficit()).
+    double median_deficit_ev = 0.0;
+    double bright_deficit_ev = 0.0;
+    double excess_ev = 0.0;
+    bool key_ambiguous = false;
+    double needed_ev = 0.0;  // the deficit (> 0) or minus the excess (< 0), before the headroom limit
     double headroom_ev = 0.0;
     double exposure_ev = 0.0;
     double shadows_ev = 0.0;     // EV-equivalent local lift (DevelopSettings::shadows x kShadowsMaxEv)
@@ -107,8 +146,22 @@ struct ToneProposal {
     std::string reason;          // developer-facing English
 };
 
-// `baseline` is the baseline render's statistics on the analysis image.
-[[nodiscard]] ToneProposal propose_tone(const RenderStats& baseline, const SceneStats& scene);
+// The distances of a render's quantiles from the policy's band and floor, in EV of display
+// luminance: median_ev = log2(Y(band_low) / Y(p50)), bright_ev = log2(Y(bright_floor) / Y(p90)),
+// deficit = max(0, min(median_ev, bright_ev)), excess = max(0, log2(Y(p50) / Y(band_high))), with
+// Y = engine::display_lightness_inverse of the lightness (at least 0.001).
+struct ToneDeficit {
+    double median_ev = 0.0;
+    double bright_ev = 0.0;
+    double deficit_ev = 0.0;
+    double excess_ev = 0.0;
+};
+[[nodiscard]] ToneDeficit tone_deficit(const LightnessQuantiles& quantiles, const ToneProposal& policy) noexcept;
+
+// `baseline` is the baseline render's statistics on the analysis image; `scene_ev` the scene
+// luminance (ShotFeatures::scene_ev), when the file has exposure metadata.
+[[nodiscard]] ToneProposal propose_tone(const RenderStats& baseline, const SceneStats& scene,
+                                        std::optional<double> scene_ev = std::nullopt);
 
 // ---- White balance -----------------------------------------------------------------------------
 
@@ -158,8 +211,12 @@ struct WhiteBalanceProposal {
 // whose camera log ratios lie within `radius` of the estimated cast. Row-major, 1 = evidence, the
 // size of `image` (3 channels). The white-balance hard check measures how far a candidate moves
 // these surfaces in the render (render_metrics.hpp, ImageContext::neutral_evidence): under a strong
-// cast nothing renders near neutral, yet the evidence still identifies the neutral surfaces.
+// cast nothing renders near neutral, yet the evidence still identifies the neutral surfaces. The
+// controller uses the mask only when the proposal's confidence is at least
+// kNeutralEvidenceMinConfidence: a cast the estimators do not agree on names arbitrary surfaces, so
+// the check then falls back to the baseline's near-neutral pixels (C*ab < 5).
 inline constexpr double kNeutralEvidenceRadius = 0.08;
+inline constexpr double kNeutralEvidenceMinConfidence = 0.3;
 [[nodiscard]] Expected<std::vector<std::uint8_t>> neutral_evidence_mask(
     const engine::StageOneImage& image, const ImageContext& context, double clip_level, double cast_log_rg,
     double cast_log_bg, double radius = kNeutralEvidenceRadius);

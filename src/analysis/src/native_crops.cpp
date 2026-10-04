@@ -490,6 +490,7 @@ NativeComparison compare_native(std::span<const CropMeasurement> candidate,
                 c.shadow_texture_ratio = b.noise_lstar > 1e-6 ? m.noise_lstar / b.noise_lstar : 1.0;
                 break;
             case CropKind::Highlights:
+                c.highlight_available = m.pixels >= kMinCropPixels;
                 if (m.pixels > 0) {
                     c.highlight_new_clip_fraction =
                         static_cast<double>(m.new_highlight_clipped) / static_cast<double>(m.pixels);

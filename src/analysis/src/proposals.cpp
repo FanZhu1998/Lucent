@@ -218,30 +218,50 @@ Expected<SceneStats> measure_scene(const engine::StageOneImage& analysis, const 
     return s;
 }
 
-ToneProposal propose_tone(const RenderStats& baseline, const SceneStats& scene) {
+ToneDeficit tone_deficit(const LightnessQuantiles& q, const ToneProposal& policy) noexcept {
+    const auto luminance = [](double l) { return engine::display_lightness_inverse(std::max(l, 0.001)); };
+    ToneDeficit d;
+    const double median = luminance(q.p50);
+    d.median_ev = std::log2(luminance(policy.band_low) / median);
+    d.bright_ev = std::log2(luminance(policy.bright_floor) / luminance(q.p90));
+    d.deficit_ev = std::max(0.0, std::min(d.median_ev, d.bright_ev));
+    d.excess_ev = std::max(0.0, std::log2(median / luminance(policy.band_high)));
+    return d;
+}
+
+ToneProposal propose_tone(const RenderStats& baseline, const SceneStats& scene, std::optional<double> scene_ev) {
     ToneProposal t;
     t.headroom_ev = scene.headroom_ev;
     const LightnessQuantiles& q = baseline.quantiles;
+    t.baseline = q;
+    t.scene_ev = scene_ev;
     t.evidence = scene.signal_pixels >= kMinSignalPixels && scene.signal_fraction() >= 0.10;
-    t.confidence = t.evidence ? std::clamp((scene.signal_fraction() - 0.10) / 0.30, 0.0, 1.0) : 0.0;
+    t.signal_evidence = t.evidence ? std::clamp((scene.signal_fraction() - 0.10) / 0.30, 0.0, 1.0) : 0.0;
     t.low_key = std::clamp((q.p99 - 0.75) / 0.15, 0.0, 1.0) * std::clamp((0.30 - q.p50) / 0.15, 0.0, 1.0);
-    t.band_low = 0.40 - 0.38 * t.low_key;
-    t.band_high = 0.85;
+    if (scene_ev && std::isfinite(*scene_ev)) {
+        t.dimness = std::clamp((kDaylightSceneEv - *scene_ev) / (kDaylightSceneEv - kNightSceneEv), 0.0, 1.0);
+    }
+    t.high_key = std::clamp((q.p50 - 0.70) / 0.15, 0.0, 1.0) * std::clamp((0.20 - (q.p75 - q.p25)) / 0.10, 0.0, 1.0);
+    t.band_low = std::max(0.02, kBandLow - kLowKeyBandDrop * t.low_key - kDimBandDrop * t.dimness);
+    t.band_high = kBandHigh + kHighKeyBandRise * t.high_key;
+    const ToneDeficit d = tone_deficit(q, t);
+    t.median_deficit_ev = d.median_ev;
+    t.bright_deficit_ev = d.bright_ev;
+    t.excess_ev = d.excess_ev;
+    // What a plain median band would ask for, without any key cue.
+    ToneProposal plain;
+    plain.bright_floor = 0.0;
+    const ToneDeficit p = tone_deficit(q, plain);
+    const double plain_deficit = std::max(0.0, p.median_ev);
     if (!t.evidence) {
         t.reason =
             std::format("too little scene signal ({} of {} pixels above 3 sigma): no exposure proposal",
                         scene.signal_pixels, scene.pixels);
         return t;
     }
-    const double p50 = std::max(q.p50, 0.001);
-    double target = p50;
-    if (p50 < t.band_low) {
-        target = t.band_low;
-    } else if (p50 > t.band_high) {
-        target = t.band_high;
-    }
-    t.needed_ev =
-        std::log2(engine::display_lightness_inverse(target) / engine::display_lightness_inverse(p50));
+    t.key_ambiguous =
+        plain_deficit >= d.deficit_ev + kKeyAmbiguityEv || p.excess_ev >= d.excess_ev + kKeyAmbiguityEv;
+    t.needed_ev = d.deficit_ev > 0.0 ? d.deficit_ev : -d.excess_ev;
     if (t.needed_ev > 0.0) {
         t.exposure_ev = std::min(t.needed_ev, std::max(0.0, scene.headroom_ev - 0.3));
         if (t.low_key < 0.5) {
@@ -259,10 +279,13 @@ ToneProposal propose_tone(const RenderStats& baseline, const SceneStats& scene) 
         t.highlights_ev = -0.25;
     }
     t.reason = std::format(
-        "median lightness {:.3f}, band [{:.3f}, {:.3f}] (low key {:.2f}), needed {:+.2f} EV, scene headroom "
-        "{:.2f} "
-        "EV, near-white {:.2f} %",
-        q.p50, t.band_low, t.band_high, t.low_key, t.needed_ev, scene.headroom_ev, 100.0 * crowding);
+        "median lightness {:.3f}, band [{:.3f}, {:.3f}] (low key {:.2f}, dimness {:.2f}{}, high key {:.2f}); "
+        "median {:+.2f} EV below band_low, bright content (p90 {:.3f}) {:+.2f} EV below its floor; needed {:+.2f} EV{} "
+        "(plain band {:+.2f} EV); scene headroom {:.2f} EV, near-white {:.2f} %",
+        q.p50, t.band_low, t.band_high, t.low_key, t.dimness,
+        scene_ev ? std::format(" at {:.1f} EV", *scene_ev) : std::string(" (no scene luminance)"), t.high_key,
+        d.median_ev, q.p90, d.bright_ev, t.needed_ev, t.key_ambiguous ? " (key ambiguous)" : "",
+        plain_deficit > 0.0 ? plain_deficit : -p.excess_ev, scene.headroom_ev, 100.0 * crowding);
     return t;
 }
 

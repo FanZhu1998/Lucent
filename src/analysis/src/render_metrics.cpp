@@ -97,6 +97,126 @@ struct Partial {
     double sum_mz = 0.0;
 };
 
+// Horizontal box means of `in` (w x h, row-major) over [x - r, x + r] clipped to the row, into `out`.
+Status horizontal_box(const std::vector<float>& in, std::vector<float>& out, std::int32_t w, std::int32_t h,
+                      std::int32_t r, bool parallel, const core::CancellationToken& cancel) {
+    return detail::for_each_band(
+        h, parallel, cancel, kWhere,
+        [&](std::int32_t, std::int32_t begin, std::int32_t end) {
+            std::vector<double> prefix(static_cast<std::size_t>(w) + 1, 0.0);
+            for (std::int32_t y = begin; y < end; ++y) {
+                const float* row = in.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
+                float* dst = out.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
+                for (std::int32_t x = 0; x < w; ++x) {
+                    prefix[static_cast<std::size_t>(x) + 1] = prefix[static_cast<std::size_t>(x)] + row[x];
+                }
+                for (std::int32_t x = 0; x < w; ++x) {
+                    const std::int32_t lo = std::max(0, x - r);
+                    const std::int32_t hi = std::min(w - 1, x + r);
+                    dst[x] = static_cast<float>((prefix[static_cast<std::size_t>(hi) + 1] -
+                                                 prefix[static_cast<std::size_t>(lo)]) /
+                                                static_cast<double>(hi - lo + 1));
+                }
+            }
+        });
+}
+
+// Vertical box means of `in` over [y - r, y + r] clipped to the column, for the columns
+// [x0, x1), row by row: visit(y, x, mean).
+template <class Visit>
+void vertical_box(const std::vector<float>& in, std::int32_t w, std::int32_t h, std::int32_t r, std::int32_t x0,
+                  std::int32_t x1, const Visit& visit) {
+    const auto cols = static_cast<std::size_t>(x1 - x0);
+    std::vector<double> sum(cols, 0.0);
+    const auto at = [&](std::int32_t y, std::int32_t x) {
+        return static_cast<double>(in[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                      static_cast<std::size_t>(x)]);
+    };
+    for (std::int32_t y = 0; y <= std::min(h - 1, r); ++y) {
+        for (std::int32_t x = x0; x < x1; ++x) {
+            sum[static_cast<std::size_t>(x - x0)] += at(y, x);
+        }
+    }
+    for (std::int32_t y = 0; y < h; ++y) {
+        const std::int32_t lo = std::max(0, y - r);
+        const std::int32_t hi = std::min(h - 1, y + r);
+        const auto count = static_cast<double>(hi - lo + 1);
+        for (std::int32_t x = x0; x < x1; ++x) {
+            visit(y, x, sum[static_cast<std::size_t>(x - x0)] / count);
+        }
+        // Slide the window to y + 1: add row y + r + 1, drop row y - r.
+        if (y + r + 1 < h) {
+            for (std::int32_t x = x0; x < x1; ++x) {
+                sum[static_cast<std::size_t>(x - x0)] += at(y + r + 1, x);
+            }
+        }
+        if (y - r >= 0) {
+            for (std::int32_t x = x0; x < x1; ++x) {
+                sum[static_cast<std::size_t>(x - x0)] -= at(y - r, x);
+            }
+        }
+    }
+}
+
+constexpr std::int32_t kStripColumns = 128;
+
+// Mean |box_r(L) - box_4r(L)| over the plane `log_y` (w x h): see render_metrics.hpp. Column strips
+// are summed separately and merged in strip order (schedule independent).
+Expected<double> local_contrast(const std::vector<float>& log_y, std::int32_t w, std::int32_t h, std::int32_t r,
+                                bool parallel, const core::CancellationToken& cancel) {
+    const auto n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    std::vector<float> tmp;
+    std::vector<float> inner;
+    try {
+        tmp.resize(n);
+        inner.resize(n);
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the local-contrast planes", kWhere);
+    }
+    // inner = box_r(L).
+    if (auto s = horizontal_box(log_y, tmp, w, h, r, parallel, cancel); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    auto status = detail::for_each_band(
+        w, parallel, cancel, kWhere,
+        [&](std::int32_t, std::int32_t x0, std::int32_t x1) {
+            vertical_box(tmp, w, h, r, x0, x1, [&](std::int32_t y, std::int32_t x, double v) {
+                inner[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] =
+                    static_cast<float>(v);
+            });
+        },
+        kStripColumns);
+    if (!status) {
+        return Unexpected(std::move(status.error()));
+    }
+    // |inner - box_4r(L)|, summed per strip.
+    const std::int32_t outer = kLocalContrastOuterFactor * r;
+    if (auto s = horizontal_box(log_y, tmp, w, h, outer, parallel, cancel); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    std::vector<double> partial(static_cast<std::size_t>(detail::band_count(w, kStripColumns)), 0.0);
+    status = detail::for_each_band(
+        w, parallel, cancel, kWhere,
+        [&](std::int32_t strip, std::int32_t x0, std::int32_t x1) {
+            double s = 0.0;
+            vertical_box(tmp, w, h, outer, x0, x1, [&](std::int32_t y, std::int32_t x, double v) {
+                s += std::abs(static_cast<double>(inner[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                                                        static_cast<std::size_t>(x)]) -
+                              v);
+            });
+            partial[static_cast<std::size_t>(strip)] = s;
+        },
+        kStripColumns);
+    if (!status) {
+        return Unexpected(std::move(status.error()));
+    }
+    double total = 0.0;
+    for (const double p : partial) {
+        total += p;
+    }
+    return n == 0 ? 0.0 : total / static_cast<double>(n);
+}
+
 template <class Hist>
 double histogram_quantile(const Hist& hist, std::uint64_t total, double q, double width) {
     if (total == 0) {
@@ -116,6 +236,11 @@ double histogram_quantile(const Hist& hist, std::uint64_t total, double q, doubl
 }
 
 }  // namespace
+
+std::int32_t local_contrast_radius(image::Size size) noexcept {
+    const double edge = static_cast<double>(std::max(size.width, size.height));
+    return std::max<std::int32_t>(1, static_cast<std::int32_t>(std::lround(engine::kLocalToneRadiusFraction * edge)));
+}
 
 double clip_high_linear() noexcept {
     return image::srgb_decode(254.5 / 255.0);
@@ -217,8 +342,11 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
     const std::int32_t width = context.size.width;
     const std::int32_t height = context.size.height;
 
+    const double floor_y = std::exp2(kLocalContrastFloorEv);
+    std::vector<float> log_y;
     std::vector<Partial> partials;
     try {
+        log_y.assign(n, static_cast<float>(kLocalContrastFloorEv));
         partials.resize(static_cast<std::size_t>(detail::band_count(height, kMetricBandRows)));
         for (Partial& p : partials) {
             p.lightness_hist.assign(kLightnessBins, 0);
@@ -253,6 +381,7 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
                     const double X = m.to_xyz(0, 0) * r + m.to_xyz(0, 1) * g + m.to_xyz(0, 2) * b;
                     const double Y = m.to_xyz(1, 0) * r + m.to_xyz(1, 1) * g + m.to_xyz(1, 2) * b;
                     const double Z = m.to_xyz(2, 0) * r + m.to_xyz(2, 1) * g + m.to_xyz(2, 2) * b;
+                    log_y[i] = static_cast<float>(std::log2(std::max(Y / yn, floor_y)));
                     const double fx = lab_f(X / xn);
                     const double fy = lab_f(Y / yn);
                     const double fz = lab_f(Z / zn);
@@ -463,6 +592,12 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
     s.midtone_x = t.sum_mx;
     s.midtone_y = t.sum_my;
     s.midtone_z = t.sum_mz;
+    s.local_contrast_radius = local_contrast_radius(context.size);
+    auto contrast = local_contrast(log_y, width, height, s.local_contrast_radius, parallel, cancel);
+    if (!contrast) {
+        return Unexpected(std::move(contrast.error()));
+    }
+    s.local_contrast_ev = *contrast;
     s.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     return s;
 }

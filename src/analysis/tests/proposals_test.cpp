@@ -130,15 +130,68 @@ SceneStats scene(double headroom, std::uint64_t signal = 100000) {
     return s;
 }
 
+// Quantiles of a render: the median, the bright content (p90), the near-white tail (p99) and the
+// quartiles.
+RenderStats key_stats(double p25, double p50, double p75, double p90, double p99) {
+    RenderStats s;
+    s.pixels = 100000;
+    s.quantiles.p25 = p25;
+    s.quantiles.p50 = p50;
+    s.quantiles.p75 = p75;
+    s.quantiles.p90 = p90;
+    s.quantiles.p99 = p99;
+    s.quantiles.p995 = p99;
+    return s;
+}
+
+double ev_between(double from, double to) {
+    return std::log2(engine::display_lightness_inverse(to) / engine::display_lightness_inverse(from));
+}
+
 TEST(ToneProposal, BrightensAnUnderexposedImageWithinTheBounds) {
-    const ToneProposal t = propose_tone(tone_stats(0.15, 0.40), scene(3.0));
+    // Everything dark, the bright content too: underexposure.
+    const ToneProposal t = propose_tone(key_stats(0.10, 0.15, 0.18, 0.20, 0.40), scene(3.0));
     EXPECT_TRUE(t.evidence);
     EXPECT_DOUBLE_EQ(t.low_key, 0.0);
-    const double needed =
-        std::log2(engine::display_lightness_inverse(0.40) / engine::display_lightness_inverse(0.15));
-    EXPECT_NEAR(t.needed_ev, needed, 1e-12);
+    EXPECT_DOUBLE_EQ(t.dimness, 0.0);  // no scene luminance: no dimness
+    EXPECT_NEAR(t.needed_ev, ev_between(0.15, 0.40), 1e-12);  // the median's deficit is the smaller
+    EXPECT_FALSE(t.key_ambiguous);
     EXPECT_DOUBLE_EQ(t.exposure_ev, 1.5);  // the search bound
-    EXPECT_DOUBLE_EQ(t.confidence, 1.0);
+    EXPECT_DOUBLE_EQ(t.signal_evidence, 1.0);
+}
+
+TEST(ToneProposal, ADarkMedianUnderBrightContentIsLowKeyNotUnderexposure) {
+    // A lit subject (p90 L* 70) before a dark ground (median L* 20), no near-white highlights: the
+    // phase-1 low-key cue (p99 > 0.75) misses it, the bright-content floor does not.
+    const ToneProposal lit = propose_tone(key_stats(0.10, 0.20, 0.45, 0.70, 0.74), scene(2.0));
+    EXPECT_DOUBLE_EQ(lit.low_key, 0.0);
+    EXPECT_LT(lit.bright_deficit_ev, 0.0);
+    EXPECT_GT(lit.median_deficit_ev, 1.0);
+    EXPECT_EQ(lit.needed_ev, 0.0);
+    EXPECT_EQ(lit.exposure_ev, 0.0);
+    EXPECT_EQ(lit.shadows_ev, 0.0);
+    EXPECT_TRUE(lit.key_ambiguous);  // a plain median band would have brightened it
+
+    // The same frame with dim bright content: brightened by the smaller of the two deficits.
+    const ToneProposal dim = propose_tone(key_stats(0.10, 0.20, 0.30, 0.42, 0.50), scene(3.0));
+    EXPECT_NEAR(dim.needed_ev, std::min(ev_between(0.20, 0.40), ev_between(0.42, kBrightContentFloor)), 1e-12);
+    EXPECT_GT(dim.exposure_ev, 0.5);
+}
+
+TEST(ToneProposal, DimScenesKeepADarkerKey) {
+    // The same tones at night-time and daylight scene luminance.
+    const RenderStats tones = key_stats(0.15, 0.25, 0.33, 0.38, 0.45);
+    const ToneProposal day = propose_tone(tones, scene(3.0), 12.0);
+    const ToneProposal interior = propose_tone(tones, scene(3.0), 4.0);
+    EXPECT_DOUBLE_EQ(day.dimness, 0.0);
+    EXPECT_DOUBLE_EQ(day.band_low, kBandLow);
+    EXPECT_NEAR(interior.dimness, 0.75, 1e-12);
+    EXPECT_NEAR(interior.band_low, kBandLow - kDimBandDrop * 0.75, 1e-12);
+    EXPECT_GT(day.needed_ev, interior.needed_ev + 0.4);
+    EXPECT_FALSE(day.key_ambiguous);
+    EXPECT_TRUE(interior.key_ambiguous);
+    // Without exposure metadata the scene counts as daylight (no key cue).
+    EXPECT_DOUBLE_EQ(propose_tone(tones, scene(3.0)).needed_ev, day.needed_ev);
 }
 
 TEST(ToneProposal, HeadroomLimitsExposureAndTheRestBecomesShadowLift) {
@@ -155,15 +208,45 @@ TEST(ToneProposal, LowKeyAndHighKeyKeepTheirKey) {
     EXPECT_EQ(low.exposure_ev, 0.0);
     EXPECT_EQ(low.shadows_ev, 0.0);
 
-    const ToneProposal high = propose_tone(tone_stats(0.92, 0.99), scene(0.4));
-    EXPECT_LT(high.exposure_ev, 0.0);
-    EXPECT_GT(high.exposure_ev, -0.5);  // pulled to the band's top (L* 85), not towards mid-grey
+    // Snow or fog: bright and low in contrast - kept.
+    const ToneProposal snow = propose_tone(key_stats(0.86, 0.92, 0.95, 0.96, 0.99), scene(0.4));
+    EXPECT_DOUBLE_EQ(snow.high_key, 1.0);
+    EXPECT_NEAR(snow.band_high, kBandHigh + kHighKeyBandRise, 1e-12);
+    EXPECT_EQ(snow.exposure_ev, 0.0);
+
+    // A bright frame with a wide range of tones is pulled to the band's top (L* 85), not towards
+    // mid-grey.
+    const ToneProposal bright = propose_tone(key_stats(0.55, 0.92, 0.97, 0.98, 0.99), scene(0.4));
+    EXPECT_DOUBLE_EQ(bright.high_key, 0.0);
+    EXPECT_LT(bright.exposure_ev, 0.0);
+    EXPECT_GT(bright.exposure_ev, -0.5);
+    EXPECT_NEAR(bright.needed_ev, -ev_between(kBandHigh, 0.92), 1e-12);
+}
+
+TEST(ToneProposal, DeficitIsTheSmallerOfTheMedianAndTheBrightContent) {
+    ToneProposal policy;
+    LightnessQuantiles q;
+    q.p50 = 0.25;
+    q.p90 = 0.50;
+    ToneDeficit d = tone_deficit(q, policy);
+    EXPECT_NEAR(d.median_ev, ev_between(0.25, kBandLow), 1e-12);
+    EXPECT_NEAR(d.bright_ev, ev_between(0.50, kBrightContentFloor), 1e-12);
+    EXPECT_DOUBLE_EQ(d.deficit_ev, std::min(d.median_ev, d.bright_ev));
+    EXPECT_EQ(d.excess_ev, 0.0);
+    // An exposure change of E EV in the base look's linear segment moves both by E: the deficit is
+    // measured in EV of display luminance.
+    q.p90 = 0.75;  // bright content above its floor: no deficit
+    d = tone_deficit(q, policy);
+    EXPECT_EQ(d.deficit_ev, 0.0);
+    q.p50 = 0.90;
+    d = tone_deficit(q, policy);
+    EXPECT_NEAR(d.excess_ev, ev_between(kBandHigh, 0.90), 1e-12);
 }
 
 TEST(ToneProposal, NoProposalWithoutSignal) {
     const ToneProposal t = propose_tone(tone_stats(0.01, 0.02), scene(8.0, 100));
     EXPECT_FALSE(t.evidence);
-    EXPECT_EQ(t.confidence, 0.0);
+    EXPECT_EQ(t.signal_evidence, 0.0);
     EXPECT_EQ(t.exposure_ev, 0.0);
     EXPECT_EQ(t.shadows_ev, 0.0);
 }

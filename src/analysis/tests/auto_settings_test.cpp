@@ -1,7 +1,10 @@
-// Natural v1 on synthetic scenes (blueprint section 6): an underexposed chart is brightened;
-// deliberate low-key and high-key scenes keep their key; a warm sunset keeps its colour while a
-// small tint is corrected; sensor-clipped highlights are not worsened; locks are honoured; too
-// little evidence gives a restrained edit with a flag; the result is deterministic.
+// Natural v1 (policy "natural" version 2) on synthetic scenes (blueprint section 6): an
+// underexposed chart is brightened; deliberate low-key and high-key scenes (a silhouette, a lit
+// subject on a dark ground, a dim interior without highlights, snow, fog) keep their key; a warm
+// sunset keeps its colour while a small tint is corrected; sensor-clipped highlights are not
+// worsened; locks are honoured, and a locked exposure is not brightened around; too little evidence
+// gives a restrained edit with a flag; the recheck pool includes an edit without local tone; the
+// conservative fallbacks step towards the baseline; the result is deterministic.
 //
 // Every result is summarised in the log ("[ AUTO     ]" lines). Run with
 // --gtest_also_run_disabled_tests to dump every evaluated candidate and its objective terms as well.
@@ -80,10 +83,10 @@ void trace(const AutoResult& r) {
             }
             const ObjectiveTerms& t = s.terms;
             return std::format(
-                "{} {:.3f} [b {:.2f} h {:.2f} s {:.2f} n {:.2f} c {:.2f} col {:.2f} wb {:.2f} nat {:.2f} "
+                "{} {:.3f} [b {:.2f} h {:.2f} s {:.2f} n {:.2f} c {:.2f} lc {:.2f} col {:.2f} wb {:.2f} nat {:.2f} "
                 "e {:.2f}] p50 {:.3f}{}",
                 s.feasible ? "ok" : "NO", t.total, t.brightness, t.highlights, t.shadows, t.noise, t.contrast,
-                t.color, t.white_balance, t.native, t.edit, s.median_lightness,
+                t.local_contrast, t.color, t.white_balance, t.native, t.edit, s.median_lightness,
                 s.failures.empty() ? "" : " " + s.failures.front());
         };
         std::printf("  %2u %-22s E%+.3f r%.3f b%.3f S%.3f H%.3f C%+.3f s%.3f | proxy %s | analysis %s\n",
@@ -303,8 +306,170 @@ TEST(AutoSettings, HonoursLocksEverywhere) {
         EXPECT_EQ(c.settings.locks, current.locks) << c.note;
     }
     EXPECT_FALSE(r.white_balance.has_value());  // no white-balance proposal for a locked white balance
-    // With exposure locked, the unlocked shadows carry the brightening.
-    EXPECT_GT(r.settings.shadows, 0.0);
+    // The locked exposure is the user's key: the unlocked shadows are not used to brighten the frame
+    // anyway (blueprint: "Do not change locked controls to make an automatic score look better").
+    EXPECT_EQ(r.settings.shadows, 0.0);
+    EXPECT_EQ(chosen(r).analysis.terms.brightness, 0.0);
+}
+
+// A lit subject (reflectance 0.4, 30 % of the frame) on a near-black ground, no near-white
+// highlights: a low-key composition. Phase 1 read its dark median as underexposure (+1.5 EV and a
+// shadow lift, the R5 still life); the bright-content floor keeps its key.
+test_support::Scene lit_subject_on_dark_ground(double exposure) {
+    return [=](std::int32_t x, std::int32_t y) -> std::array<double, 3> {
+        const bool subject = x > 320 && x < 760 && y > 160 && y < 560;
+        const double rho = subject ? 0.40 * (1.0 + 0.05 * texture(x, y)) : 0.025 * (1.0 + 0.3 * texture(x, y));
+        return neutral(rho * test_support::kProperGain * exposure);
+    };
+}
+
+TEST(AutoSettings, KeepsALitSubjectOnADarkGround) {
+    const AutoResult r = run(lit_subject_on_dark_ground(1.0));
+    expect_well_formed(r);
+    EXPECT_EQ(r.tone.low_key, 0.0);       // no near-white highlights
+    EXPECT_LT(r.tone.bright_deficit_ev, 0.0);
+    EXPECT_GT(r.tone.median_deficit_ev, 1.0);  // a plain median band would brighten it a lot
+    EXPECT_TRUE(r.tone.key_ambiguous);
+    EXPECT_LE(std::abs(r.settings.exposure_ev), 0.25);
+    EXPECT_EQ(r.settings.shadows, 0.0);
+    EXPECT_FALSE(r.has_flag(ReviewFlagCode::LargeEdit));
+}
+
+// A dim interior without highlights: the same frame is brightened less at a dim scene luminance
+// (f/2.8, 1/8 s, ISO 100: about 4 EV) than without exposure metadata.
+TEST(AutoSettings, DimInteriorKeepsADarkerKey) {
+    const test_support::Scene interior = [](std::int32_t x, std::int32_t y) -> std::array<double, 3> {
+        const double rho = 0.10 + 0.08 * ((x / 160 + y / 160) % 3) + 0.01 * texture(x, y);
+        return neutral(rho * test_support::kProperGain * 0.35);
+    };
+    SceneOptions dim;
+    dim.f_number = 2.8f;
+    dim.exposure_time_s = 0.125f;
+    const AutoResult unknown = run(interior);
+    const AutoResult r = run(interior, {}, dim);
+    expect_well_formed(r);
+    ASSERT_TRUE(r.shot.scene_ev.has_value());
+    EXPECT_LT(*r.shot.scene_ev, 6.0);
+    EXPECT_GT(r.tone.dimness, 0.5);
+    EXPECT_LT(r.tone.band_low, kBandLow - 0.07);
+    EXPECT_GT(unknown.settings.exposure_ev, 0.5);  // without the cue: brightened towards L* 40
+    EXPECT_LT(r.settings.exposure_ev, unknown.settings.exposure_ev - 0.3);
+    EXPECT_EQ(r.settings.shadows, 0.0);
+}
+
+// Fog: bright and low in contrast. It keeps its key and is not flattened or harshened.
+TEST(AutoSettings, KeepsFogBrightAndSoft) {
+    const AutoResult r = run([](std::int32_t x, std::int32_t y) -> std::array<double, 3> {
+        const double rho = 0.55 + 0.06 * y / 640.0 + 0.01 * texture(x, y);
+        return neutral(rho * test_support::kProperGain, 0.99, 1.02);
+    });
+    expect_well_formed(r);
+    EXPECT_GT(r.tone.high_key, 0.0);
+    EXPECT_LE(std::abs(r.settings.exposure_ev), 0.15);
+    EXPECT_EQ(r.settings.shadows, 0.0);
+    EXPECT_EQ(r.settings.highlights, 0.0);
+    EXPECT_EQ(r.settings.contrast, 0.0);
+}
+
+// When the leading candidates use local tone, the recheck also renders the best candidate
+// without it, so the native checks can trade the one against the other (ANA-03).
+TEST(AutoSettings, RecheckIncludesAnEditWithoutLocalTone) {
+    // The underexposed chart with a small highlight near the clip: exposure is limited by the
+    // headroom, so the proxy leaders lift shadows.
+    const test_support::Scene chart = chart_scene(std::exp2(-2.5));
+    const AutoResult r = run([chart](std::int32_t x, std::int32_t y) -> std::array<double, 3> {
+        if (x > 20 && x < 70 && y > 20 && y < 60) {
+            return neutral(0.80);
+        }
+        return chart(x, y);
+    });
+    expect_well_formed(r);
+    bool leader_local = false;
+    bool global = false;
+    for (const CandidateRecord& c : r.candidates) {
+        if (c.origin == CandidateOrigin::Baseline || !c.analysis.evaluated) {
+            continue;
+        }
+        leader_local = leader_local || changes_local_tone(c.edit);
+        global = global || (!changes_local_tone(c.edit) && !is_identity_edit(c.edit));
+    }
+    EXPECT_TRUE(global);
+    if (!leader_local) {
+        std::printf("[ AUTO     ] note: no rechecked leader used local tone in this scene\n");
+    }
+}
+
+// When every rechecked candidate fails a hard check at analysis resolution, the proxy leader's
+// conservative fallbacks are rechecked before the baseline is accepted (ANA-03, blueprint section 6
+// step 7). A very noisy frame 4 EV under without a noise model: the proxy search cannot predict the
+// noise (only a penalty applies), the native shadow crop measures it, and every brightening fails
+// the native shadow-texture check. The fallbacks fail too here, so as shot is kept, flagged, with
+// the policy confidence of an unmet objective.
+TEST(AutoSettings, FallsBackConservativelyWhenTheLeadersFail) {
+    SceneOptions noisy;
+    noisy.iso.reset();
+    noisy.read_sigma = 3e-3;
+    const AutoResult r = run(chart_scene(std::exp2(-4.0)), {}, noisy);
+    expect_well_formed(r);
+    ASSERT_TRUE(r.fallback) << "the leaders passed the recheck: the scene no longer exercises the fallback";
+    EXPECT_TRUE(r.has_flag(ReviewFlagCode::ConservativeFallback));
+    std::uint32_t fallbacks = 0;
+    for (const CandidateRecord& c : r.candidates) {
+        if (c.origin == CandidateOrigin::Fallback) {
+            ++fallbacks;
+            EXPECT_TRUE(c.analysis.evaluated) << c.note;
+            EXPECT_FALSE(c.proxy.evaluated) << c.note;
+            ASSERT_TRUE(c.source.has_value());
+            EXPECT_LT(c.edit_size, r.candidates[*c.source].edit_size) << c.note;
+        }
+    }
+    EXPECT_GE(fallbacks, 1u);
+    EXPECT_LE(fallbacks, kMaxFallbackRechecks);
+    EXPECT_TRUE(r.candidates[r.chosen].analysis.feasible);
+    if (r.candidates[r.chosen].origin == CandidateOrigin::Baseline) {
+        EXPECT_TRUE(r.has_flag(ReviewFlagCode::RecheckRejected));
+        EXPECT_EQ(r.confidence_detail.policy, kUnmetFallbackConfidence);
+    } else {
+        EXPECT_EQ(r.confidence_detail.policy, kFallbackConfidence);
+    }
+    EXPECT_LE(r.confidence, r.confidence_detail.policy);
+}
+
+TEST(AutoSettings, ConservativeFallbacksStepTowardsTheBaseline) {
+    engine::DevelopSettings base;
+    engine::DevelopSettings chosen;
+    chosen.exposure_ev = 1.2;
+    chosen.shadows = 0.3;
+    chosen.highlights = -0.2;
+    chosen.contrast = 0.05;
+    auto ladder = conservative_fallbacks(chosen, base);
+    ASSERT_EQ(ladder.size(), 2u);
+    EXPECT_EQ(ladder[0].exposure_ev, 1.2);
+    EXPECT_NEAR(ladder[0].shadows, 0.15, 1e-6);
+    EXPECT_NEAR(ladder[0].highlights, -0.1, 1e-6);
+    EXPECT_EQ(ladder[1].shadows, 0.0);
+    EXPECT_EQ(ladder[1].highlights, 0.0);
+    EXPECT_EQ(ladder[1].exposure_ev, 1.2);
+    EXPECT_EQ(ladder[1].contrast, 0.05);
+    // Without local tone: every remaining change halved.
+    chosen.shadows = 0.0;
+    chosen.highlights = 0.0;
+    ladder = conservative_fallbacks(chosen, base);
+    ASSERT_EQ(ladder.size(), 1u);
+    EXPECT_NEAR(ladder[0].exposure_ev, 0.6, 1e-6);
+    EXPECT_NEAR(ladder[0].contrast, 0.025, 1e-6);
+    // A locked control equals the baseline's and never moves; the baseline is never listed.
+    engine::DevelopSettings locked = base;
+    locked.exposure_ev = 0.7;
+    locked.locks = {engine::DevelopControl::Exposure};
+    engine::DevelopSettings auto_locked = locked;
+    auto_locked.shadows = 0.2;
+    for (const engine::DevelopSettings& s : conservative_fallbacks(auto_locked, locked)) {
+        EXPECT_EQ(s.exposure_ev, 0.7);
+        EXPECT_EQ(s.locks, locked.locks);
+        EXPECT_FALSE(s == locked);
+    }
+    EXPECT_TRUE(conservative_fallbacks(base, base).empty());
 }
 
 TEST(AutoSettings, InsufficientEvidenceGivesARestrainedFlaggedResult) {
@@ -356,14 +521,24 @@ TEST(AutoSettings, IsDeterministic) {
     for (std::size_t i = 0; i < a.diagnostics.size(); ++i) {
         EXPECT_EQ(a.diagnostics[i], b.diagnostics[i]) << to_string(a.diagnostics[i].id);
     }
-    // Serial and parallel execution agree exactly.
+    // Serial and parallel execution agree exactly: every proxy and analysis term (the native crops
+    // render concurrently), the diagnostics and the confidence (same binary, same CPU; see
+    // auto_settings.hpp, "Determinism").
     AutoOptions serial;
     serial.develop.parallel = false;
     const AutoResult c = run(chart_scene(0.5, 1.2, 0.85), {}, {}, serial);
     EXPECT_EQ(a.settings, c.settings);
+    EXPECT_EQ(a.chosen, c.chosen);
+    EXPECT_EQ(a.confidence, c.confidence);
     ASSERT_EQ(a.candidates.size(), c.candidates.size());
     for (std::size_t i = 0; i < a.candidates.size(); ++i) {
         EXPECT_EQ(a.candidates[i].proxy.terms, c.candidates[i].proxy.terms) << i;
+        EXPECT_EQ(a.candidates[i].analysis.terms, c.candidates[i].analysis.terms) << i;
+        EXPECT_EQ(a.candidates[i].analysis.appearance, c.candidates[i].analysis.appearance) << i;
+    }
+    ASSERT_EQ(a.diagnostics.size(), c.diagnostics.size());
+    for (std::size_t i = 0; i < a.diagnostics.size(); ++i) {
+        EXPECT_EQ(a.diagnostics[i], c.diagnostics[i]) << to_string(a.diagnostics[i].id);
     }
 }
 

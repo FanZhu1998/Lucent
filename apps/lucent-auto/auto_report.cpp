@@ -72,11 +72,17 @@ Json edit_json(const an::EditVector& e) {
 }
 
 Json terms_json(const an::ObjectiveTerms& t) {
-    return Json{{"brightness", number(t.brightness)}, {"highlights", number(t.highlights)},
-                {"shadows", number(t.shadows)},       {"noise", number(t.noise)},
-                {"contrast", number(t.contrast)},     {"color", number(t.color)},
-                {"white_balance", number(t.white_balance)}, {"native", number(t.native)},
-                {"edit", number(t.edit)},             {"consistency", number(t.consistency)},
+    return Json{{"brightness", number(t.brightness)},
+                {"highlights", number(t.highlights)},
+                {"shadows", number(t.shadows)},
+                {"noise", number(t.noise)},
+                {"contrast", number(t.contrast)},
+                {"local_contrast", number(t.local_contrast)},
+                {"color", number(t.color)},
+                {"white_balance", number(t.white_balance)},
+                {"native", number(t.native)},
+                {"edit", number(t.edit)},
+                {"consistency", number(t.consistency)},
                 {"total", number(t.total)}};
 }
 
@@ -191,10 +197,23 @@ Json result_json(const an::AutoResult& r) {
                                    {"values", named_values(m.values)},
                                    {"detail", core::sanitize_utf8(m.detail)}});
     }
+    const an::LightnessQuantiles& q = r.tone.baseline;
     Json tone{{"evidence", r.tone.evidence},
-              {"confidence", number(r.tone.confidence)},
+              {"signal_evidence", number(r.tone.signal_evidence)},
+              {"baseline_quantiles",
+               Json{{"p01", number(q.p01)}, {"p05", number(q.p05)}, {"p10", number(q.p10)}, {"p25", number(q.p25)},
+                    {"p50", number(q.p50)}, {"p75", number(q.p75)}, {"p90", number(q.p90)}, {"p95", number(q.p95)},
+                    {"p99", number(q.p99)}, {"p995", number(q.p995)}}},
+              {"scene_ev", optional_number(r.tone.scene_ev)},
               {"low_key", number(r.tone.low_key)},
+              {"dimness", number(r.tone.dimness)},
+              {"high_key", number(r.tone.high_key)},
               {"band", Json::array({number(r.tone.band_low), number(r.tone.band_high)})},
+              {"bright_floor", number(r.tone.bright_floor)},
+              {"median_deficit_ev", number(r.tone.median_deficit_ev)},
+              {"bright_deficit_ev", number(r.tone.bright_deficit_ev)},
+              {"excess_ev", number(r.tone.excess_ev)},
+              {"key_ambiguous", r.tone.key_ambiguous},
               {"needed_ev", number(r.tone.needed_ev)},
               {"headroom_ev", number(r.tone.headroom_ev)},
               {"exposure_ev", number(r.tone.exposure_ev)},
@@ -229,6 +248,7 @@ Json result_json(const an::AutoResult& r) {
     for (const an::CandidateRecord& c : r.candidates) {
         candidates.push_back(Json{{"index", c.index},
                                   {"origin", std::string(an::to_string(c.origin))},
+                                  {"source", c.source ? Json(*c.source) : Json(nullptr)},
                                   {"note", c.note},
                                   {"edit", edit_json(c.edit)},
                                   {"edit_size", number(c.edit_size)},
@@ -277,8 +297,10 @@ Json result_json(const an::AutoResult& r) {
                       {"white_balance", number(r.confidence_detail.white_balance)},
                       {"noise", number(r.confidence_detail.noise)},
                       {"native", number(r.confidence_detail.native)},
+                      {"policy", number(r.confidence_detail.policy)},
                       {"reasons", r.confidence_detail.reasons}}},
                 {"restrained", r.restrained},
+                {"fallback", r.fallback},
                 {"flags", flags},
                 {"appearance", appearance_json(r.appearance)},
                 {"diagnostics", diagnostics},
@@ -459,6 +481,19 @@ exporter::OutputImage side_by_side(const exporter::OutputImage& left, const expo
     return out;
 }
 
+bool visibly_identical(const exporter::OutputImage& a, const exporter::OutputImage& b) {
+    if (a.width != b.width || a.height != b.height || a.samples8.size() != b.samples8.size() ||
+        a.bit_depth != exporter::BitDepth::Eight || b.bit_depth != exporter::BitDepth::Eight) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.samples8.size(); ++i) {
+        if (std::abs(static_cast<int>(a.samples8[i]) - static_cast<int>(b.samples8[i])) > kUnchangedCodeValues) {
+            return false;
+        }
+    }
+    return true;
+}
+
 Json item_json(const ItemReport& item) {
     const an::RelatedItemResult* r = item.result;
     Json j{{"schema", kItemSchema},
@@ -482,6 +517,7 @@ Json item_json(const ItemReport& item) {
            {"previews", Json{{"as_shot", item.as_shot_jpg.empty() ? Json(nullptr) : Json(item.as_shot_jpg)},
                              {"auto", item.auto_jpg.empty() ? Json(nullptr) : Json(item.auto_jpg)},
                              {"pair", item.pair_jpg.empty() ? Json(nullptr) : Json(item.pair_jpg)},
+                             {"unchanged", item.unchanged},
                              {"error", item.preview_error ? render_tool::error_json(*item.preview_error)
                                                           : Json(nullptr)},
                              {"source", "analysis image (interactive stage one, stage two, box-reduced), sRGB "
@@ -692,7 +728,8 @@ std::string sheet_html(const Arguments& args, const an::RelatedResult& result, s
         a += row("Median L*", std::format("{:.1f} (as shot {:.1f})", 100.0 * f.appearance.lightness,
                                           100.0 * f.candidates.at(0).analysis.median_lightness));
         a += row("Time", std::format("{:.2f} s", r->seconds));
-        a += row("Chosen", std::string(an::to_string(f.candidates.at(f.chosen).origin)));
+        a += row("Chosen", std::string(an::to_string(f.candidates.at(f.chosen).origin)) +
+                               (item.unchanged ? " (no visible change)" : ""));
         if (f.consistency) {
             const an::ConsistencyRecord& k = *f.consistency;
             a += row("Consistency", std::format("{:.2f} to {:.2f}", k.independent_terms.total, k.terms.total));
@@ -758,13 +795,21 @@ bool auto_first(std::uint64_t seed, std::size_t index) noexcept {
 std::string blind_html(const Arguments& args, std::span<const ItemReport> items, const std::filesystem::path& out_dir,
                        JpegReader jpeg) {
     std::string html = head("Blind preference sheet");
+    std::size_t unchanged = 0;
+    for (const ItemReport& item : items) {
+        unchanged += !item.as_shot_jpg.empty() && !item.auto_jpg.empty() && item.unchanged ? 1u : 0u;
+    }
     html += std::format(
         "<header><h1>Blind preference sheet</h1><p class=\"lede\">For each photograph, choose the rendering you "
-        "prefer, or \"No preference\". The order of A and B was drawn per photograph (seed {}); the key is kept in "
-        "a separate file. Export your choices when done.</p></header><main>\n",
-        args.seed);
+        "prefer, or \"No preference\". The order of A and B was drawn per photograph (seed {}); the key is kept "
+        "elsewhere. Export your choices when done.{}</p></header><main>\n",
+        args.seed,
+        unchanged == 0 ? std::string()
+                       : std::format(" {} photograph{} without a visible difference between the two renderings "
+                                     "{} not shown.",
+                                     unchanged, unchanged == 1 ? "" : "s", unchanged == 1 ? "is" : "are"));
     for (const ItemReport& item : items) {
-        if (item.as_shot_jpg.empty() || item.auto_jpg.empty()) {
+        if (item.as_shot_jpg.empty() || item.auto_jpg.empty() || item.unchanged) {
             continue;
         }
         const bool first = auto_first(args.seed, item.index);
@@ -810,8 +855,13 @@ document.getElementById('export').addEventListener('click', function () {{
 
 Json blind_key(const Arguments& args, std::span<const ItemReport> items) {
     Json entries = Json::array();
+    Json unchanged = Json::array();
     for (const ItemReport& item : items) {
         if (item.as_shot_jpg.empty() || item.auto_jpg.empty()) {
+            continue;
+        }
+        if (item.unchanged) {
+            unchanged.push_back(Json{{"item", item.index}, {"name", item.input.name}});
             continue;
         }
         const bool first = auto_first(args.seed, item.index);
@@ -826,7 +876,10 @@ Json blind_key(const Arguments& args, std::span<const ItemReport> items) {
                 {"schema_version", kSchemaVersion},
                 {"seed", args.seed},
                 {"order", "splitmix64(seed xor golden * (index + 1)) & 1: auto is A when 1"},
-                {"items", entries}};
+                {"items", entries},
+                {"unchanged_rule", std::format("settings equal to as shot, or 8-bit previews within {} code value",
+                                               kUnchangedCodeValues)},
+                {"unchanged", unchanged}};
 }
 
 }  // namespace lucent::auto_tool

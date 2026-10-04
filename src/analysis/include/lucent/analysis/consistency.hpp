@@ -47,9 +47,14 @@
 //   lightness       ((max(0, |a.lightness - t.lightness| - 0.01)) / 0.04)^2;
 //   colour          ((max(0, |a.uv - t.uv| - 0.002)) / 0.004)^2, when the target carries a
 //                   colour-managed colour (its group spans more than one calibration domain);
-//   white balance   ((max(0, |a.log - t.log| - 0.005)) / 0.015)^2 (log-gain distance of the
+//   white balance   ((max(0, |a.log - t.log| - 0.01)) / 0.02)^2 (log-gain distance of the
 //                   absolute camera multipliers), when the target carries the member's own
-//                   domain's camera white balance;
+//                   domain's camera white balance. The dead zone and scale are the colour part's
+//                   (0.002 and 0.004 u'v') in log gains: a D65 neutral's rendered u'v' moves by
+//                   about 0.19 per unit log red gain and 0.09 per unit log blue gain, and the
+//                   larger sensitivity is used so that a visible difference is never
+//                   under-counted (version 2; version 1's 0.005 / 0.015 counted camera AWB jitter
+//                   well below visibility as inconsistency);
 //   total = weight x (lightness + colour + white balance).
 // The constants are uncalibrated Natural v1 defaults (ADR 0011).
 //
@@ -71,8 +76,8 @@
 namespace lucent::analysis {
 
 // Version of the grouping rules, the consistency targets and the consistency term (bump when any
-// of them changes).
-inline constexpr std::uint32_t kConsistencyVersion = 1;
+// of them changes). Version 2: the camera white-balance part's dead zone and scale.
+inline constexpr std::uint32_t kConsistencyVersion = 2;
 
 // ---- Appearance --------------------------------------------------------------------------------
 
@@ -164,8 +169,8 @@ inline constexpr double kConsistencyLightnessDeadZone = 0.01;
 inline constexpr double kConsistencyLightnessScale = 0.04;
 inline constexpr double kConsistencyColourDeadZone = 0.002;
 inline constexpr double kConsistencyColourScale = 0.004;
-inline constexpr double kConsistencyWhiteBalanceDeadZone = 0.005;
-inline constexpr double kConsistencyWhiteBalanceScale = 0.015;
+inline constexpr double kConsistencyWhiteBalanceDeadZone = 0.01;
+inline constexpr double kConsistencyWhiteBalanceScale = 0.02;
 // Above this consistency term the regularised result is flagged ConsistencyLimited.
 inline constexpr double kConsistencyLimitedTerm = 1.0;
 
