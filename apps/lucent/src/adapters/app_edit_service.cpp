@@ -118,6 +118,9 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
 
     std::mutex mutex;
     bool stopped = false;
+    // Shutting down: queued commands still run (so edits and commits reach the recipes), but no
+    // develop session is opened and nothing is rendered any more.
+    bool draining = false;
     bool clipping = false;
     quint64 next_token = 0;
     quint64 next_session = 1;
@@ -239,7 +242,7 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
     // ---- Requests (require `mutex`) -----------------------------------------------------------------
 
     void request_locked(ItemId item, Session& s, const app::RecipeState& state, quint64 token) {
-        if (!s.open) {
+        if (!s.open || draining) {
             return;
         }
         if (state.recipe_unreadable) {
@@ -268,8 +271,8 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
 
     // The as-shot frame for before/after, once the current settings are rendered.
     void maybe_request_before_locked(ItemId item, Session& s) {
-        if (!s.open || !s.want_before || s.before_valid || s.before_failed || s.before_generation != 0 ||
-            !s.current_done) {
+        if (!s.open || draining || !s.want_before || s.before_valid || s.before_failed ||
+            s.before_generation != 0 || !s.current_done) {
             return;
         }
         app::DevelopView view;  // default settings: as shot
@@ -296,6 +299,15 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
                 EditState ui = to_edit_state(*state, recipes->read_only_reason().has_value());
                 ui.token = token;
                 post_state(ui);
+            } else if (request) {
+                // Nothing can be rendered for the photo: end the view's wait with the reason instead
+                // of leaving it on its placeholder.
+                const std::lock_guard lock(mutex);
+                if (Session* s = find_locked(item); s != nullptr && s->open) {
+                    s->current_done = true;
+                    post_frame_failed(item, describe_edit_error(state.error()));
+                    update_busy_locked();
+                }
             }
             return;
         }
@@ -327,6 +339,12 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
     // ---- Commands (command thread) ----------------------------------------------------------------
 
     void open_session(ItemId item, quint64 id) {
+        {
+            const std::lock_guard lock(mutex);
+            if (draining) {
+                return;  // shutting down: nothing to show any more
+            }
+        }
         auto sink = [weak = weak_from_this(), item, id](const app::DevelopEvent& event) {
             if (auto self = weak.lock()) {
                 self->on_event(item, id, event);
@@ -617,6 +635,15 @@ AppEditService::AppEditService(std::shared_ptr<Backend> backend, RenderEventSink
 AppEditService::~AppEditService() {
     dispatcher_->close();
     release_timer_.stop();
+    // Queued commands still run first: a commit of a pending gesture (EditSession::set_item(0) from
+    // the controller's destructor), an apply or an undo waiting behind a slower command must reach
+    // the recipes. While draining nothing new is rendered and nothing is posted (the dispatcher is
+    // closed).
+    {
+        const std::lock_guard lock(state_->mutex);
+        state_->draining = true;
+    }
+    commands_->waitForDone();
     std::vector<ItemId> items;
     {
         const std::lock_guard lock(state_->mutex);
@@ -626,7 +653,7 @@ AppEditService::~AppEditService() {
         }
         state_->sessions.clear();
     }
-    commands_->waitForDone();  // queued commands see `stopped` and do nothing
+    commands_->waitForDone();  // commands queued meanwhile see `stopped` and do nothing
     for (const ItemId item : items) {
         backend_->develop().close(app_id(item));  // waits for a running sink call
     }

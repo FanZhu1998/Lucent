@@ -11,6 +11,10 @@ import Lucent
 // step and Shift+arrow or Page Up/Down by a coarse step, and holding a key down is one revision too
 // (EditSession.nudge, committed on release). Double-click the slider, press Home, or use the reset
 // button to return to the default; type a value and press Enter to set it exactly.
+//
+// Accessibility: the slider runs in the control's display units (exposure in EV, the others -100 to
+// +100), so assistive technology reads the value the field shows; temperature, whose slider is
+// linear in reciprocal kelvin, reads its position and states the kelvin value in its description.
 Item {
     id: row
 
@@ -24,6 +28,7 @@ Item {
     readonly property var spec: edit.control(key)
     readonly property string label: spec.label !== undefined ? spec.label : key
     readonly property bool editable: edit.canEdit
+    readonly property bool linear: spec.reciprocal !== true
 
     objectName: "adjust_" + key
     implicitHeight: 30
@@ -60,17 +65,20 @@ Item {
             id: slider
 
             objectName: "slider_" + row.key
-            from: 0
-            to: 1
+            from: row.linear ? row.spec.minimum : 0
+            to: row.linear ? row.spec.maximum : 1
             live: true
             enabled: row.editable
             focusPolicy: Qt.StrongFocus
-            value: { row.edit.settingsRevision; return row.edit.position(row.key) }
+            value: {
+                row.edit.settingsRevision
+                return row.linear ? row.edit.value(row.key) : row.edit.position(row.key)
+            }
             Layout.fillWidth: true
             Layout.preferredHeight: 24
 
             onPressedChanged: pressed ? row.edit.beginGesture() : row.edit.endGesture()
-            onMoved: row.edit.setPosition(row.key, value)
+            onMoved: row.linear ? row.edit.setValue(row.key, value) : row.edit.setPosition(row.key, value)
 
             Accessible.name: row.label
             Accessible.description: {
@@ -163,6 +171,7 @@ Item {
             }
 
             handle: Rectangle {
+                visible: row.edit.settingsKnown  // no position for values that cannot be read
                 x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
                 y: slider.topPadding + slider.availableHeight / 2 - height / 2
                 implicitWidth: 12

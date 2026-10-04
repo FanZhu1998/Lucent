@@ -248,6 +248,32 @@ TEST_F(AppEditServiceTest, ARecipeFromANewerLucentOpensReadOnlyWithItsReason) {
     ASSERT_TRUE(wait_final_frame(id, undone));
 }
 
+TEST_F(AppEditServiceTest, CommandsQueuedAtShutdownStillReachTheRecipes) {
+    const ItemId id = import_file(L"shutdown.dng");
+    edits_->open(id);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(id).has_value(); }, kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+    // A gesture's last positions and its commit (as EditSession::set_item(0) issues it from the
+    // controller's destructor), then a typed value, all still queued when the service goes away.
+    EditSettings settings = state_for(id)->settings;
+    for (const double ev : {0.25, 0.5, 0.75}) {
+        settings.exposure_ev = ev;
+        edits_->set_transient(id, settings);
+    }
+    edits_->commit(id);
+    settings.contrast = 0.3;
+    edits_->apply(id, settings);
+    edits_->close(id);
+    edits_.reset();
+
+    auto state = backend_->recipes().state(app::ItemId{id});
+    ASSERT_TRUE(state) << state.error().describe();
+    EXPECT_EQ(state->revision_number, 2u);
+    EXPECT_FALSE(state->transient);
+    EXPECT_DOUBLE_EQ(state->committed.exposure_ev, 0.75);
+    EXPECT_DOUBLE_EQ(state->committed.contrast, 0.3);
+}
+
 TEST_F(AppEditServiceTest, PasteKeepsCameraSpecificWhiteBalanceOnItsCameraAndSaysWhy) {
     const ItemId source = import_file(L"source.dng", "Synthetic A");
     const ItemId other = import_file(L"other.dng", "Synthetic B");

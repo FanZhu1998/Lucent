@@ -8,8 +8,10 @@
 #include <chrono>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <lucent/application/export_service.hpp>
+#include <lucent/application/recipe_service.hpp>
 
 #include "adapters/conversions.hpp"
 
@@ -17,8 +19,6 @@ namespace lucent::ui::adapters {
 namespace {
 
 constexpr auto kProgressInterval = std::chrono::milliseconds(100);
-// W3 exports the default settings, revision 1 (W6 introduces recipe revisions).
-constexpr std::uint64_t kDefaultSettingsRevision = 1;
 
 QString tr_text(const char* text) {
     return QCoreApplication::translate("lucent::ui::adapters", text);
@@ -57,10 +57,16 @@ QString source_name(const app::SourceItem& source) {
 AppExportService::AppExportService(std::shared_ptr<Backend> backend, QObject* parent)
     : ExportService(parent),
       backend_(std::move(backend)),
-      dispatcher_(std::make_shared<UiDispatcher>(this)) {}
+      dispatcher_(std::make_shared<UiDispatcher>(this)),
+      resolver_(std::make_unique<QThreadPool>()) {
+    resolver_->setObjectName(QStringLiteral("lucent-export-recipes"));
+    resolver_->setMaxThreadCount(1);  // batches in the order they were queued
+    resolver_->setExpiryTimeout(-1);
+}
 
 AppExportService::~AppExportService() {
     dispatcher_->close();
+    resolver_->waitForDone();  // its results are dropped (the dispatcher is closed)
     for (auto& [id, job] : jobs_) {
         if (is_active(job.snapshot.state)) {
             job.handle.cancel();  // no-op for jobs that were never submitted
@@ -76,6 +82,7 @@ void AppExportService::start_export(const ExportRequest& request) {
     backend_->output_folders().add(folder);
     const exporter::ExportSettings settings = to_export_settings(request.options);
 
+    std::vector<std::pair<JobId, app::ItemId>> batch;
     for (const ItemId item : request.items) {
         const JobId id = next_id_++;
         Job& job = jobs_[id];
@@ -88,12 +95,51 @@ void AppExportService::start_export(const ExportRequest& request) {
         job.source_known = source.has_value();
         job.snapshot.source_name = source ? source_name(*source) : tr_text("Photo %1").arg(item);
         job.request.item = app::ItemId{item};
-        job.request.settings_revision = kDefaultSettingsRevision;
         job.request.output_directory = folder;
         job.request.output = settings;
         job.request.allow_unsupported = false;  // blueprint section 3: never exported silently
         waiting_.push_back(id);
+        batch.emplace_back(id, app::ItemId{item});
         emit job_added(job.snapshot);
+    }
+    // Freeze every job's recipe now, not when its turn comes (blueprint section 2: a queued export
+    // keeps its revision; ADR 0010): reading recipes may read the catalog, so off the UI thread.
+    resolver_->start([backend = backend_, dispatcher = dispatcher_, this, batch = std::move(batch)] {
+        auto resolved = std::make_shared<std::vector<Resolved>>();
+        resolved->reserve(batch.size());
+        for (const auto& [id, item] : batch) {
+            resolved->push_back(Resolved{id, backend->recipes().current_settings(item)});
+        }
+        dispatcher->post([this, resolved] { on_resolved(*resolved); });
+    });
+    update_busy();
+}
+
+void AppExportService::on_resolved(const std::vector<Resolved>& resolved) {
+    for (const Resolved& r : resolved) {
+        const auto found = jobs_.find(r.id);
+        if (found == jobs_.end()) {
+            continue;
+        }
+        Job& job = found->second;
+        job.resolved = true;
+        if (job.snapshot.state != ExportJobState::Queued) {
+            continue;  // cancelled while its recipe was read
+        }
+        if (!r.current) {
+            // An unreadable recipe (or a photo no longer in the library) fails at queue time.
+            waiting_.erase(std::remove(waiting_.begin(), waiting_.end(), r.id), waiting_.end());
+            job.snapshot.state = ExportJobState::Failed;
+            job.snapshot.message = !job.source_known || r.current.error().code == ErrorCode::NotFound
+                                       ? tr_text("This photo is no longer in the library.")
+                                       : describe_error(r.current.error());
+            publish(job);
+            continue;
+        }
+        job.request.settings = r.current->settings;
+        job.request.recipe_revision = r.current->revision;
+        job.request.recipe_revision_number = r.current->revision_number;
+        job.request.settings_revision = r.current->revision_number;
     }
     submit_next();
     update_busy();
@@ -102,11 +148,15 @@ void AppExportService::start_export(const ExportRequest& request) {
 void AppExportService::submit_next() {
     while (!submitted_ && !waiting_.empty()) {
         const JobId id = waiting_.front();
-        waiting_.pop_front();
         const auto found = jobs_.find(id);
         if (found == jobs_.end() || found->second.snapshot.state != ExportJobState::Queued) {
+            waiting_.pop_front();
             continue;
         }
+        if (!found->second.resolved) {
+            return;  // its recipe is still being frozen (on_resolved() comes back here)
+        }
+        waiting_.pop_front();
         Job& job = found->second;
         auto throttle = std::make_shared<ProgressThrottle>();
         // Both callbacks run on an executor worker; `this` is only used by the posted functions.

@@ -351,6 +351,9 @@ TEST_F(QmlShellTest, TheEditPanelMakesOneRevisionPerGestureAndComparesBeforeAndA
     ASSERT_TRUE(settle());
     EXPECT_EQ(edits->revision_count(item), 1);
     EXPECT_NEAR(edit.value(QStringLiteral("exposure")), 0.2, 1e-9);
+    // The slider runs in display units: assistive technology reads the value the field shows.
+    EXPECT_NEAR(slider->property("value").toDouble(), 0.2, 1e-9);
+    EXPECT_DOUBLE_EQ(slider->property("to").toDouble(), 5.0);
     EXPECT_TRUE(edit.can_undo());
     EXPECT_EQ(edit.history()->count(), 2);  // the revision and "As shot"
 
@@ -378,6 +381,15 @@ TEST_F(QmlShellTest, TheEditPanelMakesOneRevisionPerGestureAndComparesBeforeAndA
     EXPECT_FALSE(edit.compare());
     edit.set_split(true);
     ASSERT_TRUE(QTest::qWaitFor([this] { return child<QQuickItem>("splitDivider")->isVisible(); }, kWaitMs));
+    // The divider works from the keyboard too.
+    auto* divider = child<QQuickItem>("splitDivider");
+    const double split_at = viewer->property("splitPosition").toDouble();
+    divider->forceActiveFocus(Qt::TabFocusReason);
+    ASSERT_TRUE(divider->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Left);
+    EXPECT_NEAR(viewer->property("splitPosition").toDouble(), split_at - 0.02, 1e-9);
+    QTest::keyClick(window, Qt::Key_Right, Qt::ShiftModifier);
+    EXPECT_NEAR(viewer->property("splitPosition").toDouble(), split_at + 0.08, 1e-9);
     edit.set_split(false);
 
     // The clipping overlay (J) comes from the frames.

@@ -90,6 +90,7 @@ PanelSection {
             objectName: "whiteBalanceMode"
             text: panel.edit.whiteBalanceMode === "asShot" ? qsTr("As shot")
                 : panel.edit.whiteBalanceMode === "kelvin" ? qsTr("Custom")
+                : panel.edit.whiteBalanceMode === "unknown" ? qsTr("Unknown")
                 : qsTr("Custom (camera channels)")
             color: Theme.textTertiary
             font.pixelSize: Theme.fontSmall
@@ -99,7 +100,7 @@ PanelSection {
             objectName: "whiteBalanceAsShot"
             text: qsTr("Use as shot")
             implicitHeight: 24
-            visible: panel.edit.whiteBalanceMode !== "asShot"
+            visible: panel.edit.whiteBalanceMode !== "asShot" && panel.edit.settingsKnown
             enabled: panel.edit.canEdit
             onClicked: panel.edit.resetWhiteBalance()
             ToolTip.visible: hovered

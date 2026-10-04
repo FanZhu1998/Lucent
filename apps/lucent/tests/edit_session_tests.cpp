@@ -161,6 +161,98 @@ TEST_F(EditSessionTest, UndoAndRedoFollowTheStateAndNewerLocalValuesAreKept) {
     EXPECT_EQ(service.count("reset_to_as_shot"), 1);
 }
 
+TEST_F(EditSessionTest, ACommandDuringADragNeverTurnsTheRestOfItIntoARevisionPerMove) {
+    open();
+    // Home on the pressed slider (or a double-click reset): what the drag changed so far is
+    // committed, the reset and the rest of the drag are one more gesture.
+    session.beginGesture();
+    session.setPosition(QStringLiteral("exposure"), 0.55);
+    session.setPosition(QStringLiteral("exposure"), 0.6);
+    session.resetValue(QStringLiteral("exposure"));
+    EXPECT_EQ(service.count("commit"), 1);
+    EXPECT_TRUE(session.gesture_active());
+    for (int i = 1; i <= 10; ++i) {
+        session.setPosition(QStringLiteral("exposure"), 0.5 + 0.01 * i);
+    }
+    EXPECT_EQ(service.count("apply"), 0);
+    session.endGesture();
+    EXPECT_EQ(service.count("commit"), 2);
+    EXPECT_EQ(service.count("apply"), 0);
+    EXPECT_FALSE(session.gesture_active());
+    const quint64 last_commit = service.calls_named("commit").back().token;
+    EditSettings current;
+    current.exposure_ev = 1.0;
+    service.answer(7, last_commit, current, /*can_undo=*/true);
+
+    // Ctrl+Z mid-drag: the drag so far is one revision, then the undo; moves made before the undo
+    // is answered would build on the undone values and are not sent; the rest of the drag after the
+    // answer is one more revision, committed on release.
+    session.beginGesture();
+    session.setPosition(QStringLiteral("exposure"), 0.7);
+    session.setPosition(QStringLiteral("exposure"), 0.72);
+    session.undo();
+    EXPECT_EQ(service.count("commit"), 3);
+    ASSERT_EQ(service.count("undo"), 1);
+    const int transients = service.count("set_transient");
+    session.setPosition(QStringLiteral("exposure"), 0.75);
+    session.setPosition(QStringLiteral("exposure"), 0.8);
+    EXPECT_EQ(service.count("set_transient"), transients);
+    EditSettings undone;
+    undone.exposure_ev = 1.0;
+    undone.contrast = 0.0;
+    service.answer(7, service.calls_named("undo").back().token, undone, true, true);
+    EXPECT_DOUBLE_EQ(session.value(QStringLiteral("exposure")), 1.0);  // the gesture took the new values
+    for (int i = 1; i <= 5; ++i) {
+        session.setPosition(QStringLiteral("exposure"), 0.6 + 0.01 * i);
+    }
+    EXPECT_EQ(service.count("set_transient"), transients + 5);
+    session.endGesture();
+    EXPECT_EQ(service.count("commit"), 4);
+    EXPECT_EQ(service.count("apply"), 0);
+}
+
+TEST_F(EditSessionTest, EditsWaitForAHistoryCommandToBeAnswered) {
+    open();
+    session.setValue(QStringLiteral("exposure"), 1.0);
+    EditSettings one;
+    one.exposure_ev = 1.0;
+    service.answer(7, service.calls_named("apply").back().token, one, true);
+    session.setValue(QStringLiteral("contrast"), 20.0);
+    EditSettings two = one;
+    two.contrast = 0.2;
+    service.answer(7, service.calls_named("apply").back().token, two, true);
+
+    session.undo();
+    // An arrow key and a typed value before the undo's state arrives: built on the undone contrast,
+    // they would bring it back; they are not sent.
+    session.nudge(QStringLiteral("exposure"), 1, false);
+    session.endNudge();
+    static_cast<void>(session.setValueText(QStringLiteral("saturation"), QStringLiteral("10")));
+    EXPECT_EQ(service.count("set_transient"), 0);
+    EXPECT_EQ(service.count("apply"), 2);
+    EXPECT_EQ(service.count("commit"), 0);
+    EXPECT_DOUBLE_EQ(session.value(QStringLiteral("contrast")), 20.0);  // until the answer
+
+    service.answer(7, service.calls_named("undo").back().token, one, true, true);
+    EXPECT_DOUBLE_EQ(session.value(QStringLiteral("contrast")), 0.0);
+    session.nudge(QStringLiteral("exposure"), 1, false);
+    session.endNudge();
+    ASSERT_EQ(service.count("set_transient"), 1);
+    EXPECT_DOUBLE_EQ(service.calls_named("set_transient").back().settings.contrast, 0.0);
+    EXPECT_NEAR(service.calls_named("set_transient").back().settings.exposure_ev, 1.05, 1e-12);
+    EXPECT_EQ(service.count("commit"), 1);
+
+    // A paste is applied by the service too: edits wait for its report.
+    service.emit_copied(7, 0xFF);
+    session.pasteSettings();
+    ASSERT_EQ(service.count("paste_settings"), 1);
+    session.setValue(QStringLiteral("vibrance"), 30.0);
+    EXPECT_EQ(service.count("apply"), 2);
+    service.emit_pasted(PasteReport{});
+    session.setValue(QStringLiteral("vibrance"), 30.0);
+    EXPECT_EQ(service.count("apply"), 3);
+}
+
 TEST_F(EditSessionTest, AReadOnlyRecipeRefusesEditsAndSaysWhy) {
     session.set_item(7);
     EditState state;

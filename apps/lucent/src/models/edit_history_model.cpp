@@ -32,6 +32,9 @@ QString origin_label(const QString& origin) {
     if (origin == u"import") {
         return tr_text("Imported");
     }
+    if (origin == u"unknown") {
+        return tr_text("Other");  // an origin a newer Lucent added
+    }
     return tr_text("Edit");
 }
 
@@ -56,6 +59,9 @@ QString EditHistoryModel::title_of(const EditHistoryEntry& entry) {
     }
     if (entry.origin == u"import") {
         return tr_text("Imported settings");
+    }
+    if (entry.origin == u"unknown" && changed.isEmpty()) {
+        return tr_text("Change made by a newer Lucent");
     }
     if (entry.reverted_from != 0) {
         return tr_text("Back to revision %1").arg(entry.reverted_from);

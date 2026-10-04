@@ -82,6 +82,15 @@ TEST(AdapterConversions, ErrorsAreDescribedByCodeAndLocation) {
               describe_error(Error{ErrorCode::VersionMismatch, "", "app.library.add", 0}));
     EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "raw.dng.version", 0}),
               QStringLiteral("The file needs a newer version of Lucent."));
+    // A photo's edit that cannot be read is the edit's problem, never the file's or an internal one.
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "app.recipe.unreadable", 0}),
+              QStringLiteral("This photo's edit was made by a newer version of Lucent."));
+    EXPECT_EQ(describe_error(Error{ErrorCode::VersionMismatch, "", "app.recipe", 0}),
+              QStringLiteral("This photo's edit was made by a newer version of Lucent."));
+    for (const ErrorCode code : {ErrorCode::InvalidArgument, ErrorCode::Corrupt, ErrorCode::Unsupported}) {
+        EXPECT_EQ(describe_error(Error{code, "", "app.recipe.unreadable", 0}),
+                  QStringLiteral("This photo's edit is damaged and cannot be read."));
+    }
     // Developer-facing messages are never shown.
     EXPECT_EQ(describe_error(Error{ErrorCode::Internal, "secret detail", "engine", 0}),
               QStringLiteral("Lucent ran into an internal problem (internal)."));

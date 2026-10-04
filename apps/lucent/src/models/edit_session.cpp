@@ -162,6 +162,7 @@ void EditSession::set_item(ItemId item) {
     item_ = item;
     state_.reset();
     answered_token_ = last_token_;
+    paste_pending_ = false;
     white_balance_ = WhiteBalanceInfo{};
     history_->clear();
     selected_point_ = -1;
@@ -301,6 +302,7 @@ QVariantMap EditSession::control(const QString& key) const {
         {QStringLiteral("unit"), QString::fromLatin1(spec->unit)},
         {QStringLiteral("defaultValue"), default_value},
         {QStringLiteral("lockKey"), lock_key(spec->lock)},
+        {QStringLiteral("reciprocal"), spec->scale == Scale::Reciprocal},
     };
 }
 
@@ -312,6 +314,9 @@ QString EditSession::valueText(const QString& key) const {
     const ControlSpec* spec = spec_of(key);
     if (spec == nullptr) {
         return {};
+    }
+    if (!settings_known()) {
+        return QStringLiteral("–");
     }
     const double v = round_to(display_value(settings_, key), spec->decimals);
     QLocale locale;
@@ -386,7 +391,7 @@ bool EditSession::setValueText(const QString& key, const QString& text) {
         return false;
     }
     endNudge();
-    endGesture();
+    commit_gesture();
     setValue(key, v);
     // The field shows the value as stored (rounded, clamped) even when nothing changed.
     ++settings_revision_;
@@ -403,20 +408,37 @@ void EditSession::resetValue(const QString& key) {
         return;
     }
     endNudge();
-    endGesture();
+    commit_gesture();
     setValue(key, 0.0);
 }
 
 void EditSession::resetWhiteBalance() {
     endNudge();
-    endGesture();
+    commit_gesture();
     EditSettings next = settings_;
     next.white_balance = WhiteBalanceMode::AsShot;
     change(next);
 }
 
 void EditSession::beginGesture() {
-    if (!can_edit() || gesture_) {
+    if (!can_edit() || pointer_down_) {
+        return;
+    }
+    endNudge();  // a key gesture ends where a pointer one begins
+    pointer_down_ = true;
+    start_gesture();
+}
+
+void EditSession::endGesture() {
+    if (!pointer_down_) {
+        return;  // no pointer gesture (a key's gesture ends with endNudge())
+    }
+    pointer_down_ = false;
+    commit_gesture();
+}
+
+void EditSession::start_gesture() {
+    if (gesture_) {
         return;
     }
     gesture_ = true;
@@ -424,16 +446,18 @@ void EditSession::beginGesture() {
     emit gestureChanged();
 }
 
-void EditSession::endGesture() {
+void EditSession::commit_gesture() {
     if (!gesture_) {
         return;
     }
-    gesture_ = false;
     if (gesture_changed_ && item_ != 0) {
         remember_token(service_.commit(item_));
     }
     gesture_changed_ = false;
-    emit gestureChanged();
+    if (!pointer_down_) {
+        gesture_ = false;
+        emit gestureChanged();
+    }
 }
 
 void EditSession::nudge(const QString& key, int steps, bool coarse) {
@@ -445,7 +469,7 @@ void EditSession::nudge(const QString& key, int steps, bool coarse) {
         if (gesture_) {
             return;  // a drag is in progress
         }
-        beginGesture();
+        start_gesture();
         nudging_ = true;
     }
     const double step = coarse ? spec->coarse : spec->step;
@@ -459,7 +483,7 @@ void EditSession::endNudge() {
     }
     nudging_ = false;
     nudge_timer_.stop();
-    endGesture();
+    commit_gesture();
 }
 
 bool EditSession::isLocked(const QString& key) const {
@@ -473,7 +497,7 @@ void EditSession::setLocked(const QString& key, bool locked) {
         return;
     }
     endNudge();
-    endGesture();
+    commit_gesture();
     EditSettings next = settings_;
     next.set_locked(*control, locked);
     set_local(next);
@@ -482,6 +506,13 @@ void EditSession::setLocked(const QString& key, bool locked) {
 
 void EditSession::change(const EditSettings& next) {
     if (!can_edit() || item_ == 0 || next == settings_) {
+        return;
+    }
+    if (awaiting_history()) {
+        // The values this change builds on are about to be replaced by an undo, redo, selected
+        // revision, reset or paste: sending it would silently re-apply what that command removed.
+        ++settings_revision_;  // the controls show the values held again
+        emit settingsChanged();
         return;
     }
     set_local(next);
@@ -507,6 +538,11 @@ void EditSession::set_local(const EditSettings& settings) {
     emit settingsChanged();
 }
 
+void EditSession::remember_history_token(quint64 token) {
+    remember_token(token);
+    history_token_ = std::max(history_token_, token);
+}
+
 void EditSession::remember_token(quint64 token) {
     if (token == 0) {
         return;
@@ -523,6 +559,9 @@ void EditSession::remember_token(quint64 token) {
 // ---- White balance ------------------------------------------------------------------------------
 
 QString EditSession::white_balance_mode() const {
+    if (!settings_known()) {
+        return QStringLiteral("unknown");
+    }
     switch (settings_.white_balance) {
     case WhiteBalanceMode::Kelvin:
         return QStringLiteral("kelvin");
@@ -558,6 +597,9 @@ QString EditSession::white_balance_note() const {
 
 QVariantList EditSession::curve_points() const {
     QVariantList points;
+    if (!settings_known()) {
+        return points;
+    }
     for (const QPointF& point : settings_.tone_curve) {
         points << point;
     }
@@ -674,7 +716,7 @@ bool EditSession::removeCurvePoint(int index) {
         return false;  // the end points stay (they can be moved)
     }
     endNudge();
-    endGesture();
+    commit_gesture();
     EditSettings next = settings_;
     next.tone_curve.removeAt(index);
     selected_point_ = -1;
@@ -685,7 +727,7 @@ bool EditSession::removeCurvePoint(int index) {
 
 void EditSession::resetCurve() {
     endNudge();
-    endGesture();
+    commit_gesture();
     EditSettings next = settings_;
     next.tone_curve = EditSettings{}.tone_curve;
     selected_point_ = -1;
@@ -697,17 +739,17 @@ void EditSession::resetCurve() {
 
 void EditSession::undo() {
     endNudge();
-    endGesture();
+    commit_gesture();
     if (item_ != 0 && can_undo()) {
-        remember_token(service_.undo(item_));
+        remember_history_token(service_.undo(item_));
     }
 }
 
 void EditSession::redo() {
     endNudge();
-    endGesture();
+    commit_gesture();
     if (item_ != 0 && can_redo()) {
-        remember_token(service_.redo(item_));
+        remember_history_token(service_.redo(item_));
     }
 }
 
@@ -720,15 +762,15 @@ void EditSession::selectRevision(int row) {
         return;
     }
     endNudge();
-    endGesture();
-    remember_token(service_.select_revision(item_, *revision));
+    commit_gesture();
+    remember_history_token(service_.select_revision(item_, *revision));
 }
 
 void EditSession::resetToAsShot() {
     endNudge();
-    endGesture();
+    commit_gesture();
     if (item_ != 0 && history_available()) {
-        remember_token(service_.reset_to_as_shot(item_));
+        remember_history_token(service_.reset_to_as_shot(item_));
     }
 }
 
@@ -754,7 +796,7 @@ void EditSession::copySettings(const QStringList& category_keys) {
         return;
     }
     endNudge();
-    endGesture();
+    commit_gesture();
     service_.copy_settings(item_, bits);
 }
 
@@ -763,7 +805,8 @@ void EditSession::pasteSettings() {
         return;
     }
     endNudge();
-    endGesture();
+    commit_gesture();
+    paste_pending_ = true;  // until the paste is reported (its state comes first)
     service_.paste_settings({item_});
 }
 
@@ -865,7 +908,9 @@ void EditSession::on_state(const EditState& state) {
     }
     answered_token_ = std::max(answered_token_, state.token);
     state_ = state;
-    if (!gesture_ && answered_token_ >= last_token_ && state.settings != settings_) {
+    // A gesture that has not changed anything yet (a drag that began while an undo was on its way)
+    // takes the new values too, so its changes build on them.
+    if ((!gesture_ || !gesture_changed_) && answered_token_ >= last_token_ && state.settings != settings_) {
         set_local(state.settings);
     }
     emit stateChanged();
@@ -961,6 +1006,7 @@ void EditSession::on_copied(ItemId item, quint32 categories) {
 }
 
 void EditSession::on_pasted(const PasteReport& report) {
+    paste_pending_ = false;  // the pasted state (if any) was posted before the report
     QStringList applied;
     for (const SettingsCategory category : report.applied) {
         applied << category_label(category);

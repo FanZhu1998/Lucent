@@ -35,9 +35,11 @@
 // 100 %. set_full_resolution(true) asks for full-resolution Final frames; 30 seconds after the view
 // left 100 % the session's full-resolution stage one is released (ADR 0010, "Consequences").
 //
-// Lifetime: lives on the UI thread. The destructor closes the dispatcher, stops the command thread,
-// closes every session (waiting for running sink calls), and waits for the conversion thread; it
-// must run on the UI thread (it may release the last reference to the Backend).
+// Lifetime: lives on the UI thread. The destructor closes the dispatcher, lets the commands already
+// queued finish (so a commit of a pending gesture, an apply or an undo still reaches the recipes;
+// nothing is rendered or opened any more meanwhile), stops the command thread, closes every session
+// (waiting for running sink calls), and waits for the conversion thread; it must run on the UI
+// thread (it may release the last reference to the Backend).
 
 #include <QThreadPool>
 #include <QTimer>

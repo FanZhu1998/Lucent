@@ -263,7 +263,8 @@ FocusScope {
             }
         }
 
-        // The split divider: drag it to compare another part.
+        // The split divider: drag it, or focus it (Tab) and use the arrow keys (Shift: larger
+        // steps, Home/End: the edges), to compare another part.
         Rectangle {
             id: divider
 
@@ -273,8 +274,39 @@ FocusScope {
             y: image.y
             width: 2
             height: image.height
-            color: Theme.textPrimary
+            color: activeFocus ? Theme.focusRing : Theme.textPrimary
             opacity: 0.85
+            activeFocusOnTab: true  // only while visible: hidden items are not in the tab chain
+            Accessible.role: Accessible.Splitter
+            Accessible.name: qsTr("Before and after divider")
+            Accessible.description: qsTr("%1 % of the width shows the photo as shot")
+                .arg(Math.round(root.splitPosition * 100))
+            Accessible.focusable: true
+
+            function moveBy(fraction) {
+                root.splitPosition = Math.max(0.02, Math.min(0.98, root.splitPosition + fraction))
+            }
+
+            Keys.onPressed: event => {
+                const step = (event.modifiers & Qt.ShiftModifier) !== 0 ? 0.1 : 0.02
+                switch (event.key) {
+                case Qt.Key_Left:
+                    divider.moveBy(-step)
+                    break
+                case Qt.Key_Right:
+                    divider.moveBy(step)
+                    break
+                case Qt.Key_Home:
+                    divider.moveBy(-1)
+                    break
+                case Qt.Key_End:
+                    divider.moveBy(1)
+                    break
+                default:
+                    return
+                }
+                event.accepted = true
+            }
 
             Rectangle {
                 anchors.centerIn: parent

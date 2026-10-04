@@ -148,6 +148,7 @@ EditState to_edit_state(const app::RecipeState& state, bool store_read_only) {
         out.settings = to_edit_settings(state.settings);
         out.committed = to_edit_settings(state.committed);
     }
+    out.settings_unknown = state.recipe_unreadable;
     if (state.read_only) {
         out.read_only = true;
         out.read_only_reason = describe_recipe_problem(*state.read_only, state.recipe_unreadable);

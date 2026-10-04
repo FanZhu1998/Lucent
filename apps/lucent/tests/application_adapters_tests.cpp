@@ -498,6 +498,48 @@ TEST_F(ApplicationAdaptersTest, ExportWritesJpegAndTiffAndReportsProgress) {
     EXPECT_EQ(QFileInfo(job(3).destination_path).fileName(), QStringLiteral("a_Lucent_2.jpg"));
 }
 
+TEST_F(ApplicationAdaptersTest, AQueuedExportKeepsTheRecipeItHadWhenItWasQueued) {
+    auto renderer = std::make_shared<GatedRenderer>();
+    create(renderer);
+    write_dng(dir_, L"a.dng");
+    write_dng(dir_, L"b.dng");
+    std::filesystem::create_directories(dir_.path() / L"out");
+    import_dir();
+    const ItemId a = id_of(QStringLiteral("a.dng"));
+    const ItemId b = id_of(QStringLiteral("b.dng"));
+    QList<quint64> answered;
+    QObject::connect(services_.edits.get(), &EditService::state_changed, services_.edits.get(),
+                     [&answered](const EditState& state) { answered << state.token; });
+    const auto apply = [&](ItemId item, double exposure) {
+        EditSettings settings;
+        settings.exposure_ev = exposure;
+        const quint64 token = services_.edits->apply(item, settings);
+        ASSERT_TRUE(QTest::qWaitFor([&] { return answered.contains(token); }, kAdapterWaitMs));
+    };
+    apply(b, 0.5);  // the recipe when the export is queued
+    renderer->close_gate(L"a.dng");
+
+    exports_->start_export(ExportRequest{{a, b}, out_dir(), {}});
+    ASSERT_TRUE(renderer->wait_started(L"a.dng", 1));
+    EXPECT_EQ(job(2).state, ExportJobState::Queued);
+    // Editing b while its export waits its turn does not change that export.
+    apply(b, 1.0);
+    renderer->open_gate(L"a.dng");
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !exports_->is_busy(); }, kAdapterWaitMs));
+    ASSERT_EQ(job(2).state, ExportJobState::Completed) << job(2).message.toStdString();
+    const std::vector<engine::DevelopSettings> rendered = renderer->rendered_settings(L"b.dng");
+    ASSERT_EQ(rendered.size(), 1u);
+    EXPECT_DOUBLE_EQ(rendered[0].exposure_ev, 0.5);
+    ASSERT_EQ(renderer->rendered_settings(L"a.dng").size(), 1u);
+    EXPECT_DOUBLE_EQ(renderer->rendered_settings(L"a.dng")[0].exposure_ev, 0.0);
+
+    // A queued export of a photo that left the library fails at once with the reason.
+    exports_->start_export(ExportRequest{{777777}, out_dir(), {}});
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !exports_->is_busy(); }, kAdapterWaitMs));
+    EXPECT_EQ(job(3).state, ExportJobState::Failed);
+    EXPECT_EQ(job(3).message, QStringLiteral("This photo is no longer in the library."));
+}
+
 TEST_F(ApplicationAdaptersTest, ExportRefusesUnsupportedPhotosAndReportsAMissingFolder) {
     create();
     rts::SyntheticDngSpec needs_opcode;

@@ -14,11 +14,19 @@
 // kelvin, so equal slider distances are about equal colour changes). Moving a white-balance slider
 // while the photo shows "as shot" starts a custom balance from the as-shot values.
 //
-// Gestures. beginGesture() ... setPosition()/setValue() ... endGesture() is ONE revision: the
-// positions in between are transient (EditService::set_transient) and the end commits. nudge()
-// (arrow keys; Shift for coarse steps) starts a gesture that endNudge() (key release) or a pause of
-// kNudgeCommitMs ends, so holding a key down is one revision too. Without a gesture, setValue(),
-// setValueText() and resetValue() are one step each (EditService::apply).
+// Gestures. beginGesture() ... setPosition()/setValue() ... endGesture() (a pointer press and its
+// release) is ONE revision: the positions in between are transient (EditService::set_transient) and
+// the end commits. nudge() (arrow keys; Shift for coarse steps) starts a gesture that endNudge()
+// (key release) or a pause of kNudgeCommitMs ends, so holding a key down is one revision too.
+// Without a gesture, setValue(), setValueText() and resetValue() are one step each
+// (EditService::apply). A command during a drag (undo, redo, paste, a reset by key or double-click)
+// commits what the drag changed so far; the rest of the drag is a new gesture, committed on release,
+// never a revision per position.
+//
+// History commands (undo, redo, selectRevision, resetToAsShot, pasteSettings) are applied by the
+// service, so the local values are stale until their state arrives: changes made meanwhile are
+// refused (the controls show the held values again) rather than sent on top of the values the
+// command removed.
 //
 // Tone curve. Points stay monotone: moveCurvePoint() keeps x strictly between the neighbours
 // (kMinCurveGap apart) and y between the neighbours' y; the end points move within [0, 1]. Points
@@ -64,6 +72,9 @@ class EditSession : public QObject {
     Q_PROPERTY(bool ready READ ready NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool canEdit READ can_edit NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool readOnly READ read_only NOTIFY stateChanged FINAL)
+    // False while the photo's recipe cannot be read: the controls show no values (valueText "–",
+    // no curve) rather than defaults that would look like an unedited photo.
+    Q_PROPERTY(bool settingsKnown READ settings_known NOTIFY stateChanged FINAL)
     Q_PROPERTY(QString readOnlyReason READ read_only_reason NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool historyAvailable READ history_available NOTIFY stateChanged FINAL)
     Q_PROPERTY(bool canUndo READ can_undo NOTIFY stateChanged FINAL)
@@ -122,11 +133,13 @@ public:
 
     // ---- QML: controls -------------------------------------------------------------------------
 
-    // {label, minimum, maximum, step, coarseStep, decimals, unit, defaultValue, lockKey}; empty for
-    // an unknown key.
+    // {label, minimum, maximum, step, coarseStep, decimals, unit, defaultValue, lockKey, reciprocal};
+    // empty for an unknown key. `reciprocal`: the slider runs in position() (temperature), otherwise
+    // directly in display values.
     Q_INVOKABLE QVariantMap control(const QString& key) const;
     Q_INVOKABLE double value(const QString& key) const;
-    // The value as shown in the numeric field ("+0.35", "-12", "5500").
+    // The value as shown in the numeric field ("+0.35", "-12", "5500"; "–" when the recipe cannot be
+    // read).
     Q_INVOKABLE QString valueText(const QString& key) const;
     Q_INVOKABLE double position(const QString& key) const;
     Q_INVOKABLE void setPosition(const QString& key, double position);
@@ -177,6 +190,7 @@ public:
     [[nodiscard]] bool ready() const noexcept { return state_.has_value(); }
     [[nodiscard]] bool can_edit() const noexcept { return state_ && !state_->read_only; }
     [[nodiscard]] bool read_only() const noexcept { return state_ && state_->read_only; }
+    [[nodiscard]] bool settings_known() const noexcept { return !state_ || !state_->settings_unknown; }
     [[nodiscard]] QString read_only_reason() const { return state_ ? state_->read_only_reason : QString(); }
     [[nodiscard]] bool history_available() const noexcept { return state_ && state_->history_available; }
     [[nodiscard]] bool can_undo() const noexcept { return history_available() && state_->can_undo; }
@@ -188,7 +202,9 @@ public:
     [[nodiscard]] QString white_balance_controls() const;
     [[nodiscard]] QString white_balance_note() const;
     [[nodiscard]] QVariantList curve_points() const;
-    [[nodiscard]] QList<double> curve_samples() const { return curve_samples_; }
+    [[nodiscard]] QList<double> curve_samples() const {
+        return settings_known() ? curve_samples_ : QList<double>{};
+    }
     [[nodiscard]] bool curve_is_identity() const { return settings_.tone_curve == EditSettings{}.tone_curve; }
     [[nodiscard]] int selected_curve_point() const noexcept { return selected_point_; }
     void set_selected_curve_point(int index);
@@ -253,6 +269,16 @@ signals:
     void notice(const QString& text);
 
 private:
+    // Starts a gesture (no-op while one runs).
+    void start_gesture();
+    // Commits the running gesture's changes as one revision; the gesture ends unless the pointer is
+    // still down (then its later changes form the next revision, committed on release).
+    void commit_gesture();
+    [[nodiscard]] bool awaiting_history() const noexcept {
+        return answered_token_ < history_token_ || paste_pending_;
+    }
+    void remember_history_token(quint64 token);
+
     void on_state(const EditState& state);
     void on_history(ItemId item, const QList<EditHistoryEntry>& entries);
     void on_white_balance(ItemId item, const WhiteBalanceInfo& info);
@@ -286,10 +312,13 @@ private:
 
     bool gesture_ = false;
     bool gesture_changed_ = false;
+    bool pointer_down_ = false;  // between beginGesture() and endGesture()
     bool nudging_ = false;
     QTimer nudge_timer_;
-    quint64 last_token_ = 0;     // newest call made
+    quint64 last_token_ = 0;      // newest call made
     quint64 answered_token_ = 0;  // newest call a state answered
+    quint64 history_token_ = 0;   // newest undo, redo, select or reset
+    bool paste_pending_ = false;  // a paste into this photo is not reported yet
 
     QString frame_source_;
     QString before_source_;

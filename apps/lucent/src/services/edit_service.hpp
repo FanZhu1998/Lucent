@@ -171,6 +171,9 @@ struct EditState {
     bool history_available = true;
     // The committed settings differ from as shot, or cannot be read by this Lucent.
     bool edited = false;
+    // The recipe cannot be read (read_only says why): `settings` and `committed` are placeholders, not
+    // the photo's values, and are not shown.
+    bool settings_unknown = false;
 };
 
 // User-facing names: "White balance", "Exposure", "Contrast", "Highlights", "Shadows", "Tone curve",

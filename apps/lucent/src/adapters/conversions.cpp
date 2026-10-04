@@ -307,6 +307,14 @@ QString describe_error(const Error& error) {
     // Where the failure happened: at the destination (the export service's destination checks
     // and the exporter's writing), in the services' own item checks, or reading the source.
     const std::string_view where = error.where;
+    // The photo's edit (recipe) rather than its file: it was made by a newer Lucent, or its stored
+    // record is damaged (app::kRecipeUnreadableWhere).
+    if (starts_with(where, "app.recipe") && error.code == ErrorCode::VersionMismatch) {
+        return tr_text("This photo's edit was made by a newer version of Lucent.");
+    }
+    if (starts_with(where, "app.recipe.unreadable")) {
+        return tr_text("This photo's edit is damaged and cannot be read.");
+    }
     const bool destination = starts_with(where, "app.export.destination") ||
                              starts_with(where, "app.export.space") || starts_with(where, "export");
     switch (error.code) {

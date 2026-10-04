@@ -80,6 +80,12 @@ public:
     }
 
     [[nodiscard]] int started(const std::wstring& file_name) const { return count(started_, file_name); }
+    // The settings of every render of `file_name`, in start order.
+    [[nodiscard]] std::vector<engine::DevelopSettings> rendered_settings(const std::wstring& file_name) const {
+        const std::lock_guard lock(mutex_);
+        const auto found = settings_.find(file_name);
+        return found == settings_.end() ? std::vector<engine::DevelopSettings>{} : found->second;
+    }
     [[nodiscard]] int finished(const std::wstring& file_name) const { return count(finished_, file_name); }
     [[nodiscard]] int cancelled(const std::wstring& file_name) const { return count(cancelled_, file_name); }
 
@@ -113,6 +119,10 @@ public:
                                         const core::CancellationToken& cancel) const override {
         const std::wstring name = item.path.filename().wstring();
         increment(started_, name);
+        {
+            const std::lock_guard lock(mutex_);
+            settings_[name].push_back(settings);
+        }
         while (true) {
             std::optional<Gate> gate;
             {
@@ -175,6 +185,7 @@ private:
     mutable std::map<std::wstring, int> started_;
     mutable std::map<std::wstring, int> finished_;
     mutable std::map<std::wstring, int> cancelled_;
+    mutable std::map<std::wstring, std::vector<engine::DevelopSettings>> settings_;
 };
 
 // Executor options for tests: Lucent.exe's (four workers: two background threads, one kept for
