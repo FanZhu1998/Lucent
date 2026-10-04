@@ -242,14 +242,14 @@ using detail::sql;
 constexpr std::string_view kBatchColumns =
     "b.id, b.name, b.selection_description, b.destination_json, b.export_settings_json, "
     "b.export_settings_sha256, b.policy_json, b.renderer_version, b.state, b.job_count, b.created_at, "
-    "b.updated_at, b.started_at, b.finished_at";
+    "b.updated_at, b.started_at, b.finished_at, b.reported_at";
 
 constexpr std::string_view kJobColumns =
     "j.id, j.batch_id, j.ordinal, j.item_id, j.subimage, j.revision_id, j.settings_sha256, j.source_sha256, "
     "j.assets_json, j.identity_sha256, j.stage, j.attempts, j.transient_failures, j.deterministic_failures, "
     "j.last_failure_class, j.last_error_code, j.last_error_where, j.last_error_message, j.last_error_native, "
     "j.last_error_at, j.lease_owner, j.lease_expires_at, j.heartbeat_at, j.not_before, j.temp_path, "
-    "j.final_path, j.created_at, j.updated_at";
+    "j.final_path, j.created_at, j.updated_at, j.interruptions";
 
 constexpr std::string_view kEventColumns =
     "e.id, e.job_id, e.batch_id, e.at, e.from_stage, e.to_stage, e.attempt, e.lease_owner, e.failure_class, "
@@ -381,6 +381,7 @@ Expected<BatchRecord> read_batch_row(const Statement& row, const RowDecoder& dec
     batch.updated_at = r.time(11);
     batch.started_at = r.optional_time(12);
     batch.finished_at = r.optional_time(13);
+    batch.reported_at = r.optional_time(14);
     if (r.failed()) {
         return Unexpected(r.take_error());
     }
@@ -423,6 +424,7 @@ Expected<JobRecord> read_job_row(const Statement& row, const RowDecoder& decode)
     job.final_path = r.optional_path(25, "jobs.final_path");
     job.created_at = r.time(26);
     job.updated_at = r.time(27);
+    job.interruptions = r.u32(28, "jobs.interruptions");
     if (r.failed()) {
         return Unexpected(r.take_error());
     }
@@ -636,6 +638,92 @@ Expected<std::vector<BatchRecord>> ReadTransaction::list_batches(std::uint32_t l
         batch.counts = *counts;
     }
     return batches;
+}
+
+namespace {
+
+// Batches selected by `condition` (SQL over the alias b), in `order`, with their counts.
+Expected<std::vector<BatchRecord>> select_batches(Connection& connection, bool newer_schema, std::string_view condition,
+                                                  std::string_view order, std::uint32_t limit, std::string_view where) {
+    Expected<Statement> statement = connection.prepare(
+        sql({"SELECT ", kBatchColumns, " FROM batches b WHERE ", condition, " ORDER BY ", order, " LIMIT ?1"}), where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, limit);
+    const RowDecoder decode(newer_schema, where);
+    Expected<std::vector<BatchRecord>> batches = detail::collect<BatchRecord>(*statement, decode, read_batch_row);
+    if (!batches) {
+        return batches;
+    }
+    statement->reset();
+    for (BatchRecord& batch : *batches) {
+        Expected<BatchCounts> counts = batch_counts(connection, batch.id, decode, where);
+        if (!counts) {
+            return Unexpected(std::move(counts.error()));
+        }
+        batch.counts = *counts;
+    }
+    return batches;
+}
+
+}  // namespace
+
+Expected<std::vector<BatchRecord>> ReadTransaction::list_unfinished_batches(std::uint32_t limit) const {
+    constexpr std::string_view where = "catalog.list_unfinished_batches";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    if (Status s = check_limit(limit, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    return select_batches(*connection_, newer_schema_,
+                          sql({"b.state IN ('draft', 'running', 'paused') OR (b.state = 'cancelled' AND EXISTS "
+                               "(SELECT 1 FROM jobs j WHERE j.batch_id = b.id AND j.stage IN ",
+                               kLeasedStagesSql, "))"}),
+                          "b.id DESC", limit, where);
+}
+
+Expected<std::vector<BatchRecord>> ReadTransaction::list_unreported_batches(std::uint32_t limit) const {
+    constexpr std::string_view where = "catalog.list_unreported_batches";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    if (Status s = check_limit(limit, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    return select_batches(*connection_, newer_schema_, "b.finished_at IS NOT NULL AND b.reported_at IS NULL",
+                          "b.id", limit, where);
+}
+
+Expected<BatchJobFacts> ReadTransaction::batch_job_facts(BatchId id, std::string_view flag_json_path) const {
+    constexpr std::string_view where = "catalog.batch_job_facts";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<Statement> statement = connection_->prepare(
+        "SELECT (SELECT count(*) FROM batches WHERE id = ?1), "
+        "(SELECT count(*) FROM jobs j WHERE j.batch_id = ?1 AND j.stage = 'failed' "
+        " AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.job_id = j.id)), "
+        "(SELECT count(*) FROM jobs j JOIN receipts r ON r.job_id = j.id WHERE j.batch_id = ?1 "
+        " AND j.stage = 'complete' AND json_valid(r.settings_json) "
+        " AND json_type(r.settings_json, ?2) = 'array' AND json_array_length(r.settings_json, ?2) > 0)",
+        where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, id.value).bind_text(2, flag_json_path);
+    Expected<bool> row = statement->step();
+    if (!row) {
+        return Unexpected(std::move(row.error()));
+    }
+    if (!*row || statement->column_int64(0) == 0) {
+        return fail(ErrorCode::NotFound, std::format("no batch with id {}", id.value), std::string(where));
+    }
+    BatchJobFacts facts;
+    facts.failed_retryable = static_cast<std::uint64_t>(statement->column_int64(1));
+    facts.flagged_receipts = static_cast<std::uint64_t>(statement->column_int64(2));
+    return facts;
 }
 
 Expected<std::optional<JobRecord>> ReadTransaction::find_job(JobId id) const {
@@ -1047,6 +1135,7 @@ struct Transition {
     std::optional<Timestamp> not_before;  // Queued: claimable from then
     const JobError* error = nullptr;      // recorded as last error and on the event
     bool count_failure = false;           // increment the counter of error->failure_class
+    bool count_interruption = false;      // increment interruptions instead (with count_failure unset)
 };
 
 // Moves a job from `state.stage` (checked again in the UPDATE) to `transition.to`, keeping the
@@ -1065,6 +1154,7 @@ Status apply_transition(Connection& connection, const JobState& state, const Tra
         "lease_expires_at = CASE WHEN ?3 THEN lease_expires_at ELSE NULL END, "
         "not_before = coalesce(?4, not_before), "
         "transient_failures = transient_failures + ?5, deterministic_failures = deterministic_failures + ?6, "
+        "interruptions = interruptions + ?16, "
         "last_failure_class = CASE WHEN ?7 THEN ?8 ELSE last_failure_class END, "
         "last_error_code = CASE WHEN ?7 THEN ?9 ELSE last_error_code END, "
         "last_error_where = CASE WHEN ?7 THEN ?10 ELSE last_error_where END, "
@@ -1085,7 +1175,8 @@ Status apply_transition(Connection& connection, const JobState& state, const Tra
         .bind_int64(7, transition.error != nullptr ? 1 : 0)
         .bind_int64(13, detail::to_db(now))
         .bind_text(14, to_string(state.stage))
-        .bind_int64(15, state.attempts);
+        .bind_int64(15, state.attempts)
+        .bind_int64(16, transition.count_interruption ? 1 : 0);
     if (transition.not_before) {
         update->bind_int64(4, detail::to_db(*transition.not_before));
     } else {
@@ -1545,9 +1636,21 @@ Expected<BatchState> WriteTransaction::resume_batch(BatchId id, Timestamp now) {
 }
 
 Expected<BatchState> WriteTransaction::cancel_batch(BatchId id, Timestamp now) {
+    return cancel_batch_impl(id, now, nullptr);
+}
+
+Expected<BatchState> WriteTransaction::cancel_batch_with_reason(BatchId id, Timestamp now, const Error& reason) {
+    return cancel_batch_impl(id, now, &reason);
+}
+
+Expected<BatchState> WriteTransaction::cancel_batch_impl(BatchId id, Timestamp now, const Error* reason) {
     constexpr std::string_view where = "catalog.cancel_batch";
     if (Status s = check_active(connection_, where); !s) {
         return Unexpected(std::move(s.error()));
+    }
+    std::optional<JobError> error;
+    if (reason != nullptr) {
+        error = job_error(*reason, std::nullopt, now);
     }
     Connection& connection = *connection_;
     return in_savepoint(connection, where, [&]() -> Expected<BatchState> {
@@ -1557,25 +1660,45 @@ Expected<BatchState> WriteTransaction::cancel_batch(BatchId id, Timestamp now) {
         if (!state) {
             return state;
         }
-        // Queued jobs: one event each, then the stage.
+        // Queued jobs: one event each (with the reason, when given), then the stage.
         Expected<Statement> events = connection.prepare(
-            "INSERT INTO job_events (job_id, batch_id, at, from_stage, to_stage, attempt) "
-            "SELECT id, batch_id, ?2, 'queued', 'cancelled', attempts FROM jobs "
+            "INSERT INTO job_events (job_id, batch_id, at, from_stage, to_stage, attempt, failure_class, error_code, "
+            "error_where, error_message, error_native) "
+            "SELECT id, batch_id, ?2, 'queued', 'cancelled', attempts, ?3, ?4, ?5, ?6, ?7 FROM jobs "
             "WHERE batch_id = ?1 AND stage = 'queued' ORDER BY id",
             where);
         if (!events) {
             return Unexpected(std::move(events.error()));
         }
         events->bind_int64(1, id.value).bind_int64(2, detail::to_db(now));
+        bind_error(*events, 3, error ? &*error : nullptr);
         if (Status s = events->run(); !s) {
             return Unexpected(std::move(s.error()));
         }
         Expected<Statement> cancel = connection.prepare(
-            "UPDATE jobs SET stage = 'cancelled', updated_at = ?2 WHERE batch_id = ?1 AND stage = 'queued'", where);
+            "UPDATE jobs SET stage = 'cancelled', updated_at = ?2, "
+            "last_failure_class = CASE WHEN ?3 THEN NULL ELSE last_failure_class END, "
+            "last_error_code = CASE WHEN ?3 THEN ?4 ELSE last_error_code END, "
+            "last_error_where = CASE WHEN ?3 THEN ?5 ELSE last_error_where END, "
+            "last_error_message = CASE WHEN ?3 THEN ?6 ELSE last_error_message END, "
+            "last_error_native = CASE WHEN ?3 THEN ?7 ELSE last_error_native END, "
+            "last_error_at = CASE WHEN ?3 THEN ?2 ELSE last_error_at END "
+            "WHERE batch_id = ?1 AND stage = 'queued'",
+            where);
         if (!cancel) {
             return Unexpected(std::move(cancel.error()));
         }
-        cancel->bind_int64(1, id.value).bind_int64(2, detail::to_db(now));
+        cancel->bind_int64(1, id.value).bind_int64(2, detail::to_db(now)).bind_int64(3, error ? 1 : 0);
+        if (error) {
+            cancel->bind_int64(4, static_cast<std::int64_t>(error->code))
+                .bind_text(5, error->where)
+                .bind_text(6, error->message)
+                .bind_int64(7, error->native_code);
+        } else {
+            for (int column = 4; column <= 7; ++column) {
+                cancel->bind_null(column);
+            }
+        }
         if (Status s = cancel->run(); !s) {
             return Unexpected(std::move(s.error()));
         }
@@ -1618,7 +1741,8 @@ Expected<std::uint64_t> WriteTransaction::retry_failed_jobs(BatchId id, Timestam
         Expected<Statement> events = connection.prepare(
             "INSERT INTO job_events (job_id, batch_id, at, from_stage, to_stage, attempt) "
             "SELECT id, batch_id, ?2, 'failed', 'queued', attempts FROM jobs "
-            "WHERE batch_id = ?1 AND stage = 'failed' ORDER BY id",
+            "WHERE batch_id = ?1 AND stage = 'failed' AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.job_id = jobs.id) "
+            "ORDER BY id",
             where);
         if (!events) {
             return Unexpected(std::move(events.error()));
@@ -1628,7 +1752,8 @@ Expected<std::uint64_t> WriteTransaction::retry_failed_jobs(BatchId id, Timestam
             return Unexpected(std::move(s.error()));
         }
         Expected<Statement> requeue = connection.prepare(
-            "UPDATE jobs SET stage = 'queued', not_before = ?2, updated_at = ?2 WHERE batch_id = ?1 AND stage = 'failed'",
+            "UPDATE jobs SET stage = 'queued', not_before = ?2, updated_at = ?2 WHERE batch_id = ?1 AND stage = 'failed' "
+            "AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.job_id = jobs.id)",
             where);
         if (!requeue) {
             return Unexpected(std::move(requeue.error()));
@@ -1640,7 +1765,9 @@ Expected<std::uint64_t> WriteTransaction::retry_failed_jobs(BatchId id, Timestam
         const auto requeued = static_cast<std::uint64_t>(connection.changes());
         if (requeued > 0 && *state == BatchState::Completed) {
             Expected<Statement> reopen = connection.prepare(
-                "UPDATE batches SET state = 'running', finished_at = NULL, updated_at = ?2 WHERE id = ?1", where);
+                "UPDATE batches SET state = 'running', finished_at = NULL, reported_at = NULL, updated_at = ?2 "
+                "WHERE id = ?1",
+                where);
             if (!reopen) {
                 return Unexpected(std::move(reopen.error()));
             }
@@ -1651,6 +1778,92 @@ Expected<std::uint64_t> WriteTransaction::retry_failed_jobs(BatchId id, Timestam
         }
         return requeued;
     });
+}
+
+Status WriteTransaction::set_batch_destination(BatchId id, std::string_view destination_json, Timestamp now) {
+    constexpr std::string_view where = "catalog.set_batch_destination";
+    if (Status s = check_active(connection_, where); !s) {
+        return s;
+    }
+    if (Status s = detail::check_text(destination_json, "destination_json", where); !s) {
+        return s;
+    }
+    if (Status s = check_size(destination_json, kMaxBatchJsonBytes, "destination_json", where); !s) {
+        return s;
+    }
+    Connection& connection = *connection_;
+    return in_savepoint(connection, where, [&]() -> Status {
+        Expected<Statement> select = connection.prepare("SELECT state FROM batches WHERE id = ?1", where);
+        if (!select) {
+            return Unexpected(std::move(select.error()));
+        }
+        select->bind_int64(1, id.value);
+        Expected<bool> row = select->step();
+        if (!row) {
+            return Unexpected(std::move(row.error()));
+        }
+        if (!*row) {
+            return fail(ErrorCode::NotFound, std::format("no batch with id {}", id.value), std::string(where));
+        }
+        const std::optional<BatchState> state = detail::parse_batch_state(select->column_text(0));
+        select->reset();
+        if (!state || *state == BatchState::Completed || *state == BatchState::Cancelled) {
+            return fail(ErrorCode::InvalidArgument,
+                        std::format("batch {} is finished or cancelled: its destination cannot change", id.value),
+                        std::string(kBatchTransition));
+        }
+        Expected<Statement> update =
+            connection.prepare("UPDATE batches SET destination_json = ?2, updated_at = ?3 WHERE id = ?1", where);
+        if (!update) {
+            return Unexpected(std::move(update.error()));
+        }
+        update->bind_int64(1, id.value).bind_text(2, destination_json).bind_int64(3, detail::to_db(now));
+        if (Status s = update->run(); !s) {
+            Error error = std::move(s.error());
+            if (error.code == ErrorCode::InvalidArgument) {
+                error.message = "destination rejected (it must be valid JSON): " + error.message;
+            }
+            return Unexpected(std::move(error));
+        }
+        return ok();
+    });
+}
+
+Status WriteTransaction::mark_batch_reported(BatchId id, Timestamp now) {
+    constexpr std::string_view where = "catalog.mark_batch_reported";
+    if (Status s = check_active(connection_, where); !s) {
+        return s;
+    }
+    Connection& connection = *connection_;
+    Expected<Statement> select =
+        connection.prepare("SELECT finished_at IS NOT NULL, reported_at IS NOT NULL FROM batches WHERE id = ?1", where);
+    if (!select) {
+        return Unexpected(std::move(select.error()));
+    }
+    select->bind_int64(1, id.value);
+    Expected<bool> row = select->step();
+    if (!row) {
+        return Unexpected(std::move(row.error()));
+    }
+    if (!*row) {
+        return fail(ErrorCode::NotFound, std::format("no batch with id {}", id.value), std::string(where));
+    }
+    const bool finished = select->column_int64(0) != 0;
+    const bool reported = select->column_int64(1) != 0;
+    select->reset();
+    if (reported) {
+        return ok();
+    }
+    if (!finished) {
+        return fail(ErrorCode::InvalidArgument, std::format("batch {} has not finished", id.value),
+                    std::string(kBatchTransition));
+    }
+    Expected<Statement> update = connection.prepare("UPDATE batches SET reported_at = ?2 WHERE id = ?1", where);
+    if (!update) {
+        return Unexpected(std::move(update.error()));
+    }
+    update->bind_int64(1, id.value).bind_int64(2, detail::to_db(now));
+    return update->run();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1953,7 +2166,9 @@ Expected<JobStage> WriteTransaction::record_failure(const JobLease& lease, const
         Transition transition;
         transition.error = &error;
         transition.count_failure = true;
-        if (!failure.retry_at) {
+        if (failure.skip) {
+            transition.to = JobStage::Skipped;
+        } else if (!failure.retry_at) {
             transition.to = JobStage::Failed;
         } else if (state->batch_state == BatchState::Cancelled) {
             transition.to = JobStage::Cancelled;
@@ -2020,10 +2235,15 @@ Status WriteTransaction::cancel_job(const JobLease& lease, Timestamp now) {
     });
 }
 
-Status WriteTransaction::skip_job(JobId job, const Error& reason, Timestamp now) {
+Status WriteTransaction::skip_job(JobId job, const Error& reason, Timestamp now,
+                                  const std::optional<std::filesystem::path>& existing_output) {
     constexpr std::string_view where = "catalog.skip_job";
     if (Status s = check_active(connection_, where); !s) {
         return s;
+    }
+    Expected<std::optional<std::string>> output_text = optional_path_text(existing_output, where);
+    if (!output_text) {
+        return Unexpected(std::move(output_text.error()));
     }
     Connection& connection = *connection_;
     return in_savepoint(connection, where, [&]() -> Status {
@@ -2038,7 +2258,18 @@ Status WriteTransaction::skip_job(JobId job, const Error& reason, Timestamp now)
         Transition transition;
         transition.to = JobStage::Skipped;
         transition.error = &error;
-        return apply_transition(connection, *state, transition, now, where);
+        if (Status s = apply_transition(connection, *state, transition, now, where); !s) {
+            return s;
+        }
+        if (!*output_text) {
+            return ok();
+        }
+        Expected<Statement> update = connection.prepare("UPDATE jobs SET final_path = ?2 WHERE id = ?1", where);
+        if (!update) {
+            return Unexpected(std::move(update.error()));
+        }
+        update->bind_int64(1, job.value).bind_text(2, **output_text);
+        return update->run();
     });
 }
 
@@ -2070,7 +2301,8 @@ Expected<JobStage> WriteTransaction::recover_job(const JobLease& stale, const Jo
         switch (recovery.action) {
             case RecoveryAction::Requeue:
                 transition.error = &error;
-                transition.count_failure = true;
+                transition.count_failure = !recovery.interruption;
+                transition.count_interruption = recovery.interruption;
                 if (state->batch_state == BatchState::Cancelled) {
                     transition.to = JobStage::Cancelled;
                 } else {
@@ -2080,7 +2312,8 @@ Expected<JobStage> WriteTransaction::recover_job(const JobLease& stale, const Jo
                 break;
             case RecoveryAction::Fail:
                 transition.error = &error;
-                transition.count_failure = true;
+                transition.count_failure = !recovery.interruption;
+                transition.count_interruption = recovery.interruption;
                 transition.to = JobStage::Failed;
                 break;
             case RecoveryAction::Complete: {

@@ -80,7 +80,7 @@ TEST(CatalogSchema, CreatesANewCatalogAtTheCurrentSchema) {
         EXPECT_EQ(schema.found_version, 0);
         EXPECT_EQ(schema.version, kSchemaVersion);
         EXPECT_EQ(schema.supported_version, kSchemaVersion);
-        EXPECT_EQ(schema.migrations_applied, (std::vector<std::int32_t>{1, 2, 3}));
+        EXPECT_EQ(schema.migrations_applied, (std::vector<std::int32_t>{1, 2, 3, 4}));
         EXPECT_FALSE(schema.pre_migration_backup.has_value());  // nothing to back up
         EXPECT_EQ(schema.created_by, "0.1.0-test");
         EXPECT_EQ(schema.written_by, "0.1.0-test");

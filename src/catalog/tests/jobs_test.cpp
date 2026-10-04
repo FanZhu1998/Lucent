@@ -1,4 +1,4 @@
-// The durable batch journal (schema v3): batch creation, leases and their exclusivity under
+// The durable batch journal (schema v3 and v4): batch creation, leases and their exclusivity under
 // concurrency, expired-lease recovery, stage-transition validation, the publication journal,
 // receipts (idempotent; no Complete without one), failures and retry inputs, pause / resume /
 // cancel, reconciliation helpers and the append-only tables.
@@ -1114,6 +1114,272 @@ TEST_F(BatchJournal, AnUnknownStageWrittenByANewerLucentIsReported) {
         catalog_->query([&](ReadTransaction& tx) { return tx.find_batch(created->id); });
     ASSERT_FALSE(listed);
     EXPECT_EQ(listed.error().code, ErrorCode::Corrupt);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Interruptions, lost outputs, report emission and listings (schema v4)
+// ---------------------------------------------------------------------------------------------
+
+TEST_F(BatchJournal, InterruptionsAreCountedApartFromFailures) {
+    LUCENT_ASSERT_OK(create(2, 1));
+    const ClaimedJob first = must_claim("session-a/slot0/1", kT0);
+    JobRecovery recovery;
+    recovery.now = at(kT0 + 10);
+    recovery.owner_gone = true;
+    recovery.interruption = true;
+    recovery.error = Error{ErrorCode::Timeout, "Lucent stopped", "app.batch.interrupted", 0};
+    Expected<JobStage> requeued =
+        catalog_->transact([&](WriteTransaction& tx) { return tx.recover_job(first.lease, recovery); });
+    LUCENT_ASSERT_OK(requeued);
+    EXPECT_EQ(*requeued, JobStage::Queued);
+    JobRecord after = job(first.job.id);
+    EXPECT_EQ(after.interruptions, 1u);
+    EXPECT_EQ(after.transient_failures, 0u) << "an interruption keeps the retry budget of genuine failures";
+    ASSERT_TRUE(after.last_error.has_value());
+    EXPECT_EQ(after.last_error->where, "app.batch.interrupted");
+
+    // Failing a job for repeated interruptions counts as one more interruption, not a failure.
+    const ClaimedJob second = must_claim("session-b/slot0/1", kT0 + 20);
+    recovery.action = RecoveryAction::Fail;
+    recovery.now = at(kT0 + 30);
+    Expected<JobStage> failed =
+        catalog_->transact([&](WriteTransaction& tx) { return tx.recover_job(second.lease, recovery); });
+    LUCENT_ASSERT_OK(failed);
+    EXPECT_EQ(*failed, JobStage::Failed);
+    after = job(first.job.id);
+    EXPECT_EQ(after.interruptions, 2u);
+    EXPECT_EQ(after.transient_failures + after.deterministic_failures, 0u);
+    EXPECT_EQ(after.attempts, 2u);
+}
+
+TEST_F(BatchJournal, AFailedJobWithAReceiptIsNotRetriedInPlace) {
+    Expected<CreatedBatch> created = create(2, 2);
+    LUCENT_ASSERT_OK(created);
+    // Job 1 published and committed its receipt; recovery then found its output gone.
+    const ClaimedJob lost = must_claim("worker-1", kT0, 10s);
+    publish(lost.lease, kT0 + 1, "lost");
+    if (HasFatalFailure()) {
+        return;
+    }
+    LUCENT_ASSERT_OK(record_receipt(lost.lease, kT0 + 10, receipt_for("lost")));
+    JobRecovery recovery;
+    recovery.action = RecoveryAction::Fail;
+    recovery.failure_class = FailureClass::Deterministic;
+    recovery.owner_gone = true;
+    recovery.now = at(kT0 + 20);
+    recovery.error = Error{ErrorCode::NotFound, "the published output is missing", "app.batch.output_lost", 0};
+    LUCENT_ASSERT_OK(catalog_->transact([&](WriteTransaction& tx) { return tx.recover_job(lost.lease, recovery); }));
+    // Job 2 failed without publishing anything.
+    const ClaimedJob plain = must_claim("worker-1", kT0 + 30);
+    JobFailure failure;
+    failure.failure_class = FailureClass::Transient;
+    failure.error = Error{ErrorCode::IoError, "read error", "export.write", 0};
+    LUCENT_ASSERT_OK(
+        catalog_->transact([&](WriteTransaction& tx) { return tx.record_failure(plain.lease, failure, at(kT0 + 31)); }));
+
+    Expected<BatchJobFacts> facts =
+        catalog_->query([&](ReadTransaction& tx) { return tx.batch_job_facts(created->id, "$.review"); });
+    LUCENT_ASSERT_OK(facts);
+    EXPECT_EQ(facts->failed_retryable, 1u);
+    EXPECT_EQ(batch(created->id).counts.failed, 2u);
+
+    Expected<std::uint64_t> retried =
+        catalog_->transact([&](WriteTransaction& tx) { return tx.retry_failed_jobs(created->id, at(kT0 + 40)); });
+    LUCENT_ASSERT_OK(retried);
+    EXPECT_EQ(*retried, 1u);
+    EXPECT_EQ(job(lost.job.id).stage, JobStage::Failed) << "its receipt is immutable: it cannot publish again";
+    EXPECT_EQ(job(plain.job.id).stage, JobStage::Queued);
+    // Retrying again changes nothing for the job with the receipt.
+    Expected<std::uint64_t> again =
+        catalog_->transact([&](WriteTransaction& tx) { return tx.retry_failed_jobs(created->id, at(kT0 + 41)); });
+    LUCENT_ASSERT_OK(again);
+    EXPECT_EQ(*again, 0u);
+    EXPECT_EQ(must_claim("worker-1", kT0 + 50).job.id, plain.job.id);
+    Expected<std::optional<ClaimedJob>> none = claim("worker-2", kT0 + 51);
+    LUCENT_ASSERT_OK(none);
+    EXPECT_FALSE(none->has_value());
+}
+
+TEST_F(BatchJournal, AFailureCanSkipAJobAndASkipNamesTheExistingOutput) {
+    Expected<CreatedBatch> created = create(2, 2);
+    LUCENT_ASSERT_OK(created);
+    const ClaimedJob claimed = must_claim("worker-1", kT0);
+    JobFailure unsupported;
+    unsupported.failure_class = FailureClass::Deterministic;
+    unsupported.error = Error{ErrorCode::Unsupported, "found unsupported while decoding", "raw.decode", 0};
+    unsupported.skip = true;
+    Expected<JobStage> stage = catalog_->transact(
+        [&](WriteTransaction& tx) { return tx.record_failure(claimed.lease, unsupported, at(kT0 + 1)); });
+    LUCENT_ASSERT_OK(stage);
+    EXPECT_EQ(*stage, JobStage::Skipped);
+    const JobRecord skipped = job(claimed.job.id);
+    EXPECT_EQ(skipped.deterministic_failures, 1u);
+    ASSERT_TRUE(skipped.last_error.has_value());
+    EXPECT_EQ(skipped.last_error->code, ErrorCode::Unsupported);
+
+    const std::filesystem::path existing = dir_ / L"exports" / L"IMG_0003_Lucent_0.jpg";
+    LUCENT_ASSERT_OK(catalog_->write([&](WriteTransaction& tx) {
+        return tx.skip_job(created->jobs[1], Error{ErrorCode::AlreadyExists, "output exists", "app.batch.existing"},
+                           at(kT0 + 2), existing);
+    }));
+    const JobRecord existing_job = job(created->jobs[1]);
+    EXPECT_EQ(existing_job.stage, JobStage::Skipped);
+    EXPECT_EQ(existing_job.final_path, existing);
+    const BatchRecord record = batch(created->id);
+    EXPECT_EQ(record.counts.skipped, 2u);
+    EXPECT_EQ(record.counts.failed, 0u);
+    EXPECT_EQ(record.state, BatchState::Completed);
+}
+
+TEST_F(BatchJournal, ACancellationCanRecordWhy) {
+    Expected<CreatedBatch> created = create(2, 2);
+    LUCENT_ASSERT_OK(created);
+    const Error reason{ErrorCode::DiskFull, "the destination is full", "app.batch.destination", 112};
+    Expected<BatchState> state = catalog_->transact(
+        [&](WriteTransaction& tx) { return tx.cancel_batch_with_reason(created->id, at(kT0 + 5), reason); });
+    LUCENT_ASSERT_OK(state);
+    EXPECT_EQ(*state, BatchState::Cancelled);
+    for (const JobId id : created->jobs) {
+        const JobRecord cancelled = job(id);
+        EXPECT_EQ(cancelled.stage, JobStage::Cancelled);
+        ASSERT_TRUE(cancelled.last_error.has_value());
+        EXPECT_EQ(cancelled.last_error->code, ErrorCode::DiskFull);
+        EXPECT_EQ(cancelled.last_error->native_code, 112);
+        EXPECT_FALSE(cancelled.last_error->failure_class.has_value());
+        const std::vector<JobEvent> history = events(id);
+        ASSERT_FALSE(history.empty());
+        ASSERT_TRUE(history.back().error.has_value());
+        EXPECT_EQ(history.back().error->where, "app.batch.destination");
+    }
+    // A plain cancellation records no error.
+    Expected<CreatedBatch> other = create(4, 1);
+    LUCENT_ASSERT_OK(other);
+    LUCENT_ASSERT_OK(catalog_->transact([&](WriteTransaction& tx) { return tx.cancel_batch(other->id, at(kT0 + 6)); }));
+    EXPECT_FALSE(job(other->jobs[0]).last_error.has_value());
+}
+
+TEST_F(BatchJournal, ReportEmissionIsRecordedAndReopenedByRetry) {
+    Expected<CreatedBatch> created = create(2, 1);
+    LUCENT_ASSERT_OK(created);
+    const auto unreported = [&] {
+        Expected<std::vector<BatchRecord>> list =
+            catalog_->query([&](ReadTransaction& tx) { return tx.list_unreported_batches(100); });
+        EXPECT_TRUE(list) << describe(list);
+        std::vector<std::int64_t> ids;
+        if (list) {
+            for (const BatchRecord& record : *list) {
+                ids.push_back(record.id.value);
+            }
+        }
+        return ids;
+    };
+    EXPECT_TRUE(unreported().empty());
+    const Status early =
+        catalog_->write([&](WriteTransaction& tx) { return tx.mark_batch_reported(created->id, at(kT0)); });
+    ASSERT_FALSE(early);
+    EXPECT_EQ(early.error().where, "catalog.batch.invalid_transition");
+
+    const ClaimedJob claimed = must_claim("worker-1", kT0);
+    JobFailure failure;
+    failure.failure_class = FailureClass::Deterministic;
+    failure.error = Error{ErrorCode::Corrupt, "bad file", "raw", 0};
+    LUCENT_ASSERT_OK(
+        catalog_->transact([&](WriteTransaction& tx) { return tx.record_failure(claimed.lease, failure, at(kT0 + 1)); }));
+    EXPECT_EQ(unreported(), (std::vector<std::int64_t>{created->id.value}));
+    EXPECT_FALSE(batch(created->id).reported_at.has_value());
+    LUCENT_ASSERT_OK(
+        catalog_->write([&](WriteTransaction& tx) { return tx.mark_batch_reported(created->id, at(kT0 + 2)); }));
+    LUCENT_ASSERT_OK(
+        catalog_->write([&](WriteTransaction& tx) { return tx.mark_batch_reported(created->id, at(kT0 + 3)); }));
+    EXPECT_EQ(batch(created->id).reported_at, at(kT0 + 2));
+    EXPECT_TRUE(unreported().empty());
+
+    LUCENT_ASSERT_OK(
+        catalog_->transact([&](WriteTransaction& tx) { return tx.retry_failed_jobs(created->id, at(kT0 + 4)); }));
+    const BatchRecord reopened = batch(created->id);
+    EXPECT_FALSE(reopened.finished_at.has_value());
+    EXPECT_FALSE(reopened.reported_at.has_value()) << "the next completion writes a new report";
+}
+
+TEST_F(BatchJournal, ListsUnfinishedBatchesWhateverTheirAge) {
+    Expected<CreatedBatch> paused = create(2, 2);
+    LUCENT_ASSERT_OK(paused);
+    LUCENT_ASSERT_OK(catalog_->transact([&](WriteTransaction& tx) { return tx.pause_batch(paused->id, at(kT0)); }));
+    Expected<CreatedBatch> stopping = create(4, 2);
+    LUCENT_ASSERT_OK(stopping);
+    const ClaimedJob leased = must_claim("worker-1", kT0 + 1);
+    EXPECT_EQ(leased.job.batch, stopping->id);
+    LUCENT_ASSERT_OK(
+        catalog_->transact([&](WriteTransaction& tx) { return tx.cancel_batch(stopping->id, at(kT0 + 2)); }));
+    for (std::int64_t i = 0; i < 5; ++i) {  // newer batches, all finished
+        Expected<CreatedBatch> done = create(6 + i, 1);
+        LUCENT_ASSERT_OK(done);
+        LUCENT_ASSERT_OK(
+            catalog_->transact([&](WriteTransaction& tx) { return tx.cancel_batch(done->id, at(kT0 + 3)); }));
+    }
+    Expected<CreatedBatch> draft = create(11, 1, false);
+    LUCENT_ASSERT_OK(draft);
+
+    Expected<std::vector<BatchRecord>> newest = catalog_->query([&](ReadTransaction& tx) { return tx.list_batches(3); });
+    LUCENT_ASSERT_OK(newest);
+    ASSERT_EQ(newest->size(), 3u);
+    EXPECT_EQ(newest->front().id, draft->id);
+    Expected<std::vector<BatchRecord>> unfinished =
+        catalog_->query([&](ReadTransaction& tx) { return tx.list_unfinished_batches(100); });
+    LUCENT_ASSERT_OK(unfinished);
+    std::vector<BatchId> ids;
+    for (const BatchRecord& record : *unfinished) {
+        ids.push_back(record.id);
+    }
+    EXPECT_EQ(ids, (std::vector<BatchId>{draft->id, stopping->id, paused->id}));
+    EXPECT_EQ(unfinished->back().counts.queued, 2u);
+}
+
+TEST_F(BatchJournal, TheDestinationOfAnUnfinishedBatchCanBeReplaced) {
+    Expected<CreatedBatch> created = create(2, 1);
+    LUCENT_ASSERT_OK(created);
+    const std::string replaced = R"({"folder":"E:\\Exports","object":"2"})";
+    LUCENT_ASSERT_OK(catalog_->write(
+        [&](WriteTransaction& tx) { return tx.set_batch_destination(created->id, replaced, at(kT0 + 1)); }));
+    EXPECT_EQ(batch(created->id).destination_json, replaced);
+    const Status invalid = catalog_->write(
+        [&](WriteTransaction& tx) { return tx.set_batch_destination(created->id, "{not json", at(kT0 + 2)); });
+    EXPECT_FALSE(invalid);
+    EXPECT_EQ(batch(created->id).destination_json, replaced);
+    LUCENT_ASSERT_OK(
+        catalog_->transact([&](WriteTransaction& tx) { return tx.cancel_batch(created->id, at(kT0 + 3)); }));
+    const Status finished = catalog_->write(
+        [&](WriteTransaction& tx) { return tx.set_batch_destination(created->id, "{}", at(kT0 + 4)); });
+    ASSERT_FALSE(finished);
+    EXPECT_EQ(finished.error().where, "catalog.batch.invalid_transition");
+}
+
+TEST_F(BatchJournal, FactsCountReceiptsFlaggedForReview) {
+    Expected<CreatedBatch> created = create(2, 3);
+    LUCENT_ASSERT_OK(created);
+    const std::vector<std::string> details{R"({"review":["renamed"]})", R"({"review":[]})", R"({"other":1})"};
+    for (std::size_t i = 0; i < details.size(); ++i) {
+        const std::int64_t t = kT0 + 100 * static_cast<std::int64_t>(i);
+        const std::string name = "out" + std::to_string(i);
+        const ClaimedJob claimed = must_claim("worker-1", t, 10s);
+        publish(claimed.lease, t + 1, name);
+        if (HasFatalFailure()) {
+            return;
+        }
+        NewReceipt receipt = receipt_for(name);
+        receipt.settings_json = details[i];
+        LUCENT_ASSERT_OK(record_receipt(claimed.lease, t + 10, receipt));
+        LUCENT_ASSERT_OK(advance(claimed.lease, JobStage::Publishing, t + 11));
+    }
+    Expected<BatchJobFacts> facts =
+        catalog_->query([&](ReadTransaction& tx) { return tx.batch_job_facts(created->id, "$.review"); });
+    LUCENT_ASSERT_OK(facts);
+    EXPECT_EQ(facts->flagged_receipts, 1u);
+    EXPECT_EQ(facts->failed_retryable, 0u);
+    Expected<BatchJobFacts> unknown =
+        catalog_->query([&](ReadTransaction& tx) { return tx.batch_job_facts(BatchId{999}, "$.review"); });
+    ASSERT_FALSE(unknown);
+    EXPECT_EQ(unknown.error().code, ErrorCode::NotFound);
 }
 
 }  // namespace

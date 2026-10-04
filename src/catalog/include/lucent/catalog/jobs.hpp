@@ -236,8 +236,21 @@ struct BatchRecord {
     Timestamp updated_at{};
     std::optional<Timestamp> started_at;   // first start_batch() (or creation with start)
     std::optional<Timestamp> finished_at;  // Completed, or Cancelled with no leased job left
+    // When its completion was handled (report files written, or none wanted): mark_batch_reported.
+    // std::nullopt while not finished, or finished but not handled yet (schema v4).
+    std::optional<Timestamp> reported_at;
     std::uint64_t job_count = 0;
     BatchCounts counts;
+};
+
+// Facts about a batch's jobs beyond their stages (ReadTransaction::batch_job_facts).
+struct BatchJobFacts {
+    // Failed jobs that retry_failed_jobs() requeues: those without a receipt (a job whose receipt
+    // committed but whose output was lost cannot publish a second one: export the photo again).
+    std::uint64_t failed_retryable = 0;
+    // Receipts of Complete jobs whose settings_json holds a non-empty JSON array at the path the
+    // caller named (the application's review notes).
+    std::uint64_t flagged_receipts = 0;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -280,12 +293,17 @@ struct JobRecord {
     std::uint32_t attempts = 0;  // claims so far
     std::uint32_t transient_failures = 0;
     std::uint32_t deterministic_failures = 0;
+    // Attempts that ended without an outcome (recover_job with JobRecovery::interruption): not
+    // counted in transient_failures (schema v4).
+    std::uint32_t interruptions = 0;
     std::optional<JobError> last_error;
     std::optional<JobLease> lease;  // set exactly in the leased stages
     std::optional<Timestamp> heartbeat_at;
     Timestamp not_before{};  // a queued job is not claimed before this time (retry back-off)
     std::optional<std::filesystem::path> temp_path;   // latest temporary output (journal)
-    std::optional<std::filesystem::path> final_path;  // latest reserved / published name (journal)
+    // Latest reserved / published name (journal); for a job skipped because its output already
+    // exists, that output (skip_job).
+    std::optional<std::filesystem::path> final_path;
     Timestamp created_at{};
     Timestamp updated_at{};
 };
@@ -326,6 +344,10 @@ struct JobFailure {
     // coordinator's policy decided that it must not be retried). The policy reads the counts in
     // JobRecord (attempts, transient_failures, deterministic_failures).
     std::optional<Timestamp> retry_at;
+    // The job is Skipped instead of Failed, `error` being the reason (for example a photograph
+    // found unsupported while decoding: it was not exported, but that is no failure of the batch
+    // and retrying cannot help). Counted as a failure of its class; retry_at is ignored.
+    bool skip = false;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -423,6 +445,10 @@ struct JobRecovery {
     // The owner is known to be gone (its worker process exited, or a previous session): the lease
     // may be recovered before it expires. Otherwise an unexpired lease is refused.
     bool owner_gone = false;
+    // Requeue / Fail: the attempt was interrupted (its coordinator stopped, or the lease expired)
+    // rather than failed: JobRecord::interruptions is incremented instead of the counter of
+    // failure_class, so the retry budget of genuine failures is kept.
+    bool interruption = false;
 };
 
 // The latest journal entry of an attempt whose publication neither committed a receipt nor was

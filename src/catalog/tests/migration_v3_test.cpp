@@ -1,4 +1,4 @@
-// Schema v3 (W7): migrating a populated W6 (v2) catalog to the batch journal, and the
+// Schema v3 (W7): migrating a populated W6 (v2) catalog to the batch journal (and on to v4), and the
 // forward-compatibility contract seen from a schema-v2 build (min_reader_version stays 2: it opens
 // a v3 catalog read-only and never writes it).
 
@@ -271,6 +271,76 @@ TEST(CatalogSchemaV3, AV2BuildReadsAV3CatalogReadOnlyAndNeverWritesIt) {
     old->reset();
 
     EXPECT_EQ(file_digest(path), before);  // never written, never migrated
+}
+
+// ---------------------------------------------------------------------------------------------
+// Schema v4 (W7): interruption counts and report emission, added to a populated v3 journal.
+// ---------------------------------------------------------------------------------------------
+
+TEST(CatalogSchemaV4, KeepsAV3JournalAndCountsItsFinishedBatchesAsReported) {
+    TempDir dir;
+    const std::filesystem::path path = dir / L"lucent.catalog";
+    make_populated_v2_catalog(path, dir / L"photos");
+    if (HasFatalFailure()) {
+        return;
+    }
+    BatchId finished;
+    BatchId running;
+    {
+        // A schema-v3 build: two batches, one of them cancelled (finished).
+        Expected<std::unique_ptr<Catalog>> v3 =
+            detail::CatalogAccess::open(options_for(path), detail::builtin_migrations().first(3));
+        LUCENT_ASSERT_OK(v3);
+        ASSERT_EQ((*v3)->schema().version, 3);
+        std::vector<NewJob> jobs(2);
+        jobs[0].item = ItemId{1};
+        jobs[0].settings_sha256 = digest(77);
+        jobs[1].item = ItemId{2};
+        jobs[1].settings_sha256 = digest(77);
+        NewBatch spec;
+        spec.name = "v3 batch";
+        spec.destination_json = "{}";
+        spec.export_settings_json = R"({"format":"jpeg"})";
+        spec.renderer_version = "engine";
+        spec.created_at = at(1'800'000'000'000);
+        spec.start = true;
+        for (BatchId* id : {&finished, &running}) {
+            Expected<CreatedBatch> created =
+                (*v3)->transact([&](WriteTransaction& tx) { return tx.create_batch(spec, jobs); });
+            LUCENT_ASSERT_OK(created);
+            *id = created->id;
+        }
+        LUCENT_ASSERT_OK((*v3)->transact(
+            [&](WriteTransaction& tx) { return tx.cancel_batch(finished, at(1'800'000'000'500)); }));
+    }
+    std::unique_ptr<Catalog> catalog = open_or_fail(path);
+    ASSERT_NE(catalog, nullptr);
+    EXPECT_EQ(catalog->schema().found_version, 3);
+    EXPECT_EQ(catalog->schema().migrations_applied, (std::vector<std::int32_t>{4}));
+    Expected<std::optional<BatchRecord>> done = catalog->query([&](ReadTransaction& tx) { return tx.find_batch(finished); });
+    LUCENT_ASSERT_OK(done);
+    ASSERT_TRUE(done->has_value());
+    EXPECT_EQ((*done)->reported_at, (*done)->finished_at) << "batches finished before v4 are not reported again";
+    Expected<std::optional<BatchRecord>> open = catalog->query([&](ReadTransaction& tx) { return tx.find_batch(running); });
+    LUCENT_ASSERT_OK(open);
+    ASSERT_TRUE(open->has_value());
+    EXPECT_FALSE((*open)->reported_at.has_value());
+    Expected<std::vector<BatchRecord>> unreported =
+        catalog->query([](ReadTransaction& tx) { return tx.list_unreported_batches(10); });
+    LUCENT_ASSERT_OK(unreported);
+    EXPECT_TRUE(unreported->empty());
+    JobQuery query;
+    query.batch = running;
+    Expected<std::vector<JobRecord>> jobs = catalog->query([&](ReadTransaction& tx) { return tx.list_jobs(query); });
+    LUCENT_ASSERT_OK(jobs);
+    ASSERT_EQ(jobs->size(), 2u);
+    for (const JobRecord& job : *jobs) {
+        EXPECT_EQ(job.interruptions, 0u);
+    }
+    std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
+    ASSERT_NE(raw, nullptr);
+    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "2");
+    EXPECT_EQ(query_text(*raw, "PRAGMA integrity_check"), "ok");
 }
 
 }  // namespace

@@ -404,11 +404,36 @@ Status migrate_to_v3(Connection& connection) {
     return connection.exec(kSchemaV3, kWhereMigrate);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Version 4 (W7, closing review): two columns the coordinator's recovery needs. Adds only, so
+// min_reader_version stays 2.
+//
+// jobs.interruptions: how often an attempt of the job ended without an outcome (Lucent stopped,
+//   or its lease expired while the computer slept or a step took too long). Counted separately
+//   from transient_failures, so interruptions neither use up the retry budget of genuine worker
+//   failures nor go unbounded (the coordinator fails the job after its own bound).
+// batches.reported_at: when the batch's completion was handled (its report files written, or
+//   none were wanted) after it finished; NULL while not finished, or finished but not reported
+//   yet (the coordinator stopped in between: the next start writes the report). Batches already
+//   finished when the catalog is migrated count as reported.
+// ---------------------------------------------------------------------------------------------
+constexpr std::string_view kSchemaV4 = R"sql(
+ALTER TABLE jobs ADD COLUMN interruptions INTEGER NOT NULL DEFAULT 0 CHECK (interruptions >= 0);
+ALTER TABLE batches ADD COLUMN reported_at INTEGER;
+UPDATE batches SET reported_at = finished_at WHERE finished_at IS NOT NULL;
+CREATE INDEX batches_unreported ON batches (id) WHERE finished_at IS NOT NULL AND reported_at IS NULL;
+)sql";
+
+Status migrate_to_v4(Connection& connection) {
+    return connection.exec(kSchemaV4, kWhereMigrate);
+}
+
 constexpr Migration kBuiltinMigrations[] = {
     {1, 1, "catalog metadata, imports, sources and items (W4)", &migrate_to_v1},
     {2, 2, "recipe revisions and capture settings (W6)", &migrate_to_v2},
     {3, 2, "durable batch journal: batches, jobs, events, publication journal, receipts (W7)",
      &migrate_to_v3},
+    {4, 2, "job interruption counts and batch report emission (W7)", &migrate_to_v4},
 };
 static_assert(std::size(kBuiltinMigrations) == static_cast<std::size_t>(kSchemaVersion),
               "every schema version needs exactly one migration");

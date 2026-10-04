@@ -96,7 +96,9 @@ namespace lucent::catalog {
 //   3 (W7): the durable batch journal: batches, jobs, job_events, publication_journal and
 //           receipts (jobs.hpp). Adds only and does not change what renders of items mean, so
 //           its minimum reader version stays 2: a schema-v2 build opens a v3 catalog read-only.
-inline constexpr std::int32_t kSchemaVersion = 3;
+//   4 (W7): jobs.interruptions and batches.reported_at (the coordinator's recovery bound and
+//           report emission). Adds only; minimum reader version 2.
+inline constexpr std::int32_t kSchemaVersion = 4;
 
 enum class OpenMode : std::uint8_t {
     ReadWrite = 1,  // the application's catalog: migrates, writes, holds the writer lock
@@ -251,6 +253,15 @@ public:
     // bad limit.
     [[nodiscard]] Expected<std::vector<BatchRecord>> list_batches(std::uint32_t limit,
                                                                   BatchId before = {}) const;
+    // Batches with work left, whatever their age, newest first: Draft, Running, Paused, and
+    // Cancelled ones with a job still leased. InvalidArgument for a bad limit.
+    [[nodiscard]] Expected<std::vector<BatchRecord>> list_unfinished_batches(std::uint32_t limit) const;
+    // Finished batches (finished_at set) whose completion was not handled yet (reported_at unset),
+    // oldest first. InvalidArgument for a bad limit.
+    [[nodiscard]] Expected<std::vector<BatchRecord>> list_unreported_batches(std::uint32_t limit) const;
+    // BatchJobFacts of the batch; `flag_json_path` is a SQLite JSON path into receipts'
+    // settings_json (for example "$.review"). NotFound for an unknown batch.
+    [[nodiscard]] Expected<BatchJobFacts> batch_job_facts(BatchId id, std::string_view flag_json_path) const;
     [[nodiscard]] Expected<std::optional<JobRecord>> find_job(JobId id) const;
     // InvalidArgument for a bad limit or an unknown stage in the filter.
     [[nodiscard]] Expected<std::vector<JobRecord>> list_jobs(const JobQuery& query) const;
@@ -420,11 +431,25 @@ public:
     [[nodiscard]] Expected<BatchState> pause_batch(BatchId id, Timestamp now);
     [[nodiscard]] Expected<BatchState> resume_batch(BatchId id, Timestamp now);
     [[nodiscard]] Expected<BatchState> cancel_batch(BatchId id, Timestamp now);
-    // Requeues the batch's Failed jobs (claimable from `now`; failure counts are kept) and makes
-    // a Completed batch Running again (a Running or Paused batch keeps its state).
-    // "catalog.batch.invalid_transition" for a Draft or Cancelled batch. Returns the number of
-    // jobs requeued.
+    // cancel_batch, the queued jobs it cancels recording `reason` as their last error (for example
+    // the full disk that made a single export give up), so reports can say why.
+    [[nodiscard]] Expected<BatchState> cancel_batch_with_reason(BatchId id, Timestamp now, const Error& reason);
+    // Requeues the batch's Failed jobs that hold no receipt (claimable from `now`; failure counts
+    // are kept) and makes a Completed batch Running again (a Running or Paused batch keeps its
+    // state; finished_at and reported_at are cleared). A Failed job with a receipt (its published
+    // output was lost) stays Failed: receipts are one per job and immutable, so it cannot publish
+    // again; the photo is exported again in a new batch. "catalog.batch.invalid_transition" for a
+    // Draft or Cancelled batch. Returns the number of jobs requeued.
     [[nodiscard]] Expected<std::uint64_t> retry_failed_jobs(BatchId id, Timestamp now);
+    // Replaces the destination document of a batch that is not finished (Draft, Running, Paused):
+    // the coordinator re-records the output folder the user accepted. InvalidArgument for invalid
+    // JSON or text above kMaxBatchJsonBytes; "catalog.batch.invalid_transition" for a finished
+    // batch.
+    [[nodiscard]] Status set_batch_destination(BatchId id, std::string_view destination_json, Timestamp now);
+    // Records that a finished batch's completion was handled (BatchRecord::reported_at). A no-op
+    // for a batch already reported; InvalidArgument ("catalog.batch.invalid_transition") for one
+    // that is not finished.
+    [[nodiscard]] Status mark_batch_reported(BatchId id, Timestamp now);
 
     // Leases the next Queued job of a Running batch (oldest batch first, then ordinal) whose
     // not_before has passed: stage Rendering, attempt + 1, lease until now + lease_duration.
@@ -457,8 +482,8 @@ public:
                                                          Timestamp now);
 
     // Records a failure of a leased job and ends the lease: Queued (claimable from retry_at) when
-    // retry_at is set, otherwise Failed. Increments the failure count of its class. In a
-    // cancelled batch a requeue becomes Cancelled. Returns the new stage.
+    // retry_at is set, otherwise Failed (Skipped with JobFailure::skip). Increments the failure
+    // count of its class. In a cancelled batch a requeue becomes Cancelled. Returns the new stage.
     [[nodiscard]] Expected<JobStage> record_failure(const JobLease& lease, const JobFailure& failure,
                                                     Timestamp now);
 
@@ -471,13 +496,15 @@ public:
     [[nodiscard]] Status cancel_job(const JobLease& lease, Timestamp now);
 
     // Skips a Queued job (for example: its output already exists, or its source is missing),
-    // recording `reason`. "catalog.job.stage_conflict" for any other stage.
-    [[nodiscard]] Status skip_job(JobId job, const Error& reason, Timestamp now);
+    // recording `reason` and, when given, the existing output as the job's final_path.
+    // "catalog.job.stage_conflict" for any other stage.
+    [[nodiscard]] Status skip_job(JobId job, const Error& reason, Timestamp now,
+                                  const std::optional<std::filesystem::path>& existing_output = std::nullopt);
 
     // Reconciliation of an abandoned lease (from list_reclaimable_jobs): `stale` must still be the
     // job's lease (owner and attempt), expired at recovery.now unless recovery.owner_gone
     // ("catalog.job.lease_lost" otherwise). Requeue and Fail record recovery.error as a failure of
-    // recovery.failure_class; Complete requires a receipt (stored, or recovery.receipt, which must
+    // recovery.failure_class (or, with recovery.interruption, as an interruption); Complete requires a receipt (stored, or recovery.receipt, which must
     // match the attempt's Published journal entry and is then written with ReceiptCommitted): an
     // abandoned lease is never completed without one. Returns the new stage.
     [[nodiscard]] Expected<JobStage> recover_job(const JobLease& stale, const JobRecovery& recovery);
@@ -493,6 +520,7 @@ private:
     friend class Catalog;
     friend struct detail::CatalogAccess;
     explicit WriteTransaction(detail::Connection& connection) noexcept : ReadTransaction(connection, false) {}
+    [[nodiscard]] Expected<BatchState> cancel_batch_impl(BatchId id, Timestamp now, const Error* reason);
     ~WriteTransaction() = default;
 };
 
