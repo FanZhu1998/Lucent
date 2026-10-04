@@ -40,9 +40,19 @@ set(LUCENT_ANALYSIS_SOURCES
     include/lucent/analysis/native_crops.hpp
     src/native_crops.cpp
 
-    # The automatic-settings controller: proposals, bounded search, recheck, confidence.
+    # Related-shot consistency: appearance, shot features, targets and the soft consistency term.
+    include/lucent/analysis/consistency.hpp
+    src/consistency.cpp
+
+    # The automatic-settings controller: proposals, bounded search, recheck, confidence, and the
+    # session that regularises a related-shot member towards its group's target.
     include/lucent/analysis/auto_settings.hpp
     src/auto_settings.cpp
+
+    # Related-shot grouping (capture time, visual similarity, illumination splits, caller
+    # overrides), group targets and the two-pass flow over files.
+    include/lucent/analysis/related_shots.hpp
+    src/related_shots.cpp
 )
 
 lucent_add_library(analysis
@@ -68,6 +78,8 @@ set(LUCENT_ANALYSIS_TEST_SOURCES
     tests/render_metrics_test.cpp
     tests/proposals_test.cpp
     tests/auto_settings_test.cpp
+    tests/native_crops_test.cpp
+    tests/related_shots_test.cpp
 )
 
 lucent_add_test(lucent_analysis_tests
@@ -87,6 +99,7 @@ lucent_add_test(lucent_analysis_fixture_tests
     SOURCES
         tests/analysis_test_support.hpp
         tests/auto_fixture_test.cpp
+        tests/related_fixture_test.cpp
     DEPS
         Lucent::analysis
         Lucent::raw

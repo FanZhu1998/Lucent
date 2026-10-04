@@ -20,7 +20,13 @@
 // 2 local_tone_radius(full, 1) + kProfileReach + 2 pixels (the guided filter's two box passes need
 // 2r, the edge profiles reach kProfileReach beyond the evaluation region), so stage two renders the
 // evaluation region exactly as it renders the full image wherever the halo lies inside the image
-// (where the crop meets the image border, the border is the image's own).
+// (where the crop meets the image border, the border is the image's own). Every measurement below
+// reads only the evaluation region plus kProfileReach + 2 pixels (NativeCrop::measured: the edge
+// profiles' farthest bilinear sample and the 3 x 3 neighbourhoods), and is computed from that
+// region's pixels alone, in coordinates relative to it. Stage two is per pixel except for the
+// local-tone guided filter (develop.hpp), so settings without local tone (highlights and shadows
+// both 0) can be rendered on the `measured` rectangle alone ("halo-free" crop) and measure exactly
+// as on the full crop; settings with local tone need the halo.
 //
 // Measurements (measure_crop) on the evaluation region, in display lightness l = L*/100 of the
 // luminance (L* units where stated):
@@ -79,10 +85,16 @@ struct NativeCrop {
     CropKind kind = CropKind::Detail;
     image::PixelRect evaluation;  // full-resolution upright coordinates
     image::PixelRect rendered;    // the evaluation region with its halo, inside the image
-    double statistic = 0.0;       // the selection statistic of its tile
+    // The evaluation region with kNativeMeasureMargin pixels, inside the image: every pixel a
+    // measurement reads (the halo-free render of settings without local tone).
+    image::PixelRect measured;
+    double statistic = 0.0;  // the selection statistic of its tile
 
     friend bool operator==(const NativeCrop&, const NativeCrop&) = default;
 };
+
+// Margin of NativeCrop::measured around the evaluation region.
+inline constexpr std::int32_t kNativeMeasureMargin = kProfileReach + 2;
 
 // The halo of a crop of an image whose upright full-resolution size is `full`.
 [[nodiscard]] std::int32_t native_crop_halo(image::Size full) noexcept;
@@ -95,7 +107,7 @@ struct NativeCrop {
                                                           std::int32_t crop_size = kNativeCropSize);
 
 struct EdgeSample {
-    float x = 0.0f;  // crop-render coordinates
+    float x = 0.0f;  // relative to the evaluation region's origin
     float y = 0.0f;
     float nx = 0.0f;  // unit gradient direction
     float ny = 0.0f;
@@ -133,6 +145,13 @@ struct CropMeasurement {
 [[nodiscard]] Expected<CropMeasurement> measure_crop(const engine::ColorImage& display,
                                                      const NativeCrop& crop, const CropFeatures* baseline,
                                                      CropFeatures* features);
+
+// As above for a render of the rectangle `rendered` (full-resolution upright coordinates; the
+// display's size), which must contain crop.measured: crop.rendered, crop.measured (the halo-free
+// render) or anything between. The result depends only on the pixels of crop.measured.
+[[nodiscard]] Expected<CropMeasurement> measure_crop(const engine::ColorImage& display,
+                                                     const image::PixelRect& rendered, const NativeCrop& crop,
+                                                     const CropFeatures* baseline, CropFeatures* features);
 
 // A candidate's crops compared with the baseline's (both in crop order).
 struct NativeComparison {

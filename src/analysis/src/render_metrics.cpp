@@ -5,6 +5,7 @@
 #include <format>
 #include <numbers>
 
+#include <lucent/analysis/consistency.hpp>
 #include <lucent/analysis/render_metrics.hpp>
 #include <lucent/engine/develop_operations.hpp>
 #include <lucent/engine/display_rendering.hpp>
@@ -90,6 +91,10 @@ struct Partial {
     double sum_chroma = 0.0;
     double sum_da = 0.0;
     double sum_db = 0.0;
+    std::uint64_t midtone = 0;
+    double sum_mx = 0.0;
+    double sum_my = 0.0;
+    double sum_mz = 0.0;
 };
 
 template <class Hist>
@@ -337,6 +342,12 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
                         p.sum_da += A - ba;
                         p.sum_db += B - bb;
                     }
+                    if (bl > kMidtoneLow && bl < kMidtoneHigh && !base_hi && !hi) {
+                        ++p.midtone;
+                        p.sum_mx += X;
+                        p.sum_my += Y;
+                        p.sum_mz += Z;
+                    }
                     if (bl > kShadowMaskLow && bl < kShadowMaskHigh && coverage <= 0.0f && s > 0.0) {
                         ++p.shadow;
                         if (noise_available && Y > 0.0) {
@@ -397,6 +408,10 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
         t.sum_chroma += p.sum_chroma;
         t.sum_da += p.sum_da;
         t.sum_db += p.sum_db;
+        t.midtone += p.midtone;
+        t.sum_mx += p.sum_mx;
+        t.sum_my += p.sum_my;
+        t.sum_mz += p.sum_mz;
     }
 
     RenderStats s;
@@ -444,6 +459,10 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
         noise_count += h;
     }
     s.shadow_noise_lstar = histogram_quantile(noise_hist, noise_count, 0.75, kNoiseBinWidth);
+    s.midtone_pixels = t.midtone;
+    s.midtone_x = t.sum_mx;
+    s.midtone_y = t.sum_my;
+    s.midtone_z = t.sum_mz;
     s.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     return s;
 }

@@ -132,10 +132,16 @@ struct ObjectiveTerms {
     double white_balance = 0.0;
     double native = 0.0;
     double edit = 0.0;
+    // Related-shot consistency (consistency.hpp): 0 unless the candidate is ranked against a group
+    // target (AutoSession::regularise); natural_v1_objective() never sets it.
+    double consistency = 0.0;
     double total = 0.0;
 
     friend bool operator==(const ObjectiveTerms&, const ObjectiveTerms&) = default;
 };
+
+// The total of `terms` in the objective's summation order (consistency last).
+[[nodiscard]] double objective_total(const ObjectiveTerms& terms) noexcept;
 
 // The Natural v1 objective of `candidate` against `baseline` (same resolution); `native` is the
 // native-crop comparison at recheck (null during the proxy search).

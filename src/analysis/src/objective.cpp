@@ -122,9 +122,13 @@ ObjectiveTerms natural_v1_objective(const RenderStats& c, const RenderStats& bas
     }
 
     t.edit = kEditWeight * edit_size(edit);
-    t.total = t.brightness + t.highlights + t.shadows + t.noise + t.contrast + t.color + t.white_balance +
-              t.native + t.edit;
+    t.total = objective_total(t);
     return t;
+}
+
+double objective_total(const ObjectiveTerms& t) noexcept {
+    return t.brightness + t.highlights + t.shadows + t.noise + t.contrast + t.color + t.white_balance +
+           t.native + t.edit + t.consistency;
 }
 
 CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& base, const EditVector& edit,

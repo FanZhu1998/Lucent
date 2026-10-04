@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 
 #include <lucent/image/cfa.hpp>
 #include <lucent/image/geometry.hpp>
@@ -41,6 +42,13 @@ struct SceneOptions {
     double full_well = 20000.0;  // photo-electrons at the white level (shot noise)
     std::array<double, 3> as_shot = kAsShot;
     image::Orientation orientation = image::Orientation::Normal;
+    // Capture metadata (related-shot grouping).
+    std::optional<std::string> capture_time;  // "YYYY-MM-DDTHH:MM:SS"
+    std::optional<float> exposure_time_s;
+    std::optional<float> f_number;
+    // Camera identity and calibration (a second synthetic camera for the cross-camera rule).
+    std::string model = "Scene";
+    image::Matrix3d cam_xyz = engine::test_support::kR5CamXyz;
 };
 
 // splitmix64: a deterministic pseudo-random stream without state.
@@ -90,12 +98,15 @@ inline raw::DecodedRaw make_scene(const Scene& scene, const SceneOptions& o = {}
             const double sample = kBlack + (v + sigma * gaussian(key)) * range;
             return std::clamp(std::round(sample), 0.0, kWhite);
         });
-    engine::test_support::set_decoder_matrix(decoded.metadata, engine::test_support::kR5CamXyz);
+    engine::test_support::set_decoder_matrix(decoded.metadata, o.cam_xyz);
     engine::test_support::set_as_shot(decoded.metadata, o.as_shot);
     decoded.metadata.capture.iso = o.iso;
+    decoded.metadata.capture.capture_time_local = o.capture_time;
+    decoded.metadata.capture.exposure_time_s = o.exposure_time_s;
+    decoded.metadata.capture.f_number = o.f_number;
     decoded.metadata.geometry.orientation = o.orientation;
     decoded.metadata.camera.make = "Synthetic";
-    decoded.metadata.camera.model = "Scene";
+    decoded.metadata.camera.model = o.model;
     return decoded;
 }
 

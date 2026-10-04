@@ -153,6 +153,13 @@ struct RenderStats {
     std::uint64_t shadow_pixels = 0;
     double shadow_noise_lstar = 0.0;  // p75 of the predicted noise, L* units
 
+    // Appearance (consistency.hpp): display XYZ (Y of white = 1) summed over the baseline's
+    // mid-tones, kMidtoneLow < l_base < kMidtoneHigh, unclipped in the baseline and this render.
+    std::uint64_t midtone_pixels = 0;
+    double midtone_x = 0.0;
+    double midtone_y = 0.0;
+    double midtone_z = 0.0;
+
     double seconds = 0.0;
 
     [[nodiscard]] double fraction(std::uint64_t count) const noexcept {

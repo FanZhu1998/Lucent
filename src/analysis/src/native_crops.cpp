@@ -30,25 +30,58 @@ constexpr std::array<double, 3> kNearDistances{2, 3, 4};
 constexpr std::array<double, 3> kFarDistances{16, 24, 32};
 static_assert(kFarDistances.back() == kProfileReach);
 
-double bilinear(const std::vector<float>& plane, std::int32_t width, std::int32_t height, double x,
-                double y) {
-    x = std::clamp(x, 0.0, static_cast<double>(width - 1));
-    y = std::clamp(y, 0.0, static_cast<double>(height - 1));
-    const auto x0 = static_cast<std::int32_t>(std::floor(x));
-    const auto y0 = static_cast<std::int32_t>(std::floor(y));
-    const std::int32_t x1 = std::min(width - 1, x0 + 1);
-    const std::int32_t y1 = std::min(height - 1, y0 + 1);
-    const double fx = x - x0;
-    const double fy = y - y0;
-    const auto at = [&](std::int32_t xx, std::int32_t yy) {
-        return static_cast<double>(plane[static_cast<std::size_t>(yy) * static_cast<std::size_t>(width) +
-                                         static_cast<std::size_t>(xx)]);
-    };
-    return (1.0 - fy) * ((1.0 - fx) * at(x0, y0) + fx * at(x1, y0)) +
-           fy * ((1.0 - fx) * at(x0, y1) + fx * at(x1, y1));
+// The lightness of NativeCrop::measured, row-major, read with coordinates clamped to it. Where the
+// measured region meets the image border its border is the image's, so clamping here equals
+// clamping to any larger render of the crop; elsewhere no read leaves the region.
+struct Plane {
+    std::vector<float> lightness;
+    std::int32_t width = 0;
+    std::int32_t height = 0;
+
+    [[nodiscard]] double at(std::int32_t x, std::int32_t y) const noexcept {
+        x = std::clamp(x, 0, width - 1);
+        y = std::clamp(y, 0, height - 1);
+        return static_cast<double>(
+            lightness[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)]);
+    }
+};
+
+// Bilinear sample at (ox + rx, oy + ry) for an integer origin (ox, oy) and a relative position
+// (rx, ry). The integer and fractional parts come from the relative position alone, so a position
+// relative to the evaluation region samples the same pixels with the same weights whatever the
+// region's place in the plane. Positions beyond the plane take its border (the weight towards the
+// outside is 0), as clamping the position would.
+double bilinear(const Plane& p, std::int32_t ox, std::int32_t oy, double rx, double ry) {
+    const double fx0 = std::floor(rx);
+    const double fy0 = std::floor(ry);
+    std::int64_t x0 = static_cast<std::int64_t>(ox) + static_cast<std::int64_t>(fx0);
+    std::int64_t y0 = static_cast<std::int64_t>(oy) + static_cast<std::int64_t>(fy0);
+    double fx = rx - fx0;
+    double fy = ry - fy0;
+    if (x0 < 0) {
+        x0 = 0;
+        fx = 0.0;
+    } else if (x0 >= p.width - 1) {
+        x0 = p.width - 1;
+        fx = 0.0;
+    }
+    if (y0 < 0) {
+        y0 = 0;
+        fy = 0.0;
+    } else if (y0 >= p.height - 1) {
+        y0 = p.height - 1;
+        fy = 0.0;
+    }
+    const auto x = static_cast<std::int32_t>(x0);
+    const auto y = static_cast<std::int32_t>(y0);
+    const std::int32_t x1 = std::min(p.width - 1, x + 1);
+    const std::int32_t y1 = std::min(p.height - 1, y + 1);
+    return (1.0 - fy) * ((1.0 - fx) * p.at(x, y) + fx * p.at(x1, y)) +
+           fy * ((1.0 - fx) * p.at(x, y1) + fx * p.at(x1, y1));
 }
 
-// Mean lightness near (2-4 px) and far (16-32 px) from an edge on both sides of its normal.
+// Mean lightness near (2-4 px) and far (16-32 px) from an edge on both sides of its normal; (ox, oy)
+// is the evaluation region's origin in the plane.
 struct SideMeans {
     double near_plus = 0.0;
     double far_plus = 0.0;
@@ -56,17 +89,26 @@ struct SideMeans {
     double far_minus = 0.0;
 };
 
-SideMeans side_means(const std::vector<float>& plane, std::int32_t width, std::int32_t height,
-                     const EdgeSample& e) {
+SideMeans side_means(const Plane& plane, std::int32_t ox, std::int32_t oy, const EdgeSample& e) {
     const auto mean = [&](const std::array<double, 3>& distances, double sign) {
         double s = 0.0;
         for (const double d : distances) {
-            s += bilinear(plane, width, height, e.x + sign * d * e.nx, e.y + sign * d * e.ny);
+            s += bilinear(plane, ox, oy, e.x + sign * d * e.nx, e.y + sign * d * e.ny);
         }
         return s / static_cast<double>(distances.size());
     };
     return SideMeans{mean(kNearDistances, 1.0), mean(kFarDistances, 1.0), mean(kNearDistances, -1.0),
                      mean(kFarDistances, -1.0)};
+}
+
+image::PixelRect measured_rect(const NativeCrop& crop) noexcept {
+    if (!crop.measured.empty()) {
+        return crop.measured;
+    }
+    const image::PixelRect e = crop.evaluation;
+    return image::PixelRect{e.x - kNativeMeasureMargin, e.y - kNativeMeasureMargin,
+                            e.width + 2 * kNativeMeasureMargin, e.height + 2 * kNativeMeasureMargin}
+        .intersect(crop.rendered);
 }
 
 }  // namespace
@@ -200,6 +242,10 @@ std::vector<NativeCrop> select_native_crops(const engine::StageOneImage& analysi
         const image::PixelRect expanded{crop.evaluation.x - halo, crop.evaluation.y - halo,
                                         crop_size + 2 * halo, crop_size + 2 * halo};
         crop.rendered = expanded.intersect(image::PixelRect::from_size(full));
+        const image::PixelRect margin{crop.evaluation.x - kNativeMeasureMargin,
+                                      crop.evaluation.y - kNativeMeasureMargin,
+                                      crop_size + 2 * kNativeMeasureMargin, crop_size + 2 * kNativeMeasureMargin};
+        crop.measured = margin.intersect(crop.rendered);
         crops.push_back(crop);
     };
     choose(
@@ -219,20 +265,24 @@ std::vector<NativeCrop> select_native_crops(const engine::StageOneImage& analysi
 
 Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const NativeCrop& crop,
                                        const CropFeatures* baseline, CropFeatures* features) {
+    return measure_crop(display, crop.rendered, crop, baseline, features);
+}
+
+Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const image::PixelRect& rendered,
+                                       const NativeCrop& crop, const CropFeatures* baseline,
+                                       CropFeatures* features) {
     const auto& px = display.pixels;
     if (px.empty() || px.channels() != 3 || display.encoding != engine::display_linear_rec2020() ||
-        px.size() != crop.rendered.size()) {
+        px.size() != rendered.size()) {
         return fail(ErrorCode::InvalidArgument,
-                    std::format("a crop render must be display-linear Rec.2020 of {}x{}", crop.rendered.width,
-                                crop.rendered.height),
+                    std::format("a crop render must be display-linear Rec.2020 of {}x{}", rendered.width,
+                                rendered.height),
                     kWhere);
     }
-    const std::int32_t width = px.width();
-    const std::int32_t height = px.height();
-    const image::PixelRect eval{crop.evaluation.x - crop.rendered.x, crop.evaluation.y - crop.rendered.y,
-                                crop.evaluation.width, crop.evaluation.height};
-    if (!image::PixelRect::from_size(px.size()).contains(eval)) {
-        return fail(ErrorCode::InvalidArgument, "the evaluation region lies outside the crop", kWhere);
+    const image::PixelRect region = measured_rect(crop);
+    if (region.empty() || !rendered.contains(region) || !region.contains(crop.evaluation)) {
+        return fail(ErrorCode::InvalidArgument,
+                    "the crop render does not cover the measured region around the evaluation region", kWhere);
     }
     auto srgb = image::conversion_matrix(image::ColorEncoding::scene_linear_rec2020_d65(),
                                          image::ColorEncoding::linear_srgb());
@@ -241,18 +291,30 @@ Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const 
     }
     const double hi_level = clip_high_linear();
 
+    // Everything below works in the measured region's coordinates; (ex, ey) is the evaluation
+    // region's origin there, (dx, dy) the measured region's origin in the render.
+    const std::int32_t width = region.width;
+    const std::int32_t height = region.height;
+    const std::int32_t dx = region.x - rendered.x;
+    const std::int32_t dy = region.y - rendered.y;
+    const std::int32_t ex = crop.evaluation.x - region.x;
+    const std::int32_t ey = crop.evaluation.y - region.y;
+    const image::PixelRect eval{ex, ey, crop.evaluation.width, crop.evaluation.height};
+
     CropMeasurement out;
     out.kind = crop.kind;
-    std::vector<float> lightness;
+    Plane plane;
+    plane.width = width;
+    plane.height = height;
     std::vector<std::uint8_t> clipped;
     try {
-        lightness.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0.0f);
+        plane.lightness.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0.0f);
         clipped.assign(static_cast<std::size_t>(eval.width) * static_cast<std::size_t>(eval.height), 0);
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "cannot allocate the crop planes", kWhere);
     }
     for (std::int32_t y = 0; y < height; ++y) {
-        const float* row = px.row(y);
+        const float* row = px.row(y + dy) + static_cast<std::ptrdiff_t>(dx) * 3;
         for (std::int32_t x = 0; x < width; ++x, row += 3) {
             const double r = row[0];
             const double g = row[1];
@@ -265,7 +327,7 @@ Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const 
             }
             const double Y = engine::kRec2020Luminance[0] * r + engine::kRec2020Luminance[1] * g +
                              engine::kRec2020Luminance[2] * b;
-            lightness[i] = static_cast<float>(engine::display_lightness(Y));
+            plane.lightness[i] = static_cast<float>(engine::display_lightness(Y));
             if (eval.contains(image::Point{x, y})) {
                 const image::Matrix3d& m = *srgb;
                 const double smax = std::max({m(0, 0) * r + m(0, 1) * g + m(0, 2) * b,
@@ -282,19 +344,14 @@ Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const 
     // Local residual l - mean3x3(l) over the evaluation region.
     std::vector<double> residual;
     residual.reserve(static_cast<std::size_t>(eval.width) * static_cast<std::size_t>(eval.height));
-    const auto L = [&](std::int32_t x, std::int32_t y) {
-        x = std::clamp(x, 0, width - 1);
-        y = std::clamp(y, 0, height - 1);
-        return static_cast<double>(lightness[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
-                                             static_cast<std::size_t>(x)]);
-    };
+    const auto L = [&](std::int32_t x, std::int32_t y) { return plane.at(x, y); };
     double texture = 0.0;
     for (std::int32_t y = eval.y; y < eval.y + eval.height; ++y) {
         for (std::int32_t x = eval.x; x < eval.x + eval.width; ++x) {
             double mean = 0.0;
-            for (std::int32_t dy = -1; dy <= 1; ++dy) {
-                for (std::int32_t dx = -1; dx <= 1; ++dx) {
-                    mean += L(x + dx, y + dy);
+            for (std::int32_t oy = -1; oy <= 1; ++oy) {
+                for (std::int32_t ox = -1; ox <= 1; ++ox) {
+                    mean += L(x + ox, y + oy);
                 }
             }
             const double r = std::abs(L(x, y) - mean / 9.0);
@@ -317,7 +374,7 @@ Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const 
         }
     }
 
-    // Strong edges of the baseline.
+    // Strong edges of the baseline (positions relative to the evaluation region).
     std::vector<EdgeSample> own_edges;
     const std::vector<EdgeSample>* edges = baseline != nullptr ? &baseline->edges : &own_edges;
     if (baseline == nullptr) {
@@ -359,11 +416,11 @@ Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const 
         for (std::size_t k = 0; k < strong.size(); k += stride) {
             const Candidate& c = strong[k];
             EdgeSample e;
-            e.x = static_cast<float>(c.x);
-            e.y = static_cast<float>(c.y);
+            e.x = static_cast<float>(c.x - eval.x);
+            e.y = static_cast<float>(c.y - eval.y);
             e.nx = static_cast<float>(c.gx / c.magnitude);
             e.ny = static_cast<float>(c.gy / c.magnitude);
-            const SideMeans m = side_means(lightness, width, height, e);
+            const SideMeans m = side_means(plane, eval.x, eval.y, e);
             e.near_plus = static_cast<float>(m.near_plus);
             e.far_plus = static_cast<float>(m.far_plus);
             e.near_minus = static_cast<float>(m.near_minus);
@@ -383,7 +440,7 @@ Expected<CropMeasurement> measure_crop(const engine::ColorImage& display, const 
     // edit that acts on the lightness alone; sensor noise cancels (both renders share the pixels).
     double halo = 0.0;
     for (const EdgeSample& e : *edges) {
-        const SideMeans m = side_means(lightness, width, height, e);
+        const SideMeans m = side_means(plane, eval.x, eval.y, e);
         double h = 0.0;
         if (e.plateau_plus) {
             h = std::max(h, std::abs((m.near_plus - e.near_plus) - (m.far_plus - e.far_plus)));
