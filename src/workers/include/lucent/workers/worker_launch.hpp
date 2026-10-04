@@ -22,9 +22,13 @@
 //   allocate:<bytes>       a job first allocates and touches <bytes> (memory-limit path), then
 //                          frees them and runs normally
 //   render-delay:<ms>      every render progress step waits <ms>, observing cancellation (makes a
-//                          small render long enough to cancel mid-render)
+//                          small render long enough to cancel mid-render); an analyze job waits
+//                          <ms> once before it starts
 //   fake-commit:<text>     the worker claims a build with git commit <text> (build mismatch)
 //   protocol:<min>-<max>   the worker claims to speak protocol versions <min>..<max>
+//   fail-final-check:<n>   an analysis job (protocol v2, "analyze") treats the first <n> attempts of
+//                          its full-resolution final check as failed (1..16), so the conservative
+//                          fallback ladder runs on any photo (application/auto_develop.hpp)
 // <text> is 1..64 characters of [A-Za-z0-9._-]; numbers are decimal.
 //
 // Thread-safety: pure functions.
@@ -51,6 +55,7 @@ struct TestHooks {
     std::uint32_t render_delay_ms = 0;
     std::optional<std::string> fake_commit;
     std::optional<std::pair<std::uint32_t, std::uint32_t>> protocol_range;
+    std::uint32_t fail_final_checks = 0;
 
     [[nodiscard]] bool any() const noexcept;
     // The canonical spec of every active hook, in the order listed above.
@@ -58,8 +63,8 @@ struct TestHooks {
 };
 
 // Adds the hook named by `spec` to `hooks`. InvalidArgument ("workers.launch.hook") for an unknown
-// hook, a malformed value, an allocation above 1 TiB, a delay above 10 minutes, or a protocol range
-// that starts at 0 or is empty.
+// hook, a malformed value, an allocation above 1 TiB, a delay above 10 minutes, a protocol range
+// that starts at 0 or is empty, or a failed-check count of 0 or above 16.
 [[nodiscard]] Status apply_test_hook(std::string_view spec, TestHooks& hooks);
 
 struct WorkerLaunch {

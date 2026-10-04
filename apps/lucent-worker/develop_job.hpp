@@ -1,6 +1,9 @@
 #pragma once
 
-// The job lucent-worker.exe runs: render a library photograph with a frozen recipe through the
+// The jobs lucent-worker.exe runs: the export job below, and the analyze job of automatic batches
+// (analysis_job.hpp), which this runner also serves.
+//
+// The export job: render a library photograph with a frozen recipe through the
 // develop pipeline and write one verified output file (blueprint section 7, "Export integrity").
 // It is the export render of app::ExportService without publication: the host publishes the file
 // afterwards. Kept in a library so tests can run the same code in-process.
@@ -51,6 +54,11 @@ public:
 
     [[nodiscard]] Expected<workers::JobResult> run(const workers::JobRequest& request,
                                                    workers::JobContext& context) override;
+
+    // The analyze job (protocol version 2): run_analysis_job() (analysis_job.hpp) with this
+    // runner's registry and limits.
+    [[nodiscard]] Expected<workers::AnalysisResult> analyze(const workers::AnalysisRequest& request,
+                                                            workers::JobContext& context) override;
 
 private:
     std::shared_ptr<const raw::DecoderRegistry> registry_;

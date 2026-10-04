@@ -154,6 +154,16 @@ struct JobOutcome {
     [[nodiscard]] bool succeeded() const noexcept { return result.has_value(); }
 };
 
+// The outcome of an analyze job (protocol version 2). Exactly one of result and failure is set;
+// the failures are those of run_job() (an analyze job writes no file, so nothing is removed).
+struct AnalysisOutcome {
+    std::optional<AnalysisResult> result;
+    std::optional<JobFailure> failure;
+    JobMetrics metrics;
+
+    [[nodiscard]] bool succeeded() const noexcept { return result.has_value(); }
+};
+
 struct JobCallbacks {
     std::function<void(const JobProgress&)> progress;  // on the run_job() thread
     std::function<void(const Heartbeat&)> heartbeat;   // on the run_job() thread, during the job
@@ -196,6 +206,13 @@ public:
     [[nodiscard]] JobOutcome run_job(const JobRequest& request, const JobCallbacks& callbacks = {},
                                      const core::CancellationToken& cancel = {},
                                      std::chrono::milliseconds timeout = std::chrono::milliseconds::zero());
+
+    // run_job() for an analyze job (protocol version 2): the same supervision, failures and
+    // classes. An analysis that names another source identity or starting recipe than the request
+    // is a protocol violation.
+    [[nodiscard]] AnalysisOutcome run_analysis(const AnalysisRequest& request, const JobCallbacks& callbacks = {},
+                                               const core::CancellationToken& cancel = {},
+                                               std::chrono::milliseconds timeout = std::chrono::milliseconds::zero());
 
     // Round trip to an idle worker. Errors: Internal when no worker is running; Timeout (no pong
     // within `timeout`: the worker is then terminated); IoError when the worker is gone.

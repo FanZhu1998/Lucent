@@ -1,6 +1,6 @@
 #pragma once
 
-// The worker protocol "lucent.worker", version 1: the messages exchanged between a host
+// The worker protocol "lucent.worker", version 2: the messages exchanged between a host
 // (WorkerHost, worker_host.hpp, used by the application's batch service) and an isolated
 // lucent-worker.exe process (blueprint section 4: "The UI and worker negotiate a protocol version.
 // Package matching binaries together; fail clearly if incompatible components are mixed";
@@ -39,14 +39,26 @@
 // host's BuildIdentity to equal its own; the host checks the worker's answer the same way. A
 // mismatch is VersionMismatch with a message naming both builds.
 //
-// After the handshake (version 1):
-//   host -> worker:  job, cancel, ping, shutdown
-//   worker -> host:  progress, heartbeat, result, error, pong
-// A worker runs one job at a time; the host sends a job only while none is running. The worker
-// sends a heartbeat every heartbeat_ms from a thread independent of the job, from the handshake
-// until it exits, so a missing heartbeat means the process is unresponsive (not merely busy).
-// Exactly one result or error answers each job; cancel names the job and is a no-op when it is no
+// After the handshake (version 2):
+//   host -> worker:  job, analyze, cancel, ping, shutdown
+//   worker -> host:  progress, heartbeat, result, analysis, error, pong
+// A worker runs one job at a time (an export "job" or an "analyze" job: both are jobs below); the
+// host sends a job only while none is running. The worker sends a heartbeat every heartbeat_ms from
+// a thread independent of the job, from the handshake until it exits, so a missing heartbeat means
+// the process is unresponsive (not merely busy). Exactly one answer (result for a job, analysis for
+// an analyze job) or error answers each job; cancel names the job and is a no-op when it is no
 // longer running (the answer may already be on its way). A job's error carries a FailureClass.
+//
+// Version history: 1 (W7) job, cancel, ping, shutdown / progress, heartbeat, result, error, pong.
+// 2 (W8 application wiring) adds analyze / analysis (automatic settings in the worker: the
+// analysis, related-shot regularisation and the full-resolution final check of one photo) and the
+// progress stages Analysing and Checking. Every version-1 message is unchanged.
+//
+// Analysis documents. An analyze job carries the application's request document and its analysis
+// answer carries the application's result document, each as one JSON text in a string member
+// ("lucent.auto-request" and "lucent.auto-run", application/auto_develop.hpp). The protocol checks
+// that they are non-empty UTF-8 within their limits; their content is read strictly by the
+// application (both ends are the same build). Analyze jobs write no file.
 //
 // Output files (job_output.hpp). The worker creates exactly the job's `temp_path` (no-clobber: it
 // fails with AlreadyExists rather than replace anything) and, while writing, the scratch directory
@@ -81,8 +93,8 @@ namespace lucent::workers {
 inline constexpr std::string_view kProtocolName = "lucent.worker";
 // Protocol versions this build speaks. Bump kMaxProtocolVersion for an incompatible change of any
 // message after the handshake; the handshake itself never changes.
-inline constexpr std::uint32_t kMinProtocolVersion = 1;
-inline constexpr std::uint32_t kMaxProtocolVersion = 1;
+inline constexpr std::uint32_t kMinProtocolVersion = 2;
+inline constexpr std::uint32_t kMaxProtocolVersion = 2;
 
 inline constexpr std::size_t kFrameHeaderBytes = 4;
 // Largest JSON payload of one frame. The largest legitimate message is a job request with two
@@ -93,6 +105,9 @@ inline constexpr std::uint32_t kMaxMessageBytes = 1u << 20;  // 1 MiB
 inline constexpr std::size_t kMaxJobIdBytes = 64;           // [A-Za-z0-9._:-]+
 inline constexpr std::size_t kMaxPathBytes = 32767 * 3;     // a 32,767-character path
 inline constexpr std::size_t kMaxRecipeBytes = 256 * 1024;  // canonical recipe document
+// The application's documents of an analyze job (see "Analysis documents" above).
+inline constexpr std::size_t kMaxAnalysisRequestBytes = 128 * 1024;
+inline constexpr std::size_t kMaxAnalysisDocumentBytes = 768 * 1024;
 inline constexpr std::size_t kMaxErrorMessageBytes = 4096;  // longer messages are truncated
 inline constexpr std::size_t kMaxWhereBytes = 128;
 inline constexpr std::size_t kMaxShortTextBytes = 256;      // build fields, encoder, algorithm ids
@@ -173,6 +188,8 @@ enum class JobStage : std::uint8_t {
     Encoding = 3,   // output profile conversion and quantisation
     Writing = 4,    // the exporter's write, re-read verification and hashing
     Verifying = 5,  // the output re-hashed at temp_path, the source identity re-checked
+    Analysing = 6,  // (analyze, version 2) decode, analysis, related-shot regularisation
+    Checking = 7,   // (analyze, version 2) the full-resolution final check and its fallbacks
 };
 
 [[nodiscard]] std::string_view to_string(JobStage stage) noexcept;  // "preparing", ...
@@ -327,6 +344,36 @@ struct JobResult {
     MemorySnapshot memory;  // at the end of the job (peaks cover the worker's lifetime)
 };
 
+// analyze (version 2): the automatic settings of one photo. The worker refuses to analyse unless
+// the source has its identity before and after (and, with `source.sha256`, hashes to it), the
+// recipe document is the canonical document of its SHA-256 (the settings the analysis starts from:
+// locks and locked values), and the request document is one the application can read.
+struct AnalysisRequest {
+    std::string job_id;  // 1..kMaxJobIdBytes of [A-Za-z0-9._:-]
+    JobSource source;
+    JobRecipe recipe;
+    // The application's "lucent.auto-request" document (non-empty UTF-8, at most
+    // kMaxAnalysisRequestBytes): consistency target, anchor, whether to run the final check.
+    std::string request;
+    // The engine's refusal threshold (as JobRequest::memory_budget_bytes); 0: the engine default.
+    std::uint64_t memory_budget_bytes = 0;
+    // Analyse an item whose decoded interpretation is Unsupported (as JobRequest).
+    bool allow_unsupported = false;
+};
+
+// analysis (version 2): the answer to an analyze job.
+struct AnalysisResult {
+    std::string job_id;
+    core::FileIdentity source_identity;           // as verified before and after
+    std::optional<core::Digest256> source_sha256;  // when the request asked for verification
+    core::Digest256 recipe_sha256{};              // of the starting recipe (the request's)
+    // The application's "lucent.auto-run" document (non-empty UTF-8, at most
+    // kMaxAnalysisDocumentBytes).
+    std::string document;
+    double seconds = 0.0;   // the whole job
+    MemorySnapshot memory;  // at the end of the job (peaks cover the worker's lifetime)
+};
+
 // A failed job (job_id set), or a fatal worker error (job_id empty: handshake refusal, protocol
 // violation), after which the worker exits.
 struct JobError {
@@ -340,10 +387,10 @@ struct Pong {
 };
 
 using Message = std::variant<HostHello, WorkerHello, JobRequest, CancelJob, Ping, Shutdown, JobProgress,
-                             Heartbeat, JobResult, JobError, Pong>;
+                             Heartbeat, JobResult, JobError, Pong, AnalysisRequest, AnalysisResult>;
 
-// Who sends a message: host_hello, job, cancel, ping and shutdown go host -> worker, the rest
-// worker -> host.
+// Who sends a message: host_hello, job, analyze, cancel, ping and shutdown go host -> worker, the
+// rest worker -> host.
 enum class Direction : std::uint8_t {
     HostToWorker = 1,
     WorkerToHost = 2,
@@ -351,14 +398,15 @@ enum class Direction : std::uint8_t {
 
 [[nodiscard]] Direction direction_of(const Message& message) noexcept;
 
-// The wire name of the message's type ("host_hello", "job", "error", ...).
+// The wire name of the message's type ("host_hello", "job", "analyze", "analysis", "error", ...).
 [[nodiscard]] std::string_view type_name(const Message& message) noexcept;
 
 // ---- Encoding and decoding --------------------------------------------------------------------
 
 // The JSON text of `message`. Values are validated as decode_message() would (InvalidArgument,
 // "workers.protocol.encode": a malformed job id, a relative path, a path that is not valid Unicode,
-// a recipe whose sha256 does not match, invalid export settings, a message above kMaxMessageBytes),
+// a recipe whose sha256 does not match, invalid export settings, an empty or oversized analysis
+// document, a message above kMaxMessageBytes),
 // except that over-long error messages and warnings are truncated (at a UTF-8 boundary) and only
 // the first kMaxWarnings warnings are kept. OutOfMemory.
 [[nodiscard]] Expected<std::string> encode_message(const Message& message);

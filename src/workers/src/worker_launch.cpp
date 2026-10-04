@@ -14,6 +14,7 @@ constexpr std::string_view kWhereLaunch = "workers.launch";
 constexpr std::string_view kWhereHook = "workers.launch.hook";
 constexpr std::uint64_t kMaxAllocateBytes = std::uint64_t{1} << 40;
 constexpr std::uint32_t kMaxDelayMs = 10 * 60 * 1000;
+constexpr std::uint32_t kMaxFailedFinalChecks = 16;
 
 Error invalid_hook(std::string_view spec) {
     return Error{ErrorCode::InvalidArgument, std::format("invalid test hook '{}'", core::sanitize_utf8(spec)),
@@ -65,7 +66,7 @@ bool parse_handle(std::wstring_view text, std::uintptr_t& value) {
 
 bool TestHooks::any() const noexcept {
     return hang_job || freeze || crash_job || allocate_bytes != 0 || render_delay_ms != 0 || fake_commit.has_value() ||
-           protocol_range.has_value();
+           protocol_range.has_value() || fail_final_checks != 0;
 }
 
 std::vector<std::string> TestHooks::specs() const {
@@ -90,6 +91,9 @@ std::vector<std::string> TestHooks::specs() const {
     }
     if (protocol_range) {
         out.push_back(std::format("protocol:{}-{}", protocol_range->first, protocol_range->second));
+    }
+    if (fail_final_checks != 0) {
+        out.push_back(std::format("fail-final-check:{}", fail_final_checks));
     }
     return out;
 }
@@ -131,6 +135,12 @@ Status apply_test_hook(std::string_view spec, TestHooks& hooks) {
             return Unexpected(invalid_hook(spec));
         }
         hooks.protocol_range = std::pair(low, high);
+    } else if (name == "fail-final-check" && has_value) {
+        std::uint32_t count = 0;
+        if (!parse_number(value, count) || count == 0 || count > kMaxFailedFinalChecks) {
+            return Unexpected(invalid_hook(spec));
+        }
+        hooks.fail_final_checks = count;
     } else {
         return Unexpected(invalid_hook(spec));
     }

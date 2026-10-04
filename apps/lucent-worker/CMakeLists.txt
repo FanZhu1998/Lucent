@@ -1,12 +1,15 @@
 # lucent-worker.exe: isolated processing worker (decode, render, encode, verify) driven by
 # lucent_workers (W7). A GUI-subsystem program without a window: starting it never shows a console.
 #
-# The job itself (DevelopJobRunner: recipe, source identity, develop render, export metadata,
-# verified write into the host's temporary path) lives in the small static library
+# The jobs themselves (DevelopJobRunner: recipe, source identity, develop render, export metadata,
+# verified write into the host's temporary path; and the analyze job of automatic batches,
+# analysis_job.hpp) live in the small static library
 # lucent_worker_job, so the tests run exactly the code the worker runs, in-process as well as in a
 # spawned worker.
 
 add_library(lucent_worker_job STATIC
+    analysis_job.cpp
+    analysis_job.hpp
     develop_job.cpp
     develop_job.hpp
     export_metadata.cpp

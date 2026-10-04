@@ -153,6 +153,56 @@ TEST(WorkerServer, ASecondJobWhileBusyIsRefused) {
     EXPECT_EQ(server.runner().calls.load(), 1);
 }
 
+TEST(WorkerServer, AnalyzeJobsAreAnsweredWithAnAnalysis) {
+    ServerHarness server(test_support::wait_for_cancel);
+    expect_hello(server.handshake(server.hello()));
+    AnalysisRequest analyze;
+    analyze.job_id = "auto-1";
+    analyze.source = sample_job().source;
+    analyze.recipe = sample_job().recipe;
+    analyze.request = "{}";
+    // A runner that only exports refuses.
+    ASSERT_TRUE(server.host().channel().send(analyze));
+    auto refused = server.host().next_of<JobError>();
+    ASSERT_TRUE(refused);
+    EXPECT_EQ(refused->job_id, "auto-1");
+    EXPECT_EQ(refused->error.code, ErrorCode::Unsupported);
+    EXPECT_EQ(refused->error.where, "workers.worker.analyze");
+
+    server.runner().analysis = [](const AnalysisRequest& request, JobContext& context) -> Expected<AnalysisResult> {
+        context.progress(JobStage::Analysing, 0.4);
+        context.progress(JobStage::Checking, 1.0);
+        AnalysisResult result;
+        result.source_identity = request.source.identity;
+        result.recipe_sha256 = request.recipe.sha256;
+        result.document = R"({"analysed":true})";
+        return result;
+    };
+    analyze.job_id = "auto-2";
+    ASSERT_TRUE(server.host().channel().send(analyze));
+    auto progress = server.host().next_of<JobProgress>();
+    ASSERT_TRUE(progress);
+    EXPECT_EQ(progress->stage, JobStage::Analysing);
+    auto analysis = server.host().next_of<AnalysisResult>();
+    ASSERT_TRUE(analysis);
+    EXPECT_EQ(analysis->job_id, "auto-2");
+    EXPECT_EQ(analysis->document, R"({"analysed":true})");
+    EXPECT_EQ(server.runner().analyses.load(), 2);
+    EXPECT_EQ(server.runner().calls.load(), 0);
+
+    // An analyze job while an export runs is refused like a second job.
+    ASSERT_TRUE(server.host().channel().send(sample_job("export")));
+    ASSERT_TRUE(server.host().next_of<JobProgress>());
+    analyze.job_id = "auto-3";
+    ASSERT_TRUE(server.host().channel().send(analyze));
+    auto busy = server.host().next_of<JobError>();
+    ASSERT_TRUE(busy);
+    EXPECT_EQ(busy->job_id, "auto-3");
+    EXPECT_EQ(busy->error.where, "workers.worker.busy");
+    ASSERT_TRUE(server.host().channel().send(CancelJob{"export"}));
+    ASSERT_TRUE(server.host().next_of<JobError>());
+}
+
 TEST(WorkerServer, RunnerExceptionsBecomeErrors) {
     std::atomic<int> call{0};
     ServerHarness server([&](const JobRequest&, JobContext&) -> Expected<JobResult> {

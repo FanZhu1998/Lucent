@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 #include <windows.h>
 
+#include <lucent/application/auto_develop.hpp>
 #include <lucent/workers/job_output.hpp>
 #include <lucent/workers/worker_host.hpp>
 
@@ -57,6 +58,104 @@ protected:
     std::filesystem::path source_;
     std::filesystem::path out_;
 };
+
+// An analyze job (protocol version 2) for `source` starting from as-shot settings.
+workers::AnalysisRequest analyze_job(const std::filesystem::path& source, std::string job_id,
+                                     const app::AutoRunRequest& auto_request = {}) {
+    const workers::JobRequest job = make_job(source, source.parent_path() / L"unused.partial", job_id);
+    workers::AnalysisRequest request;
+    request.job_id = std::move(job_id);
+    request.source = job.source;
+    request.recipe = job.recipe;
+    auto text = app::write_auto_request(auto_request);
+    EXPECT_TRUE(text);
+    request.request = text ? *text : std::string("{}");
+    return request;
+}
+
+// A dark synthetic photo with a noise model that Natural brightens (auto_service_test.cpp).
+rts::SyntheticDngSpec dark_spec() {
+    rts::SyntheticDngSpec spec;
+    spec.width = 256;
+    spec.height = 192;
+    spec.white_level = 65535;
+    spec.raw_noise_profile = {2e-5, 2e-7, 2e-5, 2e-7, 2e-5, 2e-7};
+    return spec;
+}
+
+TEST_F(WorkerProcess, AnalyzesAPhotoAndWalksTheFallbacksOfAFailedCheck) {
+    const auto dark = write_dng(dir_, L"dark.dng", dark_spec());
+    WorkerHost host(host_options({"fail-final-check:1"}));
+    std::vector<workers::JobProgress> progress;
+    workers::JobCallbacks callbacks;
+    callbacks.progress = [&](const workers::JobProgress& p) { progress.push_back(p); };
+    const workers::AnalysisRequest request = analyze_job(dark, "auto-1");
+    const workers::AnalysisOutcome outcome = host.run_analysis(request, callbacks);
+    ASSERT_TRUE(outcome.succeeded()) << outcome.failure->error.describe();
+    EXPECT_EQ(outcome.result->recipe_sha256, request.recipe.sha256);
+    EXPECT_EQ(outcome.result->source_identity, request.source.identity);
+    auto run = app::read_auto_run(outcome.result->document);
+    ASSERT_TRUE(run) << run.error().describe();
+    EXPECT_GT(run->chosen.exposure_ev, 0.0);
+    ASSERT_GE(run->attempts.size(), 2u);
+    EXPECT_TRUE(run->attempts[0].check.forced);
+    EXPECT_EQ(run->attempts[0].check.outcome, catalog::AutoCheckOutcome::Failed);
+    ASSERT_TRUE(run->effective);
+    EXPECT_EQ(*run->effective, 1u);
+    bool analysing = false;
+    bool checking = false;
+    for (const workers::JobProgress& p : progress) {
+        analysing = analysing || p.stage == workers::JobStage::Analysing;
+        checking = checking || p.stage == workers::JobStage::Checking;
+    }
+    EXPECT_TRUE(analysing && checking);
+
+    // The same worker exports afterwards: one process serves both kinds of job.
+    expect_success(host.run_job(job(1)));
+    EXPECT_EQ(host.info().starts, 1u);
+
+    // Deterministic: a second analysis decides the same.
+    const workers::AnalysisOutcome again = host.run_analysis(analyze_job(dark, "auto-2"));
+    ASSERT_TRUE(again.succeeded());
+    auto second = app::read_auto_run(again.result->document);
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->effective_settings(), run->effective_settings());
+    EXPECT_EQ(second->confidence, run->confidence);
+}
+
+TEST_F(WorkerProcess, AnAnalysisOfAChangedSourceOrUnreadableRequestFails) {
+    const auto dark = write_dng(dir_, L"dark.dng", dark_spec());
+    WorkerHost host(host_options());
+    workers::AnalysisRequest request = analyze_job(dark, "auto-1");
+    request.request = R"({"schema":"lucent.auto-request","version":99})";
+    const workers::AnalysisOutcome unreadable = host.run_analysis(request);
+    ASSERT_TRUE(unreadable.failure);
+    EXPECT_EQ(unreadable.failure->error.where, "worker.analysis.request");
+    EXPECT_EQ(unreadable.failure->failure_class, FailureClass::Deterministic);
+    request = analyze_job(dark, "auto-2");
+    request.source.identity.size_bytes += 1;
+    const workers::AnalysisOutcome changed = host.run_analysis(request);
+    ASSERT_TRUE(changed.failure);
+    EXPECT_EQ(changed.failure->error.code, ErrorCode::SourceChanged);
+    EXPECT_EQ(changed.failure->fault, WorkerFault::None) << "the worker stays usable";
+}
+
+TEST_F(WorkerProcess, AnAnalysisIsCancelledPromptly) {
+    const auto dark = write_dng(dir_, L"dark.dng", dark_spec());
+    WorkerHost host(host_options({"render-delay:5000"}));
+    core::CancellationSource cancel;
+    std::thread canceller([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        cancel.cancel();
+    });
+    const auto started = std::chrono::steady_clock::now();
+    const workers::AnalysisOutcome outcome = host.run_analysis(analyze_job(dark, "auto-1"), {}, cancel.token());
+    canceller.join();
+    ASSERT_TRUE(outcome.failure);
+    EXPECT_EQ(outcome.failure->failure_class, FailureClass::Cancelled);
+    EXPECT_EQ(outcome.failure->fault, WorkerFault::None);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(4));
+}
 
 TEST_F(WorkerProcess, StartsWithoutAConsoleAndReportsItsBuild) {
     WorkerHost host(host_options());
@@ -284,7 +383,7 @@ TEST_F(WorkerProcess, ASmallRenderFitsUnderAModestLimit) {
 
 TEST_F(WorkerProcess, MismatchedComponentsFailClearly) {
     {
-        WorkerHost host(host_options({"protocol:2-3"}));
+        WorkerHost host(host_options({"protocol:3-4"}));
         auto started = host.start();
         ASSERT_FALSE(started);
         EXPECT_EQ(started.error().code, ErrorCode::VersionMismatch);

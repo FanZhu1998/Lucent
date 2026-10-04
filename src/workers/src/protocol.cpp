@@ -198,7 +198,7 @@ bool known_interpretation(std::uint64_t v) {
     return v >= 1 && v <= 5 && raw::to_string(static_cast<raw::InterpretationStatus>(v)) != "unknown";
 }
 bool known_stage(std::uint64_t v) {
-    return v >= 1 && v <= 5;
+    return v >= 1 && v <= 7;
 }
 bool known_class(std::uint64_t v) {
     return v >= 1 && v <= 3;
@@ -645,6 +645,86 @@ Expected<Json> encode_body(const JobError& m) {
 
 Expected<Json> encode_body(const Pong& m) { return Json{{"nonce", m.nonce}}; }
 
+// The JSON of a job's source and recipe (job and analyze).
+Expected<Json> source_json(const JobSource& source) {
+    auto path = path_text(source.path, "the source path");
+    if (!path) {
+        return Unexpected(std::move(path.error()));
+    }
+    if (source.subimage > kMaxSubimage) {
+        return Unexpected(invalid("the subimage index is out of range"));
+    }
+    return Json{{"path", std::move(*path)},
+                {"subimage", source.subimage},
+                {"identity", identity_json(source.identity)},
+                {"sha256", optional_digest_json(source.sha256)}};
+}
+
+Expected<Json> recipe_json(const JobRecipe& recipe) {
+    if (recipe.document.empty() || recipe.document.size() > kMaxRecipeBytes || !core::is_valid_utf8(recipe.document)) {
+        return Unexpected(invalid("the recipe document is empty, too long or not UTF-8"));
+    }
+    auto digest = core::sha256(std::as_bytes(std::span(recipe.document.data(), recipe.document.size())));
+    if (!digest) {
+        return Unexpected(std::move(digest.error()));
+    }
+    if (*digest != recipe.sha256) {
+        return Unexpected(invalid("the recipe's SHA-256 does not match its document"));
+    }
+    return Json{{"document", recipe.document}, {"sha256", core::to_hex(recipe.sha256)}};
+}
+
+Status check_document(std::string_view document, std::size_t limit, std::string_view what) {
+    if (document.empty() || document.size() > limit || !core::is_valid_utf8(document)) {
+        return Unexpected(invalid(std::format("the {} is empty, above {} bytes or not UTF-8", what, limit)));
+    }
+    return ok();
+}
+
+Expected<Json> encode_body(const AnalysisRequest& m) {
+    auto id = job_id_text(m.job_id);
+    if (!id) {
+        return Unexpected(std::move(id.error()));
+    }
+    auto source = source_json(m.source);
+    if (!source) {
+        return Unexpected(std::move(source.error()));
+    }
+    auto recipe = recipe_json(m.recipe);
+    if (!recipe) {
+        return Unexpected(std::move(recipe.error()));
+    }
+    if (auto checked = check_document(m.request, kMaxAnalysisRequestBytes, "analysis request"); !checked) {
+        return Unexpected(std::move(checked.error()));
+    }
+    return Json{{"job_id", std::move(*id)},
+                {"source", std::move(*source)},
+                {"recipe", std::move(*recipe)},
+                {"request", m.request},
+                {"memory_budget_bytes", m.memory_budget_bytes},
+                {"allow_unsupported", m.allow_unsupported}};
+}
+
+Expected<Json> encode_body(const AnalysisResult& m) {
+    auto id = job_id_text(m.job_id);
+    if (!id) {
+        return Unexpected(std::move(id.error()));
+    }
+    if (auto checked = check_document(m.document, kMaxAnalysisDocumentBytes, "analysis document"); !checked) {
+        return Unexpected(std::move(checked.error()));
+    }
+    if (!(m.seconds >= 0.0 && m.seconds <= 1e9)) {
+        return Unexpected(invalid("the analysis time is negative or not finite"));
+    }
+    return Json{{"job_id", std::move(*id)},
+                {"source",
+                 Json{{"identity", identity_json(m.source_identity)}, {"sha256", optional_digest_json(m.source_sha256)}}},
+                {"recipe_sha256", core::to_hex(m.recipe_sha256)},
+                {"document", m.document},
+                {"seconds", m.seconds},
+                {"memory", memory_json(m.memory)}};
+}
+
 // ---- Messages: decode -------------------------------------------------------------------------
 
 Status check_protocol_name(ObjectReader& reader) {
@@ -915,6 +995,61 @@ Expected<Message> decode_result(ObjectReader& r) {
     return m;
 }
 
+Expected<Message> decode_analyze(ObjectReader& r) {
+    AnalysisRequest m;
+    LUCENT_READ(m.job_id, read_job_id(r));
+    {
+        auto source = r.object("source");
+        if (!source) {
+            return Unexpected(std::move(source.error()));
+        }
+        LUCENT_READ(m.source.path, read_path(*source, "path", /*needs_file_name=*/true));
+        LUCENT_READ(m.source.subimage, source->uint32("subimage", 0, kMaxSubimage));
+        LUCENT_READ(m.source.identity, read_identity(*source, "identity"));
+        LUCENT_READ(m.source.sha256, read_optional_digest(*source, "sha256"));
+        LUCENT_CHECK(source->finish());
+    }
+    {
+        auto recipe = r.object("recipe");
+        if (!recipe) {
+            return Unexpected(std::move(recipe.error()));
+        }
+        LUCENT_READ(m.recipe.document, recipe->string("document", kMaxRecipeBytes, /*allow_empty=*/false));
+        LUCENT_READ(m.recipe.sha256, read_digest(*recipe, "sha256"));
+        LUCENT_CHECK(recipe->finish());
+        auto digest = core::sha256(std::as_bytes(std::span(m.recipe.document.data(), m.recipe.document.size())));
+        if (!digest) {
+            return Unexpected(std::move(digest.error()));
+        }
+        if (*digest != m.recipe.sha256) {
+            return Unexpected(corrupt("analyze.recipe: the SHA-256 does not match the document"));
+        }
+    }
+    LUCENT_READ(m.request, r.string("request", kMaxAnalysisRequestBytes, /*allow_empty=*/false));
+    LUCENT_READ(m.memory_budget_bytes, r.unsigned_integer("memory_budget_bytes"));
+    LUCENT_READ(m.allow_unsupported, r.boolean("allow_unsupported"));
+    return m;
+}
+
+Expected<Message> decode_analysis(ObjectReader& r) {
+    AnalysisResult m;
+    LUCENT_READ(m.job_id, read_job_id(r));
+    {
+        auto source = r.object("source");
+        if (!source) {
+            return Unexpected(std::move(source.error()));
+        }
+        LUCENT_READ(m.source_identity, read_identity(*source, "identity"));
+        LUCENT_READ(m.source_sha256, read_optional_digest(*source, "sha256"));
+        LUCENT_CHECK(source->finish());
+    }
+    LUCENT_READ(m.recipe_sha256, read_digest(r, "recipe_sha256"));
+    LUCENT_READ(m.document, r.string("document", kMaxAnalysisDocumentBytes, /*allow_empty=*/false));
+    LUCENT_READ(m.seconds, r.number("seconds", 0.0, 1e9));
+    LUCENT_READ(m.memory, read_memory(r));
+    return m;
+}
+
 Expected<Message> decode_error(ObjectReader& r) {
     JobError m;
     LUCENT_READ(m.job_id, read_optional_job_id(r));
@@ -947,6 +1082,8 @@ constexpr TypeEntry kTypes[] = {
     {"result", Direction::WorkerToHost, decode_result},
     {"error", Direction::WorkerToHost, decode_error},
     {"pong", Direction::WorkerToHost, decode_pong},
+    {"analyze", Direction::HostToWorker, decode_analyze},
+    {"analysis", Direction::WorkerToHost, decode_analysis},
 };
 
 // Index in kTypes equals the variant index of Message.
@@ -1032,6 +1169,10 @@ std::string_view to_string(JobStage stage) noexcept {
             return "writing";
         case JobStage::Verifying:
             return "verifying";
+        case JobStage::Analysing:
+            return "analysing";
+        case JobStage::Checking:
+            return "checking";
     }
     return "unknown";
 }

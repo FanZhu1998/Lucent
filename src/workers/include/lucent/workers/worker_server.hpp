@@ -17,7 +17,8 @@
 // thread calls force_exit, so a worker never outlives its host for long, whatever its job does.
 //
 // Test hooks handled here (worker_launch.hpp): hang-job, freeze, crash-job and allocate act when a
-// job starts, before the runner is called; render-delay is the runner's (JobContext::test_hooks()).
+// job (export or analyze) starts, before the runner is called; render-delay and fail-final-check
+// are the runner's (JobContext::test_hooks()).
 
 #include <chrono>
 #include <functional>
@@ -57,6 +58,11 @@ public:
     // std::bad_alloc becomes OutOfMemory, any other exception Internal. The server answers with a
     // result (its job_id is set by the server) or an error whose class is default_failure_class().
     [[nodiscard]] virtual Expected<JobResult> run(const JobRequest& request, JobContext& context) = 0;
+
+    // Runs one analyze job (protocol version 2), with run()'s contract; the server answers with an
+    // analysis (its job_id set by the server) or an error. The default refuses with Unsupported
+    // ("workers.worker.analyze"): a runner that only exports.
+    [[nodiscard]] virtual Expected<AnalysisResult> analyze(const AnalysisRequest& request, JobContext& context);
 
 protected:
     JobRunner() = default;
