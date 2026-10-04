@@ -269,6 +269,87 @@ TEST_F(BatchAdapterTest, ABatchRunsWithCoalescedUpdatesAndAResponsiveUiThreadThe
     EXPECT_EQ(batches_->snapshot(again)->completed, 0);
 }
 
+// W8: automatic batches. Analysing only keeps an automatic revision per photo and exports nothing;
+// Auto exports the automatic revision; both report what Auto did to each photo.
+TEST_F(BatchAdapterTest, AutomaticBatchesAnalyseEachPhotoAndReportWhatAutoDid) {
+    open();
+    // Dark photos with a noise model (the analysis needs 256 x 192 pixels and evidence).
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        rts::SyntheticDngSpec spec;
+        spec.width = 256 + 2 * i;
+        spec.height = 192;
+        spec.white_level = 65535;
+        spec.black_level = 256;
+        spec.raw_noise_profile = {2e-5, 2e-7, 2e-5, 2e-7, 2e-5, 2e-7};
+        write_dng(dir_, std::format(L"auto\\DARK_{}.dng", i), spec);
+    }
+    library_->start_import({path(L"auto")}, ImportOptions{});
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !summaries_.isEmpty(); }, kAdapterWaitMs));
+    QList<ItemId> items;
+    for (const LibraryItem& item : added_) {
+        items << item.id;
+    }
+    ASSERT_EQ(items.size(), 2);
+
+    BatchSetup setup = setup_for(items);
+    setup.automatic = BatchAutomatic::AnalyzeOnly;
+    const quint64 plan_token = batches_->request_plan(setup);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !plans_.empty() && plans_.back().first == plan_token; }, kAdapterWaitMs));
+    const BatchPlanInfo& plan = plans_.back().second;
+    ASSERT_TRUE(plan.ok) << plan.error.toStdString();
+    EXPECT_EQ(plan.outputs, 0);  // nothing is exported
+    ASSERT_EQ(plan.automatic_notes.size(), 2);
+    EXPECT_TRUE(plan.automatic_notes[1].startsWith(QStringLiteral("Nothing is exported")));
+
+    const BatchId analysed = submit(setup);
+    ASSERT_NE(analysed, 0u);
+    ASSERT_TRUE(wait_finished(analysed));
+    const BatchSnapshot done = *batches_->snapshot(analysed);
+    EXPECT_EQ(done.automatic, BatchAutomatic::AnalyzeOnly);
+    EXPECT_EQ(done.completed, 2);
+    EXPECT_EQ(done.failed, 0);
+    EXPECT_GE(done.review, 0);
+    EXPECT_EQ(done.analysis_pending, -1);  // finished
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir_.path() / L"out", ec)) {
+        EXPECT_NE(entry.path().extension(), L".jpg") << entry.path().string();
+    }
+    batches_->request_report(analysed);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !reports_.empty() && reports_.back().id == analysed; }, kAdapterWaitMs));
+    const BatchReportInfo report = reports_.back();
+    ASSERT_TRUE(report.ok) << report.error.toStdString();
+    EXPECT_EQ(report.automatic, BatchAutomatic::AnalyzeOnly);
+    EXPECT_EQ(report.analysed, 2);
+    EXPECT_EQ(report.exported, 0);
+    ASSERT_EQ(report.entries.size(), 2);
+    for (const BatchReportEntry& entry : report.entries) {
+        EXPECT_EQ(entry.outcome, BatchOutcome::Analysed) << entry.reason.toStdString();
+        EXPECT_TRUE(entry.automatic);
+        EXPECT_GE(entry.revision_number, 1u);
+        EXPECT_GE(entry.confidence, 0.0);
+        EXPECT_LE(entry.confidence, 1.0);
+        EXPECT_TRUE(entry.output.isEmpty());
+    }
+
+    // Auto exports each photo's new automatic revision.
+    BatchSetup export_setup = setup_for({items[0]});
+    export_setup.automatic = BatchAutomatic::Auto;
+    const BatchId exported = submit(export_setup);
+    ASSERT_NE(exported, 0u);
+    ASSERT_TRUE(wait_finished(exported));
+    EXPECT_EQ(batches_->snapshot(exported)->automatic, BatchAutomatic::Auto);
+    EXPECT_EQ(batches_->snapshot(exported)->completed, 1);
+    batches_->request_report(exported);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !reports_.empty() && reports_.back().id == exported; }, kAdapterWaitMs));
+    const BatchReportEntry& row = reports_.back().entries.at(0);
+    EXPECT_EQ(row.outcome, BatchOutcome::Exported) << row.reason.toStdString();
+    EXPECT_TRUE(row.automatic);
+    EXPECT_GE(row.revision_number, 2u);  // a new automatic revision after the first batch's
+    EXPECT_TRUE(QFileInfo(row.output).isFile()) << row.output.toStdString();
+    EXPECT_TRUE(QFileInfo(row.output).fileName().contains(QStringLiteral("_Lucent_%1").arg(row.revision_number)))
+        << row.output.toStdString();
+}
+
 TEST_F(BatchAdapterTest, AFullDestinationPausesTheBatchWithItsTextUntilResume) {
     open();
     const QList<ItemId> items = import_photos(3);

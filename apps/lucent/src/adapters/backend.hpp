@@ -20,6 +20,10 @@
 // (library_problem() set as well). Without a catalog path the library is a SessionLibrary (the
 // W3 behaviour, used by tests).
 //
+// W8: the AutoService (auto_service.hpp, ADR 0013) runs the editor's "Auto" in process on the
+// executor's Background lane, over the recipe service; it is created after the executor and
+// destroyed before it (its destructor cancels the runs in progress and waits for them).
+//
 // W7: with a writable persistent library the Backend also opens the durable BatchService
 // (batch_service.hpp, ADR 0012) after the recipe service; it reconciles the job journal of the
 // previous session, continues running batches with lucent-worker.exe processes, and the export
@@ -51,6 +55,7 @@
 #include <optional>
 #include <vector>
 
+#include <lucent/application/auto_service.hpp>
 #include <lucent/application/batch_service.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/export_service.hpp>
@@ -93,6 +98,9 @@ struct BackendOptions {
     // interactive_busy, registry and lucent_directories are filled in by the Backend.
     bool batches = true;
     app::BatchServiceOptions batch;
+    // W8. The interactive Auto (its registry is filled in by the Backend; its decode limits and
+    // memory budget follow `renderer`). Tests set fail_final_checks.
+    app::AutoServiceOptions automatic;
 };
 
 // Output folders chosen for exports in this session. Imports do not scan into them when a scan
@@ -152,6 +160,8 @@ public:
     // W6. The items' recipes and the edit sessions (used by the editor; ADR 0010).
     [[nodiscard]] app::RecipeService& recipes() noexcept { return *recipes_; }
     [[nodiscard]] app::DevelopPreviewService& develop() noexcept { return *develop_; }
+    // W8. The editor's Auto (null when it could not be created).
+    [[nodiscard]] app::AutoService* automatic() noexcept { return auto_.get(); }
     [[nodiscard]] OutputFolders& output_folders() noexcept { return output_folders_; }
     // The recipe store under recipes() (tests write revisions through it directly).
     [[nodiscard]] app::RecipeStore& recipe_store() noexcept { return *recipe_store_; }
@@ -194,6 +204,7 @@ private:
     std::unique_ptr<app::PreviewService> previews_;
     std::unique_ptr<app::ExportService> exports_;
     std::unique_ptr<app::DevelopPreviewService> develop_;
+    std::unique_ptr<app::AutoService> auto_;
     std::shared_ptr<Relay> relay_ = std::make_shared<Relay>();
     std::unique_ptr<app::MaintenanceService> maintenance_;
     OutputFolders output_folders_;

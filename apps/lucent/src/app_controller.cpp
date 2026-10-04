@@ -151,6 +151,20 @@ AppController::AppController(Services services, QObject* parent)
     connect(&library, &LibraryService::verification_progress, this, &AppController::on_verification_progress);
     connect(services_.exports.get(), &ExportService::busy_changed, this, &AppController::busyChanged);
     connect(services_.edits.get(), &EditService::busy_changed, this, &AppController::busyChanged);
+    // Auto runs in the background: the window is busy while one runs. The photo being edited reports
+    // its outcome itself (EditSession::notice); a run of a photo the editor has left is reported here.
+    connect(services_.edits.get(), &EditService::auto_progress, this, &AppController::busyChanged);
+    connect(services_.edits.get(), &EditService::auto_finished, this, [this](const AutoOutcome& outcome) {
+        if (outcome.item != edit_->item()) {
+            QString name;
+            if (const auto row = library_model_->row_of(outcome.item)) {
+                name = QFileInfo(library_model_->item_at(*row)->file_path).fileName();
+            }
+            set_status_message(name.isEmpty() ? outcome.message
+                                              : tr_controller("%1: %2").arg(name, outcome.message));
+        }
+        emit busyChanged();
+    });
     connect(edit_.get(), &EditSession::notice, this, &AppController::set_status_message);
     // After the model has inserted the rows (it connected first).
     connect(&library, &LibraryService::items_added, this, &AppController::on_items_added);
@@ -565,9 +579,13 @@ void AppController::on_batch_changed(const BatchSnapshot& batch) {
     }
     const QString name = batch.name.isEmpty() ? found.value() : batch.name;
     watched_batches_.erase(found);
+    // An analysing-only batch's photos were analysed (their automatic revisions are the result).
+    const bool analysed = batch.automatic == BatchAutomatic::AnalyzeOnly;
     QString message = batch.state == BatchState::Cancelled
-                          ? tr_controller("%1 was cancelled: %2 of %3 exported")
-                          : tr_controller("%1 finished: %2 of %3 exported");
+                          ? (analysed ? tr_controller("%1 was cancelled: %2 of %3 analysed")
+                                      : tr_controller("%1 was cancelled: %2 of %3 exported"))
+                          : (analysed ? tr_controller("%1 finished: %2 of %3 analysed")
+                                      : tr_controller("%1 finished: %2 of %3 exported"));
     message = message.arg(name).arg(batch.completed).arg(batch.total);
     if (batch.skipped > 0) {
         message += QStringLiteral(" · ") + tr_controller("%1 skipped").arg(batch.skipped);
@@ -721,7 +739,7 @@ void AppController::set_current_index(int row) {
 
 bool AppController::busy() const {
     return importing_ || services_.library->is_busy() || services_.exports->is_busy() ||
-           services_.edits->is_busy() || services_.batches->is_busy();
+           services_.edits->is_busy() || services_.edits->is_auto_running() || services_.batches->is_busy();
 }
 
 void AppController::set_include_subfolders(bool include) {

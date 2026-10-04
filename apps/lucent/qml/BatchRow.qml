@@ -6,8 +6,9 @@ import Lucent
 // One batch in the Exports view (blueprint section 2, step 5): its state, live counts (exported,
 // remaining, failed, skipped, for review), the current stage, an ETA when the service has measured
 // one, the actions, and an attention banner with the service's actionable text and Resume. A batch
-// of one photo (a single export) is a compact row. The properties marked required are
-// BatchListModel roles.
+// of one photo (a single export) is a compact row. W8: an automatic batch is tagged ("Auto",
+// "Analyse only"), counts analysed photos when it only analyses, and shows the related-shot
+// pre-pass. The properties marked required are BatchListModel roles.
 Rectangle {
     id: row
 
@@ -43,6 +44,10 @@ Rectangle {
     required property string timesLabel
     required property bool isActive
     required property string accessibleLabel
+    required property string automaticKey
+    required property string automaticLabel
+    required property string completedLabel
+    required property string analysis
 
     property bool selected: false
     property bool showFocus: false
@@ -104,6 +109,17 @@ Rectangle {
                 Layout.fillWidth: true
             }
 
+            // W8: an automatic batch (Auto, or Analyse only).
+            Badge {
+                objectName: "batchAutomaticTag"
+                visible: row.automaticKey !== "off"
+                text: row.automaticLabel
+                dotColor: Theme.accent
+                detail: row.automaticKey === "analyzeOnly"
+                        ? qsTr("Each photo gets an automatic revision to review in Edit; nothing is exported.")
+                        : qsTr("Each photo is analysed, saved as an automatic revision, checked at full size and exported.")
+            }
+
             // A single export's outputs can be recommended for review too.
             Text {
                 objectName: "batchReviewMark"
@@ -155,7 +171,7 @@ Rectangle {
 
             Repeater {
                 model: [
-                    { key: "exported", label: qsTr("%1 exported").arg(row.completed), shown: true },
+                    { key: "exported", label: row.completedLabel, shown: true },
                     { key: "remaining", label: qsTr("%1 remaining").arg(row.remaining), shown: row.remaining > 0 },
                     { key: "failed", label: qsTr("%1 failed").arg(row.failed), shown: row.failed > 0 },
                     { key: "skipped", label: qsTr("%1 skipped").arg(row.skipped), shown: row.skipped > 0 },
@@ -204,6 +220,18 @@ Rectangle {
             Item {
                 Layout.fillWidth: true
             }
+        }
+
+        // W8: the related-shot pre-pass (every photo is analysed before any is exported).
+        Text {
+            objectName: "batchAnalysis"
+            visible: row.analysis.length > 0
+            text: row.analysis
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSmall
+            elide: Text.ElideRight
+            Layout.fillWidth: true
+            Layout.leftMargin: 20
         }
 
         // The current stage of the running photos.

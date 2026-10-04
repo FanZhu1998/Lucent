@@ -11,6 +11,7 @@
 #include <QQuickWindow>
 #include <QSettings>
 #include <QTimer>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <utility>
@@ -44,6 +45,10 @@ void show_text(const QString& text, bool is_error) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // As lucent-worker.exe (ADR 0013, item 10): the MSVC x64 runtime picks FMA3 or SSE2 code for exp,
+    // log and cbrt at run time, so the editor's in-process Auto could resolve a near-tie differently
+    // from an automatic batch's worker on the same photo. Both use the SSE2 code: they decide alike.
+    _set_FMA3_enable(0);
     lucent::ui::configure_application();
     QGuiApplication app(argc, argv);
 

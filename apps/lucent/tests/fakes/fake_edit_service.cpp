@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -160,6 +161,8 @@ QList<EditHistoryEntry> FakeEditService::history_of(ItemId id) const {
         entry.changed = revision.changed;
         entry.current = revision.id == item.current;
         entry.on_current_path = path.contains(revision.id);
+        entry.auto_kind = revision.auto_kind;
+        entry.auto_failed = revision.auto_failed;
         entries << entry;
     }
     return entries;
@@ -217,6 +220,7 @@ void FakeEditService::publish(ItemId id, quint64 token, bool history, bool frame
         emit state_changed(state);
         if (history) {
             emit history_changed(id, history_of(id));
+            emit auto_summary_changed(id, summary_of(id));
         }
         if (!frame || !found->second.open) {
             return;
@@ -447,6 +451,145 @@ void FakeEditService::paste_settings(const QList<ItemId>& targets) {
         }
     }
     later([this, report] { emit pasted(report); });
+}
+
+// ---- Simulated Auto ------------------------------------------------------------------------------
+
+AutoSummary FakeEditService::summary_of(ItemId id) const {
+    const auto found = items_.find(id);
+    if (found == items_.end()) {
+        return {};
+    }
+    const Revision* current = find(found->second, found->second.current);
+    return current != nullptr && current->summary ? *current->summary : AutoSummary{};
+}
+
+bool FakeEditService::is_auto_running(ItemId item) const {
+    return item == 0 ? !auto_runs_.empty() : auto_runs_.contains(item);
+}
+
+void FakeEditService::hold_auto(bool held) {
+    auto_held_ = held;
+}
+
+void FakeEditService::run_auto(ItemId id) {
+    if (id == 0 || auto_runs_.contains(id)) {
+        return;
+    }
+    AutoRun run;
+    run.fail = std::exchange(fail_next_auto_, false);
+    auto_runs_[id] = run;
+    QTimer::singleShot(0, this, [this, id] { auto_step(id); });
+}
+
+void FakeEditService::cancel_auto(ItemId id) {
+    if (const auto found = auto_runs_.find(id); found != auto_runs_.end()) {
+        found->second.cancel = true;
+    }
+}
+
+void FakeEditService::auto_step(ItemId id) {
+    const auto found = auto_runs_.find(id);
+    if (found == auto_runs_.end()) {
+        return;
+    }
+    AutoRun& run = found->second;
+    const int delay = std::max(0, timings_.preview_delay_ms);
+    if (run.cancel) {
+        auto_runs_.erase(found);
+        AutoOutcome outcome;
+        outcome.item = id;
+        outcome.cancelled = true;
+        outcome.message = tr_fake("Auto was cancelled; nothing was changed.");
+        emit auto_finished(outcome);
+        return;
+    }
+    constexpr std::array kStages{AutoStage::Queued, AutoStage::Analysing, AutoStage::Checking, AutoStage::Saving};
+    if (run.step < static_cast<int>(kStages.size())) {
+        emit auto_progress(AutoProgress{id, kStages[static_cast<std::size_t>(run.step)], run.step * 0.3});
+        run.step += auto_held_ && run.step == 1 ? 0 : 1;  // a held run stays in "Analysing"
+        QTimer::singleShot(auto_held_ ? std::max(delay, 10) : delay, this, [this, id] { auto_step(id); });
+        return;
+    }
+    const AutoRun done = run;
+    auto_runs_.erase(found);
+    finish_auto(id, done);
+}
+
+void FakeEditService::finish_auto(ItemId id, const AutoRun& run) {
+    Item& item = items_[id];
+    const EditSettings from = committed(item);
+    const quint64 parent = item.current;
+    EditSettings chosen = from;
+    AutoSummary summary;
+    summary.confidence = run.fail ? 0.6 : 0.82;
+    if (from.locked(EditControl::Exposure)) {
+        summary.locked << EditControl::Exposure;
+        summary.locks_prevented_targets = true;
+        summary.lock_notes << tr_fake("Simulated: exposure is locked, so the photo stays about 0.5 EV darker than "
+                                      "Lucent's usual target.");
+        summary.review_reasons << tr_fake("Locked controls kept Auto from its usual targets.");
+    } else {
+        chosen.exposure_ev = std::clamp(from.exposure_ev + 0.5, -kExposureLimit, kExposureLimit);
+    }
+    if (!from.locked(EditControl::Contrast)) {
+        chosen.contrast = std::clamp(from.contrast + 0.1, -kAdjustmentLimit, kAdjustmentLimit);
+    }
+    summary.notes << tr_fake("Simulated: the colour of the light was uncertain, so the white balance was kept "
+                             "close to the camera's.");
+    const auto add_revision = [&](const EditSettings& settings, const QString& kind, bool failed,
+                                  const AutoSummary& described) {
+        Revision revision;
+        revision.id = next_revision_++;
+        revision.number = static_cast<quint32>(item.revisions.size() + 1);
+        revision.parent = parent;  // siblings: undo returns to the recipe before Auto
+        revision.settings = settings;
+        revision.origin = QStringLiteral("auto");
+        revision.created = QDateTime::currentDateTimeUtc();
+        revision.changed = changed_controls(from, settings);
+        revision.auto_kind = kind;
+        revision.auto_failed = failed;
+        AutoSummary stored = described;
+        stored.revision = revision.id;
+        stored.revision_number = revision.number;
+        stored.changed = revision.changed;
+        revision.summary = stored;
+        item.revisions.push_back(revision);
+        return revision;
+    };
+    int written = 0;
+    if (run.fail) {
+        AutoSummary failed = summary;
+        failed.review = true;
+        static_cast<void>(add_revision(chosen, QStringLiteral("chosen"), true, failed));
+        ++written;
+        chosen.contrast = from.contrast;  // the conservative fallback keeps the contrast
+        summary.attempt = 1;
+        summary.fallback_detail = tr_fake("Simulated: attempt 0 failed the full-resolution check.");
+        summary.review_reasons << tr_fake("The first automatic edit failed a quality check, so a more conservative "
+                                          "one was used.");
+    }
+    summary.review = !summary.review_reasons.isEmpty();
+    const Revision effective =
+        add_revision(chosen, run.fail ? QStringLiteral("fallback") : QStringLiteral("chosen"), false, summary);
+    ++written;
+    const bool made_current = !item.transient.has_value() && item.current == parent;
+    if (made_current) {
+        item.current = effective.id;
+    }
+    publish(id, 0, true, made_current, true);
+    AutoOutcome outcome;
+    outcome.item = id;
+    outcome.saved = true;
+    outcome.made_current = made_current;
+    outcome.revision_number = effective.number;
+    outcome.revisions = written;
+    outcome.review = summary.review;
+    outcome.message = made_current ? tr_fake("Auto saved its settings as revision %1.").arg(effective.number)
+                                   : tr_fake("Auto finished, but the photo was changed meanwhile: its settings are "
+                                             "kept in the history as revision %1.")
+                                         .arg(effective.number);
+    later([this, outcome] { emit auto_finished(outcome); });
 }
 
 QList<double> FakeEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {

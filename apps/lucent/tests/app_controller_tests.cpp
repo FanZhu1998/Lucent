@@ -291,6 +291,26 @@ TEST_F(AppControllerTest, BusyFollowsTheServices) {
     EXPECT_TRUE(controller.busy());
 }
 
+// W8: Auto keeps the window busy while it runs; a photo the editor has left reports its outcome in
+// the status line with its name (the photo being edited reports it itself).
+TEST_F(AppControllerTest, AutoIsBusyAndAPhotoLeftBehindReportsItsOutcome) {
+    add_two_photos();
+    ASSERT_TRUE(controller.openItem(0));
+    QSignalSpy busy(&controller, &AppController::busyChanged);
+    scripted.edits->run_auto(1);
+    scripted.edits->emit_auto_progress(AutoProgress{1, AutoStage::Analysing, 0.2});
+    EXPECT_TRUE(controller.busy());
+    EXPECT_GE(busy.count(), 1);
+    ASSERT_TRUE(controller.openItem(1));  // the editor moves on to B.ARW
+    AutoOutcome outcome;
+    outcome.item = 1;
+    outcome.saved = true;
+    outcome.message = QStringLiteral("Auto saved its settings as revision 1.");
+    scripted.edits->emit_auto_finished(outcome);
+    EXPECT_FALSE(controller.busy());
+    EXPECT_EQ(controller.status_message(), QStringLiteral("A.CR3: Auto saved its settings as revision 1."));
+}
+
 TEST_F(AppControllerTest, ClippingOverlayIsAToggle) {
     QSignalSpy spy(&controller, &AppController::clippingOverlayChanged);
     controller.set_clipping_overlay(true);

@@ -496,5 +496,196 @@ TEST(EditHistoryModel, ListsRevisionsNewestFirstWithAsShotLast) {
     EXPECT_TRUE(model.data(model.index(2), EditHistoryModel::DetailRole).toString().startsWith(QStringLiteral("#1 · ")));
 }
 
+// ---- Auto (W8) ----------------------------------------------------------------------------------
+
+TEST_F(EditSessionTest, AutoCommitsAPendingGestureFirstAndShowsItsRunUntilItEnds) {
+    open(7);
+    AutoSettingsModel& automatic = *session.automatic();
+    EXPECT_TRUE(session.can_run_auto());
+    EXPECT_FALSE(automatic.running());
+    EXPECT_FALSE(automatic.has_summary());
+
+    // A drag in progress: its change is committed before Auto reads the photo's settings.
+    session.beginGesture();
+    session.setValue(QStringLiteral("contrast"), 20.0);
+    QSignalSpy notices(&session, &EditSession::notice);
+    session.runAuto();
+    ASSERT_EQ(service.count("run_auto"), 1);
+    ASSERT_EQ(service.count("commit"), 1);
+    std::size_t commit_at = 0;
+    std::size_t auto_at = 0;
+    for (std::size_t i = 0; i < service.calls.size(); ++i) {
+        commit_at = service.calls[i].name == u"commit" ? i : commit_at;
+        auto_at = service.calls[i].name == u"run_auto" ? i : auto_at;
+    }
+    EXPECT_LT(commit_at, auto_at);
+    EXPECT_TRUE(automatic.running());
+    EXPECT_FALSE(session.can_run_auto());  // one run per photo
+    session.runAuto();
+    EXPECT_EQ(service.count("run_auto"), 1);
+    EXPECT_EQ(automatic.stage_text(), QStringLiteral("Waiting to start…"));
+
+    // Progress of this photo is shown; another photo's is not.
+    service.emit_auto_progress(AutoProgress{7, AutoStage::Checking, 0.6});
+    service.emit_auto_progress(AutoProgress{8, AutoStage::Analysing, 0.9});
+    EXPECT_EQ(automatic.stage_text(), QStringLiteral("Checking the result at full size…"));
+    EXPECT_DOUBLE_EQ(automatic.progress(), 0.6);
+
+    // Cancelling is asked of the service; the run says so until it ends.
+    automatic.cancel();
+    EXPECT_EQ(service.count("cancel_auto"), 1);
+    EXPECT_TRUE(automatic.cancelling());
+    EXPECT_EQ(automatic.stage_text(), QStringLiteral("Cancelling…"));
+
+    AutoOutcome outcome;
+    outcome.item = 7;
+    outcome.cancelled = true;
+    outcome.message = QStringLiteral("Auto was cancelled; nothing was changed.");
+    service.emit_auto_finished(outcome);
+    EXPECT_FALSE(automatic.running());
+    EXPECT_FALSE(automatic.cancelling());
+    EXPECT_EQ(automatic.last_result(), outcome.message);
+    EXPECT_FALSE(automatic.last_result_failed());  // a cancellation is not a failure
+    EXPECT_TRUE(session.can_run_auto());
+    ASSERT_EQ(notices.count(), 1);
+    EXPECT_EQ(notices.at(0).at(0).toString(), outcome.message);
+
+    // A run that saved nothing for a reason is shown as such.
+    session.runAuto();
+    AutoOutcome failed;
+    failed.item = 7;
+    failed.message =
+        QStringLiteral("No automatic edit passed Lucent's full-size quality check, so nothing was changed.");
+    service.emit_auto_finished(failed);
+    EXPECT_TRUE(automatic.last_result_failed());
+    EXPECT_TRUE(automatic.last_result_worth_showing());
+
+    // A result saved and made current is the summary itself; one kept as a branch is news.
+    session.runAuto();
+    AutoOutcome saved;
+    saved.item = 7;
+    saved.saved = true;
+    saved.made_current = true;
+    saved.revision_number = 2;
+    saved.message = QStringLiteral("Auto saved its settings as revision 2.");
+    service.emit_auto_finished(saved);
+    EXPECT_FALSE(automatic.last_result_failed());
+    EXPECT_FALSE(automatic.last_result_worth_showing());
+    session.runAuto();
+    saved.made_current = false;
+    service.emit_auto_finished(saved);
+    EXPECT_TRUE(automatic.last_result_worth_showing());
+}
+
+TEST_F(EditSessionTest, TheAutoSummaryDescribesTheCurrentAutomaticRevisionWithItsValues) {
+    open(7);
+    AutoSettingsModel& automatic = *session.automatic();
+    // The automatic revision is current: its settings are the committed ones.
+    EditState state;
+    state.item = 7;
+    state.revision = 41;
+    state.revision_number = 3;
+    state.settings.exposure_ev = 0.75;
+    state.settings.contrast = 0.12;
+    state.settings.white_balance = WhiteBalanceMode::Kelvin;
+    state.settings.temperature_k = 5450.0;
+    state.settings.tint = 3.0;
+    state.settings.set_locked(EditControl::Highlights, true);
+    state.committed = state.settings;
+    state.can_undo = true;
+    service.emit_state(state);
+
+    AutoSummary summary;
+    summary.revision = 41;
+    summary.revision_number = 3;
+    summary.confidence = 0.82;
+    summary.review = true;
+    summary.review_reasons = {QStringLiteral("Lucent made a large automatic change; check that it suits the photo.")};
+    summary.notes = {QStringLiteral("Parts of the photo were overexposed in the camera.")};
+    summary.changed = {EditControl::WhiteBalance, EditControl::Exposure, EditControl::Contrast};
+    summary.locked = {EditControl::Highlights};
+    summary.locks_prevented_targets = true;
+    summary.lock_notes = {QStringLiteral("Highlights are locked, so bright areas stay brighter.")};
+    summary.attempt = 1;
+    summary.fallback_detail =
+        QStringLiteral("a conservative fallback after attempt 0 failed the full-resolution check");
+    summary.group = QStringLiteral("time-1");
+    QSignalSpy changed(&automatic, &AutoSettingsModel::summaryChanged);
+    service.emit_auto_summary(8, summary);  // another photo's: ignored
+    EXPECT_FALSE(automatic.has_summary());
+    service.emit_auto_summary(7, summary);
+    ASSERT_TRUE(automatic.has_summary());
+    EXPECT_EQ(changed.count(), 1);
+    EXPECT_EQ(automatic.origin(), QStringLiteral("Revision 3 · by Auto"));
+    EXPECT_EQ(automatic.confidence_percent(), 82);
+    EXPECT_EQ(automatic.confidence_level(), QStringLiteral("high"));
+    EXPECT_EQ(automatic.confidence_text(), QStringLiteral("Confidence: high (82 %)"));
+    EXPECT_TRUE(automatic.review());
+    EXPECT_EQ(automatic.review_reasons(), summary.review_reasons);
+    EXPECT_EQ(automatic.notes(), summary.notes);
+    EXPECT_EQ(automatic.changed_text(),
+              QStringLiteral("White balance 5450 K, tint +3 · Exposure +0.75 EV · Contrast +12"));
+    EXPECT_EQ(automatic.locked_text(), QStringLiteral("Locked, kept as they were: Highlights"));
+    EXPECT_TRUE(automatic.locks_prevented_targets());
+    EXPECT_FALSE(automatic.fallback_text().isEmpty());
+    EXPECT_EQ(automatic.fallback_detail(), summary.fallback_detail);
+    EXPECT_EQ(automatic.group_text(), QStringLiteral("Matched to its related shots (group time-1)."));
+
+    // A batch's revision says so; a low confidence is called low.
+    summary.from_batch = true;
+    summary.confidence = 0.3;
+    summary.attempt = 0;
+    service.emit_auto_summary(7, summary);
+    EXPECT_EQ(automatic.origin(), QStringLiteral("Revision 3 · by an automatic batch"));
+    EXPECT_EQ(automatic.confidence_level(), QStringLiteral("low"));
+    EXPECT_TRUE(automatic.fallback_text().isEmpty());
+
+    // Undo to a revision that is not automatic: no summary. Another photo starts without one.
+    service.emit_auto_summary(7, AutoSummary{});
+    EXPECT_FALSE(automatic.has_summary());
+    service.emit_auto_summary(7, summary);
+    session.set_item(8);
+    EXPECT_FALSE(automatic.has_summary());
+    EXPECT_FALSE(automatic.running());
+}
+
+TEST_F(EditSessionTest, AutoIsOfferedOnlyForAnEditablePhotoAndARunInProgressShowsAgain) {
+    session.set_item(7);
+    EXPECT_FALSE(session.can_run_auto());  // no state yet
+    EditState read_only;
+    read_only.item = 7;
+    read_only.read_only = true;
+    read_only.read_only_reason = QStringLiteral("This library was saved by a newer version of Lucent.");
+    service.emit_state(read_only);
+    EXPECT_FALSE(session.can_run_auto());
+    session.runAuto();
+    EXPECT_EQ(service.count("run_auto"), 0);
+
+    // A run of photo 9 started earlier continues while the editor shows another photo.
+    open(9);
+    session.runAuto();
+    open(10);
+    EXPECT_FALSE(session.automatic()->running());
+    open(9);
+    EXPECT_TRUE(session.automatic()->running());
+    EXPECT_FALSE(session.can_run_auto());
+}
+
+TEST(EditHistoryModelAuto, AutomaticAttemptsAreNamedByWhatHappenedToThem) {
+    EditHistoryEntry chosen;
+    chosen.revision = 5;
+    chosen.number = 2;
+    chosen.origin = QStringLiteral("auto");
+    chosen.auto_kind = QStringLiteral("chosen");
+    chosen.changed = {EditControl::Exposure};
+    EXPECT_EQ(EditHistoryModel::title_of(chosen), QStringLiteral("Auto: Exposure"));
+    chosen.auto_failed = true;
+    EXPECT_EQ(EditHistoryModel::title_of(chosen), QStringLiteral("Auto, failed the quality check"));
+    EditHistoryEntry fallback = chosen;
+    fallback.auto_failed = false;
+    fallback.auto_kind = QStringLiteral("fallback");
+    EXPECT_EQ(EditHistoryModel::title_of(fallback), QStringLiteral("Auto (conservative): Exposure"));
+}
+
 }  // namespace
 }  // namespace lucent::ui

@@ -4,7 +4,9 @@
 // development" steps 1 to 5; section 7, "Export integrity and user-selected destinations";
 // ADR 0012). The application service behind it (app::BatchService) persists every batch in the
 // catalog's job journal, renders in isolated worker processes and publishes with a no-clobber,
-// verified protocol; single exports are batches of one.
+// verified protocol; single exports are batches of one. W8: automatic batches (BatchAutomatic)
+// analyse every photo in its worker first and export (or, analysing only, keep) the automatic
+// revision; their snapshots carry the analysis progress and their reports what Auto did.
 //
 // Threading contract: as LibraryService (library_service.hpp). The object lives on the UI thread,
 // member functions return promptly (planning, submitting, status reads, commands and reports run
@@ -44,6 +46,16 @@ enum class BatchExisting : std::uint8_t {
     ExportAgain = 2,  // exported again under a new name
 };
 
+// Automatic settings of a batch (blueprint section 2, "Automatic batch development": Lucent
+// "analyzes each image, chooses its own settings, validates the result, and exports
+// automatically"; "An optional Analyze only mode produces editable previews before export";
+// ADR 0013). Numeric values are app::AutomaticSettings'.
+enum class BatchAutomatic : std::uint8_t {
+    Off = 0,          // each photo is exported with its own current edit
+    Auto = 1,         // each photo is analysed, saved as an automatic revision, checked and exported
+    AnalyzeOnly = 2,  // each photo is analysed and saved as an automatic revision; nothing is exported
+};
+
 // What the Export batch dialog asks for (blueprint section 2 step 3).
 struct BatchSetup {
     QList<ItemId> items;      // the photographs (a selection or the listed photos)
@@ -61,6 +73,9 @@ struct BatchSetup {
     QString copyright;
     bool include_gps = false;     // never on unless chosen
     QString name;                 // shown in lists; empty: "Export of <n> photos"
+    BatchAutomatic automatic = BatchAutomatic::Off;
+    // Related photographs are kept visually consistent (with Auto or AnalyzeOnly only).
+    bool keep_consistent = false;
 };
 
 struct BatchPlanExample {
@@ -98,6 +113,8 @@ struct BatchPlanInfo {
     qint64 largest_bytes = 0;
     qint64 free_bytes = -1;       // of the destination drive; -1 when unknown
     QStringList warnings;
+    // Automatic settings: what the analysis adds (its cost, what is written), one sentence each.
+    QStringList automatic_notes;
 };
 
 enum class BatchState : std::uint8_t {
@@ -158,6 +175,13 @@ struct BatchSnapshot {
     QDateTime finished;     // invalid while not finished
     QString last_output;    // the most recently published file of this session
     QString report_path;    // the HTML report once written; empty otherwise
+    // Automatic settings (W8). An AnalyzeOnly batch's `completed` photos were analysed, not exported.
+    BatchAutomatic automatic = BatchAutomatic::Off;
+    bool keep_consistent = false;
+    // While an automatic batch has work left: its unfinished photos not analysed yet, and the photos
+    // whose analysis is recorded (any stage); -1 when not known (finished, or not automatic).
+    qint64 analysis_pending = -1;
+    qint64 analysis_recorded = -1;
 
     [[nodiscard]] qint64 remaining() const noexcept { return queued + running; }
     [[nodiscard]] bool single() const noexcept { return single_export; }
@@ -172,6 +196,7 @@ enum class BatchOutcome : std::uint8_t {
     Failed = 3,
     Cancelled = 4,
     Pending = 5,
+    Analysed = 6,  // AnalyzeOnly: automatic revisions written, nothing exported
 };
 
 struct BatchReportEntry {
@@ -184,6 +209,16 @@ struct BatchReportEntry {
     QString action;  // what to do; may be empty
     QStringList review;  // why a review is recommended; empty when it is not
     int attempts = 0;
+    // Automatic batches: what automatic settings did to the photo (its effective automatic
+    // revision's analysis record). `automatic` false for other batches.
+    bool automatic = false;
+    quint32 revision_number = 0;  // the effective automatic revision; 0 until it is saved
+    double confidence = -1.0;     // 0..1; -1 unknown
+    int attempt = 0;              // 0: Auto's choice; n: the n-th conservative fallback
+    QStringList flags;            // user-facing findings, one per flag
+    bool locks_prevented = false;  // locked controls kept Auto from its usual targets
+    QStringList locks;            // user-facing: what the locks did
+    QString group;                // the related-shot group it was matched to; empty: none
 };
 
 // The report of one batch: exported, skipped, failed and review-recommended photographs with
@@ -201,6 +236,8 @@ struct BatchReportInfo {
     qint64 cancelled = 0;
     qint64 pending = 0;
     qint64 review = 0;
+    qint64 analysed = 0;  // AnalyzeOnly: photos with automatic revisions
+    BatchAutomatic automatic = BatchAutomatic::Off;
     QString format;  // "JPEG · sRGB · 8-bit" from an exported output; empty when none
     QList<BatchReportEntry> entries;  // batch order, then photographs left out at the start
     QStringList notes;

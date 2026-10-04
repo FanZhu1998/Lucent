@@ -19,6 +19,8 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 
+#include "models/batch_presentation.hpp"
+
 namespace lucent::ui {
 namespace {
 
@@ -254,6 +256,15 @@ CommandLine parse_command_line(const QStringList& arguments) {
                                             QStringLiteral("file.png"));
     const QCommandLineOption done_option(QStringLiteral("quit-when-done"),
                                          QStringLiteral("With --export-batch, exit when the batch has finished."));
+    const QCommandLineOption auto_option(QStringLiteral("auto"),
+                                         QStringLiteral("With --open-first, run Auto on the photo once it is shown "
+                                                        "and report what it did."));
+    const QCommandLineOption automatic_option(QStringLiteral("automatic"),
+                                              QStringLiteral("The automatic settings of --export-batch: off "
+                                                             "(default), auto or analyze-only."),
+                                              QStringLiteral("mode"));
+    const QCommandLineOption consistent_option(QStringLiteral("keep-consistent"),
+                                               QStringLiteral("With --automatic, keep related shots consistent."));
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
@@ -261,7 +272,8 @@ CommandLine parse_command_line(const QStringList& arguments) {
                        screenshot_option, quit_option, timeout_option, format_option, color_option,
                        quality_option, zoom_option, measure_option, dialog_option, data_root_option, set_option,
                        drag_option, drag_steps_option, compare_option, clipping_option, scroll_option,
-                       batch_option, to_option, preset_option, batch_dialog_option, running_option, done_option});
+                       batch_option, to_option, preset_option, batch_dialog_option, running_option, done_option,
+                       auto_option, automatic_option, consistent_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -410,10 +422,12 @@ CommandLine parse_command_line(const QStringList& arguments) {
             return fail(QStringLiteral("--scroll-panel needs a fraction from 0 to 1."));
         }
     }
+    options.run_auto = parser.isSet(auto_option);
     if ((!options.edits.empty() || !options.drag.isEmpty() || !options.compare.isEmpty() || options.clipping ||
-         options.panel_scroll) &&
+         options.panel_scroll || options.run_auto) &&
         !options.open_first) {
-        return fail(QStringLiteral("--set, --drag, --compare, --clipping and --scroll-panel need --open-first."));
+        return fail(
+            QStringLiteral("--set, --drag, --compare, --clipping, --scroll-panel and --auto need --open-first."));
     }
     if (parser.isSet(batch_option)) {
         options.batch_folder = parser.value(batch_option).trimmed();
@@ -425,9 +439,24 @@ CommandLine parse_command_line(const QStringList& arguments) {
             return fail(QStringLiteral("--export-batch needs --to <folder>."));
         }
     } else if (parser.isSet(to_option) || parser.isSet(preset_option) || parser.isSet(batch_dialog_option) ||
-               parser.isSet(running_option) || parser.isSet(done_option)) {
-        return fail(QStringLiteral("--to, --preset, --show-batch-dialog, --screenshot-running and --quit-when-done "
-                                   "need --export-batch."));
+               parser.isSet(running_option) || parser.isSet(done_option) || parser.isSet(automatic_option) ||
+               parser.isSet(consistent_option)) {
+        return fail(QStringLiteral("--to, --preset, --show-batch-dialog, --screenshot-running, --quit-when-done, "
+                                   "--automatic and --keep-consistent need --export-batch."));
+    }
+    if (parser.isSet(automatic_option)) {
+        const QString mode = parser.value(automatic_option).trimmed().toLower();
+        if (mode == u"auto") {
+            options.batch_automatic = BatchAutomatic::Auto;
+        } else if (mode == u"analyze-only" || mode == u"analyse-only") {
+            options.batch_automatic = BatchAutomatic::AnalyzeOnly;
+        } else if (mode != u"off") {
+            return fail(QStringLiteral("Unknown --automatic mode '%1': use off, auto or analyze-only.").arg(mode));
+        }
+    }
+    options.keep_consistent = parser.isSet(consistent_option);
+    if (options.keep_consistent && options.batch_automatic == BatchAutomatic::Off) {
+        return fail(QStringLiteral("--keep-consistent needs --automatic auto or analyze-only."));
     }
     if (parser.isSet(preset_option)) {
         const QString preset = parser.value(preset_option).trimmed().toLower();
@@ -522,6 +551,17 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
                 }
             });
     connect(&controller_.batch_service(), &BatchService::batch_changed, this, &DeveloperAutomation::on_batch_changed);
+    connect(&controller_.batch_service(), &BatchService::report_ready, this,
+            [this](BatchId batch, const BatchReportInfo& report) {
+                if (batch != 0 && batch == batch_id_ && batch_report_requested_ && !batch_report_printed_) {
+                    report_batch_entries(report);
+                }
+            });
+    connect(&controller_.edit_service(), &EditService::auto_finished, this, [this](const AutoOutcome& outcome) {
+        if (auto_started_ && !auto_outcome_ && outcome.item == controller_.edit()->item()) {
+            auto_outcome_ = outcome;
+        }
+    });
     connect(&controller_.export_service(), &ExportService::job_changed, this, [](const ExportJob& job) {
         if (job.state == ExportJobState::Completed) {
             report(QStringLiteral("export completed: %1 -> %2 (%3)")
@@ -789,6 +829,8 @@ void DeveloperAutomation::start_batch() {
         setup.setOutputFolder(QUrl::fromLocalFile(to));
         setup.setPreset(options_.batch_tiff ? BatchSetupModel::Tiff16 : BatchSetupModel::Jpeg);
         setup.setDisplayP3(options_.export_options.color_space == ExportColorSpace::DisplayP3);
+        setup.setAutomatic(static_cast<BatchSetupModel::Automatic>(options_.batch_automatic));
+        setup.setKeepConsistent(options_.keep_consistent);
     };
     if (options_.show_batch_dialog) {
         // As the Library's "Export a folder" does: the dialog opens with the folder, then the options.
@@ -810,9 +852,66 @@ void DeveloperAutomation::start_batch() {
         return;
     }
     batch_token_ = controller_.last_batch_token();
+    QString mode = options_.batch_tiff ? QStringLiteral("16-bit TIFF") : QStringLiteral("JPEG sRGB q95");
+    if (options_.batch_automatic == BatchAutomatic::Auto) {
+        mode += QStringLiteral(", automatic settings");
+    } else if (options_.batch_automatic == BatchAutomatic::AnalyzeOnly) {
+        mode = QStringLiteral("analyse only");
+    }
+    if (options_.keep_consistent) {
+        mode += QStringLiteral(", related shots kept consistent");
+    }
     report(QStringLiteral("batch started: %1 -> %2 (%3)")
-               .arg(QDir::toNativeSeparators(folder), QDir::toNativeSeparators(to),
-                    options_.batch_tiff ? QStringLiteral("16-bit TIFF") : QStringLiteral("JPEG sRGB q95")));
+               .arg(QDir::toNativeSeparators(folder), QDir::toNativeSeparators(to), mode));
+}
+
+void DeveloperAutomation::report_batch_entries(const BatchReportInfo& info) {
+    batch_report_printed_ = true;
+    if (!info.ok) {
+        report(QStringLiteral("batch %1 report: %2").arg(batch_id_).arg(info.error));
+        finish_when_done();
+        return;
+    }
+    report(QStringLiteral("batch %1 report: %2 exported, %3 analysed, %4 skipped, %5 failed, %6 for review")
+               .arg(batch_id_)
+               .arg(info.exported)
+               .arg(info.analysed)
+               .arg(info.skipped)
+               .arg(info.failed)
+               .arg(info.review));
+    for (const BatchReportEntry& entry : info.entries) {
+        QString line =
+            QStringLiteral("report: %1: %2").arg(entry.source_name, presentation::outcome_label(entry.outcome));
+        if (!entry.output.isEmpty()) {
+            line += QStringLiteral(" -> ") + QFileInfo(entry.output).fileName();
+        }
+        if (entry.automatic && entry.revision_number > 0) {
+            line += QStringLiteral("; automatic revision %1, confidence %2, attempt %3")
+                        .arg(entry.revision_number)
+                        .arg(entry.confidence, 0, 'f', 2)
+                        .arg(entry.attempt);
+            if (!entry.group.isEmpty()) {
+                line += QStringLiteral(", group %1").arg(entry.group);
+            }
+        }
+        if (!entry.reason.isEmpty() && entry.outcome != BatchOutcome::Exported &&
+            entry.outcome != BatchOutcome::Analysed) {
+            line += QStringLiteral("; ") + entry.reason;
+        }
+        report(line);
+        for (const QString& review : entry.review) {
+            report(QStringLiteral("report:   review: %1").arg(review));
+        }
+        for (const QString& flag : entry.flags) {
+            if (!entry.review.contains(flag)) {
+                report(QStringLiteral("report:   note: %1").arg(flag));
+            }
+        }
+        for (const QString& lock : entry.locks) {
+            report(QStringLiteral("report:   lock: %1").arg(lock));
+        }
+    }
+    finish_when_done();
 }
 
 void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
@@ -822,11 +921,13 @@ void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
     const qint64 done = batch.completed + batch.failed + batch.skipped + batch.cancelled;
     if (done != batch_last_done_) {
         batch_last_done_ = done;
-        report(QStringLiteral("batch %1: %2 of %3 done (%4 exported, %5 failed, %6 skipped), %7 remaining")
+        report(QStringLiteral("batch %1: %2 of %3 done (%4 %5, %6 failed, %7 skipped), %8 remaining")
                    .arg(batch.id)
                    .arg(done)
                    .arg(batch.total)
                    .arg(batch.completed)
+                   .arg(batch.automatic == BatchAutomatic::AnalyzeOnly ? QStringLiteral("analysed")
+                                                                       : QStringLiteral("exported"))
                    .arg(batch.failed)
                    .arg(batch.skipped)
                    .arg(batch.remaining()));
@@ -838,12 +939,14 @@ void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
         batch_finished_ = true;
         if (batch.review >= 0 && !batch_reported_) {
             batch_reported_ = true;
-            report(QStringLiteral("batch %1 finished (%2): %3 exported, %4 skipped, %5 failed, %6 cancelled, %7 "
-                                  "recommended for review; output folder %8")
+            report(QStringLiteral("batch %1 finished (%2): %3 %4, %5 skipped, %6 failed, %7 cancelled, %8 "
+                                  "recommended for review; output folder %9")
                        .arg(batch.id)
                        .arg(batch.state == BatchState::Cancelled ? QStringLiteral("cancelled")
                                                                  : QStringLiteral("completed"))
                        .arg(batch.completed)
+                       .arg(batch.automatic == BatchAutomatic::AnalyzeOnly ? QStringLiteral("analysed")
+                                                                           : QStringLiteral("exported"))
                        .arg(batch.skipped)
                        .arg(batch.failed)
                        .arg(batch.cancelled)
@@ -852,6 +955,11 @@ void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
             if (!batch.report_path.isEmpty()) {
                 report(QStringLiteral("batch %1 report: %2").arg(batch.id).arg(batch.report_path));
             }
+        }
+        if (batch_reported_ && !batch_report_requested_) {
+            // Its rows: what happened to each photo (and what Auto did).
+            batch_report_requested_ = true;
+            controller_.batch_service().request_report(batch.id);
         }
     }
     if (!running_shot_taken_ && !options_.running_screenshot_path.isEmpty() && batch.completed >= 1 &&
@@ -868,8 +976,8 @@ bool DeveloperAutomation::batch_pending() const {
     if (batch_id_ == 0) {
         return true;  // still being prepared
     }
-    if (!batch_reported_) {
-        return true;  // running, or its final review count is still being read
+    if (!batch_reported_ || !batch_report_printed_) {
+        return true;  // running, or its final review count or its report is still being read
     }
     return controller_.batch_report()->loading();
 }
@@ -892,7 +1000,7 @@ void DeveloperAutomation::finish_when_done() {
     if (!options_.quit_when_done) {
         return;
     }
-    if (!batch_failed_to_start_ && (!batch_finished_ || !batch_reported_)) {
+    if (!batch_failed_to_start_ && (!batch_finished_ || !batch_reported_ || !batch_report_printed_)) {
         return;
     }
     if (!options_.screenshot_path.isEmpty() && !screenshot_done_) {
@@ -943,7 +1051,68 @@ void DeveloperAutomation::after_imports() {
 
 bool DeveloperAutomation::wants_editing() const {
     return !options_.edits.empty() || !options_.drag.isEmpty() || !options_.compare.isEmpty() || options_.clipping ||
-           options_.panel_scroll.has_value();
+           options_.panel_scroll.has_value() || options_.run_auto;
+}
+
+bool DeveloperAutomation::auto_step() {
+    if (!options_.run_auto || auto_done_) {
+        return false;
+    }
+    EditSession& edit = *controller_.edit();
+    if (!auto_started_) {
+        if (!edit.can_run_auto()) {
+            report(QStringLiteral("--auto: Auto is not available for this photo"));
+            auto_done_ = true;
+            return false;
+        }
+        auto_started_ = true;
+        edit.reset_latencies();
+        finals_before_ = edit.final_frames();
+        auto_clock_.start();
+        report(QStringLiteral("auto: started on %1").arg(controller_.current()->file_name()));
+        edit.runAuto();
+        return true;
+    }
+    if (!auto_outcome_) {
+        return true;  // still running (the poll waits while the controller is busy anyway)
+    }
+    auto_done_ = true;
+    report(QStringLiteral("auto: finished after %1 ms: %2").arg(auto_clock_.elapsed()).arg(auto_outcome_->message));
+    if (auto_outcome_->saved && auto_outcome_->made_current) {
+        // The frame of the automatic revision, then the summary (edit_step reports it once it came).
+        edit_waiting_ = true;
+        edit_label_ = QStringLiteral("auto");
+        return true;
+    }
+    report_auto_summary();
+    return false;
+}
+
+void DeveloperAutomation::report_auto_summary() {
+    const AutoSettingsModel& automatic = *controller_.edit()->automatic();
+    if (!automatic.has_summary()) {
+        report(QStringLiteral("auto: the current revision is not automatic"));
+        return;
+    }
+    report(QStringLiteral("auto: %1; %2; review recommended: %3")
+               .arg(automatic.origin(), automatic.confidence_text(),
+                    automatic.review() ? QStringLiteral("yes") : QStringLiteral("no")));
+    report(QStringLiteral("auto: changed: %1").arg(automatic.changed_text()));
+    for (const QString& reason : automatic.review_reasons()) {
+        report(QStringLiteral("auto: review: %1").arg(reason));
+    }
+    if (!automatic.locked_text().isEmpty()) {
+        report(QStringLiteral("auto: %1").arg(automatic.locked_text()));
+    }
+    for (const QString& note : automatic.lock_notes()) {
+        report(QStringLiteral("auto: lock: %1").arg(note));
+    }
+    if (!automatic.fallback_text().isEmpty()) {
+        report(QStringLiteral("auto: fallback: %1 (%2)").arg(automatic.fallback_text(), automatic.fallback_detail()));
+    }
+    for (const QString& note : automatic.notes()) {
+        report(QStringLiteral("auto: note: %1").arg(note));
+    }
 }
 
 bool DeveloperAutomation::apply_edit(const QString& key, const QString& value) {
@@ -997,6 +1166,8 @@ void DeveloperAutomation::edit_step() {
             if (options_.measure) {
                 report_drag();
             }
+        } else if (auto_started_ && edit_label_ == u"auto") {
+            report_auto_summary();  // the automatic revision is shown
         } else {
             report_edit_latency(edit_label_);
         }
@@ -1016,6 +1187,9 @@ void DeveloperAutomation::edit_step() {
     }
     if (!options_.drag.isEmpty() && !drag_done_) {
         start_drag();
+        return;
+    }
+    if (auto_step()) {
         return;
     }
     if (options_.clipping) {

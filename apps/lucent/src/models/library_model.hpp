@@ -82,6 +82,7 @@ public:
         FlagBadgesRole,        // QVariantList of {key, label, detail} maps, one per flag key
         EditedRole,            // bool: the photo has develop settings other than as shot (W6)
         InSelectionRole,       // bool: selected for a batch export (W7)
+        ReviewRole,            // bool: an automatic result recommends a review (W8, ReviewRecommended)
     };
     Q_ENUM(Role)
 

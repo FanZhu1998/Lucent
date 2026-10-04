@@ -112,6 +112,7 @@ QtObject {
         switch (key) {
         case "completed":
         case "exported":
+        case "analysed":
             return verified
         case "failed":
             return unsupported

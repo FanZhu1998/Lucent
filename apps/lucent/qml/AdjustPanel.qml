@@ -6,7 +6,9 @@ import Lucent
 // The Edit view's adjustments (blueprint section 2, "Detailed individual editing"): white balance
 // (temperature and tint where the camera's calibration defines a colour temperature, otherwise the
 // camera's own channel balance, with an explanation), exposure, contrast, highlights, shadows,
-// saturation and vibrance. The header holds Auto (W8), Copy and Paste of settings by category.
+// saturation and vibrance. The header holds Auto (W8: a new revision of settings Lucent chooses,
+// keeping locked controls; the Automatic settings panel shows its progress and outcome), Copy and
+// Paste of settings by category.
 PanelSection {
     id: panel
 
@@ -26,7 +28,8 @@ PanelSection {
 
                 objectName: "autoButton"
                 text: qsTr("Auto")
-                enabled: false
+                enabled: panel.edit.canRunAuto
+                onClicked: panel.edit.runAuto()
                 Accessible.description: autoHover.tip
             }
 
@@ -34,7 +37,10 @@ PanelSection {
             HoverHandler {
                 id: autoHover
 
-                readonly property string tip: qsTr("Automatic settings are coming in W8")
+                readonly property string tip: panel.edit.automatic.running
+                    ? qsTr("Auto is choosing this photo's settings")
+                    : panel.edit.readOnly ? panel.edit.readOnlyReason
+                    : qsTr("Let Lucent choose this photo's settings as a new revision; locked controls stay as they are (Ctrl+Shift+A)")
             }
 
             ToolTip.visible: autoHover.hovered

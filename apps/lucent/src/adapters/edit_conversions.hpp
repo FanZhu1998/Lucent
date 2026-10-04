@@ -15,9 +15,11 @@
 #include <optional>
 #include <set>
 
+#include <lucent/application/auto_service.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/recipe.hpp>
 #include <lucent/application/recipe_service.hpp>
+#include <lucent/catalog/jobs.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/engine/develop_settings.hpp>
 #include <lucent/raw/decoded_raw.hpp>
@@ -62,6 +64,23 @@ namespace lucent::ui::adapters {
 
 // A WhiteBalanceInfo saying that the camera's white balance could not be read.
 [[nodiscard]] WhiteBalanceInfo unknown_white_balance_info();
+
+// ---- Automatic settings ------------------------------------------------------------------------------
+
+// What automatic settings did to the revision of `entry` (origin Auto), from its analysis record:
+// the confidence, the flags in the user's words (those recommending a review apart from the
+// others), the locks report, the final-check attempt and the related-shot group (the record's
+// "lucent.auto-record" document is read leniently: a member it lacks is left out).
+[[nodiscard]] AutoSummary to_auto_summary(const catalog::AutoAnalysisRecord& record, const app::HistoryEntry& entry);
+
+[[nodiscard]] AutoStage to_auto_stage(app::AutoTaskStage stage) noexcept;
+
+// The outcome of an Auto run in the user's words (AutoOutcome::message and the flags it reports).
+[[nodiscard]] AutoOutcome to_auto_outcome(ItemId item, const app::AutoTaskResult& result);
+
+// Why Auto did not save anything (Cancelled, "app.auto.check", "app.auto.support", "app.auto.busy",
+// LimitExceeded, a read-only or unreadable recipe, ...).
+[[nodiscard]] QString describe_auto_error(const Error& error);
 
 // ---- Paste -------------------------------------------------------------------------------------------
 

@@ -11,9 +11,10 @@ import Lucent
 // preset (JPEG / sRGB / quality 95, or 16-bit TIFF with a profile), the naming pattern with its
 // tokens, mirrored subfolders, what happens when a name is taken (a number is added by default;
 // replacing existing files needs an explicit confirmation and never applies to originals), photos
-// already exported, and the metadata (capture details, artist and copyright, GPS off unless
-// chosen). Example destination paths, counts, free space and warnings come from the service's plan
-// and follow every change. Automatic settings are shown, not yet available (W8).
+// already exported, the metadata (capture details, artist and copyright, GPS off unless chosen) and
+// the automatic settings (W8: Off, Auto or Analyse only, and Keep related shots consistent).
+// Example destination paths, counts, free space, warnings and what the analysis adds come from the
+// service's plan and follow every change.
 Dialog {
     id: dialog
 
@@ -198,6 +199,78 @@ Dialog {
                         text: qsTr("Include subfolders")
                         checked: dialog.setup.includeSubfolders
                         onToggled: dialog.setup.includeSubfolders = checked
+                    }
+                }
+
+                // --- Automatic settings (W8) --------------------------------------------------------
+                SectionLabel {
+                    text: qsTr("Automatic settings")
+                }
+
+                ColumnLayout {
+                    objectName: "batchAutomaticSettings"
+                    spacing: 6
+                    Layout.fillWidth: true
+
+                    RowLayout {
+                        spacing: 4
+
+                        ButtonGroup {
+                            id: automaticGroup
+                        }
+
+                        StyledToolButton {
+                            objectName: "batchAutomaticOff"
+                            text: qsTr("Off")
+                            checkable: true
+                            checked: dialog.setup.automatic === BatchSetupModel.AutomaticOff
+                            ButtonGroup.group: automaticGroup
+                            onClicked: dialog.setup.automatic = BatchSetupModel.AutomaticOff
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Export each photo with its own current edit")
+                            ToolTip.delay: 800
+                        }
+
+                        StyledToolButton {
+                            objectName: "batchAutomaticAuto"
+                            text: qsTr("Auto")
+                            checkable: true
+                            checked: dialog.setup.automatic === BatchSetupModel.AutomaticAuto
+                            ButtonGroup.group: automaticGroup
+                            onClicked: dialog.setup.automatic = BatchSetupModel.AutomaticAuto
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Lucent chooses each photo's settings (Natural), checks them and exports")
+                            ToolTip.delay: 800
+                        }
+
+                        StyledToolButton {
+                            objectName: "batchAutomaticAnalyze"
+                            text: qsTr("Analyse only")
+                            checkable: true
+                            checked: dialog.setup.automatic === BatchSetupModel.AutomaticAnalyzeOnly
+                            ButtonGroup.group: automaticGroup
+                            onClicked: dialog.setup.automatic = BatchSetupModel.AutomaticAnalyzeOnly
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Lucent saves each photo's automatic settings to review in Edit; nothing is exported")
+                            ToolTip.delay: 800
+                        }
+                    }
+
+                    Note {
+                        objectName: "batchAutomaticNote"
+                        text: dialog.setup.automaticNote
+                        color: Theme.textTertiary
+                    }
+
+                    StyledCheckBox {
+                        objectName: "batchKeepConsistent"
+                        text: qsTr("Keep related shots consistent")
+                        enabled: dialog.setup.automatic !== BatchSetupModel.AutomaticOff
+                        checked: dialog.setup.keepConsistent && enabled
+                        onToggled: dialog.setup.keepConsistent = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Photos taken together in similar light get a similar look; each is still checked on its own")
+                        ToolTip.delay: 800
                     }
                 }
 
@@ -436,9 +509,11 @@ Dialog {
                         id: existingGroup
                     }
 
+                    // An automatic batch makes new revisions: their exports are new by definition.
                     Choice {
                         objectName: "batchSkipExisting"
                         text: qsTr("Skip photos whose identical export is already in the folder")
+                        enabled: dialog.setup.automatic === BatchSetupModel.AutomaticOff
                         checked: dialog.setup.skipExisting
                         ButtonGroup.group: existingGroup
                         onClicked: dialog.setup.skipExisting = true
@@ -448,10 +523,17 @@ Dialog {
                     Choice {
                         objectName: "batchExportAgain"
                         text: qsTr("Export them again")
+                        enabled: dialog.setup.automatic === BatchSetupModel.AutomaticOff
                         checked: !dialog.setup.skipExisting
                         ButtonGroup.group: existingGroup
                         onClicked: dialog.setup.skipExisting = false
                         Layout.fillWidth: true
+                    }
+
+                    Note {
+                        visible: dialog.setup.automatic !== BatchSetupModel.AutomaticOff
+                        text: qsTr("With automatic settings every photo gets a new revision, so nothing counts as already exported.")
+                        color: Theme.textTertiary
                     }
                 }
 
@@ -539,30 +621,6 @@ Dialog {
                         color: dialog.setup.includeGps ? Theme.attention : Theme.textTertiary
                     }
                 }
-
-                // --- Automatic settings (W8) --------------------------------------------------------
-                SectionLabel {
-                    text: qsTr("Rendering")
-                }
-
-                ColumnLayout {
-                    spacing: 2
-                    Layout.fillWidth: true
-
-                    StyledCheckBox {
-                        objectName: "batchAutomaticSettings"
-                        text: qsTr("Automatic settings")
-                        enabled: dialog.setup.automaticSettingsAvailable
-                        checked: false
-                    }
-
-                    Note {
-                        objectName: "batchAutomaticSettingsNote"
-                        leftPadding: 24
-                        text: dialog.setup.automaticSettingsNote + qsTr(". Each photo is exported with its own current edit (as shot when it was never edited).")
-                        color: Theme.textTertiary
-                    }
-                }
             }
         }
 
@@ -590,7 +648,7 @@ Dialog {
                     Layout.fillWidth: true
 
                     Text {
-                        text: qsTr("Example files")
+                        text: dialog.setup.analyzeOnly ? qsTr("Before you start") : qsTr("Example files")
                         color: Theme.textPrimary
                         font.pixelSize: Theme.fontBody
                         font.weight: Font.Medium
@@ -653,6 +711,19 @@ Dialog {
                     objectName: "batchPlanSpace"
                     visible: text.length > 0
                     text: dialog.setup.spaceText
+                }
+
+                // What the automatic settings add: their cost, what is (not) written.
+                Repeater {
+                    objectName: "batchAnalysisNotes"
+                    model: dialog.setup.analysisNotes
+
+                    delegate: Note {
+                        required property string modelData
+
+                        text: modelData
+                        color: Theme.textPrimary
+                    }
                 }
 
                 Repeater {
@@ -732,7 +803,7 @@ Dialog {
                 id: startButton
 
                 objectName: "batchStart"
-                text: qsTr("Start export")
+                text: dialog.setup.analyzeOnly ? qsTr("Start analysis") : qsTr("Start export")
                 highlighted: true
                 enabled: dialog.setup.canStart
                 onClicked: {

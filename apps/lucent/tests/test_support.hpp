@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QtLogging>
@@ -223,9 +224,25 @@ public:
     void paste_settings(const QList<ItemId>& targets) override {
         record({"paste_settings", targets.isEmpty() ? 0 : targets.front()});
     }
+    void run_auto(ItemId item) override {
+        record({"run_auto", item});
+        auto_running.insert(item);
+    }
+    void cancel_auto(ItemId item) override { record({"cancel_auto", item}); }
+    [[nodiscard]] bool is_auto_running(ItemId item = 0) const override {
+        return item == 0 ? !auto_running.isEmpty() : auto_running.contains(item);
+    }
     // Piecewise linear (the real curve is the renderer's monotone cubic).
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
     [[nodiscard]] bool is_busy() const override { return busy; }
+
+    // Auto's signals, as the service would emit them.
+    void emit_auto_progress(const AutoProgress& progress) { emit auto_progress(progress); }
+    void emit_auto_finished(const AutoOutcome& outcome) {
+        auto_running.remove(outcome.item);
+        emit auto_finished(outcome);
+    }
+    void emit_auto_summary(ItemId item, const AutoSummary& summary) { emit auto_summary_changed(item, summary); }
 
     // Calls named `name`, in order.
     [[nodiscard]] std::vector<Call> calls_named(const QString& name) const;
@@ -248,6 +265,7 @@ public:
     std::vector<Call> calls;
     bool clipboard = false;
     bool busy = false;
+    QSet<ItemId> auto_running;
 
 private:
     quint64 next_token() { return ++last_token_; }

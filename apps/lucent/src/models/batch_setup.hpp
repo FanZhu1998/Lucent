@@ -10,7 +10,10 @@
 // confirmation that names the folder, and never for originals: the service gives those a new name),
 // what happens to photos already exported with the same settings, and the metadata (capture info,
 // Artist / Copyright with the user's text, GPS only when chosen: off whenever the dialog opens).
-// Automatic settings are shown but not available yet (Natural v1, W8).
+// W8: automatic settings (Off: each photo's own current edit; Auto: Lucent analyses each photo,
+// saves its choice as an automatic revision, checks it at full size and exports it; Analyse only:
+// automatic revisions to review in Edit, nothing exported) and whether related shots are kept
+// consistent (with Auto or Analyse only). The plan's notes say what the analysis adds.
 //
 // While the dialog is open (`active`), every change asks the service for a new plan after a short
 // quiet period (`plan_delay`, 300 ms): typing a pattern makes one request, not one per key. A plan
@@ -59,8 +62,13 @@ class BatchSetupModel : public QObject {
     Q_PROPERTY(QString artist READ artist WRITE setArtist NOTIFY setupChanged FINAL)
     Q_PROPERTY(QString copyright READ copyright WRITE setCopyright NOTIFY setupChanged FINAL)
     Q_PROPERTY(bool includeGps READ include_gps WRITE setIncludeGps NOTIFY setupChanged FINAL)
-    Q_PROPERTY(bool automaticSettingsAvailable READ automatic_settings_available CONSTANT FINAL)
-    Q_PROPERTY(QString automaticSettingsNote READ automatic_settings_note CONSTANT FINAL)
+    Q_PROPERTY(Automatic automatic READ automatic WRITE setAutomatic NOTIFY setupChanged FINAL)
+    // Kept consistent only with Auto or Analyse only (the choice is remembered while Off).
+    Q_PROPERTY(bool keepConsistent READ keep_consistent WRITE setKeepConsistent NOTIFY setupChanged FINAL)
+    // What the chosen automatic settings do, in one or two sentences.
+    Q_PROPERTY(QString automaticNote READ automatic_note NOTIFY setupChanged FINAL)
+    // Analysing only: nothing is exported (Start reads "Start analysis").
+    Q_PROPERTY(bool analyzeOnly READ analyze_only NOTIFY setupChanged FINAL)
     // True while the dialog is open: only then are plans requested.
     Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged FINAL)
 
@@ -82,6 +90,8 @@ class BatchSetupModel : public QObject {
     // "Up to 480 MB · 120 GB free on the drive".
     Q_PROPERTY(QString spaceText READ space_text NOTIFY planChanged FINAL)
     Q_PROPERTY(QStringList warnings READ warnings NOTIFY planChanged FINAL)
+    // What the automatic settings add to this plan (their cost, what is written).
+    Q_PROPERTY(QStringList analysisNotes READ analysis_notes NOTIFY planChanged FINAL)
     // Start is possible without a local problem (photos, output folder, pattern) unless the latest
     // plan failed or found nothing to export; while a plan is being computed it stays possible (the
     // service validates everything again when the batch is created).
@@ -94,6 +104,9 @@ public:
     Q_ENUM(Scope)
     enum Preset { Jpeg = 1, Tiff16 = 2 };
     Q_ENUM(Preset)
+    // Values of lucent::ui::BatchAutomatic.
+    enum Automatic { AutomaticOff = 0, AutomaticAuto = 1, AutomaticAnalyzeOnly = 2 };
+    Q_ENUM(Automatic)
 
     // `service` must outlive the model.
     explicit BatchSetupModel(BatchService& service, QObject* parent = nullptr);
@@ -138,8 +151,14 @@ public:
     void setCopyright(const QString& copyright);
     [[nodiscard]] bool include_gps() const noexcept { return include_gps_; }
     void setIncludeGps(bool include);
-    [[nodiscard]] bool automatic_settings_available() const noexcept { return false; }
-    [[nodiscard]] QString automatic_settings_note() const;
+    [[nodiscard]] Automatic automatic() const noexcept { return automatic_; }
+    void setAutomatic(Automatic automatic);
+    [[nodiscard]] bool keep_consistent() const noexcept { return keep_consistent_; }
+    void setKeepConsistent(bool keep);
+    [[nodiscard]] QString automatic_note() const;
+    [[nodiscard]] bool analyze_only() const noexcept { return automatic_ == AutomaticAnalyzeOnly; }
+    // The plan's; before a folder's photos are listed (no plan yet), what the analysis costs.
+    [[nodiscard]] QStringList analysis_notes() const;
     [[nodiscard]] bool active() const noexcept { return active_; }
     void setActive(bool active);
 
@@ -195,6 +214,9 @@ private:
     void request_plan();
     void on_plan_ready(quint64 token, const BatchPlanInfo& plan);
     [[nodiscard]] QString basic_problem() const;
+    // Analysing only: the photos the plan will analyse (the selected ones not left out); -1 when
+    // not known (a folder batch).
+    [[nodiscard]] qint64 photos_to_analyse() const;
 
     BatchService& service_;
     QList<ItemId> selection_;
@@ -215,6 +237,8 @@ private:
     QString artist_;
     QString copyright_;
     bool include_gps_ = false;
+    Automatic automatic_ = AutomaticOff;
+    bool keep_consistent_ = false;
     bool active_ = false;
 
     QTimer plan_timer_;

@@ -42,6 +42,13 @@
 // state answers is outstanding, the local values are kept (no jumping back); otherwise every state
 // replaces them.
 //
+// Auto (W8; blueprint section 2: "Auto creates a new editable revision"). runAuto() commits a
+// pending gesture, then asks the service to run Auto on the photo's committed settings (its locks
+// included); `automatic` (AutoSettingsModel) shows the run, its outcome and what Auto did to the
+// current revision. Editing stays possible while it runs: a photo changed meanwhile keeps its edit and
+// Auto's revision is kept as another branch of the history. Undo after Auto returns to the recipe
+// before it.
+//
 // Thread-safety: UI thread only.
 
 #include <QElapsedTimer>
@@ -59,6 +66,7 @@
 #include <vector>
 
 #include "imaging/frame_store.hpp"
+#include "models/auto_settings_model.hpp"
 #include "models/edit_history_model.hpp"
 #include "services/edit_service.hpp"
 
@@ -116,6 +124,10 @@ class EditSession : public QObject {
     Q_PROPERTY(bool gestureActive READ gesture_active NOTIFY gestureChanged FINAL)
     // The newest measured call-to-frame-shown latency, in milliseconds (0: none yet).
     Q_PROPERTY(double lastLatencyMs READ last_latency_ms NOTIFY latencyChanged FINAL)
+    // W8: Auto's run and what it did to the current revision.
+    Q_PROPERTY(lucent::ui::AutoSettingsModel* automatic READ automatic CONSTANT FINAL)
+    // Auto can start: the photo can be edited, its settings are known and no run of it is in progress.
+    Q_PROPERTY(bool canRunAuto READ can_run_auto NOTIFY canRunAutoChanged FINAL)
 
 public:
     static constexpr int kNudgeCommitMs = 600;
@@ -184,6 +196,11 @@ public:
     Q_INVOKABLE void noteFrameShown(const QString& source);
     Q_INVOKABLE void clearMessage();
 
+    // ---- QML: Auto (see the file comment) -----------------------------------------------------------
+
+    Q_INVOKABLE void runAuto();
+    Q_INVOKABLE void cancelAuto();
+
     // ---- Property accessors ----------------------------------------------------------------------
 
     [[nodiscard]] bool active() const noexcept { return item_ != 0; }
@@ -229,6 +246,11 @@ public:
     [[nodiscard]] bool busy() const;
     [[nodiscard]] bool gesture_active() const noexcept { return gesture_; }
     [[nodiscard]] double last_latency_ms() const noexcept { return last_latency_ms_; }
+    [[nodiscard]] AutoSettingsModel* automatic() const noexcept { return automatic_.get(); }
+    [[nodiscard]] bool can_run_auto() const;
+    // A control's committed value as the Auto panel lists it ("Exposure +0.75 EV", "White balance
+    // 5450 K, tint +3", "Tone curve").
+    [[nodiscard]] QString describe_committed(EditControl control) const;
 
     // ---- C++ ---------------------------------------------------------------------------------------
 
@@ -265,6 +287,7 @@ signals:
     void busyChanged();
     void gestureChanged();
     void latencyChanged();
+    void canRunAutoChanged();
     // A user-facing outcome for the status line (paste results, refused edits).
     void notice(const QString& text);
 
@@ -296,12 +319,15 @@ private:
     void set_message(const QString& message);
     void reset_frames();
     [[nodiscard]] double display_value(const EditSettings& settings, const QString& key) const;
+    // valueText() of `settings` (without the unknown-settings dash).
+    [[nodiscard]] QString value_text_of(const EditSettings& settings, const QString& key) const;
     [[nodiscard]] EditSettings with_value(const EditSettings& settings, const QString& key, double value) const;
     [[nodiscard]] std::array<double, 3> as_shot_neutral() const;
 
     EditService& service_;
     std::shared_ptr<FrameStore> store_;
     std::unique_ptr<EditHistoryModel> history_;
+    std::unique_ptr<AutoSettingsModel> automatic_;
     ItemId item_ = 0;
     std::optional<EditState> state_;
     EditSettings settings_;

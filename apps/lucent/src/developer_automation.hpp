@@ -60,6 +60,10 @@
 //                              screenshot.
 //   --scroll-panel <fraction>  With --open-first: scroll the Edit view's side panel (0 top, 1
 //                              bottom) before the screenshot, to show the history and details.
+//   --auto                     W8, with --open-first: after the --set edits and --drag, run Auto on the
+//                              photo (as the Auto button does), wait for it and for the frame of its
+//                              revision, and report the outcome and the Automatic settings panel's
+//                              summary (confidence, review reasons, what changed, locks, fallback).
 //   --export-batch <folder>    W7: when the imports have finished, export every photo of <folder>
 //                              (and its subfolders with --include-subfolders) as one durable batch,
 //                              as the Export batch dialog's Start does: the folder is added to the
@@ -67,6 +71,11 @@
 //   --to <folder>              The output folder of --export-batch (required with it).
 //   --preset <jpeg|tiff>       The preset of --export-batch: JPEG / sRGB / quality 95 (default) or
 //                              16-bit TIFF (profile from --export-color-space, default sRGB).
+//   --automatic <off|auto|analyze-only>
+//                              W8: the automatic settings of --export-batch (default off).
+//   --keep-consistent          W8: with --automatic auto or analyze-only, keep related shots
+//                              consistent. When the batch has finished its report's rows are
+//                              reported (outcome, what Auto did, review notes).
 //   --show-batch-dialog        With --export-batch: open the Export batch dialog with these settings
 //                              instead of starting (a screenshot then shows its example paths).
 //   --screenshot-running <file.png>
@@ -123,6 +132,7 @@ struct DeveloperOptions {
     QString compare;  // --compare: "", "before" or "split"
     bool clipping = false;
     std::optional<double> panel_scroll;  // --scroll-panel
+    bool run_auto = false;               // --auto (W8)
     // W7 batch automation (see the file comment).
     QString batch_folder;  // --export-batch
     QString batch_to;      // --to
@@ -130,6 +140,8 @@ struct DeveloperOptions {
     bool show_batch_dialog = false;
     QString running_screenshot_path;
     bool quit_when_done = false;
+    BatchAutomatic batch_automatic = BatchAutomatic::Off;  // --automatic (W8)
+    bool keep_consistent = false;                          // --keep-consistent (W8)
 };
 
 struct CommandLine {
@@ -189,6 +201,10 @@ private:
     void send_mouse(QEvent::Type type, QPointF position);
     void report_edit_latency(const QString& what);
     void report_drag();
+    // W8 --auto: true while Auto still needs the poll (started, running, or its frame pending).
+    bool auto_step();
+    void report_auto_summary();
+    void report_batch_entries(const BatchReportInfo& report);
     // W7 batch automation.
     void start_batch();
     void on_batch_changed(const BatchSnapshot& batch);
@@ -236,7 +252,15 @@ private:
     qint64 drag_release_ms_ = -1;
     std::vector<qint64> drag_gaps_ms_;
 
+    // --auto
+    bool auto_started_ = false;
+    bool auto_done_ = false;
+    std::optional<AutoOutcome> auto_outcome_;
+    QElapsedTimer auto_clock_;
+
     // --export-batch
+    bool batch_report_requested_ = false;
+    bool batch_report_printed_ = false;
     quint64 batch_token_ = 0;
     BatchId batch_id_ = 0;
     bool batch_failed_to_start_ = false;

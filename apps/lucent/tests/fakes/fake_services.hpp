@@ -204,11 +204,22 @@ public:
     void copy_settings(ItemId item, quint32 categories) override;
     [[nodiscard]] bool has_clipboard() const override { return clipboard_.has_value(); }
     void paste_settings(const QList<ItemId>& targets) override;
+    // Simulated Auto: four progress steps, then a revision of origin "auto" that brightens the photo
+    // by 0.5 EV and adds 10 contrast (locked controls are kept, and a locked exposure is reported as
+    // keeping the photo from its target), confidence 0.82. fail_next_auto() makes the next run's
+    // first attempt fail its check (a conservative fallback is used: confidence 0.6, review).
+    void run_auto(ItemId item) override;
+    void cancel_auto(ItemId item) override;
+    [[nodiscard]] bool is_auto_running(ItemId item = 0) const override;
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
     [[nodiscard]] bool is_busy() const override { return pending_ > 0; }
 
     // Revisions of `item` (for tests).
     [[nodiscard]] int revision_count(ItemId item) const;
+    // Test control of the simulated Auto.
+    void fail_next_auto() { fail_next_auto_ = true; }
+    // Runs only advance while not held (tests that look at a run in progress).
+    void hold_auto(bool held);
 
 private:
     struct Revision {
@@ -219,6 +230,14 @@ private:
         QString origin;
         QDateTime created;
         QList<EditControl> changed;
+        std::optional<AutoSummary> summary;  // automatic revisions
+        QString auto_kind;
+        bool auto_failed = false;
+    };
+    struct AutoRun {
+        int step = 0;
+        bool cancel = false;
+        bool fail = false;
     };
     struct Item {
         std::vector<Revision> revisions;
@@ -244,10 +263,16 @@ private:
     void publish(ItemId id, quint64 token, bool history, bool frame, bool settled);
     void later(std::function<void()> work);
     [[nodiscard]] QImage paint(ItemId id, const EditSettings& settings) const;
+    [[nodiscard]] AutoSummary summary_of(ItemId id) const;
+    void auto_step(ItemId id);
+    void finish_auto(ItemId id, const AutoRun& run);
 
     std::shared_ptr<const FakeCatalog> catalog_;
     FakeTimings timings_;
     std::map<ItemId, Item> items_;
+    std::map<ItemId, AutoRun> auto_runs_;
+    bool fail_next_auto_ = false;
+    bool auto_held_ = false;
     std::optional<Clipboard> clipboard_;
     quint64 next_token_ = 0;
     quint64 next_revision_ = 1;

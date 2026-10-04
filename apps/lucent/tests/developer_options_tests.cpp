@@ -158,5 +158,29 @@ TEST(CommandLine, ParsesTheBatchAutomation) {
               CommandLine::Action::Error);
 }
 
+// W8: Auto in the editor (--auto), automatic batches (--automatic, --keep-consistent).
+TEST(CommandLine, ParsesTheAutomaticSettingsAutomation) {
+    EXPECT_FALSE(parse({}).options.run_auto);
+    EXPECT_EQ(parse({}).options.batch_automatic, BatchAutomatic::Off);
+    EXPECT_TRUE(parse({"--open-first", "--auto"}).options.run_auto);
+    EXPECT_EQ(parse({"--auto"}).action, CommandLine::Action::Error);  // needs --open-first
+
+    const CommandLine command_line =
+        parse({"--export-batch", "in", "--to", "out", "--automatic", "Analyze-Only", "--keep-consistent"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    EXPECT_EQ(command_line.options.batch_automatic, BatchAutomatic::AnalyzeOnly);
+    EXPECT_TRUE(command_line.options.keep_consistent);
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--automatic", "auto"}).options.batch_automatic,
+              BatchAutomatic::Auto);
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--automatic", "off"}).options.batch_automatic,
+              BatchAutomatic::Off);
+
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--automatic", "always"}).action,
+              CommandLine::Action::Error);
+    EXPECT_EQ(parse({"--export-batch", "in", "--to", "out", "--keep-consistent"}).action,
+              CommandLine::Action::Error);  // needs automatic settings
+    EXPECT_EQ(parse({"--automatic", "auto"}).action, CommandLine::Action::Error);  // needs --export-batch
+}
+
 }  // namespace
 }  // namespace lucent::ui

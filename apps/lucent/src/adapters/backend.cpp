@@ -194,6 +194,20 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         backend->develop_ = std::make_unique<app::DevelopPreviewService>(
             *backend->library_, *backend->executor_, backend->renderer_, std::move(develop));
 
+        // W8: the editor's Auto. Without it the editor offers no Auto; nothing else depends on it.
+        app::AutoServiceOptions automatic = options.automatic;
+        automatic.registry = backend->registry_;
+        automatic.run.analysis.develop.decode_limits = options.renderer.decode_limits;
+        automatic.run.analysis.develop.memory_budget_bytes = options.renderer.memory_budget_bytes;
+        automatic.run.analysis.develop.parallel = options.renderer.parallel;
+        auto created = app::AutoService::create(*backend->library_, *backend->recipes_, *backend->executor_,
+                                                std::move(automatic));
+        if (created) {
+            backend->auto_ = std::move(*created);
+        } else {
+            core::log_warn(kLog, "automatic settings are unavailable: {}", created.error().describe());
+        }
+
         if (backend->library_->capabilities().source_maintenance) {
             app::MaintenanceServiceOptions maintenance = options.maintenance;
             maintenance.hashing.thumbnails = backend->thumbnails_;
@@ -222,6 +236,7 @@ Backend::~Backend() {
     // use, the executor (joining every task) before the library, catalog and registry those tasks
     // use.
     maintenance_.reset();
+    auto_.reset();  // cancels the runs in progress and waits for them (they use the executor)
     develop_.reset();
     exports_.reset();
     previews_.reset();

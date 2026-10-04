@@ -169,6 +169,14 @@ QVariant BatchListModel::data(const QModelIndex& index, int role) const {
         return batch_active(*batch);
     case AccessibleLabelRole:
         return p::batch_accessible_label(*batch, locale_);
+    case AutomaticKeyRole:
+        return p::automatic_key(batch->automatic);
+    case AutomaticLabelRole:
+        return p::automatic_label(*batch);
+    case CompletedLabelRole:
+        return p::completed_label(*batch, locale_);
+    case AnalysisRole:
+        return p::analysis_label(*batch, locale_);
     default:
         return {};
     }
@@ -208,6 +216,10 @@ QHash<int, QByteArray> BatchListModel::roleNames() const {
         {TimesLabelRole, "timesLabel"},
         {IsActiveRole, "isActive"},
         {AccessibleLabelRole, "accessibleLabel"},
+        {AutomaticKeyRole, "automaticKey"},
+        {AutomaticLabelRole, "automaticLabel"},
+        {CompletedLabelRole, "completedLabel"},
+        {AnalysisRole, "analysis"},
     };
 }
 

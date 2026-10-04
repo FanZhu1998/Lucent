@@ -79,6 +79,19 @@ quint64 FakeBatchService::request_plan(const BatchSetup& setup) {
         if (setup.include_gps) {
             plan.warnings << tr_fake("Simulated: GPS positions would be written.");
         }
+        if (setup.automatic != BatchAutomatic::Off) {
+            plan.automatic_notes << tr_fake("Simulated: each photo is analysed before anything is written.");
+        }
+        if (setup.automatic == BatchAutomatic::AnalyzeOnly) {
+            plan.automatic_notes << tr_fake("Simulated: nothing is exported.");
+            plan.outputs = 0;
+            plan.estimated_bytes = 0;
+            plan.largest_bytes = 0;
+            plan.examples.clear();
+        }
+        if (setup.automatic != BatchAutomatic::Off && setup.keep_consistent) {
+            plan.automatic_notes << tr_fake("Simulated: related photos are analysed together first.");
+        }
     }
     later([this, token, plan] { emit plan_ready(token, plan); });
     return token;
@@ -99,6 +112,8 @@ quint64 FakeBatchService::submit(const BatchSetup& setup) {
     batch.snapshot.created = QDateTime::currentDateTime();
     batch.snapshot.review = 0;
     batch.snapshot.excluded = 0;
+    batch.snapshot.automatic = setup.automatic;
+    batch.snapshot.keep_consistent = setup.automatic != BatchAutomatic::Off && setup.keep_consistent;
     for (qsizetype i = 0; i < setup.items.size(); ++i) {
         const std::optional<FakeCatalog::Entry> entry = catalog_->find(setup.items[i]);
         Job job;
@@ -140,8 +155,12 @@ void FakeBatchService::step() {
         } else {
             next->fraction = std::min(1.0, next->fraction + kProgressStep);
             if (next->fraction >= 1.0 - 1e-9) {
-                next->outcome = BatchOutcome::Exported;
-                batch.snapshot.last_output = next->output;
+                if (batch.snapshot.automatic == BatchAutomatic::AnalyzeOnly) {
+                    next->outcome = BatchOutcome::Analysed;
+                } else {
+                    next->outcome = BatchOutcome::Exported;
+                    batch.snapshot.last_output = next->output;
+                }
             }
         }
         publish(batch);
@@ -159,10 +178,16 @@ void FakeBatchService::publish(Batch& batch) {
     s.completed = s.failed = s.skipped = s.cancelled = s.queued = s.running = s.retryable = 0;
     s.running_jobs.clear();
     bool started = false;
+    const bool automatic = s.automatic != BatchAutomatic::Off;
+    qint64 review = 0;
+    qint64 pending_analysis = 0;
     for (const Job& job : batch.jobs) {
         switch (job.outcome) {
         case BatchOutcome::Exported:
+        case BatchOutcome::Analysed:
             ++s.completed;
+            // Simulated: every third photo of an automatic batch recommends a review.
+            review += automatic && (&job - batch.jobs.data()) % 3 == 2 ? 1 : 0;
             break;
         case BatchOutcome::Skipped:
             ++s.skipped;
@@ -178,13 +203,21 @@ void FakeBatchService::publish(Batch& batch) {
             if (!started && job.fraction > 0.0 && s.state == BatchState::Running) {
                 started = true;
                 ++s.running;
-                s.running_jobs.push_back(
-                    BatchRunningJob{0, job.item, job.source, tr_fake("Rendering"), job.fraction});
+                s.running_jobs.push_back(BatchRunningJob{0, job.item, job.source,
+                                                         automatic && job.fraction < 0.5 ? tr_fake("Analysing")
+                                                                                         : tr_fake("Rendering"),
+                                                         job.fraction});
             } else {
                 ++s.queued;
             }
+            ++pending_analysis;
             break;
         }
+    }
+    if (automatic) {
+        s.review = review;
+        s.analysis_pending = s.remaining() > 0 ? pending_analysis : -1;
+        s.analysis_recorded = s.remaining() > 0 ? s.total - pending_analysis : -1;
     }
     if (s.state == BatchState::Running && s.remaining() == 0) {
         s.state = BatchState::Completed;
@@ -271,16 +304,22 @@ void FakeBatchService::request_report(BatchId id) {
         report.name = s.name;
         report.folder = s.folder;
         report.state = s.state;
-        report.exported = s.completed;
+        const bool analyse_only = s.automatic == BatchAutomatic::AnalyzeOnly;
+        report.exported = analyse_only ? 0 : s.completed;
+        report.analysed = analyse_only ? s.completed : 0;
+        report.automatic = s.automatic;
+        report.review = s.automatic != BatchAutomatic::Off ? s.review : 0;
         report.failed = s.failed;
         report.skipped = s.skipped;
         report.cancelled = s.cancelled;
         report.pending = s.remaining();
-        report.format = tr_fake("JPEG · sRGB · 8-bit");
+        report.format = analyse_only ? QString() : tr_fake("JPEG · sRGB · 8-bit");
         report.created = s.created;
         report.finished = s.finished;
         report.notes << tr_fake("Simulated batch: no file was written.");
-        for (const Job& job : found->second.jobs) {
+        const auto& jobs = found->second.jobs;
+        for (std::size_t i = 0; i < jobs.size(); ++i) {
+            const Job& job = jobs[i];
             BatchReportEntry entry;
             entry.item = job.item;
             entry.source_name = job.source;
@@ -288,6 +327,19 @@ void FakeBatchService::request_report(BatchId id) {
             entry.output = job.outcome == BatchOutcome::Exported ? job.output : QString();
             entry.reason = job.reason;
             entry.attempts = job.outcome == BatchOutcome::Pending ? 0 : 1;
+            const bool done = job.outcome == BatchOutcome::Exported || job.outcome == BatchOutcome::Analysed;
+            if (s.automatic != BatchAutomatic::Off) {
+                entry.automatic = true;
+                if (done) {
+                    entry.revision_number = 2;
+                    entry.confidence = i % 3 == 2 ? 0.45 : 0.85;
+                    entry.flags << tr_fake("Simulated: the colour of the light was uncertain.");
+                    if (i % 3 == 2) {
+                        entry.review << tr_fake("Simulated: Lucent was unsure, so it kept the change small.");
+                        entry.flags << entry.review.front();
+                    }
+                }
+            }
             report.entries.push_back(entry);
         }
     } else {

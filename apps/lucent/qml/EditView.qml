@@ -11,8 +11,9 @@ import Lucent
 //
 // Keys: Left/Right previous/next photo (when the image has focus), Home/End first/last, Ctrl+0
 // Fit, Ctrl+1 100 %, Z toggles the zoom, \ before/after, J clipping overlay, Ctrl+Z undo, Ctrl+Y
-// (or Ctrl+Shift+Z) redo, Ctrl+Shift+C copy settings, Ctrl+Shift+V paste settings, Ctrl+E export,
-// Esc returns to the library (Main.qml). In a slider: arrows step (Shift: coarse), Home resets.
+// (or Ctrl+Shift+Z) redo, Ctrl+Shift+C copy settings, Ctrl+Shift+V paste settings, Ctrl+Shift+A
+// Auto (W8), Ctrl+E export, Esc returns to the library (Main.qml). In a slider: arrows step (Shift:
+// coarse), Home resets.
 FocusScope {
     id: root
 
@@ -312,6 +313,13 @@ FocusScope {
                         }
                     }
 
+                    // W8: Auto's progress, outcome and what it did to the current revision.
+                    AutoSettingsPanel {
+                        objectName: "autoSettingsPanel"
+                        Layout.fillWidth: true
+                        edit: root.edit
+                    }
+
                     AdjustPanel {
                         objectName: "adjustPanel"
                         Layout.fillWidth: true
@@ -429,5 +437,11 @@ FocusScope {
         sequence: "Ctrl+E"
         enabled: root.visible && root.current.valid
         onActivated: root.exportRequested()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+A"
+        enabled: root.visible && root.edit.canRunAuto
+        onActivated: root.edit.runAuto()
     }
 }

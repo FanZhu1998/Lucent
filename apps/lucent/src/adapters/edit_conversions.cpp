@@ -1,6 +1,9 @@
 #include "adapters/edit_conversions.hpp"
 
 #include <QCoreApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTimeZone>
 #include <algorithm>
 #include <cmath>
@@ -38,6 +41,38 @@ QString camera_name(const app::CameraCapabilities& camera) {
 QString origin_key(catalog::RevisionOrigin origin) {
     const std::string_view text = catalog::to_string(origin);
     return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+}
+
+QString from_utf8(std::string_view text) {
+    return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+}
+
+// The value of `key` in a revision note's ';'-separated key=value fields (recipe_service.hpp).
+QString note_field(std::string_view note, std::string_view key) {
+    while (!note.empty()) {
+        const std::size_t end = note.find(';');
+        const std::string_view field = note.substr(0, end);
+        if (const std::size_t equals = field.find('='); equals != std::string_view::npos &&
+                                                         field.substr(0, equals) == key) {
+            return from_utf8(field.substr(equals + 1));
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        note.remove_prefix(end + 1);
+    }
+    return {};
+}
+
+QJsonObject parse_object(const std::string& json) {
+    const QJsonDocument document = QJsonDocument::fromJson(QByteArray::fromStdString(json));
+    return document.isObject() ? document.object() : QJsonObject();
+}
+
+void add_unique(QStringList& list, const QString& text) {
+    if (!text.isEmpty() && !list.contains(text)) {
+        list << text;
+    }
 }
 
 }  // namespace
@@ -185,6 +220,10 @@ QList<EditHistoryEntry> to_edit_history(const app::RecipeHistory& history) {
         out.reverted_from = entry.reverted_from.value_or(0);
         out.current = entry.current;
         out.on_current_path = entry.on_current_path;
+        if (entry.info.origin == catalog::RevisionOrigin::Auto) {
+            out.auto_kind = note_field(entry.info.note, "auto");
+            out.auto_failed = note_field(entry.info.note, "check") == u"failed";
+        }
         entries << out;
     }
     return entries;
@@ -244,6 +283,154 @@ WhiteBalanceInfo white_balance_info(const raw::RawMetadata& metadata) {
         "Adjust the camera's own red–blue and green–magenta balance instead; the values are relative to "
         "the as-shot balance.");
     return info;
+}
+
+// ---- Automatic settings ------------------------------------------------------------------------------
+
+AutoSummary to_auto_summary(const catalog::AutoAnalysisRecord& record, const app::HistoryEntry& entry) {
+    AutoSummary out;
+    out.revision = static_cast<quint64>(record.revision.value);
+    out.revision_number = entry.info.revision_number;
+    out.from_batch = record.job.has_value();
+    out.confidence = std::clamp(record.confidence, 0.0, 1.0);
+    out.review = record.review;
+    out.attempt = record.attempt;
+    for (const engine::DevelopControl control : entry.changed) {
+        out.changed << to_edit_control(control);
+    }
+
+    // The flags with their reasons (a JSON array of {code, name, metric, reason, review}).
+    bool locks_flagged = false;
+    const QJsonDocument flags = QJsonDocument::fromJson(QByteArray::fromStdString(record.flags_json));
+    for (const QJsonValue value : flags.array()) {
+        const QJsonObject flag = value.toObject();
+        const int code = flag.value(QStringLiteral("code")).toInt(-1);
+        if (code < 0 || code > 0xFFFF) {
+            continue;
+        }
+        if (code == app::kFlagLocksPreventedTargets) {
+            // Its reasons are the locks report's (below): named once, there.
+            locks_flagged = true;
+            continue;
+        }
+        app::AutoFlag described;
+        described.code = static_cast<std::uint16_t>(code);
+        described.reason = flag.value(QStringLiteral("reason")).toString().toStdString();
+        const QString text = QString::fromStdString(app::describe_auto_flag(described));
+        add_unique(flag.value(QStringLiteral("review")).toBool() ? out.review_reasons : out.notes, text);
+    }
+    for (const QString& reason : out.review_reasons) {
+        out.notes.removeAll(reason);  // two codes can share their wording
+    }
+
+    // The record document: the attempt, the locks report, the related-shot group.
+    const QJsonObject document = parse_object(record.record_json);
+    const QJsonObject attempt = document.value(QStringLiteral("attempt")).toObject();
+    out.baseline = attempt.value(QStringLiteral("kind")).toString() == u"baseline";
+    if (record.attempt > 0) {
+        out.fallback_detail = attempt.value(QStringLiteral("reason")).toString();
+    }
+    const QJsonObject locks = document.value(QStringLiteral("locks")).toObject();
+    for (const QJsonValue control : locks.value(QStringLiteral("locked")).toArray()) {
+        if (const auto parsed = engine::parse_develop_control(control.toString().toStdString())) {
+            out.locked << to_edit_control(*parsed);
+        }
+    }
+    out.locks_prevented_targets = locks.value(QStringLiteral("prevented_targets")).toBool() || locks_flagged;
+    for (const QJsonValue reason : locks.value(QStringLiteral("reasons")).toArray()) {
+        add_unique(out.lock_notes, reason.toString());
+    }
+    if (out.locks_prevented_targets) {
+        add_unique(out.review_reasons, tr_text("Locked controls kept Auto from its usual targets."));
+    }
+    if (out.review && out.review_reasons.isEmpty()) {
+        out.review_reasons << tr_text("Lucent recommends checking this automatic edit.");
+    }
+    const QJsonObject consistency = document.value(QStringLiteral("consistency")).toObject();
+    out.group = consistency.value(QStringLiteral("target")).toObject().value(QStringLiteral("group_id")).toString();
+    return out;
+}
+
+AutoStage to_auto_stage(app::AutoTaskStage stage) noexcept {
+    switch (stage) {
+        case app::AutoTaskStage::Queued:
+            return AutoStage::Queued;
+        case app::AutoTaskStage::Analysing:
+            return AutoStage::Analysing;
+        case app::AutoTaskStage::Checking:
+            return AutoStage::Checking;
+        case app::AutoTaskStage::Saving:
+        case app::AutoTaskStage::Finished:
+            break;
+    }
+    return AutoStage::Saving;
+}
+
+QString describe_auto_error(const Error& error) {
+    const std::string_view where = error.where;
+    if (error.code == ErrorCode::Cancelled) {
+        return tr_text("Auto was cancelled; nothing was changed.");
+    }
+    if (where == "app.auto.check") {
+        return tr_text("No automatic edit passed Lucent's full-size quality check, so nothing was changed.");
+    }
+    if (where == "app.auto.busy") {
+        return tr_text("Auto is already running for this photo.");
+    }
+    if (where == "ui.auto.unavailable") {
+        return tr_text("Automatic settings are not available in this session.");
+    }
+    if (where == "app.auto.support" || error.code == ErrorCode::Unsupported) {
+        return tr_text("Lucent cannot render this camera file faithfully yet, so it does not choose automatic "
+                       "settings for it.");
+    }
+    switch (error.code) {
+        case ErrorCode::LimitExceeded:
+            return tr_text("This photo needs more memory for automatic settings than Lucent may use.");
+        case ErrorCode::OutOfMemory:
+            return tr_text("Not enough memory is free for automatic settings now. Close other programs and try "
+                           "again.");
+        case ErrorCode::VersionMismatch:
+            return tr_text("This photo's edit or its library was saved by a newer version of Lucent, so Auto cannot "
+                           "change it.");
+        default:
+            break;
+    }
+    return tr_text("Auto could not run: %1").arg(describe_error(error));
+}
+
+AutoOutcome to_auto_outcome(ItemId item, const app::AutoTaskResult& result) {
+    AutoOutcome out;
+    out.item = item;
+    if (result.error) {
+        out.cancelled = result.error->code == ErrorCode::Cancelled;
+        out.message = describe_auto_error(*result.error);
+        return out;
+    }
+    out.saved = !result.revisions.empty();
+    out.made_current = result.made_current;
+    out.revisions = static_cast<int>(result.revisions.size());
+    out.revision_number = out.saved ? result.revisions.back().revision_number : 0;
+    out.review = result.run && result.run->review_recommended();
+    if (!out.saved) {
+        out.message = tr_text("Auto saved nothing.");
+        return out;
+    }
+    if (!out.made_current) {
+        out.message = tr_text("Auto finished, but the photo was changed meanwhile: its settings are kept in the "
+                              "history as revision %1.")
+                          .arg(out.revision_number);
+        return out;
+    }
+    out.message = tr_text("Auto saved its settings as revision %1.").arg(out.revision_number);
+    if (out.revisions > 1) {
+        out.message += u' ' + tr_text("Its first choice failed the full-size quality check, so a more conservative "
+                                      "one is used.");
+    }
+    if (out.review) {
+        out.message += u' ' + tr_text("Review recommended.");
+    }
+    return out;
 }
 
 // ---- Paste -------------------------------------------------------------------------------------------

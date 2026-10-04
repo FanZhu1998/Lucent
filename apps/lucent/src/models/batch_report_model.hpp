@@ -3,7 +3,9 @@
 // BatchReportModel: the report of the batch selected in the Exports view (blueprint section 2
 // step 5: "a report of exported, skipped, failed, and review-recommended items"): its counts and
 // notes, and one row per photo with its outcome, output, reason, suggested action and review notes,
-// filtered by outcome ("all", "exported", "skipped", "failed", "review").
+// filtered by outcome ("all", "exported", "skipped", "failed", "review", "cancelled", "analysed").
+// W8: the rows of an automatic batch also say what Auto did (the automatic revision, its
+// confidence, a conservative fallback, the related-shot group, the other findings and the locks).
 //
 // The report is read by the BatchService off the UI thread. While the shown batch changes (photos
 // finish), the report is read again at most once per refresh interval (2 s, or 2 ms per photo for
@@ -50,6 +52,10 @@ class BatchReportModel : public QAbstractListModel {
     Q_PROPERTY(int pending READ pending NOTIFY reportChanged FINAL)
     Q_PROPERTY(int review READ review NOTIFY reportChanged FINAL)
     Q_PROPERTY(int total READ total NOTIFY reportChanged FINAL)
+    // W8: an automatic batch's report (its rows say what Auto did), and its analysed photos
+    // (analysing only).
+    Q_PROPERTY(bool automatic READ automatic NOTIFY reportChanged FINAL)
+    Q_PROPERTY(int analysed READ analysed NOTIFY reportChanged FINAL)
     Q_PROPERTY(QStringList notes READ notes NOTIFY reportChanged FINAL)
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged FINAL)
     Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
@@ -68,6 +74,12 @@ public:
         HasReviewRole,
         AttemptsRole,
         AccessibleLabelRole,
+        // W8: automatic batches.
+        AutomaticRole,         // bool: the row says what Auto did
+        AutomaticSummaryRole,  // "Automatic revision 3 · confidence 82 % · conservative fallback"
+        AutoNotesRole,         // QStringList: Auto's other findings (those not in ReviewRole)
+        LockNotesRole,         // QStringList: what locked controls did
+        LocksPreventedRole,    // bool: locks kept Auto from its usual targets
     };
     Q_ENUM(Role)
 
@@ -101,6 +113,8 @@ public:
     [[nodiscard]] int pending() const noexcept { return static_cast<int>(report_.pending); }
     [[nodiscard]] int review() const noexcept { return static_cast<int>(report_.review); }
     [[nodiscard]] int total() const noexcept { return static_cast<int>(report_.entries.size()); }
+    [[nodiscard]] bool automatic() const noexcept { return report_.automatic != BatchAutomatic::Off; }
+    [[nodiscard]] int analysed() const noexcept { return static_cast<int>(report_.analysed); }
     [[nodiscard]] QStringList notes() const { return report_.notes; }
     [[nodiscard]] QString filter() const { return filter_; }
     void setFilter(const QString& filter);
@@ -123,6 +137,7 @@ private:
     // updating rows in place.
     void update_rows(const BatchReportInfo& report);
     [[nodiscard]] bool matches(const BatchReportEntry& entry) const;
+    [[nodiscard]] QString automatic_summary(const BatchReportEntry& entry) const;
 
     BatchService& service_;
     BatchId batch_ = 0;
