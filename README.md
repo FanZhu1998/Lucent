@@ -2,19 +2,24 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its sixth development
-> increment (W6, recipes and editor), pending its commit and merge: a Qt Quick `Lucent.exe` that
-> adds RAW files in place or as verified copies into a library folder, keeps them in a saved
+> **Status: pre-alpha, under active development.** Lucent has completed its seventh development
+> increment (W7, durable batch), pending its commit and merge: a Qt Quick `Lucent.exe` that adds
+> RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
 > removable-media badges and relinking, and browses them with labelled camera previews and support
 > states. Opening a photo edits it: white balance (temperature and tint where the camera's
 > calibration defines them), exposure, contrast, highlights and shadows, a tone curve, saturation
 > and vibrance, with a histogram, clipping overlay, before/after, undo/redo over an immutable
 > revision history and copy/paste by category. Thumbnails, previews and JPEG or 16-bit TIFF exports
-> render each photo's recipe. It runs from a source build or from an unsigned per-user installer
-> built from source (see [Installing](#installing)). There is **no automatic optimisation yet**
-> (W8), and no camera model is verified as supported. The next section describes the product
-> Lucent is being built to become, from its blueprint, not what it can do today.
+> render each photo's recipe. Exports run as durable batches: a selection, every photo or a folder
+> is exported to JPEG or 16-bit TIFF in isolated `lucent-worker.exe` processes under a memory
+> budget, each output verified before it is published without overwriting anything, with pause,
+> resume, cancel, actionable pauses for a full or disconnected destination, recovery after Lucent
+> is closed or stops, and a completion report. It runs from a source build or from an unsigned
+> per-user installer built from source (see [Installing](#installing)). There is **no automatic
+> optimisation yet** (W8), and no camera model is verified as supported. The next section
+> describes the product Lucent is being built to become, from its blueprint, not what it can do
+> today.
 
 ## What Lucent is meant to be
 
@@ -58,13 +63,15 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W4 | `catalog` module (SQLite, migrations, backups), persistent library, import in place or as verified copies, source identity (SHA-256 and file identity), duplicates, missing files and relinking, disk thumbnail cache (ADR 0008) | Done |
 | W5 | Per-user Inno Setup installer with Qt deployment, dependency audit, licences and SBOM (ADR 0009) | Done except the clean-machine test |
 | W6 | Develop settings v1 and editing operations (white balance, exposure, guided-filter highlights and shadows, contrast, tone curve, saturation and vibrance, base look "neutral" v1), two-stage interactive rendering, versioned recipes with immutable revisions (catalog schema v2), undo/redo, copy/paste, the Edit view (ADR 0010) | Done, pending commit and merge |
-| W7–W12 | Batches, optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
+| W7 | Durable batch export: `lucent-worker.exe` and its versioned pipe protocol, memory-budgeted scheduling, catalog job journal (schema v3 and v4) with leases, a publication journal and receipts, verified no-clobber publication, restart recovery, pause / cancel / resume and destination attentions, EXIF capture metadata with an explicit GPS policy, completion reports, the Export batch dialog and the Exports view (ADR 0012) | Done, pending commit and merge |
+| W8–W12 | Optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
 ([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library is saved in
 `%LOCALAPPDATA%\Lucent\data\lucent.catalog` (`--data-root` points a developer session elsewhere);
 edits are stored there as recipe revisions, so a library opened by Lucent W6 can no longer be
-opened by an earlier build. Photos are rendered with their recipe and the base look "neutral" v1.
+opened by an earlier build, and W7 adds the batch journal (catalog schema v4; earlier builds open
+such a library read-only). Photos are rendered with their recipe and the base look "neutral" v1.
 The developer command-line tools `lucent-probe` and `lucent-render` remain; they are not
 installed.
 
