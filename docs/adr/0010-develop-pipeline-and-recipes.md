@@ -74,8 +74,13 @@ while another workflow was building on the same machine (so the upper ends are p
    and of the base look. The written form is the JSON Canonicalization Scheme (RFC 8785): sorted
    member names, no whitespace, ECMAScript shortest round-trip number formatting (`-0` is `0`), so
    doubles survive a write and read bit-exactly and the identity, `settings_sha256` = SHA-256 of
-   the canonical UTF-8 text, is reproducible by any JCS implementation (the default recipe's
-   identity is pinned by a test). Equal settings have equal identities whatever revision or
+   the canonical UTF-8 text, is reproducible by any JCS implementation from the *normalised*
+   document (the default recipe's identity is pinned by a test). Reading normalises two arrays
+   that JCS leaves in their given order: `locks` are put in `DevelopControl` numeric order
+   (`white_balance`, `exposure`, `contrast`, `highlights`, `shadows`, `tone_curve`,
+   `saturation`, `vibrance`, `base_look`), and tone-curve points are already required to be in
+   increasing x. So two documents that differ only in the order of their locks have the same
+   identity in Lucent, while a plain JCS implementation hashes each as written. Equal settings have equal identities whatever revision or
    transient edit they come from; previews and thumbnails are cached by it.
 
 3. **Strict reading; newer recipes are read-only, never no-ops.** A document must be an object
@@ -88,8 +93,14 @@ while another workflow was building on the same machine (so the upper ends are p
    opened read-only with that reason (`RecipeState::read_only`): previews, thumbnails and exports
    refuse it with the recipe's error instead of rendering other settings, and edits, locks and
    pastes into it fail; undo, redo, selecting another revision, revert and reset remain possible
-   because they never interpret the unreadable recipe. A catalog written by a newer schema (ADR
-   0008) makes every item read-only with the catalog's reason.
+   because they never interpret the unreadable recipe. A current revision whose stored text
+   fails its SHA-256 check, or whose fields the catalog cannot decode, is unreadable the same way
+   (never an unusable item, never an endless "rendering"). Only the current revision matters: a
+   damaged or newer revision elsewhere in the history leaves the item renderable (a history that
+   cannot be listed fails the listing alone), and an origin a later Lucent added is listed as
+   "unknown" (`RevisionOrigin::Unknown`, never written). A catalog written by a newer schema (ADR
+   0008) makes every item read-only with the catalog's reason; a schema-v1 build refuses a v2
+   catalog altogether (`min_reader_version` 2), because it would ignore the recipes.
 
 4. **Revision model** (`RecipeService`, `RecipeStore`). Revisions are immutable and never deleted;
    they go with their item when it is removed (the catalog's cascade). An item points at its
@@ -167,7 +178,9 @@ while another workflow was building on the same machine (so the upper ends are p
 8. **Exports freeze the recipe and record its identity.** A request without settings takes the
    item's current recipe at submission (`ExportService::submit`), so editing a photo while its
    export is queued or running never changes that export; an unreadable recipe is refused at
-   submission. `ExportRecord::recipe` (`RecipeIdentity`) holds the revision and its number, the
+   submission. The user interface queues exports in its own adapter (one running at a time) and
+   reads every queued item's current recipe when the user queues it (on the adapter's recipe
+   thread), passing the frozen settings, revision and number with the request. `ExportRecord::recipe` (`RecipeIdentity`) holds the revision and its number, the
    schema and version, the canonical document and its SHA-256, the operation and base-look
    versions and the pipeline version, and the record keeps the source's content hash: the
    blueprint's job identity (source hash + subimage + recipe hash + renderer versions + export
@@ -177,8 +190,10 @@ while another workflow was building on the same machine (so the upper ends are p
    renders a 1024-pixel Fit thumbnail of the item's current recipe, encodes it as an sRGB JPEG
    (quality 85) and caches it in memory and, for an item with a content hash, in the disk
    `ThumbnailCache` (generator `LucentRender`, version 1) under a key whose variant is the SHA-256
-   of the settings identity, the develop-pipeline and downscale versions and the decoder build:
-   a changed recipe or engine never shows an old thumbnail, and the next session shows edited
+   of the settings identity (which covers the operation and base-look versions), every other
+   engine algorithm version (`engine::kDevelopEngineVersions`: stage graph, sensor normalisation,
+   white balance, demosaic routes, camera colour, working space, guided filter, downscale) and the
+   decoder build: a changed recipe or engine never shows an old thumbnail, and the next session shows edited
    photos without rendering. The JPEG is written by the exporter's own writer through a scratch
    file (no in-memory JPEG encoder is public yet).
 
@@ -216,6 +231,55 @@ while another workflow was building on the same machine (so the upper ends are p
   currently pass through a scratch file); the decoded metadata in `engine::DevelopReport` (the
   application runs `render_develop_file`'s two steps itself to obtain it); an optional scene-linear
   output of the develop pipeline (for a develop-path `--dump-linear`).
+
+## Amendments at the close of W6 (independent review)
+
+The review of the finished increment (engine, recipes, editor) found these, fixed before the merge;
+DevelopSettings v1 had not shipped, so its operation versions stay 1.
+
+- **White balance near the spectral locus.** Kelvin settings in the slider range with a strong
+  green tint at low temperatures (for example 3000 K / +90) are whites with a negative Bradford
+  S-cone response; the DNG ColorMatrix path rejected them as "corrupt", so previews and exports of
+  DJI, Leica, Hasselblad and Insta360 DNGs failed. It now adapts D50 to the white as the DNG SDK's
+  `MapWhiteMatrix` does (negative cone responses taken as 0, cone scales pinned to [0.1, 10]), and
+  a fixture test renders the whole Kelvin grid (2000 to 50000 K, tints -150 to +150) on every DNG
+  fixture. Once the camera neutral reaches the SDK's [0.001, 1] pin, settings further into that
+  corner render alike (documented in `white_balance_model.hpp`).
+- **Numerically robust curves.** The contrast curve is evaluated in an equivalent tanh form (the
+  logistic differences cancelled to 0 / 0 for contrasts below 3e-17 and exported black images
+  with status ok); tone-curve x values must be at least `kMinToneCurveGap` (1e-6) apart (closer
+  points overflowed the secants; a recipe with them is damaged), the Fritsch-Carlson scaling is
+  computed without overflowing ratios, and a non-finite intermediate now reaches the operation's
+  `Internal` check instead of turning a pixel black.
+- **Lifted blacks and above-white values in the lightness curves.** A tone curve whose output at
+  black is above 0 (a fade) multiplied near-black pixels by an unbounded gain, turning sensor
+  noise into saturated colour, and left pixels at or below 0 black. The lift g(0) is now added as
+  neutral light, p' = p (g(m) - g(0)) / m + g(0), with pixels without a positive component given
+  the gain next to black. Norms above the white point were clamped to it even for curves next to
+  the identity, so contrast 0.01 desaturated bright colours differently from contrast 0; when the
+  curves keep white (contrast; a tone curve ending at y = 1) above-white values keep their
+  relation to W (the base look still renders them white), and only a tone curve that lowers white
+  maps them to its white output.
+- **Accuracy of the tabulated lightness curves.** The top three octaves are tabulated again at
+  4096 nodes per octave and the last 1/32 EV below white is evaluated exactly (the base look's
+  corner at W in the Lift regime, and steep curves next to white): the measured worst deviation
+  is 3.5e-5 relative (it was 1.7e-2 next to white).
+- **Highlights and shadows weights** use the displayed EV under the base look
+  (log2 B_W(2^base), toe and shoulder included) instead of a linear estimate that was up to 1.1 EV
+  too bright at +5 EV exposure; where the Lift regime expands the top they stay linear from white,
+  which keeps the smoothed tones in order.
+- **Rendered thumbnails** are keyed by every engine algorithm version (decision 9), and the local
+  tone record names its guided-filter version.
+- **Recipes in the catalog:** decisions 3 and 8 above (a damaged current revision is read-only
+  with undo; unknown origins are listed; exports freeze their recipe when queued) and schema v2's
+  `min_reader_version` 2 (ADR 0008).
+- **Editor:** a command during a drag no longer turns the rest of the drag into a revision per
+  move, edits made before an undo is answered are refused instead of re-applying the undone
+  values, commands queued at exit complete, unreadable recipes are named as such and show no
+  values, slider values are accessible as displayed, and the before/after divider works from the
+  keyboard (ADR 0007, decision 13).
+- **`research/tools/render_reference.py`** passes `--legacy-neutral-v0` (its `--dump-linear`
+  comparison is of the W2 path).
 
 ## Alternatives considered
 

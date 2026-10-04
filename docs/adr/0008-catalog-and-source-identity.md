@@ -53,7 +53,11 @@ persistent library and the decisions about identity, duplicates, relinking and c
    contract that never changes. Each migration runs in its own transaction with foreign keys
    verified before commit, after a verified online backup (`sqlite3_backup`) with per-kind
    retention. A catalog written by a newer Lucent is never migrated or written: it opens read-only
-   when its `min_reader_version` allows this build to read it, otherwise it is refused. Enumerations
+   when its `min_reader_version` allows this build to read it, otherwise it is refused. A schema
+   version that changes what renders or exports of existing items mean raises
+   `min_reader_version` to itself, and it never goes back down (`validate_migrations`); only a
+   purely additive change keeps it. Schema v2 (W6, ADR 0010) is the first: an older build would
+   show and export edited photos as shot, so v2 needs a v2 reader. Enumerations
    are stored as text without CHECK constraints so values can only be appended; lists use keyset
    paging. Restore verifies the backup, takes a pre-restore backup (or moves a damaged catalog
    aside) and installs a verified copy. The Library menu offers **Back up catalog** (written on the

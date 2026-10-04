@@ -233,31 +233,42 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       monochrome files), exposure, contrast, highlights, shadows, saturation and vibrance. Each has
       a slider (temperature on a reciprocal scale), a numeric field, reset (button, double-click,
       Home), arrow-key steps (Shift: coarse) and a lock toggle (`set_lock`, a revision), with
-      accessible names and values. Moving a white-balance slider from "as shot" starts a custom
-      balance from the as-shot values.
+      accessible names; a slider's accessible value is the value its field shows (temperature,
+      linear in reciprocal kelvin, reports its position and states the kelvin value in its
+      description). Moving a white-balance slider from "as shot" starts a custom balance from the
+      as-shot values.
     - *Gestures.* A drag is transient positions (`set_transient`, unsettled requests: Quick
       frames only) and one `commit` on release; a held arrow key is the same, committed on key
       release or after 600 ms without a key; a typed value, a reset or a curve point removal is one
-      `apply`. So every gesture is exactly one revision. Positions are coalesced twice: on the
-      edit adapter's command thread (a newer position replaces a waiting one) and in the develop
-      service (latest wins). The local values are not overwritten by an older call's answer while
-      a newer call is outstanding (states carry the call's token).
+      `apply`. So every gesture is exactly one revision. A command during a drag (undo, redo,
+      paste, a reset by Home or double-click) commits what the drag changed so far, and the rest of
+      the drag is the next gesture, committed on release: never a revision per mouse move.
+      Positions are coalesced twice: on the edit adapter's command thread (a newer position
+      replaces a waiting one) and in the develop service (latest wins). The local values are not
+      overwritten by an older call's answer while a newer call is outstanding (states carry the
+      call's token); while an undo, redo, selected revision, reset or paste is not answered yet,
+      changes are refused (the service applies those commands, so a change built on the local
+      values would re-apply what they removed). Commands still queued when Lucent closes are
+      completed first (a gesture pending at exit is committed), only rendering stops.
     - *Tone curve.* `ToneCurvePlot` draws the curve as the renderer evaluates it
       (`EditService::sample_tone_curve`, the engine's monotone cubic) over the frame's luma
       histogram placed at the lightness of each code value; points keep x strictly increasing
       (0.01 apart) and y non-decreasing; the end points move but are not removed.
     - *Frames.* Quick frames are shown while settings change, then the Final frame; the previous
       frame stays on screen while the next one loads. The as-shot render for before/after (\ key;
-      a split view with a draggable divider) comes from the same session (an unsettled as-shot
+      a split view whose divider is dragged, or focused with Tab and moved with the arrow keys)
+      comes from the same session (an unsettled as-shot
       request made once the current settings are rendered), and the clipping overlay (J key) is
       the frame's clipping mask (red: a channel at 255; blue: a channel at 0), with the histogram's
       clipped shares counted from the same mask. The histogram follows the newest frame.
     - *History.* Every revision, newest first, with its origin, changed controls and time; a click
       selects it (`select_revision`), Undo/Redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and buttons),
       and Reset to as shot (a recorded revision). An item whose recipe this Lucent cannot read
-      shows a read-only banner with the reason and no rendered image; its edit controls, copy and
+      shows a read-only banner with the reason and no rendered image; its controls show no values
+      (not the as-shot defaults, which would look like an unedited photo), edit controls, copy and
       paste are disabled, while undo, redo, selecting and reset stay available unless the whole
-      library is read-only.
+      library is read-only. Exports and other messages name the edit, not the file, as what cannot
+      be read ("This photo's edit was made by a newer version of Lucent", "... is damaged").
     - *Copy and paste.* Ctrl+Shift+C opens a category dialog (white balance, exposure, tone,
       colour, highlights and shadows); Ctrl+Shift+V pastes into the photo. The result message
       (panel and status line) lists the categories pasted and, with the reason, anything not
