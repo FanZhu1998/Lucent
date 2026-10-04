@@ -58,8 +58,13 @@ add_subdirectory(src/image)
 add_subdirectory(src/raw)
 add_subdirectory(src/engine)
 add_subdirectory(src/export)
+add_subdirectory(src/analysis)
 add_subdirectory(src/catalog)
+add_subdirectory(src/workers)
 add_subdirectory(src/application)
+
+# The processing worker ships with the application and is used by batch tests.
+add_subdirectory(apps/lucent-worker)
 
 if(LUCENT_BUILD_TOOLS)
     add_subdirectory(apps/lucent-probe)
