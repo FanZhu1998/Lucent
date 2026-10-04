@@ -23,6 +23,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <lucent/analysis/consistency.hpp>
 #include <lucent/application/batch_destination.hpp>
 #include <lucent/application/batch_service.hpp>
 #include <lucent/application/recipe.hpp>
@@ -38,6 +39,15 @@ namespace lucent::app {
 
 namespace detail {
 
+// The related-shot plan of an automatic batch that keeps related shots consistent (ADR 0013):
+// groups and consistency targets computed from the jobs' recorded analysis documents once none is
+// pending. Deterministic, so a restart computes the same plan.
+struct ConsistencyPlan {
+    std::uint64_t analysed = 0;                                   // analysis documents it was computed from
+    std::map<std::int64_t, analysis::ConsistencyTarget> targets;  // by job id (regularised members)
+    std::map<std::int64_t, std::string> groups;                   // group id by job id (groups of two or more)
+};
+
 // A batch's documents, parsed once (immutable after load, except the folder's identity, which
 // use_replaced_folder() may replace: read it with Impl::folder_identity_of) plus the coordinator's
 // runtime state.
@@ -50,6 +60,7 @@ struct BatchContext {
     PolicyDocument policy;
     std::string renderer_version;
     core::Digest256 export_settings_sha256{};
+    catalog::AutoMode automatic = catalog::AutoMode::None;  // the batch's automatic settings
 
     // ---- runtime (Impl::mutex) ----
     std::optional<core::FileIdentity> folder_identity;  // destination.folder_identity, maybe replaced
@@ -71,6 +82,7 @@ struct BatchContext {
     std::optional<std::uint64_t> free_bytes;  // at destination_checked
     std::uint64_t completed_this_session = 0;
     double seconds_this_session = 0.0;
+    std::shared_ptr<const ConsistencyPlan> consistency;  // computed by Impl::consistency_plan
 };
 
 struct FrozenDocument {
@@ -85,6 +97,7 @@ struct Assignment {
     std::optional<SourceItem> item;
     std::uint64_t pixels = 0;
     std::uint64_t estimate_bytes = 0;
+    bool analysis = false;  // the attempt runs an automatic analysis (its memory is estimated apart)
 };
 
 enum class StopReason : std::uint8_t {
@@ -174,6 +187,7 @@ struct BatchService::Impl {
     bool calibrated = false;
     double measured_bytes_per_pixel = 0.0;
     std::uint64_t measured_floor = 0;  // largest commit of a job below the calibration size
+    double measured_auto_bytes_per_pixel = 0.0;  // of attempts that ran an automatic analysis
     BatchSchedulerStats counters;      // (mutex) cumulative members only
     RecoveryReport recovery;           // (mutex)
     bool recovered = false;            // (mutex) recover() has run (on the coordinator thread)
@@ -234,6 +248,10 @@ struct BatchService::Impl {
     // The canonical settings document the job renders (its revision's, or the as-shot defaults),
     // verified against the job's settings SHA-256.
     [[nodiscard]] Expected<detail::FrozenDocument> frozen_document(const catalog::JobRecord& job, ItemId item) const;
+    // The related-shot plan of a consistent automatic batch (cached in the context while the number
+    // of analysed jobs does not change). Errors: the catalog's; a document that cannot be read.
+    [[nodiscard]] Expected<std::shared_ptr<const detail::ConsistencyPlan>> consistency_plan(
+        detail::BatchContext& context);
 
     // ---- batch_scheduler.cpp ----
     void start_threads();
@@ -246,7 +264,8 @@ struct BatchService::Impl {
     void reclaim_abandoned();
     void slot_main(detail::Slot& slot);
     void run_attempt(detail::Slot& slot, detail::Assignment& assignment);
-    [[nodiscard]] std::uint64_t estimate_bytes(std::uint64_t pixels) const;  // (mutex) held by caller
+    // (mutex) held by caller; `analysis`: an attempt that runs an automatic analysis.
+    [[nodiscard]] std::uint64_t estimate_bytes(std::uint64_t pixels, bool analysis = false) const;
     [[nodiscard]] std::uint64_t output_bytes(const detail::BatchContext& context, std::uint64_t pixels) const;
     // Checks the batch's folder; pauses the batch with an attention when it is not usable.
     [[nodiscard]] bool destination_usable(detail::BatchContext& context, std::uint64_t needed_bytes);
@@ -306,6 +325,9 @@ inline constexpr std::string_view kWhereOutputLost = "app.batch.output_lost";
 inline constexpr std::string_view kWhereDestination = "app.batch.destination";
 inline constexpr std::string_view kWhereDestinationReplaced = "app.batch.destination.replaced";
 inline constexpr std::string_view kWhereMemory = "app.batch.memory";
+inline constexpr std::string_view kWhereAutoCheck = "app.batch.auto.check";
+inline constexpr std::string_view kWhereAutoDocument = "app.batch.auto.document";
+inline constexpr std::string_view kWhereAutoSupport = "app.auto.support";
 
 }  // namespace detail
 

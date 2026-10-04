@@ -21,6 +21,7 @@
 #include <psapi.h>
 // clang-format on
 
+#include <lucent/application/auto_service.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/display_image.hpp>
 #include <lucent/application/export_service.hpp>
@@ -181,6 +182,48 @@ TEST_F(ApplicationFixtures, CanonR5PreviewLatency) {
     RecordProperty("fit_2048_ms", static_cast<int>(fit_seconds * 1000));
     RecordProperty("cached_ms", static_cast<int>(cached_seconds * 1000));
     RecordProperty("full_ms", static_cast<int>(full_seconds * 1000));
+}
+
+// The editor's "Auto" in process on the 45 MP Canon EOS R5 file (ADR 0013): analysis, the
+// full-resolution final check and the revision, timed; the process's peak working set bounds what
+// the final check holds at full resolution.
+TEST_F(ApplicationFixtures, CanonR5InteractiveAuto) {
+    LUCENT_REQUIRE_FIXTURE(path, "canon-eos-r5-cr3-raw");
+    auto report = import_sources(library_, *registry_, ImportRequest{.files = {path}});
+    ASSERT_TRUE(report);
+    ASSERT_EQ(report->added.size(), 1u);
+    const ItemId item = report->added[0];
+    RecipeServiceOptions recipe_options;
+    recipe_options.registry = registry_;
+    RecipeService recipes(library_, create_memory_recipe_store(), recipe_options);
+    AutoServiceOptions options;
+    options.registry = registry_;
+    auto service = AutoService::create(library_, recipes, *executor_, options);
+    ASSERT_TRUE(service);
+    const auto start = std::chrono::steady_clock::now();
+    auto ticket = (*service)->run(item);
+    ASSERT_TRUE(ticket);
+    auto result = (*service)->wait(*ticket, std::chrono::minutes(10));
+    const double seconds = seconds_since(start);
+    ASSERT_TRUE(result);
+    ASSERT_FALSE(result->error) << result->error->describe();
+    const AutoRun& run = *result->run;
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    ::GetProcessMemoryInfo(::GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                           sizeof(counters));
+    std::printf("  Canon EOS R5 Auto: %.2f s (analysis %.2f s, final check %.2f s, %zu attempt(s)); exposure %+.2f EV, "
+                "confidence %.2f, %zu flag(s); estimate %.0f MiB, process peak working set %.0f MiB\n",
+                seconds, run.analysis_seconds, run.check_seconds, run.attempts.size(), run.chosen.exposure_ev,
+                run.confidence, run.flags.size(), static_cast<double>(run.estimated_peak_bytes) / 1048576.0,
+                static_cast<double>(counters.PeakWorkingSetSize) / 1048576.0);
+    RecordProperty("auto_milliseconds", static_cast<int>(seconds * 1000));
+    RecordProperty("auto_check_milliseconds", static_cast<int>(run.check_seconds * 1000));
+    EXPECT_EQ(run.width, library_.find(item)->probe->upright_size.width);
+    EXPECT_TRUE(result->made_current);
+    EXPECT_EQ(recipes.state(item)->revision, result->effective);
+    ASSERT_TRUE(run.effective);
+    EXPECT_EQ(run.attempts[*run.effective].check.outcome, catalog::AutoCheckOutcome::Passed);
 }
 
 TEST_F(ApplicationFixtures, ExportsTheCanonR5AsJpeg) {

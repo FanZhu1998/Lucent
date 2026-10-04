@@ -36,6 +36,18 @@ std::string describe(std::optional<catalog::RevisionId> revision) {
     return revision ? std::format("revision {}", revision->value) : std::string("as shot");
 }
 
+Status check_automatic(std::span<const AutomaticRevision> revisions) {
+    if (revisions.empty()) {
+        return fail(ErrorCode::InvalidArgument, "an automatic run appends at least one revision", std::string(kWhere));
+    }
+    for (const AutomaticRevision& entry : revisions) {
+        if (entry.revision.origin != catalog::RevisionOrigin::Auto) {
+            return fail(ErrorCode::InvalidArgument, "automatic revisions have origin Auto", std::string(kWhere));
+        }
+    }
+    return ok();
+}
+
 Error conflict(ItemId item, std::optional<catalog::RevisionId> found,
                std::optional<catalog::RevisionId> expected) {
     return Error{ErrorCode::AlreadyExists,
@@ -127,6 +139,26 @@ public:
         return catalog_->transact([&](catalog::WriteTransaction& tx) { return tx.redo_revision(*id); });
     }
 
+    Expected<AutomaticAppend> append_automatic(ItemId item, std::optional<catalog::RevisionId> parent,
+                                               std::span<const AutomaticRevision> revisions,
+                                               bool make_current) override {
+        auto id = catalog_item(item);
+        if (!id) {
+            return Unexpected(std::move(id.error()));
+        }
+        return catalog_->transact([&](catalog::WriteTransaction& tx) {
+            return append_automatic_revisions(tx, *id, parent, revisions, make_current);
+        });
+    }
+
+    Expected<std::vector<catalog::AutoAnalysisRecord>> auto_analyses(ItemId item) const override {
+        auto id = catalog_item(item);
+        if (!id) {
+            return Unexpected(std::move(id.error()));
+        }
+        return catalog_->query([&](catalog::ReadTransaction& tx) { return tx.list_auto_analyses(*id); });
+    }
+
 private:
     std::shared_ptr<catalog::Catalog> catalog_;
 };
@@ -174,15 +206,7 @@ public:
 
     Expected<catalog::RevisionInfo> append(ItemId item, const catalog::NewRevision& revision,
                                            std::optional<catalog::RevisionId> expected_current) override {
-        if (auto valid = revision.validate(); !valid) {
-            return Unexpected(std::move(valid.error()));
-        }
-        if (!nlohmann::json::accept(revision.settings_json)) {
-            return fail(ErrorCode::InvalidArgument,
-                        "recipe revision rejected (settings_json must be valid JSON)", std::string(kWhere));
-        }
-        auto digest = core::sha256(
-            std::as_bytes(std::span(revision.settings_json.data(), revision.settings_json.size())));
+        auto digest = check_revision(revision);
         if (!digest) {
             return Unexpected(std::move(digest.error()));
         }
@@ -192,29 +216,95 @@ public:
             if (entry.current != expected_current) {
                 return Unexpected(conflict(item, entry.current, expected_current));
             }
-            catalog::RecipeRevision stored;
-            catalog::RevisionInfo& info = stored.info;
-            info.id = catalog::RevisionId{next_id_++};
-            info.item = catalog::ItemId{static_cast<std::int64_t>(item.value)};
-            info.revision_number = static_cast<std::uint32_t>(entry.revisions.size() + 1);
-            info.parent = entry.current;
-            info.created_at = revision.created_at;
-            info.origin = revision.origin;
-            info.schema_name = revision.schema_name;
-            info.schema_version = revision.schema_version;
-            info.settings_sha256 = *digest;
-            info.settings_bytes = revision.settings_json.size();
-            info.engine_version = revision.engine_version;
-            info.note = revision.note;
-            stored.settings_json = revision.settings_json;
-            const catalog::RevisionInfo result = info;
-            revisions_.emplace(info.id.value, std::move(stored));
-            entry.revisions.push_back(result.id);
-            entry.current = result.id;
-            return result;
+            return store_locked(item, entry, revision, *digest, entry.current);
         } catch (const std::bad_alloc&) {
             return fail(ErrorCode::OutOfMemory, "cannot store the revision", std::string(kWhere));
         }
+    }
+
+    Expected<AutomaticAppend> append_automatic(ItemId item, std::optional<catalog::RevisionId> parent,
+                                               std::span<const AutomaticRevision> revisions,
+                                               bool make_current) override {
+        if (Status valid = check_automatic(revisions); !valid) {
+            return Unexpected(std::move(valid.error()));
+        }
+        std::vector<core::Digest256> digests;
+        for (const AutomaticRevision& entry : revisions) {
+            auto digest = check_revision(entry.revision);
+            if (!digest) {
+                return Unexpected(std::move(digest.error()));
+            }
+            if (entry.analysis) {
+                catalog::NewAutoAnalysis probe = *entry.analysis;
+                probe.revision = catalog::RevisionId{1};
+                if (Status valid = probe.validate(); !valid) {
+                    return Unexpected(std::move(valid.error()));
+                }
+            }
+            digests.push_back(*digest);
+        }
+        std::lock_guard lock(mutex_);
+        try {
+            if (parent) {
+                const auto found = revisions_.find(parent->value);
+                if (found == revisions_.end() ||
+                    found->second.info.item.value != static_cast<std::int64_t>(item.value)) {
+                    return fail(ErrorCode::InvalidArgument,
+                                std::format("recipe revision {} is not one of item {}'s", parent->value, item.value),
+                                std::string(kWhere));
+                }
+            }
+            Item& entry = items_[item.value];
+            AutomaticAppend result;
+            const std::optional<catalog::RevisionId> found_current = entry.current;
+            const bool shows_parent = found_current == parent;
+            for (std::size_t i = 0; i < revisions.size(); ++i) {
+                auto stored = store_locked(item, entry, revisions[i].revision, digests[i], parent);
+                if (!stored) {
+                    return Unexpected(std::move(stored.error()));
+                }
+                if (revisions[i].analysis) {
+                    catalog::AutoAnalysisRecord record;
+                    const catalog::NewAutoAnalysis& a = *revisions[i].analysis;
+                    record.id = catalog::AutoAnalysisId{next_analysis_id_++};
+                    record.revision = stored->id;
+                    record.item = stored->item;
+                    record.job = a.job;
+                    record.policy = a.policy;
+                    record.policy_version = a.policy_version;
+                    record.search_version = a.search_version;
+                    record.metric_contract_version = a.metric_contract_version;
+                    record.consistency_version = a.consistency_version;
+                    record.develop_pipeline_version = a.develop_pipeline_version;
+                    record.develop_settings_version = a.develop_settings_version;
+                    record.attempt = a.attempt;
+                    record.final_check = a.final_check;
+                    record.confidence = a.confidence;
+                    record.review = a.review;
+                    record.flags_json = a.flags_json;
+                    record.record_json = a.record_json;
+                    record.created_at = a.created_at;
+                    analyses_.push_back(std::move(record));
+                }
+                result.revisions.push_back(*stored);
+            }
+            result.made_current = make_current && shows_parent;
+            entry.current = result.made_current ? std::optional(result.revisions.back().id) : found_current;
+            return result;
+        } catch (const std::bad_alloc&) {
+            return fail(ErrorCode::OutOfMemory, "cannot store the revisions", std::string(kWhere));
+        }
+    }
+
+    Expected<std::vector<catalog::AutoAnalysisRecord>> auto_analyses(ItemId item) const override {
+        std::lock_guard lock(mutex_);
+        std::vector<catalog::AutoAnalysisRecord> out;
+        for (const catalog::AutoAnalysisRecord& record : analyses_) {
+            if (record.item.value == static_cast<std::int64_t>(item.value)) {
+                out.push_back(record);
+            }
+        }
+        return out;
     }
 
     Status set_current(ItemId item, std::optional<catalog::RevisionId> revision) override {
@@ -276,13 +366,107 @@ private:
         std::vector<catalog::RevisionId> revisions;  // by revision number
     };
 
+    static Expected<core::Digest256> check_revision(const catalog::NewRevision& revision) {
+        if (auto valid = revision.validate(); !valid) {
+            return Unexpected(std::move(valid.error()));
+        }
+        if (!nlohmann::json::accept(revision.settings_json)) {
+            return fail(ErrorCode::InvalidArgument,
+                        "recipe revision rejected (settings_json must be valid JSON)", std::string(kWhere));
+        }
+        return core::sha256(std::as_bytes(std::span(revision.settings_json.data(), revision.settings_json.size())));
+    }
+
+    // Stores `revision` as the item's next revision with `parent` and makes it current. Caller holds
+    // mutex_.
+    Expected<catalog::RevisionInfo> store_locked(ItemId item, Item& entry, const catalog::NewRevision& revision,
+                                                 const core::Digest256& digest,
+                                                 std::optional<catalog::RevisionId> parent) {
+        catalog::RecipeRevision stored;
+        catalog::RevisionInfo& info = stored.info;
+        info.id = catalog::RevisionId{next_id_++};
+        info.item = catalog::ItemId{static_cast<std::int64_t>(item.value)};
+        info.revision_number = static_cast<std::uint32_t>(entry.revisions.size() + 1);
+        info.parent = parent;
+        info.created_at = revision.created_at;
+        info.origin = revision.origin;
+        info.schema_name = revision.schema_name;
+        info.schema_version = revision.schema_version;
+        info.settings_sha256 = digest;
+        info.settings_bytes = revision.settings_json.size();
+        info.engine_version = revision.engine_version;
+        info.note = revision.note;
+        stored.settings_json = revision.settings_json;
+        const catalog::RevisionInfo result = info;
+        revisions_.emplace(info.id.value, std::move(stored));
+        entry.revisions.push_back(result.id);
+        entry.current = result.id;
+        return result;
+    }
+
     mutable std::mutex mutex_;
     std::int64_t next_id_ = 1;
+    std::int64_t next_analysis_id_ = 1;
     std::map<std::int64_t, catalog::RecipeRevision> revisions_;
     std::unordered_map<std::uint64_t, Item> items_;
+    std::vector<catalog::AutoAnalysisRecord> analyses_;
 };
 
 }  // namespace
+
+Expected<AutomaticAppend> RecipeStore::append_automatic(ItemId item, std::optional<catalog::RevisionId>,
+                                                        std::span<const AutomaticRevision>, bool) {
+    return fail(ErrorCode::Unsupported, std::format("this store keeps no automatic revisions (item {})", item.value),
+                std::string(kWhere));
+}
+
+Expected<std::vector<catalog::AutoAnalysisRecord>> RecipeStore::auto_analyses(ItemId item) const {
+    return fail(ErrorCode::Unsupported, std::format("this store keeps no analysis records (item {})", item.value),
+                std::string(kWhere));
+}
+
+Expected<AutomaticAppend> append_automatic_revisions(catalog::WriteTransaction& tx, catalog::ItemId item,
+                                                     std::optional<catalog::RevisionId> parent,
+                                                     std::span<const AutomaticRevision> revisions,
+                                                     bool make_current) {
+    if (Status valid = check_automatic(revisions); !valid) {
+        return Unexpected(std::move(valid.error()));
+    }
+    auto record = tx.find_item(item);
+    if (!record) {
+        return Unexpected(std::move(record.error()));
+    }
+    if (!*record) {
+        return fail(ErrorCode::NotFound, std::format("no catalog item {}", item.value), std::string(kWhere));
+    }
+    const std::optional<catalog::RevisionId> found = (*record)->current_revision;
+    AutomaticAppend result;
+    for (const AutomaticRevision& entry : revisions) {
+        // Each revision is derived from `parent`: siblings, not a chain.
+        if (Status moved = tx.set_current_revision(item, parent); !moved) {
+            return Unexpected(std::move(moved.error()));
+        }
+        auto info = tx.append_revision(item, entry.revision);
+        if (!info) {
+            return Unexpected(std::move(info.error()));
+        }
+        if (entry.analysis) {
+            catalog::NewAutoAnalysis analysis = *entry.analysis;
+            analysis.revision = info->id;
+            if (auto stored = tx.record_auto_analysis(analysis); !stored) {
+                return Unexpected(std::move(stored.error()));
+            }
+        }
+        result.revisions.push_back(std::move(*info));
+    }
+    result.made_current = make_current && found == parent;
+    if (Status moved = tx.set_current_revision(item, result.made_current ? std::optional(result.revisions.back().id)
+                                                                         : found);
+        !moved) {
+        return Unexpected(std::move(moved.error()));
+    }
+    return result;
+}
 
 Expected<std::shared_ptr<RecipeStore>> create_catalog_recipe_store(
     std::shared_ptr<catalog::Catalog> catalog) {

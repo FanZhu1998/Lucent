@@ -12,6 +12,10 @@
 
 #include <windows.h>
 
+#include <nlohmann/json.hpp>
+
+#include <lucent/application/auto_develop.hpp>
+#include <lucent/application/recipe_store.hpp>
 #include <lucent/core/file.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/storage.hpp>
@@ -58,6 +62,11 @@ double seconds_since(Clock::time_point start) { return std::chrono::duration<dou
 catalog::FailureClass to_catalog(workers::FailureClass value) {
     return value == workers::FailureClass::Transient ? catalog::FailureClass::Transient
                                                      : catalog::FailureClass::Deterministic;
+}
+
+// An attempt of this job runs an automatic analysis first.
+bool needs_analysis(const catalog::JobRecord& job) {
+    return job.auto_state == catalog::AutoJobState::Pending || job.auto_state == catalog::AutoJobState::Analysed;
 }
 
 }  // namespace
@@ -210,10 +219,16 @@ std::vector<detail::Slot*> BatchService::Impl::busy_slots_of(catalog::BatchId ba
 
 // ---- Admission ---------------------------------------------------------------------------------
 
-std::uint64_t BatchService::Impl::estimate_bytes(std::uint64_t pixels) const {
-    const double per_pixel = calibrated && measured_bytes_per_pixel > 0.0
-                                 ? std::max(measured_bytes_per_pixel * options.memory.measured_margin, 1.0)
-                                 : options.memory.default_bytes_per_pixel;
+std::uint64_t BatchService::Impl::estimate_bytes(std::uint64_t pixels, bool analysis) const {
+    double per_pixel = calibrated && measured_bytes_per_pixel > 0.0
+                           ? std::max(measured_bytes_per_pixel * options.memory.measured_margin, 1.0)
+                           : options.memory.default_bytes_per_pixel;
+    if (analysis) {
+        // The analysis' full-resolution final check needs more than an export: its own calibration.
+        per_pixel = std::max(per_pixel, measured_auto_bytes_per_pixel > 0.0
+                                            ? measured_auto_bytes_per_pixel * options.memory.measured_margin
+                                            : options.memory.default_auto_bytes_per_pixel);
+    }
     const std::uint64_t px = pixels == 0 ? kUnknownPixels : pixels;
     const std::uint64_t base = std::max(options.memory.worker_baseline_bytes, measured_floor);
     return base + static_cast<std::uint64_t>(std::ceil(static_cast<double>(px) * per_pixel));
@@ -396,9 +411,23 @@ void BatchService::Impl::dispatch() {
         for (const auto& [record_ptr, context_ptr] : ordered) {
             const catalog::BatchRecord& record = *record_ptr;
             const std::shared_ptr<detail::BatchContext>* context = &context_ptr;
+            // A batch that keeps related shots consistent analyses every photo before any is
+            // regularised: while one is pending, only pending jobs are claimed (ADR 0013).
+            std::vector<catalog::AutoJobState> auto_states;
+            if ((*context)->automatic != catalog::AutoMode::None && (*context)->policy.automatic.keep_consistent) {
+                auto counts =
+                    catalog->query([&](catalog::ReadTransaction& tx) { return tx.auto_job_counts(record.id); });
+                if (!counts) {
+                    continue;
+                }
+                if (counts->pending > 0) {
+                    auto_states = {catalog::AutoJobState::Pending};
+                }
+            }
             catalog::JobQuery query;
             query.batch = record.id;
             query.stages = {catalog::JobStage::Queued};
+            query.auto_states = auto_states;
             query.limit = 32;
             auto queued = catalog->query([&](catalog::ReadTransaction& tx) { return tx.list_jobs(query); });
             if (!queued) {
@@ -412,7 +441,10 @@ void BatchService::Impl::dispatch() {
             }
             std::optional<SourceItem> item = next->item ? library.find(from_catalog(*next->item)) : std::nullopt;
             std::uint64_t pixels = item ? detail::output_pixels(*item) : 0;
-            if (!destination_usable(**context, output_bytes(**context, pixels))) {
+            bool analysis = needs_analysis(*next);
+            // An analyse-only batch writes nothing into its folder but the report.
+            if ((*context)->automatic != catalog::AutoMode::AnalyzeOnly &&
+                !destination_usable(**context, output_bytes(**context, pixels))) {
                 continue;
             }
             const bool interactive = options.interactive_busy && options.interactive_busy();
@@ -450,7 +482,7 @@ void BatchService::Impl::dispatch() {
             std::string owner;
             {
                 std::lock_guard lock(mutex);
-                if (!admit(estimate_bytes(pixels))) {
+                if (!admit(estimate_bytes(pixels, analysis))) {
                     return;
                 }
                 owner = std::format("{}/slot{}/{}", session, idle->index, ++attempt_counter);
@@ -460,6 +492,7 @@ void BatchService::Impl::dispatch() {
             claim.now = t;
             claim.lease_duration = options.lease_duration;
             claim.batch = record.id;
+            claim.auto_states = auto_states;
             auto claimed = catalog->transact([&](catalog::WriteTransaction& tx) { return tx.claim_next_job(claim); });
             if (!claimed) {
                 core::log_warn(kWhere, "cannot claim a job of batch {}: {}", record.id.value, claimed.error().describe());
@@ -471,9 +504,10 @@ void BatchService::Impl::dispatch() {
             if ((*claimed)->job.id != next->id) {
                 item = (*claimed)->job.item ? library.find(from_catalog(*(*claimed)->job.item)) : std::nullopt;
                 pixels = item ? detail::output_pixels(*item) : 0;
+                analysis = needs_analysis((*claimed)->job);
             }
             std::unique_lock lock(mutex);
-            const std::uint64_t estimate = estimate_bytes(pixels);
+            const std::uint64_t estimate = estimate_bytes(pixels, analysis);
             if (stopping || ((*claimed)->job.id != next->id && !admit(estimate))) {
                 // Give it back untouched (no failure is counted).
                 lock.unlock();
@@ -495,7 +529,8 @@ void BatchService::Impl::dispatch() {
             idle->running.attempt = (*claimed)->lease.attempt;
             idle->running.source = item ? item->path : std::filesystem::path{};
             idle->running.slot = idle->index;
-            idle->assignment = detail::Assignment{std::move(**claimed), *context, std::move(item), pixels, estimate};
+            idle->assignment =
+                detail::Assignment{std::move(**claimed), *context, std::move(item), pixels, estimate, analysis};
             std::uint32_t active = 0;
             for (const auto& slot : slots) {
                 active += slot->busy ? 1 : 0;
@@ -638,11 +673,26 @@ private:
     };
     [[nodiscard]] std::optional<DestinationProblem> destination_problem(const Error& error);
     void ensure_host();
+    [[nodiscard]] workers::JobCallbacks worker_callbacks();
     [[nodiscard]] workers::JobOutcome run_worker(const workers::JobRequest& request);
+    // A failed worker job: given back, interrupted, cancelled or diagnosed.
+    void worker_failed(const workers::JobFailure& failure);
+    // Automatic jobs (ADR 0013): the analyze job(s) and the freeze. True when the attempt goes on
+    // to export (the job is frozen); false when it ended here (given back after the pre-pass,
+    // completed without output, failed or stopped).
+    [[nodiscard]] bool automatic_stage();
+    [[nodiscard]] workers::AnalysisOutcome run_analysis(const workers::AnalysisRequest& request);
+    [[nodiscard]] bool freeze(const AutoRun& run, const std::optional<std::string>& analysis_document);
+    // An analyse-only job frozen by an earlier attempt: completes it without output.
+    void complete_analysed();
+    // Review notes of the effective automatic revision's analysis record (its review flags and what
+    // the locks did), user-facing.
+    void load_automatic_notes();
     [[nodiscard]] Status verify(detail::HeldOutput& held, const workers::JobResult& result,
                                 detail::OutputDigest& digest);
     [[nodiscard]] Status publish(detail::HeldOutput& held);
-    void calibrate(const workers::JobOutcome& outcome, bool fresh_process);
+    void calibrate(const workers::JobMetrics& metrics, const workers::MemorySnapshot* result_memory, bool fresh_process,
+                   bool analysis);
     [[nodiscard]] std::vector<std::string> review_notes(const workers::JobResult& result) const;
 
     BatchService::Impl& s_;
@@ -657,6 +707,9 @@ private:
 
     std::optional<SourceItem> item_;
     detail::FrozenDocument frozen_;
+    std::optional<catalog::RevisionId> revision_;  // the job's revision (the effective automatic one once frozen)
+    catalog::AutoJobState auto_state_ = catalog::AutoJobState::None;
+    std::vector<std::string> automatic_notes_;  // review notes of the effective automatic revision
     std::filesystem::path final_dir_;
     std::filesystem::path final_path_;
     std::filesystem::path planned_name_;  // the pattern's own name (index 1)
@@ -1150,6 +1203,15 @@ void Attempt::ensure_host() {
 
 workers::JobOutcome Attempt::run_worker(const workers::JobRequest& request) {
     ensure_host();
+    return slot_.host->run_job(request, worker_callbacks(), token_, s_.options.job_timeout);
+}
+
+workers::AnalysisOutcome Attempt::run_analysis(const workers::AnalysisRequest& request) {
+    ensure_host();
+    return slot_.host->run_analysis(request, worker_callbacks(), token_, s_.options.job_timeout);
+}
+
+workers::JobCallbacks Attempt::worker_callbacks() {
     workers::JobCallbacks callbacks;
     callbacks.progress = [&](const workers::JobProgress& progress) {
         {
@@ -1178,7 +1240,244 @@ workers::JobOutcome Attempt::run_worker(const workers::JobRequest& request) {
         }
         renew_if_due();
     };
-    return slot_.host->run_job(request, callbacks, token_, s_.options.job_timeout);
+    return callbacks;
+}
+
+void Attempt::worker_failed(const workers::JobFailure& failure) {
+    const detail::StopReason stop = stop_reason();
+    if (stop == detail::StopReason::Shutdown) {
+        give_back();
+        return;
+    }
+    if (stop == detail::StopReason::LeaseLost) {
+        lease_lost();
+        return;
+    }
+    if (failure.failure_class == workers::FailureClass::Cancelled) {
+        cancelled();
+        return;
+    }
+    Error error = failure.error;
+    if (failure.fault != workers::WorkerFault::None) {
+        error.message += std::format(" (worker {})", workers::to_string(failure.fault));
+    }
+    if (failure.fault == workers::WorkerFault::MemoryLimit || error.code == ErrorCode::LimitExceeded) {
+        error.where = error.where.empty() ? std::string(detail::kWhereMemory) : error.where;
+    }
+    diagnose(std::move(error), to_catalog(failure.failure_class));
+}
+
+bool Attempt::automatic_stage() {
+    const bool consistent = context_.policy.automatic.keep_consistent;
+    const bool pre_pass = consistent && auto_state_ == catalog::AutoJobState::Pending;
+    AutoRunRequest auto_request;
+    auto_request.final_check = !pre_pass;
+    if (pre_pass) {
+        auto_request.anchor = context_.policy.automatic.anchors.contains(job_.ordinal);
+    }
+    if (auto_state_ == catalog::AutoJobState::Analysed) {
+        auto plan = s_.consistency_plan(context_);
+        if (!plan) {
+            fail_job(catalog::FailureClass::Transient, std::move(plan.error()), true);
+            return false;
+        }
+        if (const auto found = (*plan)->targets.find(job_.id.value); found != (*plan)->targets.end()) {
+            auto_request.target = found->second;
+        }
+    }
+    auto request_text = write_auto_request(auto_request);
+    if (!request_text) {
+        fail_job(catalog::FailureClass::Deterministic, std::move(request_text.error()), false);
+        return false;
+    }
+    workers::AnalysisRequest request;
+    request.job_id = std::format("b{}-j{}-a{}-auto", job_.batch.value, job_.id.value, lease_.attempt);
+    request.source.path = item_->path;
+    request.source.subimage = item_->subimage;
+    request.source.identity = item_->identity;
+    request.source.sha256 = job_.source_sha256;
+    request.recipe = workers::JobRecipe{frozen_.json, frozen_.sha256};
+    request.request = std::move(*request_text);
+    request.memory_budget_bytes = s_.worker_budget;
+    request.allow_unsupported = context_.output.allow_unsupported;
+    const std::uint64_t starts_before = slot_.host ? slot_.host->info().starts : 0;
+    const bool host_running_before = slot_.host && slot_.host->info().running;
+    workers::AnalysisOutcome outcome = run_analysis(request);
+    const bool fresh_process = !host_running_before || (slot_.host && slot_.host->info().starts != starts_before);
+    {
+        std::lock_guard lock(s_.mutex);
+        slot_.pid = slot_.host && slot_.host->info().running ? slot_.host->info().pid : 0;
+    }
+    if (!outcome.succeeded()) {
+        worker_failed(*outcome.failure);
+        return false;
+    }
+    calibrate(outcome.metrics, &outcome.result->memory, fresh_process, true);
+    {
+        // The export that may follow in this attempt measures its own commit.
+        std::lock_guard lock(s_.mutex);
+        slot_.observed_commit = 0;
+    }
+    auto run = read_auto_run(outcome.result->document);
+    if (!run) {
+        Error error = std::move(run.error());
+        error.where = std::string(detail::kWhereAutoDocument);
+        fail_job(catalog::FailureClass::Deterministic, std::move(error), false);
+        return false;
+    }
+    if (pre_pass) {
+        // The durable pre-pass: the analysis is recorded and the job given back until every photo
+        // of the batch is analysed (never analysed again after a restart).
+        auto released = s_.catalog->transact([&](catalog::WriteTransaction& tx) -> Expected<catalog::JobStage> {
+            if (Status recorded = tx.record_job_analysis(lease_, outcome.result->document, s_.now()); !recorded) {
+                return Unexpected(std::move(recorded.error()));
+            }
+            return tx.release_job(lease_, s_.now());
+        });
+        if (!released) {
+            if (released.error().where == "catalog.job.lease_lost") {
+                lease_lost();
+            } else {
+                fail_job(catalog::FailureClass::Transient, std::move(released.error()), true);
+            }
+            return false;
+        }
+        point("analysed");
+        emit_finished(*released, std::nullopt);
+        s_.check_finished(job_.batch);
+        s_.request_wake();
+        return false;
+    }
+    if (run->check_failed()) {
+        fail_job(catalog::FailureClass::Deterministic,
+                 Error{ErrorCode::Internal,
+                       "no automatic edit of this photo passed the full-resolution check (the as-shot render is "
+                       "numerically invalid)",
+                       std::string(detail::kWhereAutoCheck), 0},
+                 false);
+        return false;
+    }
+    return freeze(*run, auto_state_ == catalog::AutoJobState::Pending
+                            ? std::optional<std::string>(outcome.result->document)
+                            : std::nullopt);
+}
+
+bool Attempt::freeze(const AutoRun& run, const std::optional<std::string>& analysis_document) {
+    auto revisions = automatic_revisions(run, job_.id, s_.now(), s_.recipes.engine_version());
+    if (!revisions) {
+        fail_job(catalog::FailureClass::Deterministic, std::move(revisions.error()), false);
+        return false;
+    }
+    const catalog::ItemId item{job_.item->value};
+    const bool analyze_only = context_.automatic == catalog::AutoMode::AnalyzeOnly;
+    auto frozen = s_.catalog->transact([&](catalog::WriteTransaction& tx) -> Expected<AutomaticAppend> {
+        if (analysis_document) {
+            if (Status recorded = tx.record_job_analysis(lease_, *analysis_document, s_.now()); !recorded) {
+                return Unexpected(std::move(recorded.error()));
+            }
+        }
+        auto appended = append_automatic_revisions(tx, item, job_.revision, *revisions, true);
+        if (!appended) {
+            return Unexpected(std::move(appended.error()));
+        }
+        const catalog::RevisionInfo& effective = appended->revisions.back();
+        catalog::AutoFreeze bind;
+        bind.revision = effective.id;
+        bind.settings_sha256 = effective.settings_sha256;
+        if (auto identity = tx.freeze_auto_job(lease_, bind, s_.now()); !identity) {
+            return Unexpected(std::move(identity.error()));
+        }
+        if (analyze_only) {
+            if (Status done = tx.complete_without_output(lease_, s_.now()); !done) {
+                return Unexpected(std::move(done.error()));
+            }
+        }
+        return appended;
+    });
+    if (!frozen) {
+        if (frozen.error().where == "catalog.job.lease_lost") {
+            lease_lost();
+        } else {
+            fail_job(catalog::FailureClass::Transient, std::move(frozen.error()), true);
+        }
+        return false;
+    }
+    const catalog::RevisionInfo& effective = frozen->revisions.back();
+    if (auto refreshed = s_.recipes.refresh(item_->id); !refreshed) {
+        core::log_warn(kWhere, "cannot refresh the recipe of item {}: {}", item_->id.value,
+                       refreshed.error().describe());
+    }
+    point("frozen");
+    core::log_info(kWhere, "job {}: automatic revision {} of item {} ({} attempt(s), confidence {:.2f}){}",
+                   job_.id.value, effective.revision_number, item_->id.value, frozen->revisions.size(),
+                   run.confidence, frozen->made_current ? "" : "; the photo was edited meanwhile, so it stays a branch");
+    revision_ = effective.id;
+    auto_state_ = catalog::AutoJobState::Frozen;
+    frozen_.json = revisions->back().revision.settings_json;
+    frozen_.sha256 = effective.settings_sha256;
+    frozen_.revision_number = effective.revision_number;
+    automatic_notes_.clear();
+    for (const AutoFlag& flag : run.flags) {
+        if (flag.review) {
+            automatic_notes_.push_back(describe_auto_flag(flag));
+        }
+    }
+    if (!frozen->made_current) {
+        automatic_notes_.push_back(
+            "The photo was edited while the batch ran; the automatic settings are kept in its history.");
+    }
+    if (analyze_only) {
+        {
+            std::lock_guard lock(s_.mutex);
+            ++context_.completed_this_session;
+            context_.seconds_this_session += seconds_since(started_);
+            ++s_.counters.completed;
+        }
+        emit_finished(catalog::JobStage::Complete, std::nullopt);
+        s_.check_finished(job_.batch);
+        return false;
+    }
+    return true;
+}
+
+void Attempt::complete_analysed() {
+    Status done = s_.catalog->write([&](catalog::WriteTransaction& tx) { return tx.complete_without_output(lease_, s_.now()); });
+    if (!done) {
+        if (done.error().where == "catalog.job.lease_lost") {
+            lease_lost();
+        } else {
+            fail_job(catalog::FailureClass::Transient, std::move(done.error()), true);
+        }
+        return;
+    }
+    emit_finished(catalog::JobStage::Complete, std::nullopt);
+    s_.check_finished(job_.batch);
+}
+
+void Attempt::load_automatic_notes() {
+    if (!revision_) {
+        return;
+    }
+    auto record = s_.catalog->query([&](catalog::ReadTransaction& tx) { return tx.find_auto_analysis(*revision_); });
+    if (!record || !*record) {
+        return;
+    }
+    nlohmann::json flags = nlohmann::json::parse((*record)->flags_json, nullptr, false);
+    if (!flags.is_array()) {
+        return;
+    }
+    for (const nlohmann::json& entry : flags) {
+        if (!entry.is_object() || !entry.contains("code") || !entry.contains("reason") || !entry.contains("review")) {
+            continue;
+        }
+        AutoFlag flag;
+        flag.code = entry["code"].get<std::uint16_t>();
+        flag.reason = entry["reason"].is_string() ? entry["reason"].get<std::string>() : std::string();
+        flag.review = entry["review"].is_boolean() && entry["review"].get<bool>();
+        if (flag.review) {
+            automatic_notes_.push_back(describe_auto_flag(flag));
+        }
+    }
 }
 
 Status Attempt::verify(detail::HeldOutput& held, const workers::JobResult& result, detail::OutputDigest& digest) {
@@ -1297,17 +1596,17 @@ Status Attempt::publish(detail::HeldOutput& held) {
     return ok();
 }
 
-void Attempt::calibrate(const workers::JobOutcome& outcome, bool fresh_process) {
+void Attempt::calibrate(const workers::JobMetrics& metrics, const workers::MemorySnapshot* result_memory,
+                        bool fresh_process, bool analysis) {
     std::lock_guard lock(s_.mutex);
     std::uint64_t commit = slot_.observed_commit;
     if (fresh_process) {
-        commit = std::max(commit, outcome.metrics.peak_commit_bytes);
+        commit = std::max(commit, metrics.peak_commit_bytes);
     }
-    if (outcome.result) {
-        commit = std::max(commit, fresh_process ? outcome.result->memory.peak_commit : outcome.result->memory.commit);
+    if (result_memory != nullptr) {
+        commit = std::max(commit, fresh_process ? result_memory->peak_commit : result_memory->commit);
     }
-    s_.counters.peak_worker_commit_bytes =
-        std::max({s_.counters.peak_worker_commit_bytes, commit, outcome.metrics.peak_commit_bytes});
+    s_.counters.peak_worker_commit_bytes = std::max({s_.counters.peak_worker_commit_bytes, commit, metrics.peak_commit_bytes});
     if (commit == 0) {
         return;
     }
@@ -1315,7 +1614,8 @@ void Attempt::calibrate(const workers::JobOutcome& outcome, bool fresh_process) 
     const std::uint64_t base = s_.options.memory.worker_baseline_bytes;
     if (a_.pixels >= kCalibrationMinPixels) {
         const double per_pixel = commit > base ? static_cast<double>(commit - base) / static_cast<double>(a_.pixels) : 0.0;
-        s_.measured_bytes_per_pixel = std::max(s_.measured_bytes_per_pixel, per_pixel);
+        double& measured = analysis ? s_.measured_auto_bytes_per_pixel : s_.measured_bytes_per_pixel;
+        measured = std::max(measured, per_pixel);
     } else {
         s_.measured_floor = std::max(s_.measured_floor, commit);
     }
@@ -1392,6 +1692,8 @@ void Attempt::run() {
         return;
     }
     frozen_ = std::move(*frozen);
+    revision_ = job_.revision;
+    auto_state_ = job_.auto_state;
     if (item_->source_state == SourceState::Missing) {
         fail_job(catalog::FailureClass::Deterministic,
              Error{ErrorCode::NotFound, std::format("the original {} cannot be found", quoted(item_->path)),
@@ -1405,6 +1707,23 @@ void Attempt::run() {
                    std::format("the original {} changed after the batch was created", quoted(item_->path)),
                    std::string(detail::kWhereSourceChanged), 0},
              false);
+        return;
+    }
+
+    // ---- Automatic settings -----------------------------------------------------------------------
+    if (auto_state_ == catalog::AutoJobState::Pending || auto_state_ == catalog::AutoJobState::Analysed) {
+        if (!automatic_stage()) {
+            return;  // the stage ended the attempt (pre-pass, analyse-only, failure, stop)
+        }
+    } else if (auto_state_ == catalog::AutoJobState::Frozen) {
+        if (context_.automatic == catalog::AutoMode::AnalyzeOnly) {
+            complete_analysed();
+            return;
+        }
+        load_automatic_notes();
+    }
+    if (token_.is_cancelled()) {
+        stop_here();
         return;
     }
 
@@ -1473,31 +1792,10 @@ void Attempt::run() {
         slot_.pid = slot_.host && slot_.host->info().running ? slot_.host->info().pid : 0;
     }
     if (!outcome.succeeded()) {
-        const workers::JobFailure& failure = *outcome.failure;
-        const detail::StopReason stop = stop_reason();
-        if (stop == detail::StopReason::Shutdown) {
-            give_back();
-            return;
-        }
-        if (stop == detail::StopReason::LeaseLost) {
-            lease_lost();
-            return;
-        }
-        if (failure.failure_class == workers::FailureClass::Cancelled) {
-            cancelled();
-            return;
-        }
-        Error error = failure.error;
-        if (failure.fault != workers::WorkerFault::None) {
-            error.message += std::format(" (worker {})", workers::to_string(failure.fault));
-        }
-        if (failure.fault == workers::WorkerFault::MemoryLimit || error.code == ErrorCode::LimitExceeded) {
-            error.where = error.where.empty() ? std::string(detail::kWhereMemory) : error.where;
-        }
-        diagnose(std::move(error), to_catalog(failure.failure_class));
+        worker_failed(*outcome.failure);
         return;
     }
-    calibrate(outcome, fresh_process);
+    calibrate(outcome.metrics, outcome.result ? &outcome.result->memory : nullptr, fresh_process, false);
     const workers::JobResult& result = *outcome.result;
     if (!journal(catalog::PublicationStep::TempWritten)) {
         give_back();
@@ -1604,7 +1902,7 @@ void Attempt::run() {
 
     // ---- Receipt --------------------------------------------------------------------------------
     ReceiptDetails details;
-    details.revision = job_.revision;
+    details.revision = revision_;
     details.revision_number = frozen_.revision_number;
     details.recipe_sha256 = frozen_.sha256;
     details.export_settings_sha256 = context_.export_settings_sha256;
@@ -1640,6 +1938,7 @@ void Attempt::run() {
     details.replaced_existing = replaces_;
     details.allow_unsupported = context_.output.allow_unsupported;
     details.review = review_notes(result);
+    details.review.insert(details.review.end(), automatic_notes_.begin(), automatic_notes_.end());
     auto details_json = write_receipt_details(details);
     catalog::NewReceipt receipt;
     receipt.final_path = final_path_;

@@ -81,6 +81,15 @@ lucent_add_library(application
         src/batch_report.cpp
         src/output_publication.hpp
         src/output_publication.cpp
+
+        # Automatic settings (W8 application wiring, ADR 0013): the shared run (analysis, related-shot
+        # regularisation, full-resolution final check and fallbacks), its documents and records, and
+        # the editor's interactive "Auto".
+        include/lucent/application/auto_develop.hpp
+        include/lucent/application/auto_service.hpp
+        src/auto_develop.cpp
+        src/auto_documents.cpp
+        src/auto_service.cpp
     PUBLIC_DEPS
         Lucent::core
         Lucent::image
@@ -88,6 +97,7 @@ lucent_add_library(application
         Lucent::engine
         Lucent::export
         Lucent::catalog
+        Lucent::analysis
         Lucent::workers
     PRIVATE_DEPS
         nlohmann_json::nlohmann_json
@@ -119,6 +129,7 @@ set(LUCENT_APPLICATION_TEST_SOURCES
     tests/develop_preview_test.cpp
     tests/thumbnail_cache_test.cpp
     tests/export_service_test.cpp
+    tests/auto_service_test.cpp
 )
 
 lucent_add_test(lucent_application_tests
@@ -152,6 +163,7 @@ if(LUCENT_BUILD_TESTS)
             tests/output_publication_test.cpp
             tests/batch_service_test.cpp
             tests/batch_recovery_test.cpp
+            tests/batch_auto_test.cpp
         DEPS
             Lucent::application
             nlohmann_json::nlohmann_json

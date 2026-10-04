@@ -14,17 +14,22 @@
 //                         members, no whitespace), because its SHA-256 is part of every job identity.
 //   policy_json           "lucent.batch-policy" v1: existing-output policy, retry policy (with
 //                         max_interruptions), whether the batch is an interactive single export,
-//                         and the photographs excluded at submission with their reasons (for the
-//                         report).
+//                         the photographs excluded at submission with their reasons (for the
+//                         report), and the automatic settings' related-shot options (whether related
+//                         shots are kept consistent, the user's groups and anchors by job ordinal;
+//                         the batch's automatic mode itself is the catalog's batches.auto_mode).
 //
 // Readers accept exactly their version: an older or unknown document is Corrupt, a newer one is
 // VersionMismatch ("app.batch.document"). Members added to a version after its first release
-// (policy: retry.max_interruptions, single_export) are optional on reading and take their defaults.
+// (policy: retry.max_interruptions, single_export, automatic) are optional on reading and take their
+// defaults.
 // Paths are UTF-8.
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,12 +63,21 @@ struct ExportDocument {
     bool allow_unsupported = false;
 };
 
+// Related-shot options of an automatic batch (BatchRequest::keep_consistent, BatchItem::group and
+// anchor), by job ordinal.
+struct AutomaticPolicy {
+    bool keep_consistent = false;
+    std::map<std::uint32_t, std::string> groups;
+    std::set<std::uint32_t> anchors;
+};
+
 struct PolicyDocument {
     ExistingOutputs existing_outputs = ExistingOutputs::Skip;
     BatchRetryPolicy retry;
     bool single_export = false;  // BatchRequest::single_export
     std::vector<PlanExclusion> excluded;  // at most kMaxListedExclusions
     std::uint64_t excluded_count = 0;
+    AutomaticPolicy automatic;
 };
 
 [[nodiscard]] Expected<std::string> write_destination(const DestinationDocument& document);

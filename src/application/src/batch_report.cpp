@@ -10,6 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <lucent/application/auto_develop.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/storage.hpp>
 #include <lucent/core/text.hpp>
@@ -69,6 +70,125 @@ std::string html_escape(std::string_view text) {
 
 bool starts_with(std::string_view text, std::string_view prefix) { return text.substr(0, prefix.size()) == prefix; }
 
+// What automatic settings did to a job's photo, from its effective revision's analysis record.
+AutomaticReport automatic_report(const catalog::Catalog& catalog, const catalog::JobRecord& job) {
+    AutomaticReport report;
+    report.state = job.auto_state;
+    if (job.auto_state != catalog::AutoJobState::Frozen || !job.revision) {
+        return report;
+    }
+    report.revision = job.revision;
+    auto revision = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_revision(*job.revision); });
+    if (revision && *revision) {
+        report.revision_number = (*revision)->info.revision_number;
+    }
+    auto record = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_auto_analysis(*job.revision); });
+    if (!record || !*record) {
+        return report;
+    }
+    report.confidence = (*record)->confidence;
+    report.attempt = (*record)->attempt;
+    report.review = (*record)->review;
+    if (job.item) {
+        auto all = catalog.query([&](catalog::ReadTransaction& tx) { return tx.list_auto_analyses(*job.item); });
+        if (all) {
+            for (const catalog::AutoAnalysisRecord& other : *all) {
+                report.attempts += other.job == job.id ? 1 : 0;
+            }
+        }
+    }
+    const Json flags = Json::parse((*record)->flags_json, nullptr, false);
+    if (flags.is_array()) {
+        for (const Json& entry : flags) {
+            if (!entry.is_object() || !entry.contains("code") || !entry["code"].is_number_unsigned()) {
+                continue;
+            }
+            AutoFlag flag;
+            flag.code = entry["code"].get<std::uint16_t>();
+            flag.reason = entry.contains("reason") && entry["reason"].is_string() ? entry["reason"].get<std::string>()
+                                                                                  : std::string();
+            report.flags.push_back(describe_auto_flag(flag));
+        }
+    }
+    const Json doc = Json::parse((*record)->record_json, nullptr, false);
+    if (doc.is_object()) {
+        if (doc.contains("consistency") && doc["consistency"].is_object() &&
+            doc["consistency"].contains("target") && doc["consistency"]["target"].contains("group_id") &&
+            doc["consistency"]["target"]["group_id"].is_string()) {
+            report.group = doc["consistency"]["target"]["group_id"].get<std::string>();
+        }
+        if (doc.contains("locks") && doc["locks"].is_object()) {
+            const Json& locks = doc["locks"];
+            report.locks_prevented_targets =
+                locks.contains("prevented_targets") && locks["prevented_targets"].is_boolean() &&
+                locks["prevented_targets"].get<bool>();
+            if (locks.contains("reasons") && locks["reasons"].is_array()) {
+                for (const Json& reason : locks["reasons"]) {
+                    if (reason.is_string()) {
+                        report.locks.push_back(reason.get<std::string>());
+                    }
+                }
+            }
+        }
+    }
+    return report;
+}
+
+// The review notes of an automatic result: its flags that recommend a review.
+std::vector<std::string> automatic_review(const catalog::Catalog& catalog, const catalog::JobRecord& job) {
+    std::vector<std::string> notes;
+    if (!job.revision) {
+        return notes;
+    }
+    auto record = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_auto_analysis(*job.revision); });
+    if (!record || !*record) {
+        return notes;
+    }
+    const Json flags = Json::parse((*record)->flags_json, nullptr, false);
+    if (!flags.is_array()) {
+        return notes;
+    }
+    for (const Json& entry : flags) {
+        if (!entry.is_object() || !entry.contains("code") || !entry["code"].is_number_unsigned() ||
+            !entry.contains("review") || !entry["review"].is_boolean() || !entry["review"].get<bool>()) {
+            continue;
+        }
+        AutoFlag flag;
+        flag.code = entry["code"].get<std::uint16_t>();
+        flag.reason = entry.contains("reason") && entry["reason"].is_string() ? entry["reason"].get<std::string>()
+                                                                              : std::string();
+        notes.push_back(describe_auto_flag(flag));
+    }
+    if (notes.empty() && (*record)->review) {
+        notes.push_back("The first automatic edit failed a quality check, so a more conservative one was used.");
+    }
+    return notes;
+}
+
+Json automatic_json(const AutomaticReport& a) {
+    Json out = Json::object();
+    out["state"] = std::string(catalog::to_string(a.state));
+    out["revision"] = a.revision ? Json(a.revision->value) : Json();
+    out["revision_number"] = a.revision_number;
+    out["confidence"] = a.confidence;
+    out["attempt"] = a.attempt;
+    out["attempts"] = a.attempts;
+    out["review"] = a.review;
+    Json flags = Json::array();
+    for (const std::string& flag : a.flags) {
+        flags.push_back(core::sanitize_utf8(flag));
+    }
+    out["flags"] = std::move(flags);
+    out["group"] = a.group ? Json(core::sanitize_utf8(*a.group)) : Json();
+    out["locks_prevented_targets"] = a.locks_prevented_targets;
+    Json locks = Json::array();
+    for (const std::string& lock : a.locks) {
+        locks.push_back(core::sanitize_utf8(lock));
+    }
+    out["locks"] = std::move(locks);
+    return out;
+}
+
 }  // namespace
 
 // ---- Wording ---------------------------------------------------------------------------------
@@ -109,6 +229,10 @@ detail::Wording detail::describe_failure(const Error& error) {
             }
             return {"A file Lucent needed was not found.", "Choose Retry failed."};
         case ErrorCode::Unsupported:
+            if (where == kWhereAutoSupport) {
+                return {"Lucent cannot interpret this camera file faithfully yet, so it was not analysed or exported.",
+                        "See the photo's compatibility details in the library."};
+            }
             return {"Lucent cannot render this camera file faithfully yet, so it was not exported.",
                     "See the photo's compatibility details in the library."};
         case ErrorCode::Corrupt:
@@ -153,6 +277,10 @@ detail::Wording detail::describe_failure(const Error& error) {
             }
             return {"The export took too long or its process stopped responding.", "Choose Retry failed."};
         case ErrorCode::Internal:
+            if (where == kWhereAutoCheck) {
+                return {"No automatic edit of this photo passed the final quality check, so it was not exported.",
+                        "Edit the photo by hand and export it on its own."};
+            }
             return {"The export process stopped unexpectedly.",
                     "Choose Retry failed; report the problem if it happens again."};
         case ErrorCode::IoError:
@@ -199,6 +327,16 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
     if (ctx.output.allow_unsupported) {
         report.notes.push_back("Photos Lucent does not fully support were exported on request.");
     }
+    if (ctx.automatic == catalog::AutoMode::Auto) {
+        report.notes.push_back(
+            "Automatic settings: each photo was analysed and exported with its automatic revision (Natural).");
+    } else if (ctx.automatic == catalog::AutoMode::AnalyzeOnly) {
+        report.notes.push_back(
+            "Analyse only: each photo received automatic revisions to review in the editor; nothing was exported.");
+    }
+    if (ctx.policy.automatic.keep_consistent) {
+        report.notes.push_back("Related photos were kept visually consistent with each other.");
+    }
 
     catalog::JobQuery query;
     query.batch = id;
@@ -223,8 +361,21 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
                 entry.error = Error{job.last_error->code, job.last_error->message, job.last_error->where,
                                     job.last_error->native_code};
             }
+            if (ctx.automatic != catalog::AutoMode::None) {
+                entry.automatic = automatic_report(*catalog, job);
+            }
             switch (job.stage) {
                 case catalog::JobStage::Complete: {
+                    if (ctx.automatic == catalog::AutoMode::AnalyzeOnly) {
+                        entry.outcome = ReportOutcome::Analysed;
+                        entry.error.reset();
+                        entry.reason = entry.automatic && entry.automatic->revision_number > 0
+                                           ? std::format("Analysed: automatic settings saved as revision {}.",
+                                                         entry.automatic->revision_number)
+                                           : std::string("Analysed.");
+                        entry.review = automatic_review(*catalog, job);
+                        break;
+                    }
                     entry.outcome = ReportOutcome::Exported;
                     entry.error.reset();
                     entry.reason = "Exported.";
@@ -282,7 +433,7 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
                     entry.outcome = ReportOutcome::Pending;
                     break;
             }
-            if (entry.outcome != ReportOutcome::Exported) {
+            if (entry.outcome != ReportOutcome::Exported && entry.outcome != ReportOutcome::Analysed) {
                 const detail::Wording wording =
                     entry.error ? detail::describe_failure(*entry.error)
                                 : detail::Wording{entry.outcome == ReportOutcome::Pending ? "Not exported yet." : "", ""};
@@ -330,6 +481,10 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
             case ReportOutcome::Pending:
                 ++report.pending;
                 break;
+            case ReportOutcome::Analysed:
+                ++report.analysed;
+                report.review_recommended += entry.review.empty() ? 0 : 1;
+                break;
         }
     }
     return report;
@@ -361,6 +516,7 @@ Expected<std::string> report_json(const BatchReport& report) {
         summary["failed"] = report.failed;
         summary["cancelled"] = report.cancelled;
         summary["pending"] = report.pending;
+        summary["analysed"] = report.analysed;
         summary["review_recommended"] = report.review_recommended;
         out["summary"] = std::move(summary);
         Json notes = Json::array();
@@ -387,6 +543,7 @@ Expected<std::string> report_json(const BatchReport& report) {
             }
             e["review"] = std::move(review);
             e["attempts"] = entry.attempts;
+            e["automatic"] = entry.automatic ? automatic_json(*entry.automatic) : Json();
             if (entry.error) {
                 Json error = Json::object();
                 error["code"] = std::string(to_string(entry.error->code));
@@ -432,8 +589,12 @@ std::string report_html(const BatchReport& report) {
     html += std::format(
         "<ul class=\"summary\"><li><strong>{}</strong> exported</li><li><strong>{}</strong> review recommended</li>"
         "<li><strong>{}</strong> skipped</li><li><strong>{}</strong> failed</li><li><strong>{}</strong> cancelled</li>"
-        "<li><strong>{}</strong> not finished</li></ul>\n",
+        "<li><strong>{}</strong> not finished</li>",
         report.exported, report.review_recommended, report.skipped, report.failed, report.cancelled, report.pending);
+    if (report.analysed > 0) {
+        html += std::format("<li><strong>{}</strong> analysed</li>", report.analysed);
+    }
+    html += "</ul>\n";
     if (!report.notes.empty()) {
         html += "<ul>\n";
         for (const std::string& note : report.notes) {
@@ -456,6 +617,15 @@ std::string report_html(const BatchReport& report) {
         }
         if (!entry.action.empty()) {
             html += "<br><em>" + html_escape(entry.action) + "</em>";
+        }
+        if (entry.automatic && entry.automatic->revision) {
+            html += std::format("<br>Automatic settings: revision {}, confidence {:.0f} %{}{}",
+                                entry.automatic->revision_number, 100.0 * entry.automatic->confidence,
+                                entry.automatic->attempt > 0 ? ", conservative fallback" : "",
+                                entry.automatic->group ? ", kept consistent with related photos" : "");
+            for (const std::string& lock : entry.automatic->locks) {
+                html += "<br><em>" + html_escape(lock) + "</em>";
+            }
         }
         if (!entry.review.empty()) {
             html += "<strong>Review recommended:</strong><ul>";

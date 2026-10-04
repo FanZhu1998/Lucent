@@ -648,6 +648,77 @@ Expected<RecipeState> RecipeService::apply(ItemId item, const engine::DevelopSet
     }
 }
 
+Expected<AutomaticOutcome> RecipeService::apply_automatic(ItemId item, std::optional<catalog::RevisionId> base,
+                                                          std::span<const AutomaticRevision> revisions) {
+    try {
+        std::vector<RecipeChange> changes;
+        AutomaticOutcome outcome;
+        {
+            std::lock_guard lock(state_->mutex);
+            auto entry = state_->load_locked(item);
+            if (!entry) {
+                return Unexpected(std::move(entry.error()));
+            }
+            State::Entry& e = **entry;
+            if (auto status = state_->check_writable(); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            const bool make_current = e.revision == base && !e.transient;
+            auto appended = state_->store->append_automatic(item, base, revisions, make_current);
+            if (!appended) {
+                (void)state_->reload_locked(item, e);
+                return Unexpected(std::move(appended.error()));
+            }
+            if (auto status = state_->reload_locked(item, e); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            changes.push_back(state_->change_locked(RecipeChangeKind::Committed, item, e, catalog::RevisionOrigin::Auto));
+            outcome.revisions = std::move(appended->revisions);
+            outcome.made_current = appended->made_current;
+            outcome.state = changes.back().state;
+        }
+        state_->publish(changes);
+        return outcome;
+    } catch (const std::bad_alloc&) {
+        return out_of_memory();
+    }
+}
+
+Expected<RecipeState> RecipeService::refresh(ItemId item) {
+    try {
+        std::vector<RecipeChange> changes;
+        RecipeState result;
+        {
+            std::lock_guard lock(state_->mutex);
+            auto entry = state_->load_locked(item);
+            if (!entry) {
+                return Unexpected(std::move(entry.error()));
+            }
+            State::Entry& e = **entry;
+            if (auto status = state_->reload_locked(item, e); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            changes.push_back(state_->change_locked(RecipeChangeKind::Committed, item, e, catalog::RevisionOrigin::Auto));
+            result = changes.back().state;
+        }
+        state_->publish(changes);
+        return result;
+    } catch (const std::bad_alloc&) {
+        return out_of_memory();
+    }
+}
+
+Expected<std::vector<catalog::AutoAnalysisRecord>> RecipeService::automatic_analyses(ItemId item) const {
+    if (!state_->library.find(item)) {
+        return fail(ErrorCode::NotFound, std::format("no library item {}", item.value), std::string(kWhere));
+    }
+    return state_->store->auto_analyses(item);
+}
+
+std::string RecipeService::engine_version() const { return state_->engine_version(); }
+
+catalog::Timestamp RecipeService::now() const { return state_->now(); }
+
 Expected<RecipeState> RecipeService::undo(ItemId item) {
     try {
         std::vector<RecipeChange> changes;

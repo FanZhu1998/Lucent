@@ -33,7 +33,15 @@
 // ignore keys they do not know.
 //
 // Locks. set_lock() records a lock change as a revision (locks are part of the settings, which are
-// immutable per revision). Locks are stored for the optimiser (W8); nothing here enforces them.
+// immutable per revision). Locks are the optimiser's instructions (auto_develop.hpp): it changes only
+// unlocked controls; nothing here enforces them.
+//
+// Automatic revisions (ADR 0013). apply_automatic() appends the revisions of an automatic run
+// (recipe_store.hpp, "Automatic revisions": origin Auto, derived from the revision the run started
+// from, each with its analysis record) and makes the effective one current when the item still
+// shows that revision and no gesture is pending; undo then returns to the recipe before the run.
+// refresh() re-reads an item whose revisions another service wrote to the store directly (the batch
+// service binds a job to its effective revision in the same catalog transaction).
 //
 // Copy and paste by category (recipe.hpp, RecipeCategory). copy() takes the item's current
 // settings and its camera; paste() applies the chosen categories to each target as ONE Paste
@@ -154,6 +162,13 @@ struct RecipeChange {
 
 using RecipeObserver = std::function<void(const RecipeChange&)>;
 
+// The result of apply_automatic().
+struct AutomaticOutcome {
+    std::vector<catalog::RevisionInfo> revisions;  // in the order given
+    bool made_current = false;  // false: the item changed meanwhile; the revisions are another branch
+    RecipeState state;          // the item's state afterwards
+};
+
 struct HistoryEntry {
     catalog::RevisionInfo info;
     bool current = false;                         // the item's current revision
@@ -252,6 +267,24 @@ public:
     [[nodiscard]] Expected<RecipeState> set_lock(ItemId item, engine::DevelopControl control, bool locked);
 
     [[nodiscard]] Expected<RecipeHistory> history(ItemId item) const;
+
+    // ---- Automatic revisions (see the file comment) ----------------------------------------------
+
+    // Errors: those of state(); the read-only reason; the store's (InvalidArgument for a revision
+    // whose origin is not Auto or a base of another item; Unsupported for a store without automatic
+    // revisions). Observers receive Committed with origin Auto.
+    [[nodiscard]] Expected<AutomaticOutcome> apply_automatic(ItemId item, std::optional<catalog::RevisionId> base,
+                                                             std::span<const AutomaticRevision> revisions);
+    // Re-reads the item's revisions from the store (a pending gesture is kept) and notifies
+    // observers (Committed, origin Auto). Errors: those of state().
+    [[nodiscard]] Expected<RecipeState> refresh(ItemId item);
+    // The analysis records of the item's automatic revisions, oldest first (the store's).
+    [[nodiscard]] Expected<std::vector<catalog::AutoAnalysisRecord>> automatic_analyses(ItemId item) const;
+    // The engine version recorded in new revisions (RecipeServiceOptions::engine_version, or this
+    // build's version).
+    [[nodiscard]] std::string engine_version() const;
+    // Time stamps of new revisions (RecipeServiceOptions::clock, or the current time).
+    [[nodiscard]] catalog::Timestamp now() const;
 
     // ---- Copy and paste ------------------------------------------------------------------------
 
