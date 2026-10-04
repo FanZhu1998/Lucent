@@ -119,9 +119,12 @@ Status migrate_to_v1(Connection& connection) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Version 2 (W6): edit revisions and the capture fields schema v1 lacked. Only adds tables,
-// columns, indexes and triggers, so min_reader_version stays 1: a v1 build opens a v2 catalog
-// read-only (catalog.hpp) and reads every v1 column unchanged.
+// Version 2 (W6): edit revisions and the capture fields schema v1 lacked. It only adds tables,
+// columns, indexes and triggers, but the revisions change what every render and export of an
+// edited item means: a v1 build would read the catalog and show and export edited photos as shot.
+// So min_reader_version is 2 and a schema-v1 build refuses the catalog ("written by a newer
+// Lucent"). The rule (ADR 0008): a schema change that changes the meaning of renders raises
+// min_reader_version; a purely additive one does not.
 //
 // recipe_revisions: the immutable develop-settings history of an item (blueprint section 8).
 //   * item_id: the item edited. ON DELETE CASCADE: removing an item (or its source) removes its
@@ -215,7 +218,7 @@ Status migrate_to_v2(Connection& connection) {
 
 constexpr Migration kBuiltinMigrations[] = {
     {1, 1, "catalog metadata, imports, sources and items (W4)", &migrate_to_v1},
-    {2, 1, "recipe revisions and capture settings (W6)", &migrate_to_v2},
+    {2, 2, "recipe revisions and capture settings (W6)", &migrate_to_v2},
 };
 static_assert(std::size(kBuiltinMigrations) == static_cast<std::size_t>(kSchemaVersion),
               "every schema version needs exactly one migration");
@@ -324,8 +327,13 @@ Status validate_migrations(std::span<const Migration> migrations) {
     }
     for (std::size_t i = 0; i < migrations.size(); ++i) {
         const Migration& migration = migrations[i];
+        // The reader requirement never goes back down: a later version cannot make readers that an
+        // earlier one refused (because they would misread it) able to read the catalog again.
+        const bool reader_lowered =
+            i > 0 && migration.min_reader_version < migrations[i - 1].min_reader_version;
         if (migration.version != static_cast<std::int32_t>(i + 1) || migration.apply == nullptr ||
-            migration.min_reader_version < 1 || migration.min_reader_version > migration.version) {
+            migration.min_reader_version < 1 || migration.min_reader_version > migration.version ||
+            reader_lowered) {
             return fail(ErrorCode::InvalidArgument, std::format("invalid migration at position {}", i),
                         std::string(kWhereMigrate));
         }

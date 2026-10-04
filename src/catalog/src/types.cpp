@@ -119,6 +119,8 @@ std::string_view to_string(RevisionOrigin value) noexcept {
             return "paste";
         case RevisionOrigin::Import:
             return "import";
+        case RevisionOrigin::Unknown:
+            return "unknown";
     }
     return "invalid";
 }

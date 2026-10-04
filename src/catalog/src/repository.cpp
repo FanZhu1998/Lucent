@@ -374,12 +374,9 @@ Expected<RevisionInfo> read_revision_info(const Statement& row, const RowDecoder
         info.parent = RevisionId{row.column_int64(3)};
     }
     info.created_at = detail::timestamp_from_db(row.column_int64(4));
-    Expected<RevisionOrigin> origin = decode.parse(detail::parse_revision_origin(row.column_text(5)),
-                                                   "recipe_revisions.origin", row.column_text(5));
-    if (!origin) {
-        return Unexpected(std::move(origin.error()));
-    }
-    info.origin = *origin;
+    // An origin a later Lucent added labels the history only: listed as Unknown, never an error
+    // (one such revision must not make the item's history, or its current revision, unreadable).
+    info.origin = detail::parse_revision_origin(row.column_text(5)).value_or(RevisionOrigin::Unknown);
     info.schema_name = std::string(row.column_text(6));
     Expected<std::uint32_t> schema_version =
         decode.u32("recipe_revisions.schema_version", row.column_int64(7));

@@ -89,8 +89,9 @@ namespace lucent::catalog {
 // Schema version this build creates and writes.
 //   1 (W4): catalog_meta, schema_history, imports, sources, items.
 //   2 (W6): recipe_revisions, items.current_revision_id and the capture fields of items (ISO,
-//           exposure time, f-number, focal length, image count). Adds only: its minimum reader
-//           version stays 1, so a schema-v1 build opens a v2 catalog read-only.
+//           exposure time, f-number, focal length, image count). Adds only, but edits change
+//           what renders mean, so its minimum reader version is 2: a schema-v1 build refuses a
+//           v2 catalog instead of showing and exporting edited photos as shot.
 // Later versions (W7 job journal) are added as migrations.
 inline constexpr std::int32_t kSchemaVersion = 2;
 

@@ -43,7 +43,8 @@ Status orphan_item(detail::Connection& connection) {
         "test.migrate");
 }
 
-std::vector<detail::Migration> with_next(Status (*apply)(detail::Connection&), std::int32_t min_reader = 1) {
+std::vector<detail::Migration> with_next(Status (*apply)(detail::Connection&),
+                                         std::int32_t min_reader = kSchemaVersion) {
     std::vector<detail::Migration> migrations(detail::builtin_migrations().begin(),
                                               detail::builtin_migrations().end());
     migrations.push_back(detail::Migration{kNext, min_reader, "synthetic next version for tests", apply});
@@ -99,8 +100,8 @@ TEST(CatalogSchema, CreatesANewCatalogAtTheCurrentSchema) {
     EXPECT_EQ(query_text(*raw, "PRAGMA journal_mode"), "wal");  // persistent
     EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"),
               std::to_string(kSchemaVersion));
-    // v2 only adds tables and columns: schema-v1 readers can still read it.
-    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "1");
+    // v2's recipes change what renders mean: schema-v1 readers must refuse it.
+    EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "2");
     EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'created_by'"), "0.1.0-test");
     EXPECT_EQ(query_int(*raw,
                         "SELECT count(*) FROM schema_history WHERE version IN (1, 2) AND app_version = "
@@ -547,6 +548,10 @@ TEST(CatalogSchema, MigrationListValidation) {
     EXPECT_FALSE(detail::validate_migrations(reader));
     std::vector<detail::Migration> none = with_next(nullptr);
     EXPECT_FALSE(detail::validate_migrations(none));
+    // A later version may not lower the reader requirement (schema v2 needs a v2 reader).
+    std::vector<detail::Migration> lowered = with_next(&add_note_column, 1);
+    EXPECT_FALSE(detail::validate_migrations(lowered));
+    EXPECT_EQ(detail::builtin_migrations()[1].min_reader_version, 2);
 }
 
 }  // namespace

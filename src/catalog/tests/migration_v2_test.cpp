@@ -1,5 +1,5 @@
 // Schema v2 (W6): migrating a populated W4 (v1) catalog, and the forward-compatibility contract
-// (min_reader_version 1) seen from a schema-v1 build.
+// (min_reader_version 2: a schema-v1 build refuses the catalog) seen from a schema-v1 build.
 
 #include <cstdint>
 #include <filesystem>
@@ -226,7 +226,7 @@ TEST(CatalogSchemaV2, MigratesAPopulatedV1CatalogAfterABackup) {
                              "ORDER BY version)"),
                   "1,2");
         EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"), "2");
-        EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "1");
+        EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "2");
         EXPECT_EQ(query_int(*raw, "SELECT count(*) FROM pragma_foreign_key_check"), 0);
         EXPECT_EQ(query_text(*raw, "PRAGMA integrity_check"), "ok");
     }
@@ -322,7 +322,7 @@ void make_v2_catalog(const std::filesystem::path& path, const std::filesystem::p
     LUCENT_ASSERT_OK(written);
 }
 
-TEST(CatalogSchemaV2, AV1BuildOpensAV2CatalogReadOnlyAndNeverWritesIt) {
+TEST(CatalogSchemaV2, AV1BuildRefusesAV2CatalogAndNeverWritesIt) {
     TempDir dir;
     const std::filesystem::path path = dir / L"lucent.catalog";
     make_v2_catalog(path, dir / L"photos");
@@ -331,62 +331,29 @@ TEST(CatalogSchemaV2, AV1BuildOpensAV2CatalogReadOnlyAndNeverWritesIt) {
     }
     const std::string before = file_digest(path);
 
-    // min_reader_version is 1: a v1 build may read it, read-only.
+    // min_reader_version is 2: a v1 build would show and export edited photos as shot (it knows no
+    // recipes), so it must refuse the catalog rather than open it read-only.
     for (const OpenMode mode : {OpenMode::ReadWrite, OpenMode::ReadOnly}) {
         OpenOptions options = options_for(path);
         options.mode = mode;
         Expected<std::unique_ptr<Catalog>> catalog = detail::CatalogAccess::open(options, v1_build());
-        LUCENT_ASSERT_OK(catalog);
-        EXPECT_TRUE((*catalog)->is_read_only());
-        EXPECT_EQ((*catalog)->schema().found_version, 2);
-        EXPECT_EQ((*catalog)->schema().version, 2);
-        EXPECT_EQ((*catalog)->schema().supported_version, 1);
-        ASSERT_TRUE((*catalog)->schema().read_only_reason.has_value());
-        EXPECT_EQ((*catalog)->schema().read_only_reason->code, ErrorCode::VersionMismatch);
-        Expected<std::uint64_t> sources =
-            (*catalog)->query([](ReadTransaction& tx) { return tx.count_sources(); });
-        LUCENT_ASSERT_OK(sources);
-        EXPECT_EQ(*sources, 12u);
-        const Status write =
-            (*catalog)->write([](WriteTransaction& tx) { return tx.set_item_flags(ItemId{1}, {}); });
-        ASSERT_FALSE(write);
-        EXPECT_EQ(write.error().code, ErrorCode::VersionMismatch);
+        ASSERT_FALSE(catalog);
+        EXPECT_EQ(catalog.error().code, ErrorCode::VersionMismatch);
+        EXPECT_NE(catalog.error().message.find("needs a reader for schema v2"), std::string::npos)
+            << catalog.error().message;
     }
-    // A v1 build that refuses newer schemas.
+    // Also when the v1 build would refuse every newer schema anyway.
     OpenOptions refuse = options_for(path);
     refuse.newer_schema = NewerSchemaPolicy::Refuse;
     Expected<std::unique_ptr<Catalog>> refused = detail::CatalogAccess::open(refuse, v1_build());
     ASSERT_FALSE(refused);
     EXPECT_EQ(refused.error().code, ErrorCode::VersionMismatch);
 
-    // The queries of the W4 build (its exact column lists) still work on the v2 file.
-    {
-        std::unique_ptr<detail::Connection> raw = raw_connection(path, detail::Access::ReadOnly);
-        ASSERT_NE(raw, nullptr);
-        Expected<detail::Statement> w4_items = raw->prepare(
-            "SELECT i.id, i.source_id, i.subimage_index, i.make, i.model, i.lens, i.capture_time, i.width, "
-            "i.height, i.orientation, i.format, i.support_status, i.support_reasons_json, i.decoder_id, "
-            "i.decoder_version, i.probed_at, i.pick, i.rating, s.path, s.state, s.storage_kind, "
-            "s.sha256 IS NOT NULL, s.path_key FROM items i JOIN sources s ON s.id = i.source_id "
-            "ORDER BY s.path_key, i.subimage_index",
-            "test");
-        LUCENT_ASSERT_OK(w4_items);
-        int rows = 0;
-        for (;;) {
-            Expected<bool> row = w4_items->step();
-            LUCENT_ASSERT_OK(row);
-            if (!*row) {
-                break;
-            }
-            ++rows;
-        }
-        EXPECT_EQ(rows, 12);
-    }
     EXPECT_EQ(file_digest(path), before);  // never written, never migrated
     EXPECT_FALSE(std::filesystem::exists(dir / L"backups"));
 }
 
-TEST(CatalogSchemaV2, AnUnknownRevisionOriginIsCorruptHereAndVersionMismatchFromANewerSchema) {
+TEST(CatalogSchemaV2, AnUnknownRevisionOriginIsListedAsUnknownInEveryCatalog) {
     TempDir dir;
     const std::filesystem::path path = dir / L"lucent.catalog";
     make_v2_catalog(path, dir / L"photos");
@@ -394,7 +361,8 @@ TEST(CatalogSchemaV2, AnUnknownRevisionOriginIsCorruptHereAndVersionMismatchFrom
         return;
     }
     {
-        // A later Lucent appends an origin this build does not know (the column has no CHECK).
+        // A later Lucent appends an origin this build does not know (the column has no CHECK, so
+        // later versions can add values without a new schema): the history must still list it.
         std::unique_ptr<detail::Connection> raw = raw_connection(path);
         ASSERT_NE(raw, nullptr);
         LUCENT_ASSERT_OK(raw->exec(
@@ -404,20 +372,36 @@ TEST(CatalogSchemaV2, AnUnknownRevisionOriginIsCorruptHereAndVersionMismatchFrom
             "x'44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '9.0.0')",
             "test"));
     }
-    const auto history_error = [&](const std::unique_ptr<Catalog>& catalog) {
+    const auto check = [&](const std::unique_ptr<Catalog>& catalog) {
         Expected<RevisionHistory> history =
             catalog->query([](ReadTransaction& tx) { return tx.revision_history(ItemId{2}); });
-        return history ? ErrorCode::Unknown : history.error().code;
-    };
-    {
-        std::unique_ptr<Catalog> catalog = open_or_fail(path);
-        ASSERT_NE(catalog, nullptr);
-        EXPECT_EQ(history_error(catalog), ErrorCode::Corrupt);
+        LUCENT_ASSERT_OK(history);
+        ASSERT_EQ(history->revisions.size(), 1u);
+        EXPECT_EQ(history->revisions[0].origin, RevisionOrigin::Unknown);
+        EXPECT_EQ(to_string(RevisionOrigin::Unknown), "unknown");
+        // Reading the revision itself works too (its settings are the reader's business).
+        Expected<std::optional<RecipeRevision>> revision = catalog->query(
+            [&](ReadTransaction& tx) { return tx.find_revision(history->revisions[0].id); });
+        LUCENT_ASSERT_OK(revision);
+        ASSERT_TRUE(revision->has_value());
+        EXPECT_EQ((*revision)->info.origin, RevisionOrigin::Unknown);
         // Other items are unaffected.
         Expected<RevisionHistory> fine =
             catalog->query([](ReadTransaction& tx) { return tx.revision_history(ItemId{1}); });
         LUCENT_ASSERT_OK(fine);
         EXPECT_EQ(fine->revisions.size(), 3u);
+    };
+    {
+        std::unique_ptr<Catalog> catalog = open_or_fail(path);
+        ASSERT_NE(catalog, nullptr);
+        check(catalog);
+        // It can never be written: an unknown origin is not a valid input.
+        NewRevision unknown;
+        unknown.origin = RevisionOrigin::Unknown;
+        unknown.schema_name = "lucent.develop";
+        unknown.schema_version = 1;
+        unknown.settings_json = "{}";
+        EXPECT_FALSE(unknown.validate());
     }
     {
         std::unique_ptr<detail::Connection> raw = raw_connection(path);
@@ -431,7 +415,7 @@ TEST(CatalogSchemaV2, AnUnknownRevisionOriginIsCorruptHereAndVersionMismatchFrom
     std::unique_ptr<Catalog> newer = open_or_fail(path);
     ASSERT_NE(newer, nullptr);
     EXPECT_TRUE(newer->is_read_only());
-    EXPECT_EQ(history_error(newer), ErrorCode::VersionMismatch);
+    check(newer);
 }
 
 }  // namespace

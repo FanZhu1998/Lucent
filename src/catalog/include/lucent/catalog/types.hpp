@@ -403,16 +403,19 @@ struct ImportRecord {
 // version, is the reader's job (blueprint section 8: "never treat newer unknown versions as
 // compatible").
 
-// Why a revision was created. Persisted as "user", "auto", "reset", "paste", "import".
+// Why a revision was created. Persisted as "user", "auto", "reset", "paste", "import"; later
+// versions may append values without a new schema (the column has no CHECK). Origins only label the
+// history, so a value this build does not know is read as Unknown rather than as an error.
 enum class RevisionOrigin : std::uint8_t {
-    User = 1,    // the photographer changed controls
+    Unknown = 0,  // read only: an origin written by a newer Lucent; never written
+    User = 1,     // the photographer changed controls
     Auto = 2,    // the automatic optimiser produced it ("Auto creates a new editable revision")
     Reset = 3,   // a recorded reset to as-shot settings
     Paste = 4,   // settings pasted from another item
     Import = 5,  // settings that arrived with the photograph (a sidecar or another catalog)
 };
 
-// "user", "auto", "reset", "paste", "import"; "invalid" for out-of-range values.
+// "user", "auto", "reset", "paste", "import", "unknown"; "invalid" for out-of-range values.
 [[nodiscard]] std::string_view to_string(RevisionOrigin value) noexcept;
 
 // Largest settings document of a revision (UTF-8 bytes). A recipe with many brush strokes stays
