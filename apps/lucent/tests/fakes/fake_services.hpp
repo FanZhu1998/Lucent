@@ -276,9 +276,11 @@ public:
     void cancel_submit(quint64) override {}
     void pause(BatchId batch) override;
     void resume(BatchId batch) override;
+    void use_replaced_folder(BatchId batch) override { resume(batch); }
     void cancel(BatchId batch) override;
     void retry_failed(BatchId batch) override;
     void refresh() override;
+    void load_older() override {}
     void request_report(BatchId batch) override;
     void request_report_file(BatchId batch) override;
     [[nodiscard]] bool is_busy() const override;

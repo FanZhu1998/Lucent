@@ -8,7 +8,9 @@
 // The report is read by the BatchService off the UI thread. While the shown batch changes (photos
 // finish), the report is read again at most once per refresh interval (2 s, or 2 ms per photo for
 // large batches, at most 15 s), so a large running batch does not re-read its report for every
-// photo.
+// photo. A report read again for the same batch updates the rows in place (changed rows, rows
+// entering or leaving the filter), so a list scrolled down keeps its place; another batch resets
+// the rows and the filter to "all".
 //
 // QML-facing members use QML naming (lowerCamelCase); C++-only members use snake_case.
 //
@@ -117,6 +119,9 @@ private:
     void on_report(BatchId batch, const BatchReportInfo& report);
     void on_batch_changed(const BatchSnapshot& batch);
     void rebuild_rows();
+    // Replaces the report of the shown batch with `report` (the same entries in the same order),
+    // updating rows in place.
+    void update_rows(const BatchReportInfo& report);
     [[nodiscard]] bool matches(const BatchReportEntry& entry) const;
 
     BatchService& service_;

@@ -100,6 +100,9 @@ class AppController : public QObject {
     Q_PROPERTY(bool batchesAvailable READ batches_available CONSTANT FINAL)
     // Exports still to do (the Exports tab's badge): photos of active batches, or queued jobs.
     Q_PROPERTY(int activeExportCount READ active_export_count NOTIFY activeExportCountChanged FINAL)
+    // Batches the service paused by itself (disk full, drive removed, ...): the Exports tab is
+    // flagged wherever the photographer is.
+    Q_PROPERTY(int exportAttentionCount READ export_attention_count NOTIFY activeExportCountChanged FINAL)
 
 public:
     enum View { Library = 0, Edit = 1, Exports = 2 };
@@ -224,6 +227,7 @@ public:
     [[nodiscard]] BatchReportModel* batch_report() const noexcept { return batch_report_.get(); }
     [[nodiscard]] bool batches_available() const { return services_.batches->is_available(); }
     [[nodiscard]] int active_export_count() const;
+    [[nodiscard]] int export_attention_count() const;
     // The submission token of the most recent startBatch() (0 when none).
     [[nodiscard]] quint64 last_batch_token() const noexcept { return last_batch_token_; }
     [[nodiscard]] LibraryService& library_service() const noexcept { return *services_.library; }
@@ -335,9 +339,11 @@ private:
     // completion is reported in the status line (single exports report through their jobs).
     QHash<quint64, QString> batch_submissions_;
     QHash<BatchId, QString> watched_batches_;
+    QHash<BatchId, BatchAttention> attentions_;  // the last attention seen per batch (status line)
     BatchId report_requested_ = 0;  // openBatchReport() waiting for its file
     quint64 last_batch_token_ = 0;
     int last_active_exports_ = 0;
+    int last_export_attentions_ = 0;
 };
 
 }  // namespace lucent::ui

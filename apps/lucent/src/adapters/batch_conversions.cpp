@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QTimeZone>
 #include <algorithm>
@@ -56,6 +57,11 @@ BatchOutcome to_ui_outcome(app::ReportOutcome outcome) {
             break;
     }
     return BatchOutcome::Pending;
+}
+
+QString data_size(std::uint64_t bytes) {
+    return QLocale().formattedDataSize(static_cast<qint64>(std::min<std::uint64_t>(bytes, INT64_MAX)), 1,
+                                       QLocale::DataSizeTraditionalFormat);
 }
 
 QString format_of(const app::ReceiptDetails& details) {
@@ -131,18 +137,31 @@ BatchAttention to_ui_attention(app::BatchAttention attention) noexcept {
             return BatchAttention::DestinationUnavailable;
         case app::BatchAttention::DestinationPermission:
             return BatchAttention::DestinationPermission;
+        case app::BatchAttention::DestinationReplaced:
+            return BatchAttention::DestinationReplaced;
         case app::BatchAttention::None:
             break;
     }
     return BatchAttention::None;
 }
 
-QString describe_attention(BatchAttention attention, const QString& folder) {
+QString describe_attention(BatchAttention attention, const QString& folder, std::optional<std::uint64_t> free_bytes,
+                           std::uint64_t needed_bytes) {
     const QString where = folder.isEmpty() ? tr_text("the output folder") : QDir::toNativeSeparators(folder);
     switch (attention) {
         case BatchAttention::DestinationFull:
+            if (free_bytes && needed_bytes > 0) {
+                return tr_text("The drive of %1 is full (%2 free; the next photo may need up to %3), so the batch is "
+                               "paused. Free some space on it, then choose Resume.")
+                    .arg(where, data_size(*free_bytes), data_size(needed_bytes));
+            }
             return tr_text("The drive of %1 is full, so the batch is paused. Free some space on it, then choose "
                            "Resume.")
+                .arg(where);
+        case BatchAttention::DestinationReplaced:
+            return tr_text("%1 is not the folder this batch started in: it was created again, or another drive now "
+                           "uses its drive letter. Choose Use this folder to continue there, or reconnect the "
+                           "original drive and choose Resume.")
                 .arg(where);
         case BatchAttention::DestinationUnavailable:
             return tr_text("%1 is not available: its drive may have been disconnected, so the batch is paused. "
@@ -272,9 +291,9 @@ BatchPlanInfo to_plan_info(const app::BatchPlan& plan) {
     info.folder = native(plan.folder);
     info.folder_exists = plan.folder_exists;
     for (const app::PlannedOutput& example : plan.examples) {
-        info.examples.push_back(
-            BatchPlanExample{file_name_of(example.source), native(example.destination), example.renamed,
-                             example.replaces_existing});
+        info.examples.push_back(BatchPlanExample{file_name_of(example.source), native(example.destination),
+                                                 example.renamed, example.replaces_existing,
+                                                 example.already_exported});
     }
     info.outputs = to_qint(plan.outputs);
     info.to_hash = to_qint(plan.to_hash);
@@ -290,27 +309,31 @@ BatchPlanInfo to_plan_info(const app::BatchPlan& plan) {
     info.estimated_bytes = to_qint(plan.estimated_output_bytes);
     info.largest_bytes = to_qint(plan.largest_output_bytes);
     info.free_bytes = plan.free_bytes ? to_qint(*plan.free_bytes) : -1;
-    // The service's warnings are developer-facing; the same facts in the user's terms.
-    switch (plan.storage) {
-        case core::StorageKind::Network:
-            info.warnings << tr_text("The output folder is on a network drive. Every file is verified, but keep the "
-                                     "connection up until the batch has finished.");
-            break;
-        case core::StorageKind::Removable:
-            info.warnings << tr_text("The output folder is on a removable drive. Keep it connected until the batch "
-                                     "has finished.");
-            break;
-        case core::StorageKind::Fixed:
-        case core::StorageKind::Unknown:
-            break;
-    }
-    if (plan.free_bytes && plan.outputs > 0) {
-        if (*plan.free_bytes < plan.largest_output_bytes + (std::uint64_t{64} << 20)) {
-            info.warnings << tr_text("The output folder's drive is too full for even one photo. Free some space "
-                                     "first.");
-        } else if (*plan.free_bytes < plan.estimated_output_bytes) {
-            info.warnings << tr_text("The drive may run out of space before the batch ends (the estimate is an upper "
-                                     "bound). If it does, the batch pauses until you free space.");
+    // The service's warnings are developer-facing; its notices (stable codes) in the user's terms.
+    // Overwriting and GPS have their own confirmations in the dialog.
+    for (const app::PlanNotice notice : plan.notices) {
+        switch (notice) {
+            case app::PlanNotice::NetworkDestination:
+                info.warnings << tr_text("The output folder is on a network drive. Every file is verified, but keep "
+                                         "the connection up until the batch has finished.");
+                break;
+            case app::PlanNotice::RemovableDestination:
+                info.warnings << tr_text("The output folder is on a removable drive. Keep it connected until the "
+                                         "batch has finished.");
+                break;
+            case app::PlanNotice::TooFullForOne:
+                info.warnings << tr_text("The output folder's drive is too full for even one photo. Free some space "
+                                         "first.");
+                break;
+            case app::PlanNotice::MayRunOutOfSpace:
+                if (plan.outputs > 0) {
+                    info.warnings << tr_text("The drive may run out of space before the batch ends (the estimate is "
+                                             "an upper bound). If it does, the batch pauses until you free space.");
+                }
+                break;
+            case app::PlanNotice::ReplacesExisting:
+            case app::PlanNotice::WritesGps:
+                break;
         }
     }
     return info;
@@ -352,7 +375,16 @@ BatchSnapshot to_snapshot(const app::BatchStatus& status) {
     snapshot.folder = native(status.folder);
     apply_counts(snapshot, record.state, record.counts);
     snapshot.attention = to_ui_attention(status.attention);
-    snapshot.attention_message = describe_attention(snapshot.attention, snapshot.folder);
+    snapshot.attention_message = describe_attention(snapshot.attention, snapshot.folder, status.attention_free_bytes,
+                                                    status.attention_needed_bytes);
+    snapshot.single_export = status.single_export;
+    snapshot.review = to_qint(status.review_recommended);
+    snapshot.excluded = to_qint(status.excluded);
+    snapshot.retryable = to_qint(status.retryable);
+    if (status.output) {
+        snapshot.last_output = native(*status.output);
+    }
+    snapshot.outcome_reason = from_utf8(status.outcome_reason);
     for (const app::RunningJob& job : status.running) {
         snapshot.running_jobs.push_back(BatchRunningJob{static_cast<qint64>(job.job.value),
                                                         job.item ? job.item->value : 0, file_name_of(job.source),

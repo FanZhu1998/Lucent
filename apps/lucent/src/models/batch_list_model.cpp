@@ -30,14 +30,21 @@ bool can_resume(const BatchSnapshot& batch) {
     return batch.state == BatchState::Paused && (batch.queued > 0 || batch.attention != BatchAttention::None);
 }
 
+bool can_use_folder(const BatchSnapshot& batch) {
+    return batch.attention == BatchAttention::DestinationReplaced && !batch.finished_state();
+}
+
 bool can_cancel(const BatchSnapshot& batch) {
     return (batch.state == BatchState::Running || batch.state == BatchState::Paused ||
             batch.state == BatchState::Draft) &&
            batch.remaining() > 0;
 }
 
+// Failed photos that Retry failed exports again (not those whose published output was lost: they
+// are exported again in a new export).
 bool can_retry(const BatchSnapshot& batch) {
-    return batch.failed > 0 && batch.state != BatchState::Cancelled && batch.state != BatchState::Draft;
+    return batch.failed > 0 && batch.retryable > 0 && batch.state != BatchState::Cancelled &&
+           batch.state != BatchState::Draft;
 }
 
 }  // namespace
@@ -48,6 +55,12 @@ BatchListModel::BatchListModel(BatchService& service, QObject* parent)
     connect(&service_, &BatchService::batch_changed, this, &BatchListModel::on_changed);
     connect(&service_, &BatchService::submit_progress, this, &BatchListModel::on_submit_progress);
     connect(&service_, &BatchService::submitted, this, &BatchListModel::on_submitted);
+    connect(&service_, &BatchService::older_batches, this, [this](bool available) {
+        if (available != has_older_) {
+            has_older_ = available;
+            emit hasOlderChanged();
+        }
+    });
 }
 
 int BatchListModel::rowCount(const QModelIndex& parent) const {
@@ -109,8 +122,9 @@ QVariant BatchListModel::data(const QModelIndex& index, int role) const {
     case FailedRole:
         return batch->failed;
     case SkippedRole:
-        // As the report counts them: skipped photos and those left out when the batch was created.
-        return batch->skipped + std::max<qint64>(0, batch->excluded);
+        return batch->skipped;
+    case LeftOutRole:
+        return std::max<qint64>(0, batch->excluded);
     case ReviewRole:
         return batch->review;
     case ProgressRole:
@@ -122,7 +136,10 @@ QVariant BatchListModel::data(const QModelIndex& index, int role) const {
     case StageRole:
         return p::batch_stage_label(*batch, locale_);
     case EtaRole:
-        return batch->finished_state() ? QString() : p::eta_label(batch->eta_seconds, locale_);
+        // Only while the batch runs: a paused or stalled batch is not about to finish.
+        return batch->state == BatchState::Running && batch->attention == BatchAttention::None
+                   ? p::eta_label(batch->eta_seconds, locale_)
+                   : QString();
     case HasAttentionRole:
         return batch->attention != BatchAttention::None && !batch->finished_state();
     case AttentionRole:
@@ -131,6 +148,8 @@ QVariant BatchListModel::data(const QModelIndex& index, int role) const {
         return can_pause(*batch);
     case CanResumeRole:
         return can_resume(*batch);
+    case CanUseFolderRole:
+        return can_use_folder(*batch);
     case CanCancelRole:
         return can_cancel(*batch);
     case CanRetryRole:
@@ -139,9 +158,11 @@ QVariant BatchListModel::data(const QModelIndex& index, int role) const {
         // No file-system check on the UI thread; opening reports a folder that no longer exists.
         return !batch->folder.isEmpty();
     case CanOpenReportRole:
-        return !batch->single() && batch->finished_state() && !batch->folder.isEmpty();
+        return batch->finished_state() && !batch->folder.isEmpty();
     case OutputPathRole:
         return batch->last_output;
+    case OutcomeReasonRole:
+        return batch->outcome_reason;
     case TimesLabelRole:
         return p::batch_times_label(batch->created, batch->finished, locale_);
     case IsActiveRole:
@@ -167,6 +188,7 @@ QHash<int, QByteArray> BatchListModel::roleNames() const {
         {RemainingRole, "remaining"},
         {FailedRole, "failed"},
         {SkippedRole, "skipped"},
+        {LeftOutRole, "leftOut"},
         {ReviewRole, "review"},
         {ProgressRole, "progress"},
         {ProgressLabelRole, "progressLabel"},
@@ -176,11 +198,13 @@ QHash<int, QByteArray> BatchListModel::roleNames() const {
         {AttentionRole, "attention"},
         {CanPauseRole, "canPause"},
         {CanResumeRole, "canResume"},
+        {CanUseFolderRole, "canUseFolder"},
         {CanCancelRole, "canCancel"},
         {CanRetryRole, "canRetry"},
         {CanOpenFolderRole, "canOpenFolder"},
         {CanOpenReportRole, "canOpenReport"},
         {OutputPathRole, "outputPath"},
+        {OutcomeReasonRole, "outcomeReason"},
         {TimesLabelRole, "timesLabel"},
         {IsActiveRole, "isActive"},
         {AccessibleLabelRole, "accessibleLabel"},
@@ -254,6 +278,18 @@ void BatchListModel::resume(int row) {
     }
 }
 
+void BatchListModel::useReplacedFolder(int row) {
+    if (const BatchSnapshot* batch = batch_at(row); batch != nullptr && can_use_folder(*batch)) {
+        service_.use_replaced_folder(batch->id);
+    }
+}
+
+void BatchListModel::loadOlder() {
+    if (has_older_) {
+        service_.load_older();
+    }
+}
+
 void BatchListModel::cancel(int row) {
     if (const BatchSnapshot* batch = batch_at(row); batch != nullptr && can_cancel(*batch)) {
         service_.cancel(batch->id);
@@ -297,14 +333,25 @@ void BatchListModel::reindex() {
 }
 
 void BatchListModel::on_listed(const QList<BatchSnapshot>& batches) {
-    beginResetModel();
-    batches_.assign(batches.begin(), batches.end());
-    std::stable_sort(batches_.begin(), batches_.end(),
-                     [](const BatchSnapshot& a, const BatchSnapshot& b) { return a.id > b.id; });
-    reindex();
-    endResetModel();
-    emit countChanged();
-    emit_summary_if_changed();
+    if (batches_.empty()) {
+        beginResetModel();
+        batches_.assign(batches.begin(), batches.end());
+        std::stable_sort(batches_.begin(), batches_.end(),
+                         [](const BatchSnapshot& a, const BatchSnapshot& b) { return a.id > b.id; });
+        batches_.erase(std::unique(batches_.begin(), batches_.end(),
+                                   [](const BatchSnapshot& a, const BatchSnapshot& b) { return a.id == b.id; }),
+                       batches_.end());
+        reindex();
+        endResetModel();
+        emit countChanged();
+        emit_summary_if_changed();
+        return;
+    }
+    // Added to what is shown (a page of older batches): rows keep their place, so the list does not
+    // jump.
+    for (const BatchSnapshot& batch : batches) {
+        on_changed(batch);
+    }
 }
 
 void BatchListModel::on_changed(const BatchSnapshot& batch) {

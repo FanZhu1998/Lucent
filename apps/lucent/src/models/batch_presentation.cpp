@@ -52,6 +52,9 @@ QString batch_state_label(const BatchSnapshot& batch) {
         if (key == u"completed") {
             return batch.skipped > 0 ? tr_text("Skipped") : tr_text("Exported");
         }
+        if (key == u"cancelled" && !batch.outcome_reason.isEmpty()) {
+            return tr_text("Not exported");  // stopped by the destination, not by the user
+        }
         if (key == u"failed" || key == u"partial") {
             return tr_text("Failed");
         }
@@ -161,15 +164,27 @@ QString batch_accessible_label(const BatchSnapshot& batch, const QLocale& locale
         if (batch.failed > 0) {
             parts << tr_text("%1 failed").arg(batch.failed);
         }
-        if (const qint64 skipped = batch.skipped + std::max<qint64>(0, batch.excluded); skipped > 0) {
-            parts << tr_text("%1 skipped").arg(skipped);
+        if (batch.skipped > 0) {
+            parts << tr_text("%1 skipped").arg(batch.skipped);
+        }
+        if (batch.excluded > 0) {
+            parts << tr_text("%1 left out").arg(batch.excluded);
         }
         if (batch.review > 0) {
             parts << tr_text("%1 recommended for review").arg(batch.review);
         }
+    } else {
+        if (batch.review > 0) {
+            parts << tr_text("recommended for review");
+        }
+        if (!batch.outcome_reason.isEmpty()) {
+            parts << batch.outcome_reason;
+        }
     }
-    if (const QString eta = eta_label(batch.eta_seconds, locale); !eta.isEmpty()) {
-        parts << eta;
+    if (batch.state == BatchState::Running && batch.attention == BatchAttention::None) {
+        if (const QString eta = eta_label(batch.eta_seconds, locale); !eta.isEmpty()) {
+            parts << eta;
+        }
     }
     if (!batch.attention_message.isEmpty()) {
         parts << batch.attention_message;

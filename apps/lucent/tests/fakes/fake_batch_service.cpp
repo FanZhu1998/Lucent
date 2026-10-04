@@ -98,6 +98,7 @@ quint64 FakeBatchService::submit(const BatchSetup& setup) {
     batch.snapshot.state = BatchState::Running;
     batch.snapshot.created = QDateTime::currentDateTime();
     batch.snapshot.review = 0;
+    batch.snapshot.excluded = 0;
     for (qsizetype i = 0; i < setup.items.size(); ++i) {
         const std::optional<FakeCatalog::Entry> entry = catalog_->find(setup.items[i]);
         Job job;
@@ -155,7 +156,7 @@ void FakeBatchService::step() {
 void FakeBatchService::publish(Batch& batch) {
     BatchSnapshot& s = batch.snapshot;
     s.total = static_cast<qint64>(batch.jobs.size());
-    s.completed = s.failed = s.skipped = s.cancelled = s.queued = s.running = 0;
+    s.completed = s.failed = s.skipped = s.cancelled = s.queued = s.running = s.retryable = 0;
     s.running_jobs.clear();
     bool started = false;
     for (const Job& job : batch.jobs) {
@@ -168,6 +169,7 @@ void FakeBatchService::publish(Batch& batch) {
             break;
         case BatchOutcome::Failed:
             ++s.failed;
+            ++s.retryable;
             break;
         case BatchOutcome::Cancelled:
             ++s.cancelled;

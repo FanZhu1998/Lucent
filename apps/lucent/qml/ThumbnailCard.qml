@@ -45,7 +45,8 @@ Item {
 
     Accessible.role: Accessible.ListItem
     Accessible.name: accessibleLabel
-    Accessible.selected: selected || inSelection
+    // The batch selection; the current photo alone is not "selected" for assistive technology.
+    Accessible.selected: inSelection
 
     HoverHandler {
         id: hover
@@ -73,10 +74,11 @@ Item {
         anchors.fill: parent
         anchors.margins: 6
         radius: Theme.radius
-        color: card.selected || card.inSelection ? Theme.surfaceRaised
-                                                 : (hover.hovered ? Theme.surfaceHover : Theme.surface)
-        border.width: card.selected || card.inSelection ? 2 : 0
-        border.color: Theme.accent
+        // Selected photos are filled and outlined in the accent; the current photo outside the
+        // selection (after Ctrl+click or Ctrl+Arrow) only gets a thin neutral outline.
+        color: card.inSelection ? Theme.surfaceRaised : (hover.hovered ? Theme.surfaceHover : Theme.surface)
+        border.width: card.inSelection ? 2 : (card.selected ? 1 : 0)
+        border.color: card.inSelection ? Theme.accent : Theme.indicatorBorder
 
         Rectangle {
             id: well

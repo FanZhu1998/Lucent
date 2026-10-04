@@ -1,11 +1,13 @@
 #pragma once
 
 // BatchListModel: the Exports view's list of batches (blueprint section 2 step 5), newest first,
-// mirroring the BatchService's snapshots: live counts (exported, remaining, failed, skipped, for
-// review), the current stage, an ETA only when the service has one, the attention with its
-// actionable text, and the commands (pause, resume, cancel, retry failed). Single exports are
-// batches of one and read as one photo. Submissions that have not created their batch yet
-// (importing a folder, fingerprinting originals) are shown as "preparing".
+// mirroring the BatchService's snapshots: live counts (exported, remaining, failed, skipped, left
+// out, for review), the current stage, an ETA only while a batch runs and the service has one, the
+// attention with its actionable text, and the commands (pause, resume, use a replaced folder,
+// cancel, retry failed). Single exports (marked by the service) read as one photo. Submissions that
+// have not created their batch yet (importing a folder, fingerprinting originals) are shown as
+// "preparing". The service lists the newest batches and every unfinished one; older ones are
+// loaded on request (loadOlder).
 //
 // The service already coalesces its updates (a few per second per batch); this model only updates
 // the row that changed and emits summaryChanged when the summary moved.
@@ -45,6 +47,8 @@ class BatchListModel : public QAbstractListModel {
     Q_PROPERTY(QString preparingName READ preparing_name NOTIFY preparingChanged FINAL)
     Q_PROPERTY(QString preparingText READ preparing_text NOTIFY preparingChanged FINAL)
     Q_PROPERTY(double preparingProgress READ preparing_progress NOTIFY preparingChanged FINAL)
+    // Older batches than those listed exist (loadOlder lists the next page).
+    Q_PROPERTY(bool hasOlder READ has_older NOTIFY hasOlderChanged FINAL)
 
 public:
     enum Role {
@@ -59,7 +63,8 @@ public:
         CompletedRole,
         RemainingRole,
         FailedRole,
-        SkippedRole,
+        SkippedRole,         // photos of the batch skipped (already exported, unsupported)
+        LeftOutRole,         // photos left out when the batch was created
         ReviewRole,          // -1 until counted
         ProgressRole,        // 0..1
         ProgressLabelRole,   // "3 of 5"
@@ -69,11 +74,13 @@ public:
         AttentionRole,       // what happened and what to do
         CanPauseRole,
         CanResumeRole,
+        CanUseFolderRole,    // the attention is a replaced output folder: "Use this folder"
         CanCancelRole,
-        CanRetryRole,
+        CanRetryRole,        // failed photos that Retry failed exports again
         CanOpenFolderRole,
-        CanOpenReportRole,   // a finished batch of more than one photo
+        CanOpenReportRole,   // a finished batch (the report file is written on request)
         OutputPathRole,      // the newest exported file (a batch of one: its output); may be empty
+        OutcomeReasonRole,   // a single export not exported: why
         TimesLabelRole,
         IsActiveRole,
         AccessibleLabelRole,
@@ -98,10 +105,14 @@ public:
     [[nodiscard]] QString preparing_name() const;
     [[nodiscard]] QString preparing_text() const;
     [[nodiscard]] double preparing_progress() const;
+    [[nodiscard]] bool has_older() const noexcept { return has_older_; }
 
     // Commands for the batch at `row` (ignored for an invalid row or one that cannot do it).
     Q_INVOKABLE void pause(int row);
     Q_INVOKABLE void resume(int row);
+    Q_INVOKABLE void useReplacedFolder(int row);
+    // Lists the next page of older batches.
+    Q_INVOKABLE void loadOlder();
     Q_INVOKABLE void cancel(int row);
     Q_INVOKABLE void retryFailed(int row);
     // Stops the oldest preparing submission.
@@ -121,6 +132,7 @@ signals:
     void countChanged();
     void summaryChanged();
     void preparingChanged();
+    void hasOlderChanged();
 
 private:
     struct Submission {
@@ -146,6 +158,7 @@ private:
     int last_active_ = -1;
     int last_attention_ = -1;
     int last_remaining_ = -1;
+    bool has_older_ = false;
 };
 
 }  // namespace lucent::ui

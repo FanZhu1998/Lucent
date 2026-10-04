@@ -23,6 +23,7 @@ Rectangle {
     required property int remaining
     required property int failed
     required property int skipped
+    required property int leftOut
     required property int review
     required property real progress
     required property string progressLabel
@@ -32,11 +33,13 @@ Rectangle {
     required property string attention
     required property bool canPause
     required property bool canResume
+    required property bool canUseFolder
     required property bool canCancel
     required property bool canRetry
     required property bool canOpenFolder
     required property bool canOpenReport
     required property string outputPath
+    required property string outcomeReason
     required property string timesLabel
     required property bool isActive
     required property string accessibleLabel
@@ -47,6 +50,7 @@ Rectangle {
     signal clicked()
     signal pauseRequested()
     signal resumeRequested()
+    signal useFolderRequested()
     signal cancelRequested()
     signal retryRequested()
     signal openFolderRequested()
@@ -100,6 +104,15 @@ Rectangle {
                 Layout.fillWidth: true
             }
 
+            // A single export's outputs can be recommended for review too.
+            Text {
+                objectName: "batchReviewMark"
+                visible: row.single && row.review > 0
+                text: qsTr("Review")
+                color: Theme.attention
+                font.pixelSize: Theme.fontSmall
+            }
+
             Text {
                 objectName: "batchStateLabel"
                 text: row.single || row.stateKey === "completed" || !row.isActive
@@ -120,6 +133,18 @@ Rectangle {
             Layout.leftMargin: 20
         }
 
+        // A single export that ended without its photo: why.
+        Text {
+            objectName: "batchOutcomeReason"
+            visible: row.single && row.outcomeReason.length > 0
+            text: row.outcomeReason
+            color: row.stateKey === "cancelled" || row.stateKey === "failed" ? Theme.unsupported : Theme.textSecondary
+            font.pixelSize: Theme.fontSmall
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.leftMargin: 20
+        }
+
         // Live counts: exported, remaining, failed, skipped, for review.
         Flow {
             objectName: "batchCounts"
@@ -134,6 +159,7 @@ Rectangle {
                     { key: "remaining", label: qsTr("%1 remaining").arg(row.remaining), shown: row.remaining > 0 },
                     { key: "failed", label: qsTr("%1 failed").arg(row.failed), shown: row.failed > 0 },
                     { key: "skipped", label: qsTr("%1 skipped").arg(row.skipped), shown: row.skipped > 0 },
+                    { key: "leftOut", label: qsTr("%1 left out").arg(row.leftOut), shown: row.leftOut > 0 },
                     { key: "review", label: qsTr("%1 for review").arg(row.review), shown: row.review > 0 }
                 ]
 
@@ -230,9 +256,18 @@ Rectangle {
                 }
 
                 StyledButton {
+                    objectName: "batchAttentionUseFolder"
+                    visible: row.canUseFolder
+                    text: qsTr("Use this folder")
+                    highlighted: true
+                    onClicked: row.useFolderRequested()
+                    Accessible.name: qsTr("Continue %1 in the folder now at its output path").arg(row.name)
+                }
+
+                StyledButton {
                     objectName: "batchAttentionResume"
                     text: qsTr("Resume")
-                    highlighted: true
+                    highlighted: !row.canUseFolder
                     onClicked: row.resumeRequested()
                     Accessible.name: qsTr("Resume %1").arg(row.name)
                 }
@@ -300,7 +335,7 @@ Rectangle {
 
             StyledToolButton {
                 objectName: "batchOpenReport"
-                visible: row.canOpenReport
+                visible: row.canOpenReport && !row.single  // a single export's is in its report pane
                 text: qsTr("Open report")
                 onClicked: row.openReportRequested()
                 Accessible.name: qsTr("Open the report of %1").arg(row.name)

@@ -1,8 +1,10 @@
 import QtQuick
+import QtQuick.Controls
 import Lucent
 
 // The opening screen of an empty library: Add photos, Add folder and the Include subfolders
-// option (blueprint section 2, "Import and organize").
+// option (blueprint section 2, "Import and organize"), and W7's Export a folder (a folder batch
+// adds the folder's photos first).
 FocusScope {
     id: root
 
@@ -10,6 +12,7 @@ FocusScope {
 
     signal addPhotosRequested()
     signal addFolderRequested()
+    signal exportFolderRequested()
 
     function takeFocus() {
         addPhotosButton.forceActiveFocus(Qt.OtherFocusReason)
@@ -64,6 +67,16 @@ FocusScope {
                 objectName: "addFolderButton"
                 text: qsTr("Add folder…")
                 onClicked: root.addFolderRequested()
+            }
+
+            StyledButton {
+                objectName: "emptyExportFolderButton"
+                visible: root.controller.batchesAvailable
+                text: qsTr("Export a folder…")
+                onClicked: root.exportFolderRequested()
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Add a folder's photos to the library and export them into a folder you choose")
+                ToolTip.delay: 600
             }
         }
 

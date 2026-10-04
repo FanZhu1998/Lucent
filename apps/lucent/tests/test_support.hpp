@@ -139,6 +139,8 @@ public:
     void cancel_submit(quint64 token) override { cancelled_submissions.push_back(token); }
     void pause(BatchId batch) override { commands.push_back({QStringLiteral("pause"), batch}); }
     void resume(BatchId batch) override { commands.push_back({QStringLiteral("resume"), batch}); }
+    void use_replaced_folder(BatchId batch) override { commands.push_back({QStringLiteral("use_folder"), batch}); }
+    void load_older() override { ++older_loads; }
     void cancel(BatchId batch) override { commands.push_back({QStringLiteral("cancel"), batch}); }
     void retry_failed(BatchId batch) override { commands.push_back({QStringLiteral("retry"), batch}); }
     void refresh() override { ++refreshes; }
@@ -154,6 +156,7 @@ public:
         emit submitted(token, batch, error);
     }
     void list(const QList<BatchSnapshot>& batches) { emit batches_listed(batches); }
+    void older(bool more) { emit older_batches(more); }
     void change(const BatchSnapshot& batch) { emit batch_changed(batch); }
     void answer_report(BatchId batch, const BatchReportInfo& report) { emit report_ready(batch, report); }
     void answer_report_file(BatchId batch, const QString& path, const QString& error = {}) {
@@ -170,6 +173,7 @@ public:
     std::vector<quint64> cancelled_submissions;
     std::vector<std::pair<QString, BatchId>> commands;
     int refreshes = 0;
+    int older_loads = 0;
     std::vector<BatchId> reports;
     std::vector<BatchId> report_files;
 };

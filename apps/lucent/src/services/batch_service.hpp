@@ -65,9 +65,10 @@ struct BatchSetup {
 
 struct BatchPlanExample {
     QString source_name;
-    QString destination;  // the full output path
+    QString destination;  // the full output path (an already exported one: the existing file)
     bool renamed = false;
     bool replaces = false;
+    bool already_exported = false;  // skipped: an identical output is already in the folder
 };
 
 struct BatchPlanExclusion {
@@ -113,6 +114,9 @@ enum class BatchAttention : std::uint8_t {
     DestinationFull = 1,
     DestinationUnavailable = 2,
     DestinationPermission = 3,
+    // Another folder is at the output folder's path (created again, or another drive got its
+    // letter): BatchService::use_replaced_folder continues there.
+    DestinationReplaced = 4,
 };
 
 struct BatchRunningJob {
@@ -138,7 +142,14 @@ struct BatchSnapshot {
     qint64 skipped = 0;
     qint64 cancelled = 0;
     qint64 review = -1;    // exported outputs recommended for review; -1 until counted
-    qint64 excluded = -1;  // photos left out when the batch was created (reported as skipped); -1 until counted
+    qint64 excluded = -1;  // photos left out when the batch was created; -1 until counted
+    qint64 retryable = 0;  // failed photos that Retry failed exports again
+    // An interactive single export (Export in Edit), shown as one photo; a batch from the dialog
+    // is a batch whatever its size.
+    bool single_export = false;
+    // A batch of one photo that ended without exporting it: why (failed, skipped, or cancelled
+    // because of the destination); empty otherwise.
+    QString outcome_reason;
     BatchAttention attention = BatchAttention::None;
     QString attention_message;  // what happened and what to do; empty without an attention
     QList<BatchRunningJob> running_jobs;
@@ -149,7 +160,7 @@ struct BatchSnapshot {
     QString report_path;    // the HTML report once written; empty otherwise
 
     [[nodiscard]] qint64 remaining() const noexcept { return queued + running; }
-    [[nodiscard]] bool single() const noexcept { return total == 1; }
+    [[nodiscard]] bool single() const noexcept { return single_export; }
     [[nodiscard]] bool finished_state() const noexcept {
         return state == BatchState::Completed || (state == BatchState::Cancelled && running == 0);
     }
@@ -226,11 +237,17 @@ public:
     // Batch commands; failures arrive as command_failed().
     virtual void pause(BatchId batch) = 0;
     virtual void resume(BatchId batch) = 0;  // also after an attention, once the problem is fixed
+    // After BatchAttention::DestinationReplaced: continue in the folder now at the output path.
+    virtual void use_replaced_folder(BatchId batch) = 0;
     virtual void cancel(BatchId batch) = 0;
     virtual void retry_failed(BatchId batch) = 0;
 
-    // Reloads the list of batches (batches_listed).
+    // Lists the newest batches and every batch with work left, whatever its age
+    // (batches_listed).
     virtual void refresh() = 0;
+    // Lists the next page of older batches (batches_listed); older_batches(false) once there are
+    // no more.
+    virtual void load_older() = 0;
     // Reads the report of `batch` (report_ready).
     virtual void request_report(BatchId batch) = 0;
     // Makes sure the readable HTML report of a finished batch exists in its output folder (writing
@@ -247,8 +264,10 @@ signals:
     void submit_progress(quint64 token, const QString& text, double fraction);
     // `batch` is 0 when the batch was not created; `error` then says why.
     void submitted(quint64 token, lucent::ui::BatchId batch, const QString& error);
-    // Every batch the service lists (newest first, limited); replaces what was known.
+    // Batches the service lists (newest first): they are added to (or update) what is known.
     void batches_listed(const QList<lucent::ui::BatchSnapshot>& batches);
+    // Whether older batches than those listed exist (load_older).
+    void older_batches(bool available);
     // A complete new snapshot of one batch (also for a batch not listed before: a new one).
     void batch_changed(const lucent::ui::BatchSnapshot& batch);
     void report_ready(lucent::ui::BatchId batch, const lucent::ui::BatchReportInfo& report);

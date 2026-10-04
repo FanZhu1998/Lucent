@@ -623,7 +623,8 @@ Dialog {
 
                         Text {
                             text: modelData.destination
-                            color: Theme.textPrimary
+                            // An output already in the folder is not written again.
+                            color: modelData.skipped ? Theme.textSecondary : Theme.textPrimary
                             font.pixelSize: Theme.fontBody
                             font.family: "Consolas"
                             elide: Text.ElideMiddle

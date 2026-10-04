@@ -120,7 +120,8 @@ QtObject {
             return attention
         case "running":
         case "waiting":
-            return accent
+            // Text: the focus-ring blue keeps 4.5:1 on surface and surfaceRaised (accent does not).
+            return focusRing
         }
         return textTertiary
     }

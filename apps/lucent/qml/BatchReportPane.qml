@@ -85,7 +85,8 @@ Rectangle {
         // Outcome filters with their counts.
         Flow {
             objectName: "reportFilters"
-            visible: pane.report.total > 1  // a single export needs no filters
+            // A single export needs no filters (unless one is chosen: it can always be switched back).
+            visible: pane.report.total > 1 || pane.report.filter !== "all"
             spacing: 4
             Layout.fillWidth: true
             Layout.topMargin: 4

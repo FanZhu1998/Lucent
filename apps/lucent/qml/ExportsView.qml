@@ -2,13 +2,15 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import Lucent
 
 // Exports (blueprint section 2, "Automatic batch development" step 5): every batch, newest first,
 // with live counts, the current stage, an ETA when the service has measured one, pause, resume,
 // cancel and retry failed, attention banners with Resume, and the selected batch's report with
-// Open output folder and Open report. Single exports are batches of one. When this session cannot
+// Open output folder and Open report. Single exports are batches of one. The newest batches and
+// every unfinished one are listed; Show older exports pages further back. When this session cannot
 // keep batches (the library is not saved), the session's in-process export jobs are listed instead.
 // Up/Down move through the list.
 FocusScope {
@@ -71,6 +73,16 @@ FocusScope {
 
                 Item {
                     Layout.fillWidth: true
+                }
+
+                StyledButton {
+                    objectName: "exportsFolderBatchButton"
+                    visible: root.batchesAvailable
+                    text: qsTr("Export a folder…")
+                    onClicked: exportFolderPicker.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Add a folder's photos to the library and export them into a folder you choose")
+                    ToolTip.delay: 800
                 }
 
                 StyledButton {
@@ -208,6 +220,22 @@ FocusScope {
                     // shifts the current index without a choice).
                     Keys.onReleased: followNewest = currentIndex === 0
 
+                    // Older batches are listed on request (every unfinished one is listed already).
+                    footer: Item {
+                        width: batchList.width
+                        height: root.controller.batches.hasOlder ? olderButton.implicitHeight + 16 : 0
+                        visible: root.controller.batches.hasOlder
+
+                        StyledButton {
+                            id: olderButton
+
+                            objectName: "batchListOlder"
+                            anchors.centerIn: parent
+                            text: qsTr("Show older exports")
+                            onClicked: root.controller.batches.loadOlder()
+                        }
+                    }
+
                     delegate: BatchRow {
                         width: batchList.width
                         selected: ListView.isCurrentItem
@@ -219,6 +247,7 @@ FocusScope {
                         }
                         onPauseRequested: root.controller.batches.pause(index)
                         onResumeRequested: root.controller.batches.resume(index)
+                        onUseFolderRequested: root.controller.batches.useReplacedFolder(index)
                         onCancelRequested: root.controller.batches.cancel(index)
                         onRetryRequested: root.controller.batches.retryFailed(index)
                         onOpenFolderRequested: root.controller.openBatchFolder(index)
@@ -263,6 +292,13 @@ FocusScope {
                 Layout.fillHeight: true
                 Layout.preferredWidth: Math.max(320, Math.round(root.width * 0.4))
             }
+        }
+
+        FolderDialog {
+            id: exportFolderPicker
+
+            title: qsTr("Choose the folder of photos to export")
+            onAccepted: root.controller.openFolderBatchExport(selectedFolder)
         }
 
         // --- In-process export jobs (no batches in this session) ---------------------------------

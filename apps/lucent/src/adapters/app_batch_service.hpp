@@ -21,11 +21,15 @@
 // applies everything that accumulated at most once per `coalesce` interval, emitting one
 // batch_changed() per changed batch. So a batch of thousands of photos produces a few UI updates a
 // second, whatever its size. Events carry no ETA and no review count: while a batch has work, its
-// status (running jobs, ETA once the service has measured three photos, attention) is read every
-// `status_interval` and its review count and left-out photos (from its report) at most every
-// `review_interval` (longer for large batches: a report reads every job), and once more when it
-// finishes. A status read that started before newer events were applied does not overwrite their
-// state or counts.
+// status (running jobs, ETA once the service has measured three photos and only while it runs,
+// attention, review and retry counts, left-out photos; a batch of one: its output or why there is
+// none) is read every `status_interval`, and once more when it finishes. No report is read for the
+// list. A status read that started before newer events were applied does not overwrite their state
+// or counts.
+//
+// The list: refresh() lists the newest `list_limit` batches and every batch with work left
+// whatever its age (a paused batch is never lost behind newer single exports); load_older() pages
+// further back.
 //
 // The output folder of every submission is recorded in Backend::output_folders() (imports do not
 // scan into it when they reach it below the folder being imported).
@@ -59,8 +63,7 @@ namespace lucent::ui::adapters {
 struct BatchAdapterOptions {
     std::chrono::milliseconds coalesce{200};
     std::chrono::milliseconds status_interval{1000};
-    std::chrono::milliseconds review_interval{4000};
-    std::uint32_t list_limit = 100;
+    std::uint32_t list_limit = 100;  // newest batches listed at once (and per load_older page)
 };
 
 class AppBatchService final : public BatchService {
@@ -78,9 +81,11 @@ public:
     void cancel_submit(quint64 token) override;
     void pause(BatchId batch) override;
     void resume(BatchId batch) override;
+    void use_replaced_folder(BatchId batch) override;
     void cancel(BatchId batch) override;
     void retry_failed(BatchId batch) override;
     void refresh() override;
+    void load_older() override;
     void request_report(BatchId batch) override;
     void request_report_file(BatchId batch) override;
     [[nodiscard]] bool is_busy() const override;
@@ -92,34 +97,21 @@ public:
 
     struct Shared;  // implementation detail: the observer's pending events
 
-    // What a batch's snapshot takes from its report (read off the UI thread): the review count, the
-    // photos left out at submission (the report lists them as skipped) and, for a batch of one, its
-    // output.
-    struct ReportFacts {
-        qint64 review = 0;
-        qint64 excluded = 0;
-        QString single_output;
-    };
-
 private:
     struct StatusResult {
         BatchId id = 0;
         std::optional<BatchSnapshot> snapshot;  // std::nullopt: the status could not be read
-        std::optional<ReportFacts> facts;
         quint64 sequence = 0;  // sequence_ when the read was dispatched
     };
-
-    // Applies `facts`; true when the snapshot changed.
-    static bool apply_facts(BatchSnapshot& snapshot, const ReportFacts& facts);
 
     void schedule_flush();
     void flush();
     void on_status_tick();
-    // Reads the status (and with `with_review` the report facts) of `batch`; false when a read of
-    // it is already outstanding.
-    bool request_status(BatchId batch, bool with_review);
+    // Reads the status of `batch`; false when a read of it is already outstanding.
+    bool request_status(BatchId batch);
     void apply_status(const std::vector<StatusResult>& results);
-    void apply_listed(const std::vector<BatchSnapshot>& listed);
+    // `oldest`: the oldest batch of the page read (0: none); `more`: the page was full.
+    void apply_listed(const std::vector<BatchSnapshot>& listed, BatchId oldest, bool more);
     void store(const BatchSnapshot& snapshot);
     void rebuild_running(BatchSnapshot& snapshot);
     void update_timers();
@@ -142,9 +134,10 @@ private:
     // Running jobs per batch by job id (events add, update and remove them).
     std::map<BatchId, std::map<std::int64_t, BatchRunningJob>> running_;
     std::map<BatchId, quint64> sequence_;  // incremented whenever events changed a batch's counts
-    std::set<BatchId> review_dirty_;        // photos finished since the review count was read
-    std::map<BatchId, std::chrono::steady_clock::time_point> review_read_;
     std::set<BatchId> final_refresh_;       // finished batches to read once more
+    BatchId oldest_listed_ = 0;             // the oldest batch of the pages read (load_older)
+    bool older_available_ = false;
+    bool listing_ = false;                  // a page is being read
     std::set<BatchId> status_requested_;    // unknown batches whose status is being read
     bool status_in_flight_ = false;
     QHash<ItemId, QString> names_;

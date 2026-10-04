@@ -16,8 +16,8 @@ namespace lucent::ui::presentation {
 // "partial" (finished with some failures), "cancelled".
 [[nodiscard]] QString batch_state_key(const BatchSnapshot& batch);
 // "Running", "Paused", "Needs attention", "Completed", "Completed with failures", "Failed",
-// "Cancelled"; a batch of one says what happened to its photo ("Exported", "Skipped", "Failed",
-// "Exporting", "Waiting").
+// "Cancelled"; a single export says what happened to its photo ("Exported", "Skipped", "Failed",
+// "Not exported" when the destination stopped it, "Exporting", "Waiting").
 [[nodiscard]] QString batch_state_label(const BatchSnapshot& batch);
 
 // Finished share of the photos, the running ones counted by their progress: 0..1.
@@ -33,7 +33,8 @@ namespace lucent::ui::presentation {
 // "3 of 5 photos" or "1 photo".
 [[nodiscard]] QString photo_count_label(qint64 count);
 
-// "Running · 3 of 5 exported · 1 failed · about 2 min left" for screen readers.
+// "Running · 3 of 5 exported · 1 failed · 2 left out · about 2 min left" for screen readers (the
+// time only while the batch runs).
 [[nodiscard]] QString batch_accessible_label(const BatchSnapshot& batch, const QLocale& locale);
 
 // "exported", "skipped", "failed", "cancelled", "pending" and their labels.

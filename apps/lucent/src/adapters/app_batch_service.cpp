@@ -16,7 +16,6 @@ namespace {
 
 constexpr std::string_view kLog = "ui.batches";
 constexpr auto kSubmitProgressInterval = std::chrono::milliseconds(100);
-constexpr std::size_t kEagerReportReads = 30;  // listed batches whose review count is read at once
 
 QString tr_text(const char* text) {
     return QCoreApplication::translate("lucent::ui::adapters", text);
@@ -30,42 +29,7 @@ bool is_terminal(catalog::BatchState state) {
     return state == catalog::BatchState::Completed || state == catalog::BatchState::Cancelled;
 }
 
-AppBatchService::ReportFacts facts_of(const app::BatchReport& report) {
-    AppBatchService::ReportFacts facts;
-    facts.review = static_cast<qint64>(report.review_recommended);
-    for (const app::ReportEntry& entry : report.entries) {
-        if (!entry.job) {
-            ++facts.excluded;
-        }
-    }
-    if (report.batch.job_count == 1) {
-        for (const app::ReportEntry& entry : report.entries) {
-            if (entry.job && entry.output && entry.outcome == app::ReportOutcome::Exported) {
-                facts.single_output = QDir::toNativeSeparators(to_qstring(*entry.output));
-            }
-        }
-    }
-    return facts;
-}
-
 }  // namespace
-
-bool AppBatchService::apply_facts(BatchSnapshot& snapshot, const ReportFacts& facts) {
-    bool changed = false;
-    if (snapshot.review != facts.review) {
-        snapshot.review = facts.review;
-        changed = true;
-    }
-    if (snapshot.excluded != facts.excluded) {
-        snapshot.excluded = facts.excluded;
-        changed = true;
-    }
-    if (snapshot.last_output.isEmpty() && !facts.single_output.isEmpty()) {
-        snapshot.last_output = facts.single_output;
-        changed = true;
-    }
-    return changed;
-}
 
 // The observer's pending events (see the file comment of the header).
 struct AppBatchService::Shared {
@@ -81,12 +45,13 @@ struct AppBatchService::Shared {
         catalog::BatchCounts counts;
         bool has_attention = false;
         app::BatchAttention attention = app::BatchAttention::None;
+        std::optional<std::uint64_t> attention_free_bytes;
+        std::uint64_t attention_needed_bytes = 0;
         std::map<std::int64_t, Job> jobs;
         std::optional<std::filesystem::path> last_output;
         std::optional<std::filesystem::path> report;
         bool created = false;
         bool finished = false;
-        bool job_finished = false;
     };
 
     std::mutex mutex;
@@ -147,7 +112,6 @@ AppBatchService::AppBatchService(std::shared_ptr<Backend> backend, BatchAdapterO
                         if (event.job_stage == catalog::JobStage::Complete && event.output) {
                             batch.last_output = event.output;
                         }
-                        batch.job_finished = true;
                         [[fallthrough]];
                     case app::BatchEventKind::Created:
                     case app::BatchEventKind::StateChanged:
@@ -157,6 +121,10 @@ AppBatchService::AppBatchService(std::shared_ptr<Backend> backend, BatchAdapterO
                         batch.state = event.state;
                         batch.counts = event.counts;
                         batch.has_attention = true;
+                        if (event.kind == app::BatchEventKind::Attention || event.attention != batch.attention) {
+                            batch.attention_free_bytes = event.attention_free_bytes;
+                            batch.attention_needed_bytes = event.attention_needed_bytes;
+                        }
                         batch.attention = event.attention;
                         batch.created = batch.created || event.kind == app::BatchEventKind::Created;
                         batch.finished = batch.finished || event.kind == app::BatchEventKind::Finished;
@@ -291,7 +259,7 @@ quint64 AppBatchService::submit(const BatchSetup& setup) {
         dispatcher->post([this, token, id, error] {
             submissions_.erase(token);
             if (id != 0 && !snapshots_.contains(id)) {
-                request_status(id, false);
+                request_status(id);
             }
             emit submitted(token, id, error);
             update_busy();
@@ -323,6 +291,8 @@ void AppBatchService::run_command(BatchId batch, const char* what) {
             result = service.pause(id);
         } else if (command == "resume") {
             result = service.resume(id);
+        } else if (command == "use_folder") {
+            result = service.use_replaced_folder(id);
         } else if (command == "cancel") {
             result = service.cancel(id);
         } else if (command == "retry") {
@@ -349,6 +319,10 @@ void AppBatchService::resume(BatchId batch) {
     run_command(batch, "resume");
 }
 
+void AppBatchService::use_replaced_folder(BatchId batch) {
+    run_command(batch, "use_folder");
+}
+
 void AppBatchService::cancel(BatchId batch) {
     run_command(batch, "cancel");
 }
@@ -363,18 +337,60 @@ void AppBatchService::refresh() {
         return;
     }
     const std::uint32_t limit = options_.list_limit;
+    listing_ = true;
     commands_->start([backend = backend_, dispatcher = dispatcher_, this, limit] {
+        // The newest batches, and every batch with work left whatever its age.
         auto listed = backend->batches()->list(limit);
         if (!listed) {
             core::log_warn(kLog, "cannot list the batches: {}", listed.error().describe());
+            dispatcher->post([this] { listing_ = false; });
             return;
         }
         auto snapshots = std::make_shared<std::vector<BatchSnapshot>>();
         snapshots->reserve(listed->size());
+        std::set<BatchId> seen;
+        BatchId oldest = 0;
         for (const app::BatchStatus& status : *listed) {
             snapshots->push_back(to_snapshot(status));
+            seen.insert(snapshots->back().id);
+            oldest = snapshots->back().id;
         }
-        dispatcher->post([this, snapshots] { apply_listed(*snapshots); });
+        const bool more = listed->size() >= limit;
+        if (auto unfinished = backend->batches()->list_unfinished()) {
+            for (const app::BatchStatus& status : *unfinished) {
+                if (!seen.contains(static_cast<BatchId>(status.record.id.value))) {
+                    snapshots->push_back(to_snapshot(status));
+                }
+            }
+        } else {
+            core::log_warn(kLog, "cannot list the unfinished batches: {}", unfinished.error().describe());
+        }
+        dispatcher->post([this, snapshots, oldest, more] { apply_listed(*snapshots, oldest, more); });
+    });
+}
+
+void AppBatchService::load_older() {
+    if (backend_->batches() == nullptr || listing_ || !older_available_ || oldest_listed_ == 0) {
+        return;
+    }
+    const std::uint32_t limit = options_.list_limit;
+    const BatchId before = oldest_listed_;
+    listing_ = true;
+    commands_->start([backend = backend_, dispatcher = dispatcher_, this, limit, before] {
+        auto listed = backend->batches()->list(limit, to_catalog(before));
+        if (!listed) {
+            core::log_warn(kLog, "cannot list older batches: {}", listed.error().describe());
+            dispatcher->post([this] { listing_ = false; });
+            return;
+        }
+        auto snapshots = std::make_shared<std::vector<BatchSnapshot>>();
+        BatchId oldest = 0;
+        for (const app::BatchStatus& status : *listed) {
+            snapshots->push_back(to_snapshot(status));
+            oldest = snapshots->back().id;
+        }
+        const bool more = listed->size() >= limit;
+        dispatcher->post([this, snapshots, oldest, more] { apply_listed(*snapshots, oldest, more); });
     });
 }
 
@@ -389,23 +405,13 @@ void AppBatchService::request_report(BatchId batch) {
     commands_->start([backend = backend_, dispatcher = dispatcher_, this, batch] {
         auto report = backend->batches()->report(to_catalog(batch));
         BatchReportInfo info;
-        std::optional<ReportFacts> facts;
         if (report) {
             info = to_report_info(*report);
-            facts = facts_of(*report);
         } else {
             info.id = batch;
             info.error = describe_batch_error(report.error());
         }
-        dispatcher->post([this, batch, info = std::move(info), facts] {
-            if (facts) {
-                if (const auto found = snapshots_.find(batch);
-                    found != snapshots_.end() && apply_facts(found->second, *facts)) {
-                    emit batch_changed(found->second);
-                }
-            }
-            emit report_ready(batch, info);
-        });
+        dispatcher->post([this, batch, info = std::move(info)] { emit report_ready(batch, info); });
     });
 }
 
@@ -449,7 +455,7 @@ void AppBatchService::request_report_file(BatchId batch) {
 }
 
 bool AppBatchService::is_busy() const {
-    // Submissions, and the final reads of batches that just finished (their report facts).
+    // Submissions, and the final reads of batches that just finished (their final counts).
     if (!submissions_.empty() || !status_requested_.empty() || !final_refresh_.empty()) {
         return true;
     }
@@ -523,13 +529,10 @@ void AppBatchService::flush() {
         if (batch.has_counts && is_terminal(batch.state) && batch.counts.leased() == 0) {
             jobs.clear();
         }
-        if (batch.job_finished) {
-            review_dirty_.insert(id);
-        }
         const auto found = snapshots_.find(id);
         if (found == snapshots_.end()) {
             // A new batch (or one not listed): read it completely.
-            if (!request_status(id, batch.finished) && batch.finished) {
+            if (!request_status(id) && batch.finished) {
                 final_refresh_.insert(id);
             }
             continue;
@@ -539,13 +542,15 @@ void AppBatchService::flush() {
             apply_counts(snapshot, batch.state, batch.counts);
             ++sequence_[id];
         }
-        // Finished: its time, review count and report facts are read at once (not at the next tick).
-        if (batch.finished && !request_status(id, true)) {
+        // Finished: its time, review and retry counts and output are read at once (not at the next
+        // tick; while it runs, the tick reads them every status_interval).
+        if (batch.finished && !request_status(id)) {
             final_refresh_.insert(id);
         }
         if (batch.has_attention) {
             snapshot.attention = to_ui_attention(batch.attention);
-            snapshot.attention_message = describe_attention(snapshot.attention, snapshot.folder);
+            snapshot.attention_message = describe_attention(snapshot.attention, snapshot.folder,
+                                                            batch.attention_free_bytes, batch.attention_needed_bytes);
         }
         if (batch.last_output) {
             snapshot.last_output = QDir::toNativeSeparators(to_qstring(*batch.last_output));
@@ -553,8 +558,8 @@ void AppBatchService::flush() {
         if (batch.report) {
             snapshot.report_path = QDir::toNativeSeparators(to_qstring(*batch.report));
         }
-        if (snapshot.finished_state()) {
-            snapshot.eta_seconds = -1.0;
+        if (snapshot.state != BatchState::Running || snapshot.attention != BatchAttention::None) {
+            snapshot.eta_seconds = -1.0;  // stalled or done: no time left to tell
         }
         rebuild_running(snapshot);
         emit batch_changed(snapshot);
@@ -563,22 +568,17 @@ void AppBatchService::flush() {
     update_busy();
 }
 
-bool AppBatchService::request_status(BatchId batch, bool with_review) {
+bool AppBatchService::request_status(BatchId batch) {
     if (backend_->batches() == nullptr || !status_requested_.insert(batch).second) {
         return false;
     }
     const quint64 sequence = sequence_[batch];
-    commands_->start([backend = backend_, dispatcher = dispatcher_, this, batch, with_review, sequence] {
+    commands_->start([backend = backend_, dispatcher = dispatcher_, this, batch, sequence] {
         StatusResult result;
         result.id = batch;
         result.sequence = sequence;
         if (auto status = backend->batches()->status(to_catalog(batch))) {
             result.snapshot = to_snapshot(*status);
-        }
-        if (with_review) {
-            if (auto report = backend->batches()->report(to_catalog(batch))) {
-                result.facts = facts_of(*report);
-            }
         }
         dispatcher->post([this, result = std::move(result)] {
             status_requested_.erase(result.id);
@@ -592,26 +592,14 @@ void AppBatchService::on_status_tick() {
     if (status_in_flight_ || backend_->batches() == nullptr) {
         return;
     }
-    const auto now = std::chrono::steady_clock::now();
-    std::vector<std::pair<BatchId, bool>> wanted;  // batch, with review
+    std::vector<BatchId> wanted;
     for (const auto& [id, snapshot] : snapshots_) {
         const bool active = (snapshot.state == BatchState::Running && snapshot.remaining() > 0) ||
                             (snapshot.state == BatchState::Paused && snapshot.running > 0) ||
                             (snapshot.state == BatchState::Cancelled && snapshot.running > 0);
-        const bool final = final_refresh_.contains(id);
-        if (!active && !final) {
-            continue;
+        if (active || final_refresh_.contains(id)) {
+            wanted.push_back(id);
         }
-        bool review = final;
-        if (!review && review_dirty_.contains(id)) {
-            const auto read = review_read_.find(id);
-            // A report reads every job of the batch: large batches are read less often (2 ms per
-            // photo, at least review_interval).
-            const auto interval = std::max<std::chrono::milliseconds>(
-                options_.review_interval, std::chrono::milliseconds(2 * snapshot.total));
-            review = read == review_read_.end() || now - read->second >= interval;
-        }
-        wanted.emplace_back(id, review);
     }
     final_refresh_.clear();
     if (wanted.empty()) {
@@ -620,27 +608,17 @@ void AppBatchService::on_status_tick() {
     }
     status_in_flight_ = true;
     std::vector<quint64> sequences;
-    for (const auto& [id, review] : wanted) {
+    for (const BatchId id : wanted) {
         sequences.push_back(sequence_[id]);
-        if (review) {
-            review_dirty_.erase(id);
-            review_read_[id] = now;
-        }
     }
     commands_->start([backend = backend_, dispatcher = dispatcher_, this, wanted, sequences] {
         auto results = std::make_shared<std::vector<StatusResult>>();
         for (std::size_t i = 0; i < wanted.size(); ++i) {
-            const auto [id, review] = wanted[i];
             StatusResult result;
-            result.id = id;
+            result.id = wanted[i];
             result.sequence = sequences[i];
-            if (auto status = backend->batches()->status(to_catalog(id))) {
+            if (auto status = backend->batches()->status(to_catalog(wanted[i]))) {
                 result.snapshot = to_snapshot(*status);
-            }
-            if (review) {
-                if (auto report = backend->batches()->report(to_catalog(id))) {
-                    result.facts = facts_of(*report);
-                }
             }
             results->push_back(std::move(result));
         }
@@ -669,9 +647,6 @@ void AppBatchService::apply_status(const std::vector<StatusResult>& results) {
                 }
             }
             store(fresh);
-            if (result.facts) {
-                apply_facts(snapshots_[result.id], *result.facts);
-            }
             emit batch_changed(snapshots_[result.id]);
             continue;
         }
@@ -688,7 +663,8 @@ void AppBatchService::apply_status(const std::vector<StatusResult>& results) {
             snapshot.skipped = fresh.skipped;
             snapshot.cancelled = fresh.cancelled;
             snapshot.attention = fresh.attention;
-            snapshot.attention_message = describe_attention(fresh.attention, fresh.folder);
+            snapshot.attention_message = fresh.attention_message;
+            snapshot.retryable = fresh.retryable;
             auto& jobs = running_[result.id];
             jobs.clear();
             for (const BatchRunningJob& job : fresh.running_jobs) {
@@ -701,10 +677,16 @@ void AppBatchService::apply_status(const std::vector<StatusResult>& results) {
         snapshot.folder = fresh.folder;
         snapshot.created = fresh.created;
         snapshot.finished = fresh.finished;
-        snapshot.eta_seconds = snapshot.finished_state() ? -1.0 : fresh.eta_seconds;
-        if (result.facts) {
-            apply_facts(snapshot, *result.facts);
+        snapshot.single_export = fresh.single_export;
+        snapshot.review = fresh.review;
+        snapshot.excluded = fresh.excluded;
+        snapshot.outcome_reason = fresh.outcome_reason;
+        if (!fresh.last_output.isEmpty()) {
+            snapshot.last_output = fresh.last_output;
         }
+        snapshot.eta_seconds = snapshot.state == BatchState::Running && snapshot.attention == BatchAttention::None
+                                   ? fresh.eta_seconds
+                                   : -1.0;
         emit batch_changed(snapshot);
     }
     update_timers();
@@ -732,38 +714,21 @@ void AppBatchService::store(const BatchSnapshot& snapshot) {
     }
 }
 
-void AppBatchService::apply_listed(const std::vector<BatchSnapshot>& listed) {
+void AppBatchService::apply_listed(const std::vector<BatchSnapshot>& listed, BatchId oldest, bool more) {
+    listing_ = false;
     QList<BatchSnapshot> list;
-    std::vector<BatchId> unreviewed;
     for (const BatchSnapshot& snapshot : listed) {
         store(snapshot);
         list.push_back(snapshots_[snapshot.id]);
-        // The newest ones only: each report reads all jobs of its batch, and this read runs before
-        // any command queued after it. Others get theirs when their report is shown.
-        if (snapshots_[snapshot.id].review < 0 && unreviewed.size() < kEagerReportReads) {
-            unreviewed.push_back(snapshot.id);
-        }
     }
+    if (oldest != 0 && (oldest_listed_ == 0 || oldest < oldest_listed_)) {
+        oldest_listed_ = oldest;
+    }
+    const bool older = more && oldest_listed_ != 0;
     emit batches_listed(list);
-    // Review counts come from the reports; read them once, in the background, newest first.
-    if (!unreviewed.empty() && backend_->batches() != nullptr) {
-        commands_->start([backend = backend_, dispatcher = dispatcher_, this, unreviewed] {
-            auto reviews = std::make_shared<std::vector<std::pair<BatchId, ReportFacts>>>();
-            for (const BatchId id : unreviewed) {
-                if (auto report = backend->batches()->report(to_catalog(id))) {
-                    reviews->emplace_back(id, facts_of(*report));
-                }
-            }
-            dispatcher->post([this, reviews] {
-                for (const auto& [id, facts] : *reviews) {
-                    if (const auto found = snapshots_.find(id); found != snapshots_.end() &&
-                                                                found->second.review < 0 &&
-                                                                apply_facts(found->second, facts)) {
-                        emit batch_changed(found->second);
-                    }
-                }
-            });
-        });
+    if (older != older_available_) {
+        older_available_ = older;
+        emit older_batches(older);
     }
     update_timers();
     update_busy();

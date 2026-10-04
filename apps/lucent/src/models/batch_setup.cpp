@@ -396,14 +396,17 @@ QVariantList BatchSetupModel::examples() const {
     QVariantList list;
     for (const BatchPlanExample& example : plan_.examples) {
         QString note;
-        if (example.replaces) {
+        if (example.already_exported) {
+            note = tr_text("already exported: skipped");
+        } else if (example.replaces) {
             note = tr_text("replaces the existing file");
         } else if (example.renamed) {
             note = tr_text("a number is added: the name is taken");
         }
         list.push_back(QVariantMap{{QStringLiteral("source"), example.source_name},
                                    {QStringLiteral("destination"), example.destination},
-                                   {QStringLiteral("note"), note}});
+                                   {QStringLiteral("note"), note},
+                                   {QStringLiteral("skipped"), example.already_exported}});
     }
     return list;
 }

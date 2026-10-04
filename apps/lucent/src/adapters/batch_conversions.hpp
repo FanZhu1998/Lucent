@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QString>
+#include <cstdint>
 #include <optional>
 
 #include <lucent/application/batch_service.hpp>
@@ -29,7 +30,10 @@ namespace lucent::ui::adapters {
 [[nodiscard]] BatchAttention to_ui_attention(app::BatchAttention attention) noexcept;
 
 // What happened and what to do, naming the output folder (native separators); empty for None.
-[[nodiscard]] QString describe_attention(BatchAttention attention, const QString& folder);
+// DestinationFull with the free space seen and what the next photo may need (bytes) says how much.
+[[nodiscard]] QString describe_attention(BatchAttention attention, const QString& folder,
+                                         std::optional<std::uint64_t> free_bytes = std::nullopt,
+                                         std::uint64_t needed_bytes = 0);
 
 // "Preparing", "Rendering", "Encoding", "Writing", "Verifying".
 [[nodiscard]] QString describe_worker_stage(workers::JobStage stage);

@@ -127,12 +127,13 @@ protected:
         return 0;
     }
 
-    // Waits until `batch` finished and its review count was read.
+    // Waits until `batch` finished and its final status (review count, output) was read.
     bool wait_finished(BatchId batch) {
         return QTest::qWaitFor(
             [&] {
                 const BatchSnapshot* snapshot = batches_->snapshot(batch);
-                return snapshot != nullptr && snapshot->finished_state() && snapshot->review >= 0;
+                return snapshot != nullptr && snapshot->finished_state() && snapshot->review >= 0 &&
+                       !batches_->is_busy();
             },
             kBatchWaitMs);
     }

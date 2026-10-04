@@ -177,8 +177,10 @@ AppController::AppController(Services services, QObject* parent)
             });
     const auto update_active = [this] {
         const int active = active_export_count();
-        if (active != last_active_exports_) {
+        const int attentions = export_attention_count();
+        if (active != last_active_exports_ || attentions != last_export_attentions_) {
             last_active_exports_ = active;
+            last_export_attentions_ = attentions;
             emit activeExportCountChanged();
         }
     };
@@ -426,6 +428,10 @@ int AppController::active_export_count() const {
     return export_model_->active_count();
 }
 
+int AppController::export_attention_count() const {
+    return services_.batches->is_available() ? batch_list_->attention_count() : 0;
+}
+
 bool AppController::openBatchExport() {
     if (library_model_->count() == 0) {
         set_status_message(tr_controller("Add photos to the library first."));
@@ -537,6 +543,20 @@ void AppController::on_batch_submitted(quint64 token, BatchId batch, const QStri
 }
 
 void AppController::on_batch_changed(const BatchSnapshot& batch) {
+    // The service paused a batch by itself: say so wherever the photographer is (the Exports tab is
+    // flagged too), once per new attention.
+    const BatchAttention seen = attentions_.value(batch.id, BatchAttention::None);
+    const BatchAttention now = batch.finished_state() ? BatchAttention::None : batch.attention;
+    if (now != seen) {
+        if (now == BatchAttention::None) {
+            attentions_.remove(batch.id);
+        } else {
+            attentions_.insert(batch.id, now);
+            if (!batch.attention_message.isEmpty()) {
+                set_status_message(batch.attention_message);
+            }
+        }
+    }
     const auto found = watched_batches_.find(batch.id);
     // Reported once its outcome is complete: the review count and the photos left out at the start
     // are read from its report right after it finished.
@@ -549,8 +569,11 @@ void AppController::on_batch_changed(const BatchSnapshot& batch) {
                           ? tr_controller("%1 was cancelled: %2 of %3 exported")
                           : tr_controller("%1 finished: %2 of %3 exported");
     message = message.arg(name).arg(batch.completed).arg(batch.total);
-    if (const qint64 skipped = batch.skipped + std::max<qint64>(0, batch.excluded); skipped > 0) {
-        message += QStringLiteral(" · ") + tr_controller("%1 skipped").arg(skipped);
+    if (batch.skipped > 0) {
+        message += QStringLiteral(" · ") + tr_controller("%1 skipped").arg(batch.skipped);
+    }
+    if (batch.excluded > 0) {
+        message += QStringLiteral(" · ") + tr_controller("%1 left out").arg(batch.excluded);
     }
     if (batch.failed > 0) {
         message += QStringLiteral(" · ") + tr_controller("%1 failed").arg(batch.failed);

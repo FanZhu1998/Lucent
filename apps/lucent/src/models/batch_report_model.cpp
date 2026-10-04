@@ -113,6 +113,12 @@ void BatchReportModel::show(qulonglong batch) {
         rows_.clear();
         endResetModel();
         emit countChanged();
+        if (filter_ != u"all") {
+            // A filter chosen for another batch would hide this one's photos (a single export has
+            // no filter buttons to switch back).
+            filter_ = QStringLiteral("all");
+            emit filterChanged();
+        }
     }
     loading_ = id != 0;
     emit reportChanged();
@@ -171,15 +177,52 @@ void BatchReportModel::rebuild_rows() {
     }
 }
 
+void BatchReportModel::update_rows(const BatchReportInfo& report) {
+    std::vector<int> wanted;
+    report_ = report;
+    for (qsizetype i = 0; i < report_.entries.size(); ++i) {
+        if (matches(report_.entries[i])) {
+            wanted.push_back(static_cast<int>(i));
+        }
+    }
+    // Rows leaving the filter, last first; then rows entering it, first first. Both lists are
+    // sorted entry indices, so the remaining rows keep their order.
+    for (int row = static_cast<int>(rows_.size()) - 1; row >= 0; --row) {
+        const int entry = rows_[static_cast<std::size_t>(row)];
+        if (!std::binary_search(wanted.begin(), wanted.end(), entry)) {
+            beginRemoveRows({}, row, row);
+            rows_.erase(rows_.begin() + row);
+            endRemoveRows();
+        }
+    }
+    for (std::size_t i = 0; i < wanted.size(); ++i) {
+        if (i >= rows_.size() || rows_[i] != wanted[i]) {
+            const int row = static_cast<int>(i);
+            beginInsertRows({}, row, row);
+            rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(i), wanted[i]);
+            endInsertRows();
+        }
+    }
+    if (!rows_.empty()) {
+        emit dataChanged(index(0), index(count() - 1));
+    }
+}
+
 void BatchReportModel::on_report(BatchId batch, const BatchReportInfo& report) {
     if (batch != batch_) {
         return;  // a report of a batch no longer shown
     }
     loading_ = false;
-    beginResetModel();
-    report_ = report;
-    rebuild_rows();
-    endResetModel();
+    const bool same_entries = report_.ok && report_.id == batch && report.ok &&
+                              report_.entries.size() == report.entries.size();
+    if (same_entries) {
+        update_rows(report);  // keeps the list's scroll position and current row
+    } else {
+        beginResetModel();
+        report_ = report;
+        rebuild_rows();
+        endResetModel();
+    }
     emit countChanged();
     emit reportChanged();
     if (reload_pending_) {

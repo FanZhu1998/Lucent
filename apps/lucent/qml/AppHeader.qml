@@ -61,10 +61,13 @@ Rectangle {
             objectName: "exportsTab"
             text: qsTr("Exports")
             badgeText: header.controller.activeExportCount > 0 ? String(header.controller.activeExportCount) : ""
+            badgeAttention: header.controller.exportAttentionCount > 0
             checked: header.controller.currentView === AppController.Exports
             onClicked: header.controller.showView(AppController.Exports)
             ToolTip.visible: hovered
-            ToolTip.text: qsTr("Exports (Ctrl+Alt+3)")
+            ToolTip.text: header.controller.exportAttentionCount > 0
+                          ? qsTr("Exports (Ctrl+Alt+3): a batch is paused and needs you")
+                          : qsTr("Exports (Ctrl+Alt+3)")
             ToolTip.delay: 800
         }
 

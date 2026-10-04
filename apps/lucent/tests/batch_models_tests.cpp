@@ -277,7 +277,8 @@ TEST_F(BatchListTest, CountsStageAndCommandsFollowTheStateTransitions) {
     EXPECT_EQ(role(model, 0, BatchListModel::StateKeyRole).toString(), QStringLiteral("running"));
     EXPECT_EQ(role(model, 0, BatchListModel::CompletedRole).toLongLong(), 3);
     EXPECT_EQ(role(model, 0, BatchListModel::RemainingRole).toLongLong(), 7);
-    EXPECT_EQ(role(model, 0, BatchListModel::SkippedRole).toLongLong(), 1);
+    EXPECT_EQ(role(model, 0, BatchListModel::SkippedRole).toLongLong(), 0);
+    EXPECT_EQ(role(model, 0, BatchListModel::LeftOutRole).toLongLong(), 1);  // shown apart, not as skipped
     EXPECT_EQ(role(model, 0, BatchListModel::ReviewRole).toLongLong(), 1);
     EXPECT_EQ(role(model, 0, BatchListModel::StageRole).toString(), QStringLiteral("Rendering A.CR3 (42 %)"));
     EXPECT_TRUE(role(model, 0, BatchListModel::EtaRole).toString().isEmpty());  // no ETA yet
@@ -301,8 +302,9 @@ TEST_F(BatchListTest, CountsStageAndCommandsFollowTheStateTransitions) {
     s.running_jobs.clear();
     s.queued = 7;
     s.running = 0;
-    s.eta_seconds = -1;
+    s.eta_seconds = 130;  // a stale estimate is not shown for a paused batch
     service.change(s);
+    EXPECT_TRUE(role(model, 0, BatchListModel::EtaRole).toString().isEmpty());
     EXPECT_EQ(role(model, 0, BatchListModel::StateKeyRole).toString(), QStringLiteral("paused"));
     EXPECT_FALSE(role(model, 0, BatchListModel::CanPauseRole).toBool());
     EXPECT_TRUE(role(model, 0, BatchListModel::CanResumeRole).toBool());
@@ -314,8 +316,12 @@ TEST_F(BatchListTest, CountsStageAndCommandsFollowTheStateTransitions) {
     s.state = BatchState::Completed;
     s.completed = 8;
     s.failed = 2;
+    s.retryable = 0;  // not counted yet (or every failure lost its published output)
     s.queued = 0;
     s.finished = QDateTime::currentDateTime();
+    service.change(s);
+    EXPECT_FALSE(role(model, 0, BatchListModel::CanRetryRole).toBool());
+    s.retryable = 2;
     service.change(s);
     EXPECT_EQ(role(model, 0, BatchListModel::StateKeyRole).toString(), QStringLiteral("partial"));
     EXPECT_EQ(role(model, 0, BatchListModel::StateLabelRole).toString(), QStringLiteral("Completed with failures"));
@@ -358,6 +364,7 @@ TEST_F(BatchListTest, AnAttentionIsShownWithItsTextAndResumeUntilTheBatchMovesOn
 
 TEST_F(BatchListTest, ASingleExportReadsAsOnePhoto) {
     BatchSnapshot s = batch(5, BatchState::Running, 1, 0, 0, 1);
+    s.single_export = true;  // marked by the service, not guessed from its size
     s.running_jobs = {BatchRunningJob{1, 3, QStringLiteral("A.NEF"), QStringLiteral("Writing"), 0.9}};
     service.change(s);
     EXPECT_TRUE(role(model, 0, BatchListModel::SingleRole).toBool());
@@ -370,7 +377,70 @@ TEST_F(BatchListTest, ASingleExportReadsAsOnePhoto) {
     service.change(s);
     EXPECT_EQ(role(model, 0, BatchListModel::StateLabelRole).toString(), QStringLiteral("Exported"));
     EXPECT_EQ(role(model, 0, BatchListModel::OutputPathRole).toString(), s.last_output);
-    EXPECT_FALSE(role(model, 0, BatchListModel::CanOpenReportRole).toBool());  // no clutter
+    // Its report is offered in the report pane (the compact row has no button for it).
+    EXPECT_TRUE(role(model, 0, BatchListModel::CanOpenReportRole).toBool());
+
+    // A batch of one from the dialog is a batch.
+    BatchSnapshot dialog = batch(6, BatchState::Completed, 1, 1);
+    service.change(dialog);
+    EXPECT_FALSE(role(model, 0, BatchListModel::SingleRole).toBool());
+    EXPECT_EQ(role(model, 0, BatchListModel::StateLabelRole).toString(), QStringLiteral("Completed"));
+
+    // A single export the destination stopped says so instead of "Cancelled".
+    BatchSnapshot stopped = batch(7, BatchState::Cancelled, 1, 0);
+    stopped.single_export = true;
+    stopped.cancelled = 1;
+    stopped.outcome_reason = QStringLiteral("The destination ran out of space.");
+    service.change(stopped);
+    EXPECT_EQ(role(model, 0, BatchListModel::StateLabelRole).toString(), QStringLiteral("Not exported"));
+    EXPECT_EQ(role(model, 0, BatchListModel::OutcomeReasonRole).toString(), stopped.outcome_reason);
+    EXPECT_TRUE(role(model, 0, BatchListModel::AccessibleLabelRole).toString().contains(stopped.outcome_reason));
+}
+
+TEST_F(BatchListTest, AReplacedFolderOffersUseThisFolder) {
+    BatchSnapshot s = batch(9, BatchState::Paused, 4, 1, 3);
+    s.attention = BatchAttention::DestinationReplaced;
+    s.attention_message = QStringLiteral("D:\\Out is not the folder this batch started in.");
+    service.change(s);
+    EXPECT_TRUE(role(model, 0, BatchListModel::CanUseFolderRole).toBool());
+    EXPECT_TRUE(role(model, 0, BatchListModel::CanResumeRole).toBool());
+    model.useReplacedFolder(0);
+    EXPECT_EQ(service.commands.back(), (std::pair<QString, BatchId>{QStringLiteral("use_folder"), 9}));
+    s.attention = BatchAttention::DestinationFull;
+    service.change(s);
+    EXPECT_FALSE(role(model, 0, BatchListModel::CanUseFolderRole).toBool());
+    model.useReplacedFolder(0);  // not offered: nothing sent
+    EXPECT_EQ(service.commands.size(), 1u);
+}
+
+TEST_F(BatchListTest, OlderBatchesAreAddedWithoutDisturbingTheList) {
+    service.list({batch(30, BatchState::Completed, 1, 1), batch(29, BatchState::Completed, 1, 1),
+                  batch(3, BatchState::Paused, 300, 23, 277)});  // an old unfinished batch is listed too
+    ASSERT_EQ(model.count(), 3);
+    EXPECT_EQ(model.batchIdAt(2), 3u);
+    EXPECT_EQ(model.summary(), QStringLiteral("1 paused"));
+    EXPECT_EQ(model.remaining_photos(), 277);
+    EXPECT_FALSE(model.has_older());
+    QSignalSpy older(&model, &BatchListModel::hasOlderChanged);
+    service.older(true);
+    EXPECT_TRUE(model.has_older());
+    EXPECT_EQ(older.count(), 1);
+    model.loadOlder();
+    EXPECT_EQ(service.older_loads, 1);
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+    service.list({batch(28, BatchState::Completed, 2, 2), batch(4, BatchState::Completed, 1, 1),
+                  batch(3, BatchState::Paused, 300, 23, 277)});
+    EXPECT_EQ(reset.count(), 0) << "a page of older batches does not reset the list";
+    EXPECT_EQ(inserted.count(), 2);
+    ASSERT_EQ(model.count(), 5);
+    EXPECT_EQ(model.batchIdAt(2), 28u);
+    EXPECT_EQ(model.batchIdAt(3), 4u);
+    EXPECT_EQ(model.batchIdAt(4), 3u);
+    service.older(false);
+    EXPECT_FALSE(model.has_older());
+    model.loadOlder();
+    EXPECT_EQ(service.older_loads, 1);
 }
 
 TEST_F(BatchListTest, PreparingSubmissionsAreShownUntilTheyAnswer) {
@@ -459,6 +529,50 @@ TEST(BatchReportModelTest, ShowsTheSelectedBatchsReportWithFilters) {
     model.clear();
     EXPECT_EQ(model.count(), 0);
     EXPECT_FALSE(model.has_report());
+}
+
+TEST(BatchReportModelTest, AReloadUpdatesRowsInPlaceAndAnotherBatchResetsTheFilter) {
+    RecordingBatchService service;
+    BatchReportModel model(service);
+    model.show(4);
+    BatchReportInfo report = report_of(4);
+    service.answer_report(4, report);
+    ASSERT_EQ(model.count(), 3);
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+    // The same batch read again (a photo finished): rows are updated, the list keeps its place.
+    report.entries[2].outcome = BatchOutcome::Exported;
+    report.entries[2].reason = QStringLiteral("Exported.");
+    model.reload();
+    service.answer_report(4, report);
+    EXPECT_EQ(reset.count(), 0);
+    EXPECT_GE(changed.count(), 1);
+    EXPECT_EQ(role(model, 2, BatchReportModel::OutcomeKeyRole).toString(), QStringLiteral("exported"));
+    // With a filter, rows enter and leave it in place.
+    model.setFilter(QStringLiteral("exported"));
+    ASSERT_EQ(model.count(), 2);
+    reset.clear();
+    QSignalSpy removed(&model, &QAbstractItemModel::rowsRemoved);
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+    report.entries[0].outcome = BatchOutcome::Failed;
+    report.entries[1].outcome = BatchOutcome::Exported;
+    model.reload();
+    service.answer_report(4, report);
+    EXPECT_EQ(reset.count(), 0);
+    EXPECT_EQ(removed.count(), 1);
+    EXPECT_EQ(inserted.count(), 1);
+    ASSERT_EQ(model.count(), 2);
+    EXPECT_EQ(role(model, 0, BatchReportModel::SourceNameRole).toString(), QStringLiteral("B.dng"));
+    EXPECT_EQ(role(model, 1, BatchReportModel::SourceNameRole).toString(), QStringLiteral("C.NEF"));
+    // Another batch (a single export): the filter goes back to all, so its photo shows.
+    QSignalSpy filter(&model, &BatchReportModel::filterChanged);
+    model.show(5);
+    EXPECT_EQ(model.filter(), QStringLiteral("all"));
+    EXPECT_EQ(filter.count(), 1);
+    BatchReportInfo single = report_of(5);
+    single.entries = {single.entries[1]};
+    service.answer_report(5, single);
+    EXPECT_EQ(model.count(), 1);
 }
 
 TEST(BatchReportModelTest, ARunningBatchsReportIsReadAgainAtMostOncePerInterval) {
@@ -570,7 +684,7 @@ TEST_F(BatchControllerTest, StartBatchShowsItPreparingThenReportsItsOutcome) {
     s.excluded = 1;
     batches->change(s);
     EXPECT_EQ(controller->status_message(),
-              QStringLiteral("Export of 3 photos finished: 2 of 3 exported · 1 skipped · 1 failed · 1 for review"));
+              QStringLiteral("Export of 3 photos finished: 2 of 3 exported · 1 left out · 1 failed · 1 for review"));
     EXPECT_EQ(controller->active_export_count(), 0);
 
     // Opening its folder and its report.
@@ -594,6 +708,32 @@ TEST_F(BatchControllerTest, AFailedSubmissionAndAFailedCommandAreReported) {
                   "folder."));
     batches->fail_command(3, QStringLiteral("The batch has changed meanwhile; try again."));
     EXPECT_EQ(controller->status_message(), QStringLiteral("The batch has changed meanwhile; try again."));
+}
+
+TEST_F(BatchControllerTest, AnAttentionIsReportedWhereverThePhotographerIs) {
+    controller->showView(AppController::Library);
+    BatchSnapshot s = batch(14, BatchState::Running, 300, 23, 277);
+    batches->change(s);
+    EXPECT_EQ(controller->export_attention_count(), 0);
+    s.state = BatchState::Paused;
+    s.attention = BatchAttention::DestinationUnavailable;
+    s.attention_message = QStringLiteral("D:\\Out is not available: its drive may have been disconnected.");
+    QSignalSpy counts(controller.get(), &AppController::activeExportCountChanged);
+    batches->change(s);
+    EXPECT_EQ(controller->status_message(), s.attention_message);
+    EXPECT_EQ(controller->export_attention_count(), 1);
+    EXPECT_GE(counts.count(), 1);
+    // Said once per attention, not at every update.
+    controller->showView(AppController::Exports);
+    const QString later = QStringLiteral("something else");
+    batches->fail_command(1, later);
+    batches->change(s);
+    EXPECT_EQ(controller->status_message(), later);
+    s.state = BatchState::Running;
+    s.attention = BatchAttention::None;
+    s.attention_message.clear();
+    batches->change(s);
+    EXPECT_EQ(controller->export_attention_count(), 0);
 }
 
 TEST_F(BatchControllerTest, BusyFollowsTheBatchService) {
