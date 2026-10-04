@@ -80,7 +80,7 @@ TEST(CatalogSchema, CreatesANewCatalogAtTheCurrentSchema) {
         EXPECT_EQ(schema.found_version, 0);
         EXPECT_EQ(schema.version, kSchemaVersion);
         EXPECT_EQ(schema.supported_version, kSchemaVersion);
-        EXPECT_EQ(schema.migrations_applied, (std::vector<std::int32_t>{1, 2}));
+        EXPECT_EQ(schema.migrations_applied, (std::vector<std::int32_t>{1, 2, 3}));
         EXPECT_FALSE(schema.pre_migration_backup.has_value());  // nothing to back up
         EXPECT_EQ(schema.created_by, "0.1.0-test");
         EXPECT_EQ(schema.written_by, "0.1.0-test");
@@ -100,7 +100,8 @@ TEST(CatalogSchema, CreatesANewCatalogAtTheCurrentSchema) {
     EXPECT_EQ(query_text(*raw, "PRAGMA journal_mode"), "wal");  // persistent
     EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'schema_version'"),
               std::to_string(kSchemaVersion));
-    // v2's recipes change what renders mean: schema-v1 readers must refuse it.
+    // v2's recipes change what renders mean: schema-v1 readers must refuse it. v3 (the batch
+    // journal) is additive and keeps the requirement at 2.
     EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'min_reader_version'"), "2");
     EXPECT_EQ(query_text(*raw, "SELECT value FROM catalog_meta WHERE key = 'created_by'"), "0.1.0-test");
     EXPECT_EQ(query_int(*raw,
@@ -108,7 +109,8 @@ TEST(CatalogSchema, CreatesANewCatalogAtTheCurrentSchema) {
                         "'0.1.0-test'"),
               2);
     for (const char* table :
-         {"sources", "items", "imports", "catalog_meta", "schema_history", "recipe_revisions"}) {
+         {"sources", "items", "imports", "catalog_meta", "schema_history", "recipe_revisions", "batches", "jobs",
+          "job_events", "publication_journal", "receipts"}) {
         EXPECT_EQ(
             query_int(*raw,
                       std::format("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = '{}'",
@@ -552,6 +554,7 @@ TEST(CatalogSchema, MigrationListValidation) {
     std::vector<detail::Migration> lowered = with_next(&add_note_column, 1);
     EXPECT_FALSE(detail::validate_migrations(lowered));
     EXPECT_EQ(detail::builtin_migrations()[1].min_reader_version, 2);
+    EXPECT_EQ(detail::builtin_migrations()[2].min_reader_version, 2);  // v3 is additive
 }
 
 }  // namespace

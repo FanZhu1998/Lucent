@@ -1,5 +1,5 @@
-# lucent_catalog: local SQLite catalog, schema migrations, backups, source identity, import records (W4)
-# and recipe revisions (W6). SQLite is private.
+# lucent_catalog: local SQLite catalog, schema migrations, backups, source identity, import records (W4),
+# recipe revisions (W6) and the durable batch journal (W7). SQLite is private.
 #
 # Layout
 #   include/lucent/catalog/   public headers (no SQLite types)
@@ -11,6 +11,7 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 lucent_add_library(catalog
     SOURCES
         include/lucent/catalog/catalog.hpp
+        include/lucent/catalog/jobs.hpp
         include/lucent/catalog/location.hpp
         include/lucent/catalog/types.hpp
         src/backup.cpp
@@ -20,8 +21,10 @@ lucent_add_library(catalog
         src/codec.hpp
         src/files.cpp
         src/files.hpp
+        src/jobs.cpp
         src/location.cpp
         src/repository.cpp
+        src/repository_support.hpp
         src/schema.cpp
         src/schema.hpp
         src/sqlite.cpp
@@ -45,6 +48,8 @@ lucent_add_test(lucent_catalog_tests
         tests/location_test.cpp
         tests/schema_test.cpp
         tests/migration_v2_test.cpp
+        tests/migration_v3_test.cpp
+        tests/jobs_test.cpp
         tests/repository_test.cpp
         tests/revision_test.cpp
         tests/transaction_test.cpp

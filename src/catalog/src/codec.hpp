@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "lucent/catalog/catalog.hpp"
+#include "lucent/catalog/jobs.hpp"
 #include "lucent/catalog/types.hpp"
 
 namespace lucent::catalog::detail {
@@ -21,6 +22,13 @@ namespace lucent::catalog::detail {
 [[nodiscard]] std::optional<ImportOutcome> parse_import_outcome(std::string_view text) noexcept;
 [[nodiscard]] std::optional<RevisionOrigin> parse_revision_origin(std::string_view text) noexcept;
 [[nodiscard]] std::optional<BackupKind> parse_backup_kind(std::string_view text) noexcept;
+// Batch journal spellings (schema v3; defined in jobs.cpp).
+[[nodiscard]] std::optional<BatchState> parse_batch_state(std::string_view text) noexcept;
+[[nodiscard]] std::optional<JobStage> parse_job_stage(std::string_view text) noexcept;
+[[nodiscard]] std::optional<FailureClass> parse_failure_class(std::string_view text) noexcept;
+[[nodiscard]] std::optional<PublicationStep> parse_publication_step(std::string_view text) noexcept;
+// A stored numeric lucent::ErrorCode; codes this build does not know read as ErrorCode::Unknown.
+[[nodiscard]] ErrorCode error_code_from_db(std::int64_t value) noexcept;
 
 // Persisted spelling of a storage kind; "invalid" for values outside the enumeration.
 [[nodiscard]] std::string_view storage_kind_text(StorageKind kind) noexcept;
