@@ -16,9 +16,10 @@
 // Shared definitions:
 //   * Luminance Y of scene- or display-linear Rec.2020 / D65: ITU-R BT.2020 coefficients
 //     Y = 0.2627 R + 0.6780 G + 0.0593 B (kRec2020Luminance).
-//   * Value norm m = max(R, G, B): the base look and the lightness curves scale a pixel by
-//     f(m) / m, which keeps channel ratios (hue and linear saturation) exactly; pixels with
-//     m <= 0 are left unchanged.
+//   * Value norm m = max(R, G, B): the base look scales a pixel by f(m) / m, which keeps channel
+//     ratios (hue and linear saturation) exactly, and leaves pixels with m <= 0 unchanged; the
+//     lightness curves do the same except for a lifted black, which they add as neutral light
+//     (apply_lightness_curves).
 //   * Display lightness l of a display-linear value d (relative to display white): CIE 1976
 //     L* / 100, l = 1.16 d^(1/3) - 0.16 above (6/29)^3, linear below (display_lightness()).
 //
@@ -92,7 +93,8 @@ inline constexpr double kContrastMaxSteepness = 8.0;
 //     f(l) = (s(b (l - p)) - s(-b p)) / (s(b (1 - p)) - s(-b p));
 // for c < 0, the exact inverse of the c > 0 curve with the same b (so +c and -c cancel):
 //     f(l) = p + logit(s(-b p) + l (s(b (1 - p)) - s(-b p))) / b.
-// c = 0 is the identity. Strictly increasing and smooth for every c.
+// c = 0 is the identity. Strictly increasing and smooth for every c, and continuous in c: it is
+// evaluated in an equivalent tanh form that keeps full precision for tiny |c| (tone_curves.cpp).
 class ContrastCurve {
 public:
     // InvalidArgument (engine.develop.contrast) unless contrast is finite and within [-1, 1].
@@ -107,8 +109,9 @@ public:
 private:
     double contrast_ = 0.0;
     double steepness_ = 0.0;
-    double low_ = 0.0;    // s(-b p)
-    double range_ = 1.0;  // s(b (1 - p)) - s(-b p)
+    double t0_ = 0.0;      // tanh(b p / 2)
+    double span_ = 1.0;    // tanh(b (1 - p) / 2) + tanh(b p / 2) = 2 (s(b (1 - p)) - s(-b p))
+    bool linear_ = true;   // b so small that the curve equals the identity to double precision
 };
 
 // ---- Base look "neutral" v1 -------------------------------------------------------------------
@@ -235,20 +238,24 @@ inline constexpr double kLocalToneRadiusFraction = 1.0 / 64.0;
 // The log luminance is floored 12 EV below the white point, so sensor noise in the deepest
 // shadows (where the shadows weight is constant) does not steer the filter.
 inline constexpr double kLocalToneFloorEv = -12.0;
-// Weight transitions in estimated display EV (0 = display white, -2.47 = display grey 0.18):
-// highlights rise from 0 at -3 EV to 1 at 0 EV, shadows fall from 1 at -6.5 EV to 0 at -2.5 EV.
+// Weight transitions in display EV (0 = display white, -2.47 = display grey 0.18): highlights
+// rise from 0 at -3 EV to 1 at 0 EV, shadows fall from 1 at -6.5 EV to 0 at -2.5 EV.
 inline constexpr std::array<double, 2> kHighlightsWeightEv = {-3.0, 0.0};
 inline constexpr std::array<double, 2> kShadowsWeightEv = {-6.5, -2.5};
 
 // Gain in EV that the local tone operation applies to a pixel whose guided-filter base layer is
-// `base_ev` (log2 of the smoothed luminance) with white point log2 W = `white_ev`:
-//   e = min(0, max(base_ev + o, base_ev - white_ev))  (estimated display EV under neutral v1:
-//       mid-tones are placed +o EV, the white point is display white),
+// `base_ev` (log2 of the smoothed luminance), with `look` the base look of the image's white
+// point W:
+//   e = min(0, max(log2 look(2^base_ev), base_ev - log2 W))  (the tone's display EV under the
+//       base look, toe and shoulder included; where the Lift regime expands the top, it is
+//       measured linearly from white instead, so the weights never change faster than one EV
+//       per scene EV there),
 //   gain = kHighlightsMaxEv * highlights * smoothstep(kHighlightsWeightEv, e)
 //        + kShadowsMaxEv * shadows * (1 - smoothstep(kShadowsWeightEv, e)),
 // smoothstep(lo, hi, e) = t^2 (3 - 2t), t = clamp((e - lo) / (hi - lo), 0, 1). The slope of the
 // gain in base_ev stays above -1 for every setting, so the smoothed tones keep their order.
-[[nodiscard]] double local_tone_gain_ev(double base_ev, double white_ev, double highlights, double shadows) noexcept;
+[[nodiscard]] double local_tone_gain_ev(double base_ev, const NeutralV1Curve& look, double highlights,
+                                        double shadows) noexcept;
 
 struct LocalToneParameters {
     double highlights = 0.0;  // [-1, 1]
@@ -283,24 +290,43 @@ struct LocalToneRecord {
 // ---- Contrast and tone curve (display-lightness curves) ---------------------------------------
 
 struct LightnessCurvesRecord {
-    std::uint64_t changed_pixels = 0;  // pixels whose value norm changed
+    std::uint64_t changed_pixels = 0;  // pixels that changed
+    double black_lift = 0.0;           // g(0), scene-linear: added to every pixel as neutral light
+    bool keeps_white = true;           // g(W) = W: norms above W keep their relation to W
 };
+
+// The top band below the white point (EV) in which apply_lightness_curves() evaluates the exact
+// chain instead of its table (the base look's corner at W in the Lift regime, and steep curves
+// next to white, are not followed closely enough by linear interpolation).
+inline constexpr double kLightnessExactBandEv = 1.0 / 32.0;
 
 // Applies the contrast curve and then the tone curve, both defined on display lightness, to
 // scene-linear `image` (scene_linear_rec2020_d65(), 3 channels) in place, by conjugation with
-// the base look `base`: for the value norm m > 0,
-//     l = display_lightness(base.evaluate(m)), l' = tone(contrast(l)),
-//     m' = base.inverse(display_lightness_inverse(l')),
-// and the pixel is scaled by m' / m. After the base look the norm's display lightness is
-// l' (for neutrals: the displayed L* follows the curves), so both curves act in the
-// display-referred lightness domain while running at their place in the scene-linear order.
-// m -> m' is evaluated exactly at 512 nodes per octave over the 27 octaves below the white point
-// (built per call, in parallel) and interpolated linearly between them, which keeps it monotone;
-// norms further below use the exact chain, norms at or above the white point the white's value.
-// The interpolation deviates from the exact chain by less than 1e-4 relative (0.00015 EV)
-// wherever the curves are smooth (measured worst case 4.1e-5, contrast -1 with a lift-regime
-// white point; develop_operations_test.cpp), more only within one node of a slope
-// discontinuity (the ends of a tone curve that does not span [0, 1]).
+// the base look `base`. For the value norm m the target norm is
+//     g(m) = base.inverse(display_lightness_inverse(l')),  l' = tone(contrast(l)),
+//     l = display_lightness(base.evaluate(m)),
+// so that after the base look the norm's display lightness is l' (for neutrals: the displayed L*
+// follows the curves): both curves act in the display-referred lightness domain while running at
+// their place in the scene-linear order. A pixel p becomes
+//     p' = p (g(m) - g(0)) / m + g(0) (1, 1, 1),
+// which maps its norm to g(m) and keeps its channel ratios when the curves keep black (g(0) = 0,
+// the usual case: contrast always does). A lifted black (a tone curve whose output at 0 is above
+// 0, a fade) is added as neutral light rather than multiplied into the pixel, so the gain stays
+// bounded and near-black pixels fade towards a neutral grey instead of turning their noise into
+// saturated colour. Pixels with m <= 0 get the gain next to black, g'(0), continuing their
+// neighbours. Norms at or above W: when the curves keep white (g(W) = W: contrast, a tone curve
+// whose last y is 1) the white's gain applies, so above-white values keep their relation to W and
+// are not clipped here (the base look renders them white); a tone curve that lowers white maps
+// them to its white output g(W). The operation therefore tends to the identity as its settings do.
+// g is evaluated exactly at 512 nodes per octave over the 27 octaves below the white point, and at
+// 4096 nodes per octave over the top 3 octaves (where the base look's top segment and curves that
+// are steep next to white bend it most), built per call in parallel, and interpolated linearly
+// between them, which keeps it monotone; norms further below and within kLightnessExactBandEv of W
+// use the exact chain. The interpolation
+// deviates from the exact chain by less than 1e-4 relative (0.00015 EV) wherever the curves are
+// smooth (measured worst case 3.5e-5 over contrasts -1 to +1, white points 2^-5 to 2^5 and the
+// tone curves of develop_operations_test.cpp, one of them of slope 7 next to white), more only
+// within one node of a slope discontinuity (the ends of a tone curve that does not span [0, 1]).
 // Either curve may be null (skipped). Errors (engine.develop.lightness): InvalidArgument for an
 // empty image or another encoding; Internal for a non-finite result; OutOfMemory; Cancelled.
 [[nodiscard]] Expected<LightnessCurvesRecord> apply_lightness_curves(ColorImage& image, const NeutralV1Curve& base,

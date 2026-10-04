@@ -108,6 +108,40 @@ TEST(ToneCurve, RejectsInvalidPoints) {
     ts::expect_error(ToneCurve::create(s), ErrorCode::InvalidArgument, "engine.develop.tone_curve");
     s.points = {{0.5, 0.5}};
     ts::expect_error(ToneCurve::create(s), ErrorCode::InvalidArgument, "engine.develop.tone_curve");
+    // Points closer than kMinToneCurveGap would overflow the secants (1e-310 apart: infinite).
+    s.points = {{0.0, 0.0}, {1e-310, 0.75}, {1.0, 1.0}};
+    ts::expect_error(ToneCurve::create(s), ErrorCode::InvalidArgument, "engine.develop.tone_curve");
+    s.points = {{0.0, 0.0}, {0.5, 0.2}, {0.5 + 0.5 * kMinToneCurveGap, 0.9}, {1.0, 1.0}};
+    ts::expect_error(ToneCurve::create(s), ErrorCode::InvalidArgument, "engine.develop.tone_curve");
+}
+
+TEST(ToneCurve, ExtremeButValidPointsGiveFiniteMonotoneCurves) {
+    // A nearly flat interval (a subnormal rise) next to a nearly vertical one at the minimum gap:
+    // the Fritsch-Carlson ratios m_k / d_k overflow there, so the scaling is computed without them.
+    const std::vector<std::vector<ToneCurvePoint>> cases = {
+        {{0.0, 0.0}, {0.5, 1e-310}, {0.5 + 2.0 * kMinToneCurveGap, 1.0}, {1.0, 1.0}},
+        {{0.0, 0.0}, {0.3, 1e-300}, {0.3 + 2.0 * kMinToneCurveGap, 0.5}, {0.6, 0.5 + 1e-300}, {1.0, 1.0}},
+        {{0.0, 0.75}, {kMinToneCurveGap, 0.75}, {2.0 * kMinToneCurveGap, 1.0}},
+    };
+    for (const auto& points : cases) {
+        ToneCurveSetting s;
+        s.points = points;
+        auto curve = ToneCurve::create(s);
+        ASSERT_TRUE(curve) << curve.error().describe();
+        for (const double m : curve->tangents()) {
+            EXPECT_TRUE(std::isfinite(m));
+        }
+        double previous = -1.0;
+        for (double x = 0.0; x <= 1.0; x += 1e-5) {
+            const double y = curve->evaluate(x);
+            ASSERT_TRUE(std::isfinite(y)) << x;
+            EXPECT_GE(y, previous) << x;
+            previous = y;
+        }
+        for (const ToneCurvePoint& p : points) {
+            EXPECT_EQ(curve->evaluate(p.x), p.y);
+        }
+    }
 }
 
 // ---- Contrast ---------------------------------------------------------------------------------------
@@ -139,6 +173,34 @@ TEST(ContrastCurve, FixesBlackPivotAndWhiteAndIsSymmetricInItsSign) {
                     1e-6);
     }
     EXPECT_TRUE(ContrastCurve::create(0.0)->identity());
+    // Tiny contrasts are tiny changes: the logistic difference they used to be evaluated with
+    // cancelled to 0 / 0 below |c| = 3e-17 and kept only a few bits up to about 1e-12.
+    for (const double c : {1e-300, -1e-300, 1e-17, -1e-17, 1e-15, -1e-13, 1e-9, -1e-6}) {
+        auto tiny = ContrastCurve::create(c);
+        ASSERT_TRUE(tiny);
+        EXPECT_FALSE(tiny->identity());
+        EXPECT_NEAR(tiny->slope_at_pivot(), 1.0, 1e-9) << c;
+        for (double l = 0.0; l <= 1.0; l += 1e-3) {
+            const double v = tiny->evaluate(l);
+            ASSERT_TRUE(std::isfinite(v)) << c << " at " << l;
+            // f(l) - l = O(b^2) (b = 8 |c|): below 1e-11 for |c| <= 1e-6.
+            EXPECT_NEAR(v, l, 1e-11) << c << " at " << l;
+        }
+    }
+    // Small contrasts deviate smoothly: the deviation scales with b^2 (here b = 8e-4 and 8e-3).
+    double previous_deviation = 0.0;
+    for (const double c : {1e-4, 1e-3}) {
+        auto curve = ContrastCurve::create(c);
+        ASSERT_TRUE(curve);
+        double deviation = 0.0;
+        for (double l = 0.0; l <= 1.0; l += 1e-3) {
+            deviation = std::max(deviation, std::abs(curve->evaluate(l) - l));
+        }
+        if (previous_deviation > 0.0) {
+            EXPECT_NEAR(deviation / previous_deviation, 100.0, 1.0);
+        }
+        previous_deviation = deviation;
+    }
     EXPECT_NEAR(ContrastCurve::create(1.0)->slope_at_pivot(), 2.0 / std::tanh(2.0), 1e-12);  // 2.0746
     ts::expect_error(ContrastCurve::create(1.01), ErrorCode::InvalidArgument, "engine.develop.contrast");
     ts::expect_error(ContrastCurve::create(std::nan("")), ErrorCode::InvalidArgument, "engine.develop.contrast");
@@ -222,28 +284,56 @@ TEST(NeutralV1Curve, ShoulderRollsIntoWhiteWithZeroSlope) {
 // ---- Local tone gain ----------------------------------------------------------------------------------
 
 TEST(LocalToneGain, WeightsAndBoundsAndKeepsTheBaseLayerOrdered) {
+    const NeutralV1Curve look = *NeutralV1Curve::create(1.0);
     // Identity at zero.
-    EXPECT_EQ(local_tone_gain_ev(-3.0, 0.0, 0.0, 0.0), 0.0);
+    EXPECT_EQ(local_tone_gain_ev(-3.0, look, 0.0, 0.0), 0.0);
     // Full weights at white and in deep shadow.
-    EXPECT_NEAR(local_tone_gain_ev(0.0, 0.0, -1.0, 0.0), -kHighlightsMaxEv, 1e-15);
-    EXPECT_NEAR(local_tone_gain_ev(-9.0, 0.0, 0.0, 1.0), kShadowsMaxEv, 1e-15);
+    EXPECT_NEAR(local_tone_gain_ev(0.0, look, -1.0, 0.0), -kHighlightsMaxEv, 1e-15);
+    EXPECT_NEAR(local_tone_gain_ev(-9.0, look, 0.0, 1.0), kShadowsMaxEv, 1e-15);
     // Mid grey (display -2.47 EV): no shadow weight, almost no highlight weight.
-    EXPECT_EQ(local_tone_gain_ev(-2.97, 0.0, 0.0, 1.0), 0.0);
-    EXPECT_LT(std::abs(local_tone_gain_ev(-2.97, 0.0, -1.0, 0.0)), 0.15);
+    EXPECT_EQ(local_tone_gain_ev(-2.97, look, 0.0, 1.0), 0.0);
+    EXPECT_LT(std::abs(local_tone_gain_ev(-2.97, look, -1.0, 0.0)), 0.15);
     // For every extreme setting and white point, x + gain(x) is strictly increasing: the smoothed
-    // tones never swap order (no tonal reversal).
-    for (const double white_ev : {-3.0, -1.0, 0.0, 0.5, 3.0}) {
+    // tones never swap order (no tonal reversal), including the toe (slope up to 4/3 in display
+    // EV) and the Lift regime's expanded top.
+    for (const double white_ev : {-5.0, -3.0, -1.0, -0.25, 0.0, 0.5, 2.0, 3.0, 5.0}) {
+        const NeutralV1Curve curve = *NeutralV1Curve::create(std::exp2(white_ev));
         for (const double h : {-1.0, 1.0}) {
             for (const double s : {-1.0, 1.0}) {
                 double previous = -1e9;
                 for (double x = white_ev - 14.0; x <= white_ev + 2.0; x += 1e-3) {
-                    const double mapped = x + local_tone_gain_ev(x, white_ev, h, s);
+                    const double mapped = x + local_tone_gain_ev(x, curve, h, s);
                     EXPECT_GT(mapped, previous) << white_ev << " " << h << " " << s << " at " << x;
                     previous = mapped;
                 }
             }
         }
     }
+}
+
+TEST(LocalToneGain, WeightsFollowTheDisplayedToneUnderTheBaseLook) {
+    // With positive exposure the shoulder lowers bright tones' display EV well below a linear run
+    // to white: the weights follow the displayed EV, log2 B_W(2^base).
+    for (const double white_ev : {0.0, 2.0, 3.0, 5.0}) {
+        const NeutralV1Curve curve = *NeutralV1Curve::create(std::exp2(white_ev));
+        for (const double base_ev : {-6.0, -3.0, -2.0, -1.0, 0.0, 1.0}) {
+            const double displayed = std::min(0.0, std::log2(curve.evaluate(std::exp2(base_ev))));
+            const double t = std::clamp((displayed - kHighlightsWeightEv[0]) /
+                                            (kHighlightsWeightEv[1] - kHighlightsWeightEv[0]),
+                                        0.0, 1.0);
+            EXPECT_NEAR(local_tone_gain_ev(base_ev, curve, -1.0, 0.0), -kHighlightsMaxEv * t * t * (3.0 - 2.0 * t),
+                        1e-12)
+                << white_ev << " at " << base_ev;
+        }
+    }
+    // W = 2^5: base 0 is displayed at -1.14 EV (a linear estimate put it at 0 EV), so highlights -1
+    // darkens it by about 1.02 EV rather than 1.5 EV.
+    const NeutralV1Curve bright = *NeutralV1Curve::create(32.0);
+    EXPECT_NEAR(local_tone_gain_ev(0.0, bright, -1.0, 0.0), -1.017, 2e-3);
+    // Strong negative exposure (Lift regime, expanded top): measured linearly from white, so base
+    // -4.5 at W = 2^-3 sits at e = -1.5, the middle of the highlights transition.
+    const NeutralV1Curve dark = *NeutralV1Curve::create(0.125);
+    EXPECT_NEAR(local_tone_gain_ev(-4.5, dark, -1.0, 0.0), -kHighlightsMaxEv * 0.5, 1e-12);
 }
 
 }  // namespace

@@ -84,9 +84,11 @@ inline constexpr double kMaxTint = 150.0;  // tint in [-150, +150]
 // CameraNeutral: each multiplier divided by the green one must lie in [1/64, 64] (a sanity bound
 // far outside real illuminants; it rejects corrupt values before they reach pixels).
 inline constexpr double kMaxMultiplierRatio = 64.0;
-// Tone curve: 2 to 32 control points.
+// Tone curve: 2 to 32 control points, x at least kMinToneCurveGap apart (closer points would
+// make the curve's secants overflow; the editor keeps them 0.01 apart).
 inline constexpr std::size_t kMinToneCurvePoints = 2;
 inline constexpr std::size_t kMaxToneCurvePoints = 32;
+inline constexpr double kMinToneCurveGap = 1e-6;
 
 // ---- White balance ----------------------------------------------------------------------------
 
@@ -138,7 +140,8 @@ struct ToneCurvePoint {
 // luminance relative to display white: 0 = black, 0.5 = L* 50 (display-linear 0.184), 1 = white).
 // The curve is the Fritsch-Carlson monotone cubic through the points, constant beyond the first
 // and last points (ToneCurve, develop_operations.hpp). Points: 2 to 32, finite, within [0, 1],
-// x strictly increasing, y non-decreasing. The default {(0, 0), (1, 1)} is the identity.
+// x increasing by at least kMinToneCurveGap, y non-decreasing. The default {(0, 0), (1, 1)} is
+// the identity.
 struct ToneCurveSetting {
     std::vector<ToneCurvePoint> points{{0.0, 0.0}, {1.0, 1.0}};
 

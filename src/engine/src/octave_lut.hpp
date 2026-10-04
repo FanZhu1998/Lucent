@@ -2,12 +2,13 @@
 
 // Tabulated scalar functions for the per-pixel develop passes (private).
 //
-// OctaveLut tabulates f over positive floats [2^e_min, 2^(e_min + octaves)) with
-// kOctaveLutCells equally spaced nodes per octave (the node spacing is relative: 1/512 of the
-// octave's start). A lookup reads the float's exponent and leading mantissa bits directly (no
-// logarithm) and interpolates linearly between the two neighbouring nodes, so a non-decreasing f
-// stays non-decreasing. For a function with bounded second derivative the relative error is about
-// (1/512)^2 / 8 = 4.8e-7 times |x^2 f''(x) / f(x)|.
+// OctaveLut tabulates f over positive floats [2^e_min, 2^(e_min + octaves)) with 2^cell_bits
+// equally spaced nodes per octave (default kOctaveLutCellBits: 512 nodes, a relative spacing of
+// 1/512 of the octave's start). A lookup reads the float's exponent and leading mantissa bits
+// directly (no logarithm) and interpolates linearly between the two neighbouring nodes, so a
+// non-decreasing f stays non-decreasing. For a function with bounded second derivative the
+// relative error is about (2^-cell_bits)^2 / 8 times |x^2 f''(x) / f(x)| (4.8e-7 times it at 512
+// nodes per octave).
 //
 // UniformLut tabulates f on [lo, hi] with equally spaced nodes and clamps outside.
 //
@@ -32,29 +33,36 @@
 namespace lucent::engine::detail {
 
 inline constexpr std::int32_t kOctaveLutCellBits = 9;
-inline constexpr std::int32_t kOctaveLutCells = 1 << kOctaveLutCellBits;
+inline constexpr std::int32_t kOctaveLutMaxCellBits = 16;
 
 class OctaveLut {
 public:
-    // Tabulates `f` (must not throw) over the octaves [e_min, e_min + octaves). The nodes are
-    // computed in parallel when requested (each node independently: schedule-independent).
-    // OutOfMemory when the table cannot be allocated; Cancelled.
+    // Tabulates `f` (must not throw) over the octaves [e_min, e_min + octaves) with 2^cell_bits
+    // nodes per octave (1 to kOctaveLutMaxCellBits). The nodes are computed in parallel when
+    // requested (each node independently: schedule-independent). OutOfMemory when the table cannot
+    // be allocated; Cancelled.
     [[nodiscard]] static Expected<OctaveLut> create(std::int32_t e_min, std::int32_t octaves,
                                                     const std::function<double(double)>& f, bool parallel,
-                                                    const core::CancellationToken& cancel, std::string_view where) {
+                                                    const core::CancellationToken& cancel,
+                                                    std::string_view where,
+                                                    std::int32_t cell_bits = kOctaveLutCellBits) {
         OctaveLut lut;
         lut.e_min_ = e_min;
         lut.octaves_ = std::max(1, octaves);
+        lut.cell_bits_ = std::clamp(cell_bits, 1, kOctaveLutMaxCellBits);
+        const std::int32_t cells_per_octave = std::int32_t{1} << lut.cell_bits_;
         try {
-            lut.nodes_.resize(static_cast<std::size_t>(lut.octaves_) * kOctaveLutCells + 1);
+            lut.nodes_.resize(static_cast<std::size_t>(lut.octaves_) *
+                                  static_cast<std::size_t>(cells_per_octave) + 1);
         } catch (const std::bad_alloc&) {
             return fail(ErrorCode::OutOfMemory, "cannot allocate a lookup table", std::string(where));
         }
         auto status = for_each_row(lut.octaves_ + 1, parallel, cancel, where, [&](std::int32_t o) {
-            const std::int32_t cells = o == lut.octaves_ ? 1 : kOctaveLutCells;
+            const std::int32_t cells = o == lut.octaves_ ? 1 : cells_per_octave;
             for (std::int32_t j = 0; j < cells; ++j) {
-                const double x = std::ldexp(1.0 + static_cast<double>(j) / kOctaveLutCells, e_min + o);
-                lut.nodes_[static_cast<std::size_t>(o) * kOctaveLutCells + static_cast<std::size_t>(j)] = f(x);
+                const double x = std::ldexp(1.0 + static_cast<double>(j) / cells_per_octave, e_min + o);
+                lut.nodes_[static_cast<std::size_t>(o) * static_cast<std::size_t>(cells_per_octave) +
+                           static_cast<std::size_t>(j)] = f(x);
             }
         });
         if (!status) {
@@ -72,17 +80,18 @@ public:
         const auto bits = std::bit_cast<std::uint32_t>(x);
         const auto exponent = static_cast<std::int32_t>((bits >> 23) & 0xFFu) - 127;
         const std::uint32_t mantissa = bits & 0x7FFFFFu;
-        constexpr std::uint32_t kFractionBits = 23 - kOctaveLutCellBits;
-        const auto cell = static_cast<std::size_t>(exponent - e_min_) * kOctaveLutCells +
-                          static_cast<std::size_t>(mantissa >> kFractionBits);
-        const double t = static_cast<double>(mantissa & ((1u << kFractionBits) - 1u)) /
-                         static_cast<double>(1u << kFractionBits);
+        const auto fraction_bits = static_cast<std::uint32_t>(23 - cell_bits_);
+        const auto cell = (static_cast<std::size_t>(exponent - e_min_) << cell_bits_) +
+                          static_cast<std::size_t>(mantissa >> fraction_bits);
+        const double t = static_cast<double>(mantissa & ((1u << fraction_bits) - 1u)) /
+                         static_cast<double>(1u << fraction_bits);
         return nodes_[cell] + t * (nodes_[cell + 1] - nodes_[cell]);
     }
 
 private:
     std::int32_t e_min_ = 0;
     std::int32_t octaves_ = 1;
+    std::int32_t cell_bits_ = kOctaveLutCellBits;
     std::vector<double> nodes_;
 };
 

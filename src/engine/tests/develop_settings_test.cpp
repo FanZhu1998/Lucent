@@ -111,6 +111,8 @@ TEST(DevelopSettings, ValidatesTheToneCurve) {
         {{-0.1, 0.0}, {1.0, 1.0}},                   // x below 0
         {{0.0, 0.0}, {1.0, 1.1}},                    // y above 1
         {{0.0, kNaN}, {1.0, 1.0}},                   // not finite
+        {{0.0, 0.0}, {1e-310, 0.75}, {1.0, 1.0}},    // x closer than kMinToneCurveGap
+        {{0.0, 0.0}, {0.5, 0.5}, {0.5 + 0.5 * kMinToneCurveGap, 0.6}, {1.0, 1.0}},
     };
     for (const auto& points : bad) {
         s.tone_curve.points = points;
@@ -130,6 +132,9 @@ TEST(DevelopSettings, ValidatesTheToneCurve) {
 
     // A flat curve (all y equal) is monotone and valid.
     s.tone_curve.points = {{0.0, 0.4}, {1.0, 0.4}};
+    EXPECT_TRUE(s.validate());
+    // Points exactly kMinToneCurveGap apart are valid.
+    s.tone_curve.points = {{0.0, 0.0}, {kMinToneCurveGap, 0.5}, {2.0 * kMinToneCurveGap, 1.0}};
     EXPECT_TRUE(s.validate());
 }
 

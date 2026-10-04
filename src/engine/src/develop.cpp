@@ -706,6 +706,8 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             r.parameters.push_back(
                 param("radius_full_image", kLocalToneRadiusFraction * static_cast<double>(long_edge(one.full_size))));
             r.parameters.push_back(param("epsilon", applied->epsilon));
+            r.parameters.push_back(
+                param("guided_filter_version", static_cast<std::int64_t>(kGuidedFilterVersion)));
             r.parameters.push_back(param("min_gain_ev", applied->min_gain_ev));
             r.parameters.push_back(param("max_gain_ev", applied->max_gain_ev));
             r.seconds = seconds_since(t);
@@ -733,12 +735,14 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         const bool apply_contrast = !contrast->identity();
         const bool apply_tone = !tone->identity();
         t = Clock::now();
+        LightnessCurvesRecord curves;
         if (apply_contrast || apply_tone) {
             auto applied = apply_lightness_curves(image, *base, apply_contrast ? &*contrast : nullptr,
                                                   apply_tone ? &*tone : nullptr, cancel, options.parallel);
             if (!applied) {
                 return Unexpected(std::move(applied.error()));
             }
+            curves = *applied;
         }
         const double seconds = seconds_since(t);
         OperationRecord rc;
@@ -761,6 +765,10 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             points.push_back(p.y);
         }
         rt.parameters = {param("points_xy", std::move(points))};
+        if (apply_tone) {
+            rt.parameters.push_back(param("black_lift", curves.black_lift));
+            rt.parameters.push_back(param("keeps_white", curves.keeps_white));
+        }
         rt.seconds = apply_tone && !apply_contrast ? seconds : 0.0;
         report.operations.push_back(std::move(rt));
     }

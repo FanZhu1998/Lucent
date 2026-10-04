@@ -5,6 +5,7 @@
 // ~5003 K (D50) and ~2856 K (A). Matrices are checked against independent computations written
 // here in the DNG specification's own terms (chapter 6) and against dcraw's cam_xyz_coeff().
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -268,6 +269,40 @@ TEST(DngProfile, ForwardMatrixPathMapsTheNeutralToD50) {
     const Matrix3d expected =
         fm * Matrix3d::diagonal(Vec3d{1.0 / ref[0], 1.0 / ref[1], 1.0 / ref[2]}) * to_reference;
     expect_matrix_near(record->camera_to_xyz_d50, expected, 1e-12);
+}
+
+TEST(DngProfile, ColorMatrixAdaptsWhitesBeyondTheSConeLimitLikeTheSdk) {
+    // 3000 K / tint +90 (DNG SDK units): x + y = 0.997, Bradford S-cone response below zero, which
+    // an unguarded adaptation rejects.
+    DngProfile profile;
+    profile.illuminants = {21, 0};
+    profile.color_matrix[0] = kCamXyz;
+    const Chromaticity white{0.4878, 0.5091};
+    const Matrix3d bradford_cone{{0.8951, 0.2664, -0.1614}, {-0.7502, 1.7135, 0.0367}, {0.0389, -0.0685, 1.0296}};
+    ASSERT_LT((bradford_cone * xyz_of(white))[2], 0.0);
+    const Vec3d neutral = kCamXyz * xyz_of(white);
+    auto record = evaluate_dng_profile(profile, neutral);
+    ASSERT_TRUE(record) << record.error().describe();
+    EXPECT_NEAR(record->white_xy.x, white.x, 1e-7);
+    EXPECT_NEAR(record->white_xy.y, white.y, 1e-7);
+    // Independent: the SDK's MapWhiteMatrix (dng_color_spec.cpp) with its guards written out here:
+    // cone responses below 0 count as 0, each cone scale is pinned to [0.1, 10].
+    const Vec3d d50 = xyz_of(image::kD50White);
+    const Vec3d w1 = bradford_cone * d50;
+    const Vec3d w2 = bradford_cone * xyz_of(record->white_xy);
+    Vec3d scale;
+    for (std::size_t i = 0; i < 3; ++i) {
+        scale[i] = std::clamp(std::max(w2[i], 0.0) / w1[i], 0.1, 10.0);
+    }
+    EXPECT_EQ(scale[2], 0.1);
+    const Matrix3d map_white = *image::inverse(bradford_cone) * (Matrix3d::diagonal(scale) * bradford_cone);
+    Matrix3d pcs_to_camera = kCamXyz * map_white;
+    const Vec3d white_camera = pcs_to_camera * d50;
+    const double s = std::max({white_camera[0], white_camera[1], white_camera[2]});
+    pcs_to_camera = Matrix3d{(1.0 / s) * pcs_to_camera.row(0), (1.0 / s) * pcs_to_camera.row(1),
+                             (1.0 / s) * pcs_to_camera.row(2)};
+    expect_matrix_near(record->camera_to_xyz_d50, *image::inverse(pcs_to_camera), 1e-9);
+    EXPECT_TRUE(image::is_finite(record->camera_to_xyz_d50));
 }
 
 TEST(DngProfile, PinsTinyNeutralEntriesLikeTheSdk) {

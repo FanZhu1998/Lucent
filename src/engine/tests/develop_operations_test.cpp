@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <iostream>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -264,34 +265,220 @@ TEST(LightnessCurves, DisplayedLightnessOfNeutralsFollowsTheToneCurveExactly) {
 }
 
 TEST(LightnessCurves, TabulationMatchesTheExactChain) {
-    ToneCurveSetting setting;
-    setting.points = {{0.0, 0.0}, {0.2, 0.12}, {0.5, 0.58}, {0.8, 0.9}, {1.0, 1.0}};
-    auto tone = ToneCurve::create(setting);
-    for (const double c : {-1.0, 0.0, 0.6, 1.0}) {
-        auto contrast = ContrastCurve::create(c);
-        ASSERT_TRUE(tone && contrast);
-        for (const double white : {0.3, 1.0, 5.0}) {
-            auto base = NeutralV1Curve::create(white);
-            ASSERT_TRUE(base);
-            const std::int32_t n = 4000;
-            const auto value = [&](std::int32_t x) {
-                return static_cast<float>(white * std::exp2(-25.0 + 25.0 * x / (n - 1.0)));
-            };
-            ColorImage image = scene_image(n, 1, [&](std::int32_t x, std::int32_t) {
-                const float v = value(x);
-                return Rgb{v, 0.5f * v, 0.25f * v};
-            });
-            ASSERT_TRUE(apply_lightness_curves(image, *base, c == 0.0 ? nullptr : &*contrast, &*tone));
-            double worst = 0.0;
-            for (std::int32_t x = 0; x < n; ++x) {
-                const double m = value(x);
-                double l = display_lightness(base->evaluate(m));
-                l = tone->evaluate(c == 0.0 ? l : contrast->evaluate(l));
-                const double exact = base->inverse(display_lightness_inverse(l));
-                worst = std::max(worst, std::abs(image.pixels.at(x, 0, 0) / exact - 1.0));
+    // Smooth curves spanning [0, 1]: an S-curve, a steep C1 curve next to white, a lifted black, and
+    // none; white points from deep in the Lift regime (2^-5) to strong positive exposure (2^5).
+    const std::vector<std::vector<ToneCurvePoint>> curves = {
+        {{0.0, 0.0}, {0.2, 0.12}, {0.5, 0.58}, {0.8, 0.9}, {1.0, 1.0}},
+        {{0.0, 0.0}, {0.9, 0.3}, {1.0, 1.0}},
+        {{0.0, 0.1}, {1.0, 1.0}},
+        {},
+    };
+    double overall = 0.0;
+    for (const auto& points : curves) {
+        ToneCurveSetting setting;
+        if (!points.empty()) {
+            setting.points = points;
+        }
+        auto tone = ToneCurve::create(setting);
+        ASSERT_TRUE(tone);
+        const ToneCurve* tone_ptr = points.empty() ? nullptr : &*tone;
+        for (const double c : {-1.0, -0.5, 0.0, 0.6, 1.0}) {
+            auto contrast = ContrastCurve::create(c);
+            ASSERT_TRUE(contrast);
+            const ContrastCurve* contrast_ptr = c == 0.0 ? nullptr : &*contrast;
+            if (contrast_ptr == nullptr && tone_ptr == nullptr) {
+                continue;
             }
-            // Measured worst case 4.1e-5 (contrast -1 with a lift-regime white point).
-            EXPECT_LT(worst, 1e-4) << "contrast " << c << ", white " << white;
+            for (const double white : {0.03125, 0.3, 0.5, 1.0, 5.0, 32.0}) {
+                auto base = NeutralV1Curve::create(white);
+                ASSERT_TRUE(base);
+                const std::int32_t n = 20000;
+                const auto value = [&](std::int32_t x) {
+                    return static_cast<float>(white * std::exp2(-25.0 + (25.0 - 1.44e-4) * x / (n - 1.0)));
+                };
+                ColorImage image = scene_image(n, 1, [&](std::int32_t x, std::int32_t) {
+                    const float v = value(x);
+                    return Rgb{v, 0.5f * v, 0.25f * v};
+                });
+                ASSERT_TRUE(apply_lightness_curves(image, *base, contrast_ptr, tone_ptr));
+                double worst = 0.0;
+                double worst_at = 0.0;
+                for (std::int32_t x = 0; x < n; ++x) {
+                    const double m = value(x);
+                    double l = display_lightness(base->evaluate(m));
+                    if (contrast_ptr != nullptr) {
+                        l = contrast_ptr->evaluate(l);
+                    }
+                    if (tone_ptr != nullptr) {
+                        l = tone_ptr->evaluate(l);
+                    }
+                    const double exact = base->inverse(display_lightness_inverse(l));
+                    // The norm channel carries the target norm exactly, lift included.
+                    const double deviation = std::abs(image.pixels.at(x, 0, 0) / exact - 1.0);
+                    if (deviation > worst) {
+                        worst = deviation;
+                        worst_at = std::log2(m / white);
+                    }
+                }
+                overall = std::max(overall, worst);
+                // Float pixels and the table: see the bound in develop_operations.hpp.
+                EXPECT_LT(worst, 1e-4) << "contrast " << c << ", white " << white << ", curve " << points.size()
+                                       << ", at " << worst_at << " EV from white";
+            }
+        }
+    }
+    std::cout << "lightness tabulation: worst relative deviation " << overall << "\n";
+}
+
+TEST(LightnessCurves, ALiftedBlackIsAddedAsNeutralLightWithABoundedGain) {
+    // A fade: the tone curve's black output is lifted to L* 10.
+    ToneCurveSetting setting;
+    setting.points = {{0.0, 0.1}, {1.0, 1.0}};
+    auto tone = ToneCurve::create(setting);
+    auto base = NeutralV1Curve::create(1.0);
+    ASSERT_TRUE(tone && base);
+    const auto exact = [&](double m) {
+        return base->inverse(display_lightness_inverse(tone->evaluate(display_lightness(base->evaluate(m)))));
+    };
+    const double lift = exact(0.0);
+    ASSERT_GT(lift, 0.005);  // L* 10 is display-linear 0.0113
+    const std::vector<Rgb> pixels = {
+        {1e-7f, 1e-7f, 1e-7f},     {1e-4f, 1e-4f, 1e-4f},   {1e-3f, 1e-3f, 1e-3f},   // neutrals
+        {1e-6f, -5e-6f, 0.0f},     {5e-5f, -2e-5f, 4e-5f},                           // noise next to black
+        {0.0f, 0.0f, 0.0f},        {-1e-6f, -2e-6f, -1e-6f}, {-1e-9f, -1e-9f, -1e-9f}, {1e-9f, 1e-9f, 1e-9f},
+        {0.3f, 0.12f, 0.05f},                                                           // a mid-tone colour
+    };
+    ColorImage image = scene_image(static_cast<std::int32_t>(pixels.size()), 1, [&](std::int32_t x, std::int32_t) {
+        return pixels[static_cast<std::size_t>(x)];
+    });
+    auto record = apply_lightness_curves(image, *base, nullptr, &*tone);
+    ASSERT_TRUE(record);
+    EXPECT_NEAR(record->black_lift, lift, 1e-9);
+    EXPECT_TRUE(record->keeps_white);
+    // The gain of the multiplicative part next to black, by an independent difference quotient.
+    const double black_gain = (exact(1e-9) - lift) / 1e-9;
+    EXPECT_GT(black_gain, 0.0);
+    EXPECT_LT(black_gain, 2.0);
+    for (std::size_t i = 0; i < pixels.size(); ++i) {
+        const auto x = static_cast<std::int32_t>(i);
+        const Rgb& in = pixels[i];
+        const double m = std::max({in[0], in[1], in[2]});
+        const Rgb out{image.pixels.at(x, 0, 0), image.pixels.at(x, 0, 1), image.pixels.at(x, 0, 2)};
+        SCOPED_TRACE(i);
+        if (m > 0.0) {
+            // The norm follows the curve exactly; the channels keep their differences scaled by a
+            // bounded gain around the neutral lift.
+            const double target = exact(m);
+            EXPECT_NEAR(std::max({out[0], out[1], out[2]}), target, 2e-6 * target);
+            const double gain = (target - lift) / m;
+            EXPECT_LT(gain, 2.0);
+            for (std::size_t c = 0; c < 3; ++c) {
+                EXPECT_NEAR(out[c], lift + gain * in[c], 2e-6 * target);
+            }
+        } else {
+            // No positive component: the gain next to black, continuing the neighbours.
+            for (std::size_t c = 0; c < 3; ++c) {
+                EXPECT_NEAR(out[c], lift + black_gain * in[c], 1e-7);
+            }
+        }
+        // Lifted blacks are a neutral grey: near-black noise stays near-neutral.
+        if (m < 1e-4) {
+            const double spread = std::max({out[0], out[1], out[2]}) - std::min({out[0], out[1], out[2]});
+            EXPECT_LT(spread / lift, 0.01);
+        }
+    }
+    // Continuous through m = 0.
+    EXPECT_NEAR(image.pixels.at(7, 0, 0), image.pixels.at(8, 0, 0), 1e-8);
+}
+
+TEST(LightnessCurves, TendToTheIdentityAsTheirSettingsDoAndKeepAboveWhiteValues) {
+    // Bright saturated colours above the white point, as a camera matrix produces them.
+    const std::vector<Rgb> pixels = {{1.5f, 0.1f, 0.05f}, {3.0f, 2.0f, 0.5f}, {1.2f, 1.2f, 1.2f},
+                                     {0.4f, 0.2f, 0.1f},  {0.02f, 0.01f, 0.03f}};
+    for (const double white : {0.3, 1.0, 4.0}) {
+        auto base = NeutralV1Curve::create(white);
+        ASSERT_TRUE(base);
+        const auto make = [&] {
+            return scene_image(static_cast<std::int32_t>(pixels.size()), 1, [&](std::int32_t x, std::int32_t) {
+                Rgb v = pixels[static_cast<std::size_t>(x)];
+                for (float& c : v) {
+                    c *= static_cast<float>(white);
+                }
+                return v;
+            });
+        };
+        // Contrast 0 skips the operation; contrast 1e-3 must be close to it, also after a
+        // desaturation (which is not scale invariant once the base look follows).
+        for (const double saturation : {0.0, -0.5, -1.0}) {
+            ColorImage skipped = make();
+            ASSERT_TRUE(apply_color(skipped, saturation, 0.0));
+            ASSERT_TRUE(apply_base_look(skipped, *base));
+            ColorImage slight = make();
+            auto contrast = ContrastCurve::create(1e-3);
+            ASSERT_TRUE(contrast);
+            auto record = apply_lightness_curves(slight, *base, &*contrast, nullptr);
+            ASSERT_TRUE(record);
+            EXPECT_TRUE(record->keeps_white);
+            EXPECT_EQ(record->black_lift, 0.0);
+            ASSERT_TRUE(apply_color(slight, saturation, 0.0));
+            ASSERT_TRUE(apply_base_look(slight, *base));
+            double worst = 0.0;
+            for (std::int32_t x = 0; x < skipped.pixels.width(); ++x) {
+                for (std::int32_t c = 0; c < 3; ++c) {
+                    worst = std::max(worst, static_cast<double>(std::abs(slight.pixels.at(x, 0, c) -
+                                                                         skipped.pixels.at(x, 0, c))));
+                }
+            }
+            // Contrast 1e-3 moves display lightness by at most about 1e-6 (an O(b^2) curve).
+            EXPECT_LT(worst, 1e-4) << "white " << white << ", saturation " << saturation;
+        }
+        // Norms at or above white keep their values when the curves keep white...
+        ColorImage kept = make();
+        auto contrast = ContrastCurve::create(0.8);
+        ASSERT_TRUE(contrast);
+        ASSERT_TRUE(apply_lightness_curves(kept, *base, &*contrast, nullptr));
+        for (std::int32_t x = 0; x < 3; ++x) {
+            for (std::int32_t c = 0; c < 3; ++c) {
+                EXPECT_FLOAT_EQ(kept.pixels.at(x, 0, c),
+                                pixels[static_cast<std::size_t>(x)][static_cast<std::size_t>(c)] *
+                                    static_cast<float>(white));
+            }
+        }
+        // ... and are mapped to the white output of a tone curve that lowers white (a matte look).
+        ToneCurveSetting matte;
+        matte.points = {{0.0, 0.0}, {1.0, 0.9}};
+        auto lowered = ToneCurve::create(matte);
+        ASSERT_TRUE(lowered);
+        ColorImage capped = make();
+        auto record = apply_lightness_curves(capped, *base, nullptr, &*lowered);
+        ASSERT_TRUE(record);
+        EXPECT_FALSE(record->keeps_white);
+        const double ceiling = base->inverse(display_lightness_inverse(0.9));
+        for (std::int32_t x = 0; x < 3; ++x) {
+            const float m = std::max({capped.pixels.at(x, 0, 0), capped.pixels.at(x, 0, 1), capped.pixels.at(x, 0, 2)});
+            EXPECT_NEAR(m, ceiling, 1e-6 * ceiling) << x;
+        }
+    }
+}
+
+TEST(LightnessCurves, TinyContrastIsATinyChangeNotABlackImage) {
+    auto base = NeutralV1Curve::create(1.0);
+    ASSERT_TRUE(base);
+    for (const double c : {1e-17, -1e-17, 1e-15, 1e-13, 1e-300}) {
+        auto contrast = ContrastCurve::create(c);
+        ASSERT_TRUE(contrast);
+        ColorImage image = scene_image(64, 1, [](std::int32_t x, std::int32_t) {
+            const float v = std::exp2(-12.0f + 13.0f * static_cast<float>(x) / 63.0f);
+            return Rgb{v, 0.6f * v, 0.3f * v};
+        });
+        const ColorImage original = clone(image);
+        ASSERT_TRUE(apply_lightness_curves(image, *base, &*contrast, nullptr));
+        for (std::int32_t x = 0; x < 64; ++x) {
+            for (std::int32_t c2 = 0; c2 < 3; ++c2) {
+                EXPECT_NEAR(image.pixels.at(x, 0, c2), original.pixels.at(x, 0, c2),
+                            2e-6f * original.pixels.at(x, 0, c2))
+                    << c << " at " << x;
+            }
         }
     }
 }

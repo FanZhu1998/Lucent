@@ -100,10 +100,11 @@ Status check_tone_curve(const ToneCurveSetting& curve) {
                         std::format("tone-curve point {} ({}, {}) must be finite and within [0, 1]", i, q.x, q.y),
                         kWhere);
         }
-        if (i > 0 && !(q.x > p[i - 1].x)) {
+        if (i > 0 && !(q.x - p[i - 1].x >= kMinToneCurveGap)) {
             return fail(ErrorCode::InvalidArgument,
-                        std::format("tone-curve x values must be strictly increasing (point {} has x {} after {})", i,
-                                    q.x, p[i - 1].x),
+                        std::format("tone-curve x values must increase by at least {} (point {} has x {} "
+                                    "after {})",
+                                    kMinToneCurveGap, i, q.x, p[i - 1].x),
                         kWhere);
         }
         if (i > 0 && q.y < p[i - 1].y) {

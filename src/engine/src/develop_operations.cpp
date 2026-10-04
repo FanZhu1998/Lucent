@@ -118,8 +118,10 @@ Expected<BaseLookRecord> apply_base_look(ColorImage& image, const NeutralV1Curve
 
 // ---- Local tone -----------------------------------------------------------------------------------
 
-double local_tone_gain_ev(double base_ev, double white_ev, double highlights, double shadows) noexcept {
-    const double e = std::min(0.0, std::max(base_ev + kNeutralV1MidOffsetEv, base_ev - white_ev));
+double local_tone_gain_ev(double base_ev, const NeutralV1Curve& look, double highlights,
+                          double shadows) noexcept {
+    const double displayed = std::log2(look.evaluate(std::exp2(base_ev)));
+    const double e = std::min(0.0, std::max(displayed, base_ev - std::log2(look.white())));
     double gain = 0.0;
     if (highlights != 0.0) {
         gain += kHighlightsMaxEv * highlights * smoothstep(kHighlightsWeightEv[0], kHighlightsWeightEv[1], e);
@@ -152,6 +154,10 @@ Expected<LocalToneRecord> apply_local_tone(ColorImage& image, const LocalTonePar
     if (!log_plane) {
         return fail(log_plane.error().code, "local tone log-luminance plane: " + log_plane.error().message, kWhere);
     }
+    auto look = NeutralV1Curve::create(q.white);
+    if (!look) {
+        return Unexpected(std::move(look.error()));
+    }
     const image::ImageView<float> rgb = image.pixels.view();
     const image::ImageView<float> base = log_plane->view();
     const double white_ev = std::log2(q.white);
@@ -178,7 +184,9 @@ Expected<LocalToneRecord> apply_local_tone(ColorImage& image, const LocalTonePar
     auto gain = detail::UniformLut::create(
         white_ev + kLocalToneFloorEv - 1.0, white_ev + 1.0,
         256 * static_cast<std::int32_t>(2.0 - kLocalToneFloorEv) + 1,
-        [&](double base_ev) { return std::exp2(local_tone_gain_ev(base_ev, white_ev, q.highlights, q.shadows)); },
+        [&](double base_ev) {
+            return std::exp2(local_tone_gain_ev(base_ev, *look, q.highlights, q.shadows));
+        },
         kWhere);
     if (!gain) {
         return Unexpected(std::move(gain.error()));
@@ -244,7 +252,8 @@ Expected<LightnessCurvesRecord> apply_lightness_curves(ColorImage& image, const 
     if (!counts) {
         return Unexpected(std::move(counts.error()));
     }
-    // The target norm as a function of the norm (the exact chain).
+    // The target norm as a function of the norm (the exact chain). A non-finite intermediate stays
+    // non-finite, so the check below reports it instead of the pixel turning black.
     const auto composite = [&](double m) noexcept {
         double l = display_lightness(base.evaluate(m));
         if (contrast != nullptr) {
@@ -254,22 +263,48 @@ Expected<LightnessCurvesRecord> apply_lightness_curves(ColorImage& image, const 
             l = tone->evaluate(l);
         }
         const double d = display_lightness_inverse(l);
-        return d > 0.0 ? base.inverse(d) : 0.0;
+        if (!(d > 0.0)) {
+            return std::isnan(d) ? d : 0.0;
+        }
+        return base.inverse(d);
     };
-    // Tabulated over the 27 octaves below the white point (512 nodes per octave, octave_lut.hpp);
-    // smaller norms (more than 26 EV below white) use the exact chain, norms at or above the
-    // white point its constant value there.
+    // Tabulated over the 27 octaves below the white point (512 nodes per octave, octave_lut.hpp),
+    // and over the top 3 octaves again at 4096 nodes per octave: the base look's top segment and
+    // curves that are steep next to white bend g there more than 512 nodes follow. Smaller norms
+    // (more than 26 EV below white) and the band just below the white point (the base look's
+    // corner at W in the Lift regime) use the exact chain.
     const double white = base.white();
     const std::int32_t e_top = std::ilogb(white) + 1;  // 2^e_top > white
     constexpr std::int32_t kOctaves = 27;
+    constexpr std::int32_t kFineOctaves = 3;
+    constexpr std::int32_t kFineCellBits = 12;
     auto table = detail::OctaveLut::create(e_top - kOctaves, kOctaves, composite, parallel, cancel, kWhere);
     if (!table) {
         return Unexpected(std::move(table.error()));
     }
+    auto fine_table = detail::OctaveLut::create(e_top - kFineOctaves, kFineOctaves, composite, parallel,
+                                                cancel, kWhere, kFineCellBits);
+    if (!fine_table) {
+        return Unexpected(std::move(fine_table.error()));
+    }
     const detail::OctaveLut& lut = *table;
+    const detail::OctaveLut& fine = *fine_table;
     // Lookups need normal floats.
     const double table_low = std::max(lut.lower(), 2.0 * static_cast<double>(std::numeric_limits<float>::min()));
-    const double at_white = composite(white);
+    const double fine_low = fine.lower();
+    const double exact_high = white * std::exp2(-kLightnessExactBandEv);
+    // The black lift g(0) is added as neutral light; the rest of g scales the pixel.
+    const double lift = composite(0.0);
+    // Slope of g next to black: the gain of pixels without a positive component.
+    const double h = std::ldexp(white, -30);
+    const double black_gain = (composite(h) - lift) / h;
+    // A curve that keeps white (contrast does; a tone curve ending at y = 1) maps W to W: norms
+    // above it keep their relation to W (the white's gain). One that lowers white maps every norm
+    // at or above W to its white output.
+    const bool keeps_white = tone == nullptr || !(tone->evaluate(1.0) < 1.0);
+    const double at_white = keeps_white ? white : composite(white);
+    const double white_gain = (at_white - lift) / white;
+    const auto lift_f = static_cast<float>(lift);
     const image::ImageView<float> view = image.pixels.view();
     const std::int32_t width = view.width();
     auto status = detail::for_each_row(view.height(), parallel, cancel, kWhere, [&](std::int32_t y) {
@@ -278,16 +313,24 @@ Expected<LightnessCurvesRecord> apply_lightness_curves(ColorImage& image, const 
         for (std::int32_t x = 0; x < width; ++x, p += 3) {
             const float mf = std::max({p[0], p[1], p[2]});
             const double m = mf;
-            if (!(m > 0.0)) {
-                continue;
+            double gain = black_gain;
+            if (m >= white) {
+                gain = keeps_white ? white_gain : (at_white - lift) / m;
+            } else if (m > 0.0) {
+                double target = 0.0;
+                if (m >= exact_high || m < table_low) {
+                    target = composite(m);
+                } else {
+                    target = m >= fine_low ? fine(mf) : lut(mf);
+                }
+                gain = (target - lift) / m;
             }
-            const double target = m >= white ? at_white : (m >= table_low ? lut(mf) : composite(m));
-            const auto scale = static_cast<float>(target / m);
-            if (scale != 1.0f) {
+            const auto scale = static_cast<float>(gain);
+            if (scale != 1.0f || lift_f != 0.0f) {
                 ++c.changed;
-                p[0] *= scale;
-                p[1] *= scale;
-                p[2] *= scale;
+                p[0] = p[0] * scale + lift_f;
+                p[1] = p[1] * scale + lift_f;
+                p[2] = p[2] * scale + lift_f;
             }
             c.non_finite += static_cast<std::uint64_t>(!std::isfinite(p[0]) || !std::isfinite(p[1]) ||
                                                        !std::isfinite(p[2]));
@@ -298,6 +341,8 @@ Expected<LightnessCurvesRecord> apply_lightness_curves(ColorImage& image, const 
         return Unexpected(std::move(status.error()));
     }
     LightnessCurvesRecord record;
+    record.black_lift = lift;
+    record.keeps_white = keeps_white;
     std::uint64_t non_finite = 0;
     for (const Counts& c : *counts) {
         record.changed_pixels += c.changed;

@@ -146,16 +146,22 @@ struct DngCalibrationRecord {
     double weight_matrix1 = 1.0;      // interpolation weight g of calibration 1
     std::uint32_t iterations = 0;     // passes of the neutral -> xy search
     bool converged = true;            // false: the last two estimates were averaged
-    // Camera -> XYZ(D50) for UNBALANCED camera values; maps camera_neutral to the D50 white.
+    // Camera -> XYZ(D50) for UNBALANCED camera values; maps camera_neutral to the D50 white
+    // (approximately for a ColorMatrix white whose Bradford adaptation the SDK's guards limit, see
+    // evaluate_dng_profile()).
     image::Matrix3d camera_to_xyz_d50;
     image::Vec3d camera_neutral;  // as used (maximum 1, entries >= 0.001)
 };
 
 // Evaluates a DNG profile for a camera neutral (camera R, G, B values of a neutral surface; any
-// positive scale). Errors (engine.color.dng): InvalidArgument for a neutral that is not finite
-// and positive or a profile without ColorMatrix1; Corrupt for a singular or non-finite matrix, a
-// ForwardMatrix whose rows do not sum to positive values, or a neutral that maps outside positive
-// XYZ.
+// positive scale). The ColorMatrix path adapts D50 to the camera white with the SDK's
+// MapWhiteMatrix: linearised Bradford, with negative cone responses taken as 0 and each cone's
+// scale pinned to [0.1, 10], so whites near or beyond the spectral locus (strong green tints at
+// low temperatures, whose S-cone response is negative) are rendered as the SDK renders them
+// instead of failing; the pinned adaptation no longer maps the neutral exactly to D50.
+// Errors (engine.color.dng): InvalidArgument for a neutral that is not finite and positive or a
+// profile without ColorMatrix1; Corrupt for a singular or non-finite matrix, a ForwardMatrix whose
+// rows do not sum to positive values, or a neutral that maps outside positive XYZ.
 [[nodiscard]] Expected<DngCalibrationRecord> evaluate_dng_profile(const DngProfile& profile,
                                                                   const image::Vec3d& camera_neutral);
 

@@ -29,7 +29,11 @@
 //   In both paths the camera neutral is scaled to a maximum of 1 and its entries pinned to
 //   [0.001, 1], as the SDK does, so the extreme corners of the DevelopSettings range (for
 //   example 2000 K with tint +150, beyond the spectral locus, which a matrix can map to a
-//   negative blue response) give finite, very large multipliers rather than an error.
+//   negative blue response) give finite, very large multipliers rather than an error; once an
+//   entry is pinned, settings further into that corner give the same multipliers (on a Canon
+//   EOS R5 every tint from about +70 to +150 at 2000 K renders alike), as in Adobe's raw
+//   editors. Rendering such whites never fails either: the DNG ColorMatrix path adapts to them
+//   with the SDK's guarded Bradford adaptation (evaluate_dng_profile()).
 //   * Monochrome data, or no usable calibration: no mapping; Kelvin is unavailable
 //     (kelvin_available() is false and kelvin_unavailable_reason() says why).
 // Multipliers are always for camera red, green and blue (RgbMultipliers, green = 1) and

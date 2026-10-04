@@ -60,6 +60,37 @@ image::Vec3d xy_to_xyz(image::Chromaticity xy) noexcept {
     return image::Vec3d{xy.x / xy.y, 1.0, (1.0 - xy.x - xy.y) / xy.y};
 }
 
+// dng_color_spec.cpp MapWhiteMatrix: the linearised Bradford adaptation from white1 to white2
+// (XYZ), with the SDK's guards: negative cone responses are taken as 0 and each cone's scale is
+// pinned to [0.1, 10] (10 when white1's response is 0). Unlike image::chromatic_adaptation() it
+// never fails, so whites near or beyond the spectral locus are adapted as the DNG SDK adapts
+// them (a Kelvin setting with a strong green tint has a negative S-cone response, for example
+// 3000 K / +90 at xy (0.488, 0.509)). Where no guard applies, the result is that of
+// image::chromatic_adaptation(white1, white2, Bradford).
+Expected<image::Matrix3d> map_white_matrix(const image::Vec3d& white1, const image::Vec3d& white2) {
+    constexpr image::Matrix3d kBradford{
+        {0.8951, 0.2664, -0.1614}, {-0.7502, 1.7135, 0.0367}, {0.0389, -0.0685, 1.0296}};
+    if (!finite(white1) || !finite(white2)) {
+        return fail(ErrorCode::Corrupt, "a white point is not finite", kWhereDng);
+    }
+    if (white1 == white2) {
+        return image::Matrix3d::identity();  // as image::chromatic_adaptation: no rounding noise
+    }
+    auto inverse = image::inverse(kBradford);
+    if (!inverse) {
+        return fail(ErrorCode::Internal, "the Bradford matrix is singular", kWhereDng);
+    }
+    image::Vec3d w1 = kBradford * white1;
+    image::Vec3d w2 = kBradford * white2;
+    image::Vec3d scale;
+    for (std::size_t i = 0; i < 3; ++i) {
+        w1[i] = std::max(w1[i], 0.0);
+        w2[i] = std::max(w2[i], 0.0);
+        scale[i] = std::clamp(w1[i] > 0.0 ? w2[i] / w1[i] : 10.0, 0.1, 10.0);
+    }
+    return *inverse * (image::Matrix3d::diagonal(scale) * kBradford);
+}
+
 // dng_camera_profile::NormalizeForwardMatrix: scale each row so that camera (1,1,1) maps to the
 // D50 white (PCS).
 Expected<image::Matrix3d> normalize_forward_matrix(const image::Matrix3d& fm, std::size_t which) {
@@ -379,11 +410,9 @@ Expected<DngCalibrationRecord> evaluate_dng_profile(const DngProfile& profile,
     } else {
         // PCStoCamera = CM * MapWhiteMatrix(D50 -> white), scaled so that the PCS white just reaches
         // the first camera channel at 1; CameraToPCS is its inverse.
-        auto map_white =
-            image::chromatic_adaptation(d50, xy_to_xyz(last), image::ChromaticAdaptationMethod::Bradford);
+        auto map_white = map_white_matrix(d50, xy_to_xyz(last));
         if (!map_white) {
-            return fail(ErrorCode::Corrupt,
-                        "cannot adapt D50 to the camera white: " + map_white.error().message, kWhereDng);
+            return Unexpected(std::move(map_white.error()));
         }
         image::Matrix3d pcs_to_camera = at->xyz_to_camera * *map_white;
         const image::Vec3d white_camera = pcs_to_camera * d50;

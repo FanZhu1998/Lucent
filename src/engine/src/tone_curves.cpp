@@ -19,7 +19,9 @@ constexpr double kLabEpsilon = 216.0 / 24389.0;
 constexpr double kLabLinearSlope = 1.16 * (841.0 / 108.0);  // 1.16 * (1/3) * (29/6)^2
 constexpr double kLabBreak = 6.0 / 29.0;
 
-double logistic(double z) noexcept { return 1.0 / (1.0 + std::exp(-z)); }
+// Below this steepness the contrast curve differs from the identity by less than the rounding
+// of a double (its deviation is O(b^2)); smaller values would also reach subnormal numbers.
+constexpr double kMinContrastSteepness = 1e-150;
 
 // Positive root t of c t^2 + t - delta = 0 (delta >= 0 or c small), computed stably.
 double quadratic_root(double c, double delta) noexcept {
@@ -57,7 +59,7 @@ Expected<ToneCurve> ToneCurve::create(const ToneCurveSetting& setting) {
     }
     for (std::size_t i = 0; i < p.size(); ++i) {
         if (!std::isfinite(p[i].x) || !std::isfinite(p[i].y) || p[i].x < 0.0 || p[i].x > 1.0 || p[i].y < 0.0 ||
-            p[i].y > 1.0 || (i > 0 && (!(p[i].x > p[i - 1].x) || p[i].y < p[i - 1].y))) {
+            p[i].y > 1.0 || (i > 0 && (!(p[i].x - p[i - 1].x >= kMinToneCurveGap) || p[i].y < p[i - 1].y))) {
             return fail(ErrorCode::InvalidArgument,
                         std::format("tone-curve point {} ({}, {}) breaks the monotone-curve rules", i, p[i].x, p[i].y),
                         kWhere);
@@ -89,13 +91,15 @@ Expected<ToneCurve> ToneCurve::create(const ToneCurveSetting& setting) {
             m[k + 1] = 0.0;
             continue;
         }
-        const double alpha = m[k] / d[k];
-        const double beta = m[k + 1] / d[k];
-        const double r2 = alpha * alpha + beta * beta;
-        if (r2 > 9.0) {
-            const double tau = 3.0 / std::sqrt(r2);
-            m[k] = tau * alpha * d[k];
-            m[k + 1] = tau * beta * d[k];
+        // alpha^2 + beta^2 > 9 with alpha = m_k / d_k, beta = m_{k+1} / d_k, and the scaling
+        // tau = 3 / sqrt(alpha^2 + beta^2), written without the ratios: they overflow when d_k is
+        // tiny next to a steep neighbour (a nearly flat interval beside a nearly vertical one),
+        // and tau * alpha would then be 0 * inf = NaN.
+        const double norm = std::hypot(m[k], m[k + 1]);
+        if (norm > 3.0 * d[k]) {
+            const double s = 3.0 * d[k] / norm;
+            m[k] *= s;
+            m[k + 1] *= s;
         }
     }
     return curve;
@@ -134,31 +138,37 @@ Expected<ContrastCurve> ContrastCurve::create(double contrast) {
     ContrastCurve curve;
     curve.contrast_ = contrast;
     curve.steepness_ = kContrastMaxSteepness * std::abs(contrast);
-    if (curve.steepness_ > 0.0) {
-        curve.low_ = logistic(-curve.steepness_ * kContrastPivot);
-        curve.range_ = logistic(curve.steepness_ * (1.0 - kContrastPivot)) - curve.low_;
+    curve.linear_ = !(curve.steepness_ >= kMinContrastSteepness);
+    if (!curve.linear_) {
+        curve.t0_ = std::tanh(0.5 * curve.steepness_ * kContrastPivot);
+        curve.span_ = curve.t0_ + std::tanh(0.5 * curve.steepness_ * (1.0 - kContrastPivot));
     }
     return curve;
 }
 
+// With s(z) - 1/2 = tanh(z / 2) / 2 the logistic forms of the header become
+//   c > 0: f(l) = (tanh(b (l - p) / 2) + tanh(b p / 2)) / (tanh(b (1 - p) / 2) + tanh(b p / 2)),
+//   c < 0: f(l) = p + 2 atanh(l (tanh(b (1 - p) / 2) + tanh(b p / 2)) - tanh(b p / 2)) / b,
+// which keep full relative precision as b -> 0 (the differences of logistics they replace cancel
+// to nothing for |c| below about 3e-17).
 double ContrastCurve::evaluate(double l) const noexcept {
-    if (contrast_ == 0.0) {
+    if (contrast_ == 0.0 || linear_) {
         return l;
     }
     const double x = std::clamp(l, 0.0, 1.0);
     const double b = steepness_;
     if (contrast_ > 0.0) {
-        return std::clamp((logistic(b * (x - kContrastPivot)) - low_) / range_, 0.0, 1.0);
+        return std::clamp((std::tanh(0.5 * b * (x - kContrastPivot)) + t0_) / span_, 0.0, 1.0);
     }
-    const double z = low_ + x * range_;
-    return std::clamp(kContrastPivot + std::log(z / (1.0 - z)) / b, 0.0, 1.0);
+    const double u = std::clamp(x * span_ - t0_, -1.0, 1.0);
+    return std::clamp(kContrastPivot + 2.0 * std::atanh(u) / b, 0.0, 1.0);
 }
 
 double ContrastCurve::slope_at_pivot() const noexcept {
-    if (contrast_ == 0.0) {
+    if (contrast_ == 0.0 || linear_) {
         return 1.0;
     }
-    const double s = 0.25 * steepness_ / range_;  // s'(0) * b / range
+    const double s = 0.5 * steepness_ / span_;  // (b / 2) / (tanh(b (1 - p) / 2) + tanh(b p / 2))
     return contrast_ > 0.0 ? s : 1.0 / s;
 }
 

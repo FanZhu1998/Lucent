@@ -4,6 +4,9 @@
 //   * KelvinRoundTrips: on every renderable colour fixture, the as-shot multipliers map to a
 //     temperature/tint and back to themselves (DNG profiles: dual-illuminant interpolation and
 //     ForwardMatrix files; decoder matrices: LibRaw's cam_xyz).
+//   * EveryKelvinSettingRendersOnEveryDngCalibration: stage two renders the DevelopSettings Kelvin
+//     range (2000 to 50000 K, tints -150 to +150) on every DNG fixture, ColorMatrix and
+//     ForwardMatrix, with finite pixels.
 //   * InteractiveMatchesExport: the interactive path (cached as-shot stage one, then stage two)
 //     against the export render (the settings' white balance before demosaicing), at full
 //     resolution and as a 2048-pixel proxy against the export box-downscaled to the proxy grid.
@@ -271,6 +274,62 @@ TEST(DevelopFixtures, KelvinRoundTripsTheAsShotBalance) {
     }
     if (checked == 0) {
         GTEST_SKIP() << "no camera fixture is downloaded; run tools\\fetch-fixtures.ps1";
+    }
+}
+
+// ---- The whole Kelvin range renders --------------------------------------------------------------------
+
+TEST(DevelopFixtures, EveryKelvinSettingRendersOnEveryDngCalibration) {
+    // Strong green tints at low temperatures are whites near or beyond the spectral locus with a
+    // negative Bradford S-cone response; the ColorMatrix files (DJI, Leica, Hasselblad, Insta360)
+    // must adapt to them as the DNG SDK does instead of failing. The ForwardMatrix DNGs complete
+    // the DNG paths. Stage one is a small proxy: the colour path does not depend on the size.
+    const std::vector<std::string> fixtures = {
+        "dji-fc4382-dng",     "dji-fc220-dng", "leica-m10-dng", "hasselblad-l2d-20c-dng", "insta360-one-x-dng",
+        "adobe-dng-canon-eos-5d-mark-iii-linear-dng", "canon-eos-7d-mark-ii-dng-jxl"};
+    const std::vector<double> temperatures = {kMinTemperatureK, 2200.0, 2500.0, 3000.0, 4000.0,
+                                              6500.0,           10000.0, 20000.0, kMaxTemperatureK};
+    auto registry = raw::create_default_registry();
+    ASSERT_TRUE(registry);
+    std::size_t checked = 0;
+    for (const std::string& id : fixtures) {
+        const auto file = ts::fixture_file(id);
+        if (!file) {
+            continue;
+        }
+        SCOPED_TRACE(id);
+        StageOneRequest request;
+        request.proxy_long_edge = 64;
+        auto one = render_stage_one_file(*registry, *file, 0u, request);
+        ASSERT_TRUE(one) << one.error().describe();
+        std::size_t failures = 0;
+        for (const double temperature : temperatures) {
+            for (double tint = -kMaxTint; tint <= kMaxTint; tint += 10.0) {
+                DevelopSettings settings;
+                settings.white_balance = KelvinWhiteBalance{temperature, tint};
+                auto result = render_stage_two(*one, settings);
+                if (!result) {
+                    ++failures;
+                    ADD_FAILURE() << temperature << " K / " << tint << ": " << result.error().describe();
+                    continue;
+                }
+                const image::ImageBuffer<float>& pixels = result->display.pixels;
+                bool finite = true;
+                for (std::int32_t y = 0; y < pixels.height() && finite; ++y) {
+                    const float* row = pixels.row(y);
+                    for (std::int32_t x = 0; x < pixels.width() * pixels.channels(); ++x) {
+                        finite = finite && std::isfinite(row[x]);
+                    }
+                }
+                EXPECT_TRUE(finite) << temperature << " K / " << tint;
+            }
+        }
+        std::cout << std::left << std::setw(44) << id << " Kelvin grid: " << temperatures.size() * 31 - failures
+                  << " of " << temperatures.size() * 31 << " settings rendered\n";
+        ++checked;
+    }
+    if (checked == 0) {
+        GTEST_SKIP() << "no DNG fixture is downloaded; run tools\\fetch-fixtures.ps1";
     }
 }
 
