@@ -38,7 +38,9 @@ namespace lucent::app {
 
 namespace detail {
 
-// A batch's documents, parsed once (immutable after load) plus the coordinator's runtime state.
+// A batch's documents, parsed once (immutable after load, except the folder's identity, which
+// use_replaced_folder() may replace: read it with Impl::folder_identity_of) plus the coordinator's
+// runtime state.
 struct BatchContext {
     catalog::BatchId id;
     std::string name;
@@ -50,8 +52,14 @@ struct BatchContext {
     core::Digest256 export_settings_sha256{};
 
     // ---- runtime (Impl::mutex) ----
+    std::optional<core::FileIdentity> folder_identity;  // destination.folder_identity, maybe replaced
     BatchAttention attention = BatchAttention::None;
     std::optional<Error> attention_error;
+    std::optional<std::uint64_t> attention_free_bytes;  // DestinationFull
+    std::uint64_t attention_needed_bytes = 0;
+    // BatchStatus facts read from the catalog, valid while the counts they were read at hold.
+    std::optional<catalog::BatchCounts> facts_counts;
+    catalog::BatchJobFacts facts;
     // Names known to be taken per final folder: folded folder path -> folded file names. Filled
     // by one listing per folder, then by this session's reservations and publications.
     std::map<std::wstring, std::unordered_set<std::wstring>> taken;
@@ -83,7 +91,7 @@ enum class StopReason : std::uint8_t {
     None = 0,
     BatchCancelled = 1,  // the batch was cancelled: the attempt ends Cancelled
     Shutdown = 2,        // the service is closing: the job is given back (Queued)
-    LeaseLost = 3,       // the lease was taken away: abandon without touching the job
+    LeaseLost = 3,       // the lease was taken away or expired: the attempt is an interruption
 };
 
 struct Slot {
@@ -104,6 +112,21 @@ struct Slot {
     std::uint64_t estimate_bytes = 0;
     std::uint64_t observed_commit = 0;  // largest commit heartbeats reported in this attempt
     std::uint32_t pid = 0;
+    bool reclaim_after = false;  // the attempt left its job leased: reconcile it once the slot is free
+};
+
+// Where the batch's output folder stands (recovery decides nothing about outputs it cannot see).
+enum class Reach : std::uint8_t {
+    Reachable = 1,
+    Unreachable = 2,  // the folder or its drive cannot be opened
+    Replaced = 3,     // another folder object is at its path
+};
+
+// A file compared with a recorded size and SHA-256.
+enum class FileCheck : std::uint8_t {
+    Match = 1,
+    Mismatch = 2,  // absent (with its folder reachable), another size, or other bytes
+    Unknown = 3,   // it could not be read (a sharing violation, an I/O error, changed while read)
 };
 
 }  // namespace detail
@@ -126,6 +149,7 @@ struct BatchService::Impl {
     std::condition_variable coordinator_cv;
     bool stopping = false;          // (mutex)
     bool wake_requested = false;    // (mutex)
+    bool reclaim_requested = false;  // (mutex) reconcile abandoned leases at the next wake-up
     bool work_waiting = true;       // (mutex) the last dispatch saw queued jobs of running batches
     std::thread coordinator;
     std::vector<std::unique_ptr<detail::Slot>> slots;
@@ -153,6 +177,11 @@ struct BatchService::Impl {
     BatchSchedulerStats counters;      // (mutex) cumulative members only
     RecoveryReport recovery;           // (mutex)
     bool recovered = false;            // (mutex) recover() has run (on the coordinator thread)
+    // (mutex) Reconciliations left for later because the output folder was out of reach or an
+    // output could not be read: jobs (by id) and open publications (job id, attempt). Retried by
+    // reclaim_abandoned(); logged once.
+    std::set<std::int64_t> deferred_jobs;
+    std::set<std::pair<std::int64_t, std::uint32_t>> deferred_publications;
     mutable std::condition_variable recovered_cv;
 
     [[nodiscard]] catalog::Timestamp now() const {
@@ -172,16 +201,35 @@ struct BatchService::Impl {
     // Emits Finished (and writes the report) once when the batch has nothing left to run.
     void check_finished(catalog::BatchId id);
     void request_wake() noexcept;
+    // Reconciles abandoned leases and deferred publications at the next wake-up.
+    void request_reclaim() noexcept;
     // Adds `id` to active_batches.
     void note_active(catalog::BatchId id);
     // Pages through every batch: unfinished ones join active_batches (and active_scanned is set when
     // the scan completed); `visit` sees each record (recovery's leftover sweep).
     [[nodiscard]] Status scan_batches(const std::function<void(const catalog::BatchRecord&)>& visit = {});
     [[nodiscard]] Status recover();
-    // Reconciles a job whose lease belongs to no running attempt (see "Recovery").
-    void reconcile_job(const catalog::JobRecord& job);
-    // Cleans up the open publication of an attempt that no longer holds a lease and closes it.
-    void close_publication(const catalog::PublicationInProgress& open);
+    // Reconciles a job whose lease belongs to no running attempt (see "Recovery"); false when it
+    // was left for later (output folder out of reach, an output unreadable, a catalog error). Paths
+    // a deferred reconciliation still needs (its temporary and set-aside files) are added to `keep`.
+    bool reconcile_job(const catalog::JobRecord& job, std::vector<std::filesystem::path>* keep = nullptr);
+    // Cleans up the open publication of an attempt that no longer holds a lease and closes it;
+    // false when it was left for later (as reconcile_job).
+    bool close_publication(const catalog::PublicationInProgress& open,
+                           std::vector<std::filesystem::path>* keep = nullptr);
+    // Requeues (or, past BatchRetryPolicy::max_interruptions, fails) the job of an interrupted
+    // attempt whose lease is `lease`, recording `error`; the job's stage afterwards.
+    [[nodiscard]] Expected<catalog::JobStage> recover_interrupted(const catalog::JobLease& lease,
+                                                                  const catalog::JobRecord& job, Error error,
+                                                                  const detail::BatchContext* context);
+    // The error recorded for an attempt interrupted under `owner` (a previous session: Lucent
+    // stopped; this one: the lease expired).
+    [[nodiscard]] Error interruption_error(std::string_view owner) const;
+    [[nodiscard]] detail::Reach reach_destination(const detail::BatchContext& context) const;
+    [[nodiscard]] std::optional<core::FileIdentity> folder_identity_of(const detail::BatchContext& context) const;
+    // Writes the reports of batches that finished without them (Lucent stopped in between).
+    void report_unreported();
+    void note_deferred_job(catalog::JobId job, std::string_view why);
     [[nodiscard]] std::optional<std::uint64_t> free_space(const std::filesystem::path& directory) const;
     // The canonical settings document the job renders (its revision's, or the as-shot defaults),
     // verified against the job's settings SHA-256.
@@ -202,7 +250,8 @@ struct BatchService::Impl {
     [[nodiscard]] std::uint64_t output_bytes(const detail::BatchContext& context, std::uint64_t pixels) const;
     // Checks the batch's folder; pauses the batch with an attention when it is not usable.
     [[nodiscard]] bool destination_usable(detail::BatchContext& context, std::uint64_t needed_bytes);
-    void raise_attention(detail::BatchContext& context, BatchAttention attention, Error error);
+    void raise_attention(detail::BatchContext& context, BatchAttention attention, Error error,
+                         std::optional<std::uint64_t> free_bytes = std::nullopt, std::uint64_t needed_bytes = 0);
     [[nodiscard]] std::vector<detail::Slot*> busy_slots_of(catalog::BatchId batch);
 
     // ---- batch_report.cpp ----
@@ -231,6 +280,10 @@ struct PhysicalMemory {
 // The pixels of an item's output (upright size from its probe; 0 when unknown).
 [[nodiscard]] std::uint64_t output_pixels(const SourceItem& item) noexcept;
 
+// `path` compared with `size` and `sha256` (stat, then a stable hash read).
+[[nodiscard]] FileCheck check_file(const std::filesystem::path& path, std::uint64_t size, const core::Digest256& sha256,
+                                   const core::CancellationToken& cancel = {});
+
 // User-facing English for a job's outcome (report.hpp's reason and action).
 struct Wording {
     std::string reason;
@@ -245,10 +298,13 @@ inline constexpr std::string_view kWhereSourceAccess = "app.batch.source.access"
 inline constexpr std::string_view kWhereRemoved = "app.batch.source.removed";
 inline constexpr std::string_view kWhereExisting = "app.batch.existing";
 inline constexpr std::string_view kWhereInterrupted = "app.batch.interrupted";
+inline constexpr std::string_view kWhereLeaseExpired = "app.batch.interrupted.lease";
+inline constexpr std::string_view kWhereInterruptedTooOften = "app.batch.interrupted.limit";
 inline constexpr std::string_view kWhereVerify = "app.batch.verify";
 inline constexpr std::string_view kWhereRecipe = "app.batch.recipe";
 inline constexpr std::string_view kWhereOutputLost = "app.batch.output_lost";
 inline constexpr std::string_view kWhereDestination = "app.batch.destination";
+inline constexpr std::string_view kWhereDestinationReplaced = "app.batch.destination.replaced";
 inline constexpr std::string_view kWhereMemory = "app.batch.memory";
 
 }  // namespace detail

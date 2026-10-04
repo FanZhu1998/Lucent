@@ -870,5 +870,239 @@ TEST_F(BatchFailureTest, LostPermissionPausesTheBatchUntilRestored) {
     EXPECT_TRUE(ts::leftovers(out_).empty());
 }
 
+// ---- Closing review of W7: interruptions, folders created again, plans, status facts ---------
+
+TEST_F(BatchFailureTest, InterruptionsAreBoundedApartFromTransientFailures) {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.lease_duration = 2s;
+    options.lease_renewal = 1s;
+    options.retry.max_interruptions = 1;
+    // A step that outlasts the lease (like a system sleep): every attempt loses it.
+    options.test.on_point = [](std::string_view point, catalog::JobId) {
+        if (point == "temp_written") {
+            std::this_thread::sleep_for(3s);
+        }
+    };
+    open(options);
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 1));
+    const catalog::BatchId id = h().run(h().request(ids, out_), 120s);
+    const catalog::JobRecord job = job_at(id, 0);
+    EXPECT_EQ(job.stage, catalog::JobStage::Failed) << "a job interrupted at every attempt does not loop forever";
+    EXPECT_EQ(job.attempts, 2u);
+    EXPECT_EQ(job.interruptions, 2u);
+    EXPECT_EQ(job.transient_failures, 0u) << "interruptions keep the budget of genuine worker failures";
+    ASSERT_TRUE(job.last_error);
+    EXPECT_EQ(job.last_error->where, "app.batch.interrupted.limit");
+    auto report = h().batches().report(id);
+    ASSERT_TRUE(report);
+    ASSERT_FALSE(report->entries.empty());
+    EXPECT_NE(report->entries[0].reason.find("interrupted repeatedly"), std::string::npos) << report->entries[0].reason;
+    EXPECT_TRUE(ts::leftovers(out_).empty());
+    auto status = h().batches().status(id);
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->retryable, 1u);
+}
+
+TEST_F(BatchFailureTest, AFolderCreatedAgainIsUsedOnlyOnceTheUserAcceptsIt) {
+    open(ts::fast_batch_options());
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 2));
+    BatchRequest request = h().request(ids, out_);
+    request.start = false;
+    auto submitted = h().batches().submit(request);
+    ASSERT_TRUE(submitted) << submitted.error().describe();
+    const catalog::BatchId id = submitted->id;
+    // The user deletes the output folder: the batch never creates it again by itself.
+    std::filesystem::remove_all(out_);
+    ASSERT_TRUE(h().batches().start(id));
+    ASSERT_TRUE(h().log.wait_for_kind(id, BatchEventKind::Attention, 30s));
+    auto status = h().batches().status(id);
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->attention, BatchAttention::DestinationUnavailable);
+    std::this_thread::sleep_for(300ms);
+    EXPECT_FALSE(std::filesystem::exists(out_));
+    // The user creates it again: another folder object. Resuming says so instead of using it.
+    std::filesystem::create_directories(out_);
+    ASSERT_TRUE(ts::eventually([&] { return h().record(id).state == catalog::BatchState::Paused; }));
+    ASSERT_TRUE(h().batches().resume(id));
+    ASSERT_TRUE(ts::eventually([&] { return h().log.count(id, BatchEventKind::Attention) >= 2; }));
+    status = h().batches().status(id);
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->attention, BatchAttention::DestinationReplaced);
+    EXPECT_EQ(status->record.counts.queued, 2u);
+    // Accepting the new folder continues there, and the choice is recorded in the batch.
+    ASSERT_TRUE(ts::eventually([&] { return h().record(id).state == catalog::BatchState::Paused; }));
+    ASSERT_TRUE(h().batches().use_replaced_folder(id));
+    ASSERT_TRUE(h().log.wait_for_kind(id, BatchEventKind::Finished));
+    EXPECT_EQ(h().record(id).counts.complete, 2u);
+    EXPECT_EQ(count_with_extension(out_, L".jpg"), 2u);
+    EXPECT_EQ(h().batches().status(id)->attention, BatchAttention::None);
+    EXPECT_FALSE(h().batches().use_replaced_folder(id)) << "a finished batch keeps its folder";
+}
+
+TEST_F(BatchFailureTest, ASingleExportRunsBeforeTheRestOfAnOlderBatch) {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.max_workers = 1;
+    options.test.worker_hooks_by_start = {{"render-delay:150"}};
+    open(options);
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 13));
+    const std::vector<ItemId> many(ids.begin(), ids.begin() + 12);
+    auto big = h().batches().submit(h().request(many, out_));
+    ASSERT_TRUE(big);
+    ASSERT_TRUE(wait_rendering(big->id));
+    BatchRequest single = h().request({ids[12]}, dir_.path() / L"single");
+    single.single_export = true;
+    auto one = h().batches().submit(single);
+    ASSERT_TRUE(one) << one.error().describe();
+    ASSERT_TRUE(h().log.wait_for_kind(one->id, BatchEventKind::Finished, 60s));
+    EXPECT_GT(h().record(big->id).counts.pending(), 0u) << "the single export did not wait for the whole batch";
+    auto status = h().batches().status(one->id);
+    ASSERT_TRUE(status);
+    EXPECT_TRUE(status->single_export);
+    ASSERT_TRUE(status->output);
+    EXPECT_EQ(status->output->filename(), L"photo12_Lucent_0.jpg");
+    ASSERT_TRUE(h().log.wait_for_kind(big->id, BatchEventKind::Finished));
+}
+
+TEST_F(BatchFailureTest, APausedBatchHasNoTimeLeftToTell) {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.max_workers = 1;
+    options.test.worker_hooks_by_start = {{"render-delay:100"}};
+    open(options);
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 8));
+    auto submitted = h().batches().submit(h().request(ids, out_));
+    ASSERT_TRUE(submitted);
+    ASSERT_TRUE(h().log.wait_for([&](const std::vector<BatchEvent>& events) {
+        return std::count_if(events.begin(), events.end(), [&](const BatchEvent& e) {
+                   return e.batch == submitted->id && e.kind == BatchEventKind::JobFinished;
+               }) >= 3;
+    }));
+    ASSERT_TRUE(h().batches().pause(submitted->id));
+    ASSERT_TRUE(ts::eventually([&] { return h().record(submitted->id).counts.leased() == 0; }));
+    auto status = h().batches().status(submitted->id);
+    ASSERT_TRUE(status);
+    if (status->record.counts.pending() > 0) {
+        EXPECT_EQ(status->record.state, catalog::BatchState::Paused);
+        EXPECT_FALSE(status->eta_seconds.has_value()) << "a paused batch is not about to finish";
+    }
+    ASSERT_TRUE(h().batches().resume(submitted->id));
+    ASSERT_TRUE(h().log.wait_for_kind(submitted->id, BatchEventKind::Finished));
+    EXPECT_FALSE(h().batches().status(submitted->id)->eta_seconds.has_value());
+}
+
+TEST_F(BatchServiceTest, PlansShowOutputsToWriteFirstAndTrustSizesUntilSubmission) {
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 3));
+    h().run(h().request({ids[0], ids[1]}, out_));
+    // Another program changes one earlier output without changing its size.
+    const std::filesystem::path changed = out_ / L"photo1_Lucent_0.jpg";
+    {
+        std::fstream file(changed, std::ios::in | std::ios::out | std::ios::binary);
+        ASSERT_TRUE(file.is_open());
+        file.seekp(200);
+        file.put('\x5A');
+    }
+    auto plan = h().batches().plan(h().request(ids, out_));
+    ASSERT_TRUE(plan) << plan.error().describe();
+    EXPECT_EQ(plan->outputs, 1u);
+    EXPECT_EQ(plan->already_exported, 2u) << "a plan does not hash earlier outputs";
+    ASSERT_EQ(plan->examples.size(), 3u);
+    EXPECT_FALSE(plan->examples[0].already_exported) << "outputs that will be written come first";
+    EXPECT_EQ(plan->examples[0].destination.filename(), L"photo2_Lucent_0.jpg");
+    EXPECT_TRUE(plan->examples[1].already_exported);
+    EXPECT_TRUE(plan->examples[2].already_exported);
+    auto submitted = h().batches().submit(h().request(ids, out_));
+    ASSERT_TRUE(submitted) << submitted.error().describe();
+    EXPECT_EQ(submitted->skipped_existing, 1u) << "submission verifies byte for byte";
+    ASSERT_TRUE(h().log.wait_for_kind(submitted->id, BatchEventKind::Finished));
+    EXPECT_EQ(h().record(submitted->id).counts.complete, 2u);
+}
+
+TEST_F(BatchServiceTest, StatusCarriesWhatTheInterfaceShows) {
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 2));
+    BatchRequest request = h().request({ids[0], ItemId{999'999}}, out_);
+    const catalog::BatchId first = h().run(request);
+    auto status = h().batches().status(first);
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->excluded, 1u);
+    EXPECT_FALSE(status->single_export);
+    EXPECT_EQ(status->review_recommended, 0u);
+    EXPECT_EQ(status->retryable, 0u);
+    ASSERT_TRUE(status->output);
+    EXPECT_EQ(*status->output, out_ / L"photo0_Lucent_0.jpg");
+    EXPECT_FALSE(status->outcome_error);
+    EXPECT_FALSE(status->eta_seconds);
+    // The same photo again under a new name: its receipt recommends a review.
+    BatchRequest again = h().request({ids[0]}, out_);
+    again.existing_outputs = ExistingOutputs::ExportAgain;
+    again.single_export = true;
+    const catalog::BatchId second = h().run(again);
+    status = h().batches().status(second);
+    ASSERT_TRUE(status);
+    EXPECT_TRUE(status->single_export);
+    EXPECT_EQ(status->review_recommended, 1u);
+    ASSERT_TRUE(status->output);
+    EXPECT_EQ(status->output->filename(), L"photo0_Lucent_0_2.jpg");
+    // Skipped as already exported: the batch of one names the existing file.
+    const catalog::BatchId third = h().run(h().request({ids[0]}, out_));
+    status = h().batches().status(third);
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->record.counts.skipped, 1u);
+    ASSERT_TRUE(status->output);
+    EXPECT_EQ(status->output->filename(), L"photo0_Lucent_0.jpg");
+    ASSERT_TRUE(status->outcome_error);
+    EXPECT_EQ(status->outcome_error->where, "app.batch.existing");
+    // Paging and the unfinished batches.
+    auto newest = h().batches().list(1);
+    ASSERT_TRUE(newest && newest->size() == 1u);
+    EXPECT_EQ(newest->front().record.id, third);
+    auto older = h().batches().list(10, third);
+    ASSERT_TRUE(older);
+    ASSERT_EQ(older->size(), 2u);
+    EXPECT_EQ(older->front().record.id, second);
+    BatchRequest draft = h().request({ids[1]}, out_);
+    draft.start = false;
+    auto drafted = h().batches().submit(draft);
+    ASSERT_TRUE(drafted);
+    auto unfinished = h().batches().list_unfinished();
+    ASSERT_TRUE(unfinished);
+    ASSERT_EQ(unfinished->size(), 1u);
+    EXPECT_EQ(unfinished->front().record.id, drafted->id);
+}
+
+TEST_F(BatchServiceTest, ASkippedPhotoNamesTheOutputInItsOwnFolder) {
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 1));
+    const std::filesystem::path a = out_ / L"A";
+    const std::filesystem::path b = out_ / L"B";
+    h().run(h().request(ids, a));
+    h().run(h().request(ids, b));
+    const catalog::BatchId id = h().run(h().request(ids, a));
+    auto report = h().batches().report(id);
+    ASSERT_TRUE(report);
+    ASSERT_EQ(report->entries.size(), 1u);
+    EXPECT_EQ(report->entries[0].outcome, ReportOutcome::Skipped);
+    ASSERT_TRUE(report->entries[0].output);
+    EXPECT_EQ(*report->entries[0].output, a / L"photo0_Lucent_0.jpg");
+    ASSERT_TRUE(report->entries[0].sha256);
+    EXPECT_EQ(*report->entries[0].sha256, ts::file_sha256(a / L"photo0_Lucent_0.jpg"));
+}
+
+TEST_F(BatchServiceTest, ACancellationKeepsItsReason) {
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 1));
+    BatchRequest request = h().request(ids, out_);
+    request.start = false;
+    auto submitted = h().batches().submit(request);
+    ASSERT_TRUE(submitted);
+    const Error full{ErrorCode::DiskFull, "the destination is full", "app.batch.destination", 112};
+    ASSERT_TRUE(h().batches().cancel(submitted->id, full));
+    auto status = h().batches().status(submitted->id);
+    ASSERT_TRUE(status);
+    ASSERT_TRUE(status->outcome_error);
+    EXPECT_EQ(status->outcome_error->code, ErrorCode::DiskFull);
+    auto report = h().batches().report(submitted->id);
+    ASSERT_TRUE(report);
+    ASSERT_EQ(report->entries.size(), 1u);
+    EXPECT_EQ(report->entries[0].outcome, ReportOutcome::Cancelled);
+    EXPECT_EQ(report->entries[0].reason, "The destination ran out of space.");
+}
+
 }  // namespace
 }  // namespace lucent::app

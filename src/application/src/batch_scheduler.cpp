@@ -36,7 +36,6 @@ constexpr std::string_view kWherePublish = "app.batch.publish";
 constexpr auto kTick = 250ms;       // while batches have queued jobs (back-off, admission)
 constexpr auto kIdleTick = 2000ms;  // otherwise; submissions, commands and finished jobs wake it at once
 constexpr auto kDestinationCheckInterval = 2s;
-constexpr auto kReclaimInterval = 30s;
 constexpr std::uint64_t kCalibrationMinPixels = 1'000'000;
 constexpr std::uint64_t kUnknownPixels = 50'000'000;  // estimate for a photo without a probe
 constexpr std::uint64_t kDestinationReserveBytes = std::uint64_t{64} << 20;
@@ -128,6 +127,7 @@ void BatchService::Impl::coordinator_main() {
     recovered_cv.notify_all();
     auto last_reclaim = Clock::now();
     for (;;) {
+        bool reclaim = false;
         {
             std::unique_lock lock(mutex);
             coordinator_cv.wait_for(lock, work_waiting ? kTick : kIdleTick,
@@ -136,13 +136,14 @@ void BatchService::Impl::coordinator_main() {
                 return;
             }
             wake_requested = false;
+            reclaim = std::exchange(reclaim_requested, false);
         }
         try {
-            dispatch();
-            if (Clock::now() - last_reclaim >= kReclaimInterval) {
+            if (reclaim || Clock::now() - last_reclaim >= options.reclaim_interval) {
                 last_reclaim = Clock::now();
                 reclaim_abandoned();
             }
+            dispatch();
         } catch (const std::exception& e) {
             core::log_error(kWhere, "the batch coordinator raised: {}", e.what());
         } catch (...) {
@@ -171,6 +172,7 @@ void BatchService::Impl::slot_main(detail::Slot& slot) {
         } catch (...) {
             core::log_error(kWhere, "a batch attempt raised an unknown exception");
         }
+        bool reclaim = false;
         {
             std::lock_guard lock(mutex);
             slot.busy = false;
@@ -180,8 +182,13 @@ void BatchService::Impl::slot_main(detail::Slot& slot) {
             slot.owner.clear();
             slot.estimate_bytes = 0;
             slot.observed_commit = 0;
+            reclaim = std::exchange(slot.reclaim_after, false);
         }
-        request_wake();
+        if (reclaim) {
+            request_reclaim();  // its owner is no longer live: reconcile the job now
+        } else {
+            request_wake();
+        }
     }
     if (slot.host) {
         slot.host->shutdown();
@@ -218,11 +225,14 @@ std::uint64_t BatchService::Impl::output_bytes(const detail::BatchContext& conte
     return (pixels == 0 ? kUnknownPixels : pixels) * per_pixel + kFileOverheadBytes;
 }
 
-void BatchService::Impl::raise_attention(detail::BatchContext& context, BatchAttention attention, Error error) {
+void BatchService::Impl::raise_attention(detail::BatchContext& context, BatchAttention attention, Error error,
+                                         std::optional<std::uint64_t> free_bytes, std::uint64_t needed_bytes) {
     {
         std::lock_guard lock(mutex);
         context.attention = attention;
         context.attention_error = error;
+        context.attention_free_bytes = free_bytes;
+        context.attention_needed_bytes = needed_bytes;
         context.destination_checked = {};
     }
     auto paused = catalog->transact([&](catalog::WriteTransaction& tx) { return tx.pause_batch(context.id, now()); });
@@ -239,6 +249,8 @@ void BatchService::Impl::raise_attention(detail::BatchContext& context, BatchAtt
         event.counts = record->counts;
     }
     event.attention = attention;
+    event.attention_free_bytes = free_bytes;
+    event.attention_needed_bytes = needed_bytes;
     event.error = std::move(error);
     emit(std::move(event));
 }
@@ -268,13 +280,14 @@ bool BatchService::Impl::destination_usable(detail::BatchContext& context, std::
         }
         return false;
     }
-    if (context.destination.folder_identity && !core::is_same_file(*id, *context.destination.folder_identity)) {
-        raise_attention(context, BatchAttention::DestinationUnavailable,
+    if (const std::optional<core::FileIdentity> recorded = folder_identity_of(context);
+        recorded && !core::is_same_file(*id, *recorded)) {
+        raise_attention(context, BatchAttention::DestinationReplaced,
                         Error{ErrorCode::NotFound,
-                              std::format("{} is no longer the output folder chosen for this batch (another drive or "
-                                          "folder took its place)",
+                              std::format("{} is no longer the output folder chosen for this batch (it was created "
+                                          "again, or another drive took its place)",
                                           quoted(folder)),
-                              std::string(detail::kWhereDestination), 0});
+                              std::string(detail::kWhereDestinationReplaced), 0});
         return false;
     }
     const std::optional<std::uint64_t> free = free_space(folder);
@@ -283,7 +296,8 @@ bool BatchService::Impl::destination_usable(detail::BatchContext& context, std::
                         Error{ErrorCode::DiskFull,
                               std::format("the destination has {} MB free; the next output may need up to {} MB",
                                           *free >> 20, needed_bytes >> 20),
-                              std::string(detail::kWhereDestination), 0});
+                              std::string(detail::kWhereDestination), 0},
+                        free, needed_bytes);
         return false;
     }
     std::lock_guard lock(mutex);
@@ -364,7 +378,9 @@ void BatchService::Impl::dispatch() {
             std::lock_guard lock(mutex);
             work_waiting = !running.empty();
         }
-        bool assigned = false;
+        // Interactive single exports first (the photographer is waiting for them), then the oldest
+        // batch first.
+        std::vector<std::pair<const catalog::BatchRecord*, std::shared_ptr<detail::BatchContext>>> ordered;
         for (const catalog::BatchRecord& record : running) {
             auto context = load_context(record);
             if (!context) {
@@ -372,6 +388,14 @@ void BatchService::Impl::dispatch() {
                                 context.error().describe());
                 continue;
             }
+            ordered.emplace_back(&record, *context);
+        }
+        std::stable_partition(ordered.begin(), ordered.end(),
+                              [](const auto& entry) { return entry.second->policy.single_export; });
+        bool assigned = false;
+        for (const auto& [record_ptr, context_ptr] : ordered) {
+            const catalog::BatchRecord& record = *record_ptr;
+            const std::shared_ptr<detail::BatchContext>* context = &context_ptr;
             catalog::JobQuery query;
             query.batch = record.id;
             query.stages = {catalog::JobStage::Queued};
@@ -510,9 +534,45 @@ void BatchService::Impl::reclaim_abandoned() {
         if (job.lease && std::find(live.begin(), live.end(), job.lease->owner) != live.end()) {
             continue;  // its slot is still working on it and renews it
         }
-        core::log_warn(kWhere, "reclaiming job {} from its abandoned lease", job.id.value);
-        reconcile_job(job);
-        check_finished(job.batch);
+        bool deferred_before = false;
+        {
+            std::lock_guard lock(mutex);
+            deferred_before = deferred_jobs.contains(job.id.value);
+        }
+        if (!deferred_before) {
+            core::log_warn(kWhere, "reclaiming job {} from its abandoned lease", job.id.value);
+        }
+        if (reconcile_job(job)) {
+            check_finished(job.batch);
+        }
+    }
+    // Publications whose clean-up waited for their output folder.
+    std::set<std::pair<std::int64_t, std::uint32_t>> waiting;
+    {
+        std::lock_guard lock(mutex);
+        waiting = deferred_publications;
+    }
+    if (waiting.empty()) {
+        return;
+    }
+    std::int64_t after = 0;
+    for (;;) {
+        auto open = catalog->query(
+            [&](catalog::ReadTransaction& tx) { return tx.list_publications_in_progress(std::nullopt, 1000, after); });
+        if (!open) {
+            return;
+        }
+        for (const catalog::PublicationInProgress& entry : *open) {
+            after = std::max(after, entry.latest.id);
+            if (!entry.attempt_is_live() && waiting.contains({entry.latest.job.value, entry.latest.attempt})) {
+                if (close_publication(entry)) {
+                    check_finished(entry.batch);
+                }
+            }
+        }
+        if (open->size() < 1000) {
+            break;
+        }
     }
 }
 
@@ -561,12 +621,22 @@ private:
     void give_back();
     void cancelled();
     void lease_lost();
+    // After publication, when the journal or the receipt could not be recorded: the job keeps its
+    // lease and is reconciled from its journal as soon as the slot is free.
+    void leave_to_recovery();
     // Ends the attempt at a safe boundary after its token was cancelled, as its stop reason says.
     void stop_here();
-    void fail_job(catalog::FailureClass failure_class, Error error, bool retry_allowed);
+    // `skip`: the job ends Skipped with `error` as its reason (unsupported while decoding).
+    void fail_job(catalog::FailureClass failure_class, Error error, bool retry_allowed, bool skip = false);
     // A failure: destination problems pause the batch; source problems fail; others by class.
     void diagnose(Error error, catalog::FailureClass failure_class);
-    [[nodiscard]] std::optional<std::pair<BatchAttention, Error>> destination_problem(const Error& error);
+    struct DestinationProblem {
+        BatchAttention attention = BatchAttention::None;
+        Error error;
+        std::optional<std::uint64_t> free_bytes;
+        std::uint64_t needed_bytes = 0;
+    };
+    [[nodiscard]] std::optional<DestinationProblem> destination_problem(const Error& error);
     void ensure_host();
     [[nodiscard]] workers::JobOutcome run_worker(const workers::JobRequest& request);
     [[nodiscard]] Status verify(detail::HeldOutput& held, const workers::JobResult& result,
@@ -627,6 +697,7 @@ void Attempt::renew_if_due(bool force) {
 }
 
 bool Attempt::journal(catalog::PublicationStep step, const std::optional<detail::OutputDigest>& digest) {
+    renew_if_due();  // every step requires an unexpired lease
     catalog::PublicationEntry entry;
     entry.step = step;
     entry.temp_path = temp_path_;
@@ -656,6 +727,7 @@ bool Attempt::journal(catalog::PublicationStep step, const std::optional<detail:
 }
 
 Status Attempt::advance(catalog::JobStage from) {
+    renew_if_due();
     Status advanced = lucent::fail(ErrorCode::Internal, "not advanced", std::string(kWhere));
     for (int attempt = 0; attempt < kCatalogAttempts; ++attempt) {
         auto stage = s_.catalog->transact([&](catalog::WriteTransaction& tx) { return tx.advance_job(lease_, from, s_.now()); });
@@ -834,6 +906,10 @@ void Attempt::emit_finished(catalog::JobStage stage, std::optional<Error> error,
 void Attempt::give_back() {
     cleanup_temp();
     auto stage = s_.catalog->transact([&](catalog::WriteTransaction& tx) { return tx.release_job(lease_, s_.now()); });
+    if (!stage && stage.error().where == "catalog.job.lease_lost") {
+        lease_lost();  // expired meanwhile: an interruption
+        return;
+    }
     close_journal();
     emit_finished(stage ? *stage : catalog::JobStage::Queued, std::nullopt);
 }
@@ -842,6 +918,10 @@ void Attempt::cancelled() {
     cleanup_temp();
     Status done = s_.catalog->write([&](catalog::WriteTransaction& tx) { return tx.cancel_job(lease_, s_.now()); });
     if (!done) {
+        if (done.error().where == "catalog.job.lease_lost") {
+            lease_lost();
+            return;
+        }
         core::log_warn(kWhere, "cannot cancel job {}: {}", job_.id.value, done.error().describe());
     }
     close_journal();
@@ -851,9 +931,34 @@ void Attempt::cancelled() {
 }
 
 void Attempt::lease_lost() {
+    // Only before publication (the rename): nothing of this attempt is in the output folder but its
+    // temporary file, removed here. While nobody else took the lease (it expired: the computer
+    // slept, or a step outlasted it), the attempt is recorded as an interruption at once (bounded by
+    // max_interruptions); otherwise it is left to the job's new owner or to reconciliation.
     cleanup_temp();
-    close_journal();
-    core::log_warn(kWhere, "job {} lost its lease; its attempt {} was abandoned", job_.id.value, lease_.attempt);
+    release_name();
+    auto stage = s_.recover_interrupted(lease_, job_, s_.interruption_error(lease_.owner), &context_);
+    if (stage) {
+        close_journal();
+        core::log_warn(kWhere, "job {} lost its lease during attempt {}: {}", job_.id.value, lease_.attempt,
+                       catalog::to_string(*stage));
+        emit_finished(*stage, s_.interruption_error(lease_.owner));
+        s_.check_finished(job_.batch);
+        if (*stage == catalog::JobStage::Queued) {
+            s_.request_wake();
+        }
+        return;
+    }
+    core::log_warn(kWhere, "job {} lost its lease; its attempt {} was abandoned ({})", job_.id.value, lease_.attempt,
+                   stage.error().describe());
+    std::lock_guard lock(s_.mutex);
+    slot_.reclaim_after = true;
+}
+
+void Attempt::leave_to_recovery() {
+    release_name();
+    std::lock_guard lock(s_.mutex);
+    slot_.reclaim_after = true;
 }
 
 void Attempt::stop_here() {
@@ -871,11 +976,12 @@ void Attempt::stop_here() {
     }
 }
 
-void Attempt::fail_job(catalog::FailureClass failure_class, Error error, bool retry_allowed) {
+void Attempt::fail_job(catalog::FailureClass failure_class, Error error, bool retry_allowed, bool skip) {
     cleanup_temp();
     catalog::JobFailure failure;
     failure.failure_class = failure_class;
     failure.error = error;
+    failure.skip = skip;
     const BatchRetryPolicy& retry = context_.policy.retry;
     if (failure_class == catalog::FailureClass::Transient && retry_allowed &&
         job_.transient_failures < retry.max_transient_failures) {
@@ -884,6 +990,10 @@ void Attempt::fail_job(catalog::FailureClass failure_class, Error error, bool re
         failure.retry_at = s_.now() + std::chrono::duration_cast<catalog::Timestamp::duration>(delay);
     }
     auto stage = s_.catalog->transact([&](catalog::WriteTransaction& tx) { return tx.record_failure(lease_, failure, s_.now()); });
+    if (!stage && stage.error().where == "catalog.job.lease_lost") {
+        lease_lost();
+        return;
+    }
     close_journal();
     if (!stage) {
         core::log_error(kWhere, "cannot record the failure of job {}: {}", job_.id.value, stage.error().describe());
@@ -906,58 +1016,65 @@ void Attempt::fail_job(catalog::FailureClass failure_class, Error error, bool re
     }
 }
 
-std::optional<std::pair<BatchAttention, Error>> Attempt::destination_problem(const Error& error) {
+std::optional<Attempt::DestinationProblem> Attempt::destination_problem(const Error& error) {
     const std::filesystem::path& folder = context_.destination.folder;
     auto id = core::stat_file(folder);
     if (!id) {
         if (id.error().code == ErrorCode::PermissionDenied) {
-            return std::make_pair(BatchAttention::DestinationPermission,
-                                  Error{ErrorCode::PermissionDenied,
-                                        std::format("Lucent may not open the output folder {}", quoted(folder)),
-                                        std::string(detail::kWhereDestination), id.error().native_code});
+            return DestinationProblem{BatchAttention::DestinationPermission,
+                                      Error{ErrorCode::PermissionDenied,
+                                            std::format("Lucent may not open the output folder {}", quoted(folder)),
+                                            std::string(detail::kWhereDestination), id.error().native_code}};
         }
-        return std::make_pair(BatchAttention::DestinationUnavailable,
-                              Error{ErrorCode::NotFound, std::format("the output folder {} is not available", quoted(folder)),
-                                    std::string(detail::kWhereDestination), id.error().native_code});
+        return DestinationProblem{
+            BatchAttention::DestinationUnavailable,
+            Error{ErrorCode::NotFound, std::format("the output folder {} is not available", quoted(folder)),
+                  std::string(detail::kWhereDestination), id.error().native_code}};
     }
-    if (context_.destination.folder_identity && !core::is_same_file(*id, *context_.destination.folder_identity)) {
-        return std::make_pair(BatchAttention::DestinationUnavailable,
-                              Error{ErrorCode::NotFound,
-                                    std::format("{} is no longer the output folder chosen for this batch", quoted(folder)),
-                                    std::string(detail::kWhereDestination), 0});
+    if (const std::optional<core::FileIdentity> recorded = s_.folder_identity_of(context_);
+        recorded && !core::is_same_file(*id, *recorded)) {
+        return DestinationProblem{BatchAttention::DestinationReplaced,
+                                  Error{ErrorCode::NotFound,
+                                        std::format("{} is no longer the output folder chosen for this batch (it was "
+                                                    "created again, or another drive took its place)",
+                                                    quoted(folder)),
+                                        std::string(detail::kWhereDestinationReplaced), 0}};
     }
     const std::uint64_t needed = s_.output_bytes(context_, a_.pixels);
     const std::filesystem::path probe_dir = final_dir_.empty() ? folder : final_dir_;
     const std::optional<std::uint64_t> free = s_.free_space(detail::is_directory(probe_dir) ? probe_dir : folder);
     if (error.code == ErrorCode::DiskFull || (free && *free < needed + kDestinationReserveBytes)) {
-        return std::make_pair(BatchAttention::DestinationFull,
-                              Error{ErrorCode::DiskFull,
-                                    free ? std::format("the destination has {} MB free; the output may need up to {} MB",
-                                                       *free >> 20, needed >> 20)
-                                         : std::string("the destination is full"),
-                                    std::string(detail::kWhereDestination), error.native_code});
+        return DestinationProblem{
+            BatchAttention::DestinationFull,
+            Error{ErrorCode::DiskFull,
+                  free ? std::format("the destination has {} MB free; the output may need up to {} MB", *free >> 20,
+                                     needed >> 20)
+                       : std::string("the destination is full"),
+                  std::string(detail::kWhereDestination), error.native_code},
+            free, needed};
     }
     if (error.code == ErrorCode::PermissionDenied) {
         if (Status writable = detail::probe_writable(probe_dir, context_.destination.temp_tag);
             !writable && writable.error().code == ErrorCode::PermissionDenied) {
-            return std::make_pair(BatchAttention::DestinationPermission,
-                                  Error{ErrorCode::PermissionDenied,
-                                        std::format("Lucent may no longer create files in {}", quoted(probe_dir)),
-                                        std::string(detail::kWhereDestination), writable.error().native_code});
+            return DestinationProblem{BatchAttention::DestinationPermission,
+                                      Error{ErrorCode::PermissionDenied,
+                                            std::format("Lucent may no longer create files in {}", quoted(probe_dir)),
+                                            std::string(detail::kWhereDestination), writable.error().native_code}};
         }
     }
     if (error.code == ErrorCode::IoError && error.native_code > 0 &&
         core::is_volume_absent_win32_error(static_cast<std::uint32_t>(error.native_code)) && !path_exists(folder)) {
-        return std::make_pair(BatchAttention::DestinationUnavailable,
-                              Error{ErrorCode::NotFound, std::format("the output folder {} is not available", quoted(folder)),
-                                    std::string(detail::kWhereDestination), error.native_code});
+        return DestinationProblem{
+            BatchAttention::DestinationUnavailable,
+            Error{ErrorCode::NotFound, std::format("the output folder {} is not available", quoted(folder)),
+                  std::string(detail::kWhereDestination), error.native_code}};
     }
     return std::nullopt;
 }
 
 void Attempt::diagnose(Error error, catalog::FailureClass failure_class) {
     if (auto problem = destination_problem(error)) {
-        s_.raise_attention(context_, problem->first, problem->second);
+        s_.raise_attention(context_, problem->attention, problem->error, problem->free_bytes, problem->needed_bytes);
         give_back();
         return;
     }
@@ -993,6 +1110,12 @@ void Attempt::diagnose(Error error, catalog::FailureClass failure_class) {
     }
     if (error.code == ErrorCode::SourceChanged) {
         fail_job(catalog::FailureClass::Deterministic, std::move(error), false);
+        return;
+    }
+    if (error.code == ErrorCode::Unsupported) {
+        // Found unsupported while decoding: not exported, and no failure of the batch (as the
+        // photographs left out at submission); retrying cannot help.
+        fail_job(catalog::FailureClass::Deterministic, std::move(error), false, true);
         return;
     }
     fail_job(failure_class, std::move(error), failure_class == catalog::FailureClass::Transient);
@@ -1077,7 +1200,7 @@ Status Attempt::verify(detail::HeldOutput& held, const workers::JobResult& resul
         out.bit_depth != exporter::bit_depth_for(settings.format)) {
         return bad("the worker wrote another format, profile or bit depth");
     }
-    auto hashed = held.digest(token_);
+    auto hashed = held.digest(token_, [this] { renew_if_due(); });
     if (!hashed) {
         return Unexpected(std::move(hashed.error()));
     }
@@ -1112,6 +1235,7 @@ Status Attempt::verify(detail::HeldOutput& held, const workers::JobResult& resul
     if (!header->icc_sha256 || *header->icc_sha256 != *expected_icc || out.icc_sha256 != *expected_icc) {
         return bad("the embedded ICC profile is not the chosen profile");
     }
+    renew_if_due();
     auto metadata = exporter::read_export_metadata(held.path());
     if (!metadata) {
         return Unexpected(std::move(metadata.error()));
@@ -1287,9 +1411,25 @@ void Attempt::run() {
     // ---- Reservation ----------------------------------------------------------------------------
     final_dir_ = output_directory_for(context_.destination.folder, context_.destination.mirror_subfolders,
                                       context_.destination.mirror_root, item_->path);
-    if (Status made = core::create_directory_tree(final_dir_); !made) {
-        diagnose(std::move(made.error()), catalog::FailureClass::Transient);
-        return;
+    // The output folder itself is never created after submission (a folder deleted meanwhile is
+    // reported, not silently made again as another folder object): it must be there, as recorded.
+    // Only mirrored subfolders below it are created.
+    {
+        auto root = core::stat_file(context_.destination.folder);
+        const std::optional<core::FileIdentity> recorded = s_.folder_identity_of(context_);
+        if (!root || (recorded && !core::is_same_file(*root, *recorded))) {
+            diagnose(root ? Error{ErrorCode::NotFound, "the output folder was replaced",
+                                  std::string(detail::kWhereDestinationReplaced), 0}
+                          : root.error(),
+                     catalog::FailureClass::Transient);
+            return;
+        }
+    }
+    if (!detail::same_path_text(final_dir_, context_.destination.folder)) {
+        if (Status made = core::create_directory_tree(final_dir_); !made) {
+            diagnose(std::move(made.error()), catalog::FailureClass::Transient);
+            return;
+        }
     }
     if (!choose_name(1)) {
         fail_job(catalog::FailureClass::Deterministic,
@@ -1449,9 +1589,9 @@ void Attempt::run() {
     }
     point("after_rename");
     if (!journal(catalog::PublicationStep::Published, digest)) {
-        // Left to recovery: the lease expires and the unrecorded output is reconciled.
+        // Left to recovery: the unrecorded output is reconciled once the slot is free.
         held->close();
-        release_name();
+        leave_to_recovery();
         return;
     }
     point("published");
@@ -1519,14 +1659,14 @@ void Attempt::run() {
     held->close();
     if (!recorded) {
         core::log_error(kWhere, "cannot record the receipt of job {}: {}", job_.id.value, recorded.error().describe());
-        release_name();
-        return;  // recovery completes it from the Published step once the lease expires
+        leave_to_recovery();  // recovery completes it from the Published step
+        return;
     }
     journal_open_ = false;
     point("receipt");
     if (Status advanced = advance(catalog::JobStage::Publishing); !advanced) {
         core::log_error(kWhere, "cannot complete job {}: {}", job_.id.value, advanced.error().describe());
-        release_name();
+        leave_to_recovery();  // recovery completes it from its receipt
         return;
     }
     point("complete");

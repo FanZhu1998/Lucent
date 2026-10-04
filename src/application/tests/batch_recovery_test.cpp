@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <optional>
 #include <set>
 #include <string>
@@ -75,8 +76,8 @@ struct Crash {
     std::vector<std::filesystem::path> files;
     std::vector<core::Digest256> originals;
 
-    Crash() : root(dir.path() / L"lucent"), out(dir.path() / L"out") {
-        files = ts::write_dngs(dir, L"in", 2);
+    explicit Crash(std::size_t photos = 2) : root(dir.path() / L"lucent"), out(dir.path() / L"out") {
+        files = ts::write_dngs(dir, L"in", photos);
         for (const auto& file : files) {
             originals.push_back(ts::file_sha256(file));
         }
@@ -223,6 +224,117 @@ TEST_P(BatchRecoveryOverwrite, RestoresOrReplacesTheFileItWasReplacing) {
 INSTANTIATE_TEST_SUITE_P(PublicationSteps, BatchRecoveryOverwrite,
                          ::testing::Values("before_rename", "after_rename", "published"),
                          [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });
+
+// ---- The destination out of reach at restart (a USB drive not plugged in yet, a share not
+// reconnected, an output held by a sync client): recovery decides nothing about outputs it cannot
+// see, and the batch still ends with exactly one output and one receipt per photo.
+
+BatchServiceOptions reconnecting_options() {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.reclaim_interval = 300ms;
+    return options;
+}
+
+class BatchRecoveryAway : public ::testing::TestWithParam<const char*> {};
+
+TEST_P(BatchRecoveryAway, WaitsForTheOutputFolderInsteadOfGuessing) {
+    const std::string point = GetParam();
+    Crash crash;
+    crash.kill_at(point);
+    if (HasFatalFailure()) {
+        return;
+    }
+    // The drive is not back when Lucent starts again.
+    const std::filesystem::path away = crash.dir.path() / L"away";
+    std::filesystem::rename(crash.out, away);
+    {
+        ts::BatchHarness h(crash.root, reconnecting_options());
+        const RecoveryReport recovery = h.batches().last_recovery();
+        EXPECT_EQ(recovery.reclaimed, 0u) << "nothing is decided about an output folder that cannot be seen";
+        EXPECT_GE(recovery.deferred, 1u);
+        EXPECT_EQ(recovery.failed, 0u);
+        auto batches = h.batches().list();
+        ASSERT_TRUE(batches);
+        ASSERT_EQ(batches->size(), 1u);
+        const catalog::BatchId id = batches->front().record.id;
+        // The rest of the batch waits for the folder too.
+        ASSERT_TRUE(ts::eventually([&] {
+            auto status = h.batches().status(id);
+            return status && status->attention != BatchAttention::None &&
+                   status->record.state == catalog::BatchState::Paused;
+        }));
+        EXPECT_EQ(h.record(id).counts.leased(), 1u) << "the interrupted job keeps its lease until the folder is back";
+        EXPECT_EQ(h.record(id).counts.failed, 0u);
+        std::this_thread::sleep_for(1s);  // a few reclaim ticks without the folder change nothing
+        EXPECT_EQ(h.record(id).counts.leased(), 1u);
+        EXPECT_FALSE(std::filesystem::exists(crash.out)) << "the output folder is never created again";
+        // The drive is back: resume.
+        std::filesystem::rename(away, crash.out);
+        ASSERT_TRUE(h.batches().resume(id));
+        const catalog::JobRecord first = check_recovered(crash, h);
+        if (point == "after_rename") {
+            EXPECT_EQ(first.attempts, 2u);
+            EXPECT_EQ(h.batches().last_recovery().orphans_removed, 1u);
+        } else {
+            EXPECT_EQ(first.attempts, 1u) << "the verified output was completed, not rendered again";
+        }
+        EXPECT_EQ(first.transient_failures, 0u);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(PublicationSteps, BatchRecoveryAway, ::testing::Values("after_rename", "published", "receipt"),
+                         [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });
+
+TEST(BatchRecoveryLocked, AnOutputHeldByAnotherProgramIsCheckedWhenItIsFree) {
+    Crash crash;
+    crash.kill_at("receipt");
+    if (HasFatalFailure()) {
+        return;
+    }
+    // A sync client or a virus scanner holds the published output exclusively at start-up.
+    const std::filesystem::path output = crash.out / L"photo0_Lucent_0.jpg";
+    HANDLE lock = ::CreateFileW(output.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(lock, INVALID_HANDLE_VALUE);
+    ts::BatchHarness h(crash.root, reconnecting_options());
+    const RecoveryReport recovery = h.batches().last_recovery();
+    EXPECT_EQ(recovery.failed, 0u) << "an output that cannot be read now is not lost";
+    EXPECT_EQ(recovery.deferred, 1u);
+    auto batches = h.batches().list();
+    ASSERT_TRUE(batches && batches->size() == 1u);
+    const catalog::BatchId id = batches->front().record.id;
+    // The other photo is exported meanwhile; the held one waits.
+    ASSERT_TRUE(ts::eventually([&] { return h.record(id).counts.complete == 1u; }));
+    EXPECT_EQ(h.record(id).counts.leased(), 1u);
+    ::CloseHandle(lock);
+    const catalog::JobRecord first = check_recovered(crash, h);
+    EXPECT_EQ(first.attempts, 1u);
+    EXPECT_EQ(first.stage, catalog::JobStage::Complete);
+}
+
+TEST(BatchRecoveryReport, ABatchThatFinishedJustBeforeAStopGetsItsReport) {
+    Crash crash(1);
+    crash.kill_at("complete");
+    if (HasFatalFailure()) {
+        return;
+    }
+    EXPECT_EQ(ts::folder_entries(crash.out), (std::vector<std::wstring>{L"photo0_Lucent_0.jpg"}));
+    catalog::BatchId id;
+    {
+        ts::BatchHarness h(crash.root);
+        EXPECT_EQ(h.batches().last_recovery().reports_written, 1u);
+        auto batches = h.batches().list();
+        ASSERT_TRUE(batches && batches->size() == 1u);
+        id = batches->front().record.id;
+        EXPECT_EQ(batches->front().record.state, catalog::BatchState::Completed);
+        EXPECT_TRUE(batches->front().record.reported_at.has_value());
+    }
+    const std::vector<std::wstring> names = ts::folder_entries(crash.out);
+    EXPECT_EQ(names, (std::vector<std::wstring>{std::format(L"Lucent-batch-{}-report.html", id.value),
+                                                std::format(L"Lucent-batch-{}-report.json", id.value),
+                                                L"photo0_Lucent_0.jpg"}));
+    ts::BatchHarness again(crash.root);
+    EXPECT_EQ(again.batches().last_recovery().reports_written, 0u) << "written once";
+}
 
 }  // namespace
 }  // namespace lucent::app

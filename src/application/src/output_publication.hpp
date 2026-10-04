@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -82,8 +83,11 @@ public:
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
 
     [[nodiscard]] Expected<core::FileIdentity> identity() const;
-    // Size and SHA-256 of the whole file, read through the handle. Cancelled between 1 MiB reads.
-    [[nodiscard]] Expected<OutputDigest> digest(const core::CancellationToken& cancel) const;
+    // Size and SHA-256 of the whole file, read through the handle. Cancelled between 1 MiB reads;
+    // `between_reads` runs before each read (the coordinator renews its lease there: hashing a
+    // large output on a slow destination can take minutes).
+    [[nodiscard]] Expected<OutputDigest> digest(const core::CancellationToken& cancel,
+                                                const std::function<void()>& between_reads = {}) const;
     // See the file comment. Corrupt ("app.batch.verify") for a file that is neither a JPEG nor a
     // classic TIFF, or whose structure is malformed.
     [[nodiscard]] Expected<OutputHeader> inspect_header() const;

@@ -12,11 +12,15 @@
 //                         quality, TIFF compression, metadata policy, rights text, and whether
 //                         unsupported photographs are exported. Written deterministically (sorted
 //                         members, no whitespace), because its SHA-256 is part of every job identity.
-//   policy_json           "lucent.batch-policy" v1: existing-output policy, retry policy, and the
-//                         photographs excluded at submission with their reasons (for the report).
+//   policy_json           "lucent.batch-policy" v1: existing-output policy, retry policy (with
+//                         max_interruptions), whether the batch is an interactive single export,
+//                         and the photographs excluded at submission with their reasons (for the
+//                         report).
 //
 // Readers accept exactly their version: an older or unknown document is Corrupt, a newer one is
-// VersionMismatch ("app.batch.document"). Paths are UTF-8.
+// VersionMismatch ("app.batch.document"). Members added to a version after its first release
+// (policy: retry.max_interruptions, single_export) are optional on reading and take their defaults.
+// Paths are UTF-8.
 
 #include <cstdint>
 #include <filesystem>
@@ -57,6 +61,7 @@ struct ExportDocument {
 struct PolicyDocument {
     ExistingOutputs existing_outputs = ExistingOutputs::Skip;
     BatchRetryPolicy retry;
+    bool single_export = false;  // BatchRequest::single_export
     std::vector<PlanExclusion> excluded;  // at most kMaxListedExclusions
     std::uint64_t excluded_count = 0;
 };

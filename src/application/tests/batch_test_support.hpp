@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -46,6 +47,20 @@ inline BatchServiceOptions fast_batch_options() {
     options.retry.max_backoff = 200ms;
     options.job_timeout = 120s;
     return options;
+}
+
+// Waits until `predicate()` holds, polling every 50 ms (for state that changes without an event);
+// false after `timeout`.
+template <class Predicate>
+bool eventually(Predicate predicate, std::chrono::milliseconds timeout = 60s) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(50ms);
+    }
+    return predicate();
 }
 
 // Records every batch event; waits for conditions on them.

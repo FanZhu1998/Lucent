@@ -77,6 +77,15 @@ std::uint64_t unsigned_number(const Json& object, const char* name) {
     return value.get<std::uint64_t>();
 }
 
+// A member added to a version-1 document after it was first written: `fallback` when absent.
+std::uint64_t unsigned_number_or(const Json& object, const char* name, std::uint64_t fallback) {
+    return object.contains(name) ? unsigned_number(object, name) : fallback;
+}
+
+bool boolean_or(const Json& object, const char* name, bool fallback) {
+    return object.contains(name) ? boolean(object, name) : fallback;
+}
+
 double real_number(const Json& object, const char* name) {
     const Json& value = member(object, name);
     if (!value.is_number()) {
@@ -346,7 +355,9 @@ Expected<std::string> write_policy(const PolicyDocument& document) {
         retry["max_transient_failures"] = document.retry.max_transient_failures;
         retry["initial_backoff_ms"] = static_cast<std::uint64_t>(document.retry.initial_backoff.count());
         retry["max_backoff_ms"] = static_cast<std::uint64_t>(document.retry.max_backoff.count());
+        retry["max_interruptions"] = document.retry.max_interruptions;
         out["retry"] = std::move(retry);
+        out["single_export"] = document.single_export;
         Json excluded = Json::array();
         for (const PlanExclusion& exclusion : document.excluded) {
             Json entry = Json::object();
@@ -380,6 +391,9 @@ Expected<PolicyDocument> read_policy(std::string_view json) {
         document.retry.max_transient_failures = static_cast<std::uint32_t>(unsigned_number(retry, "max_transient_failures"));
         document.retry.initial_backoff = std::chrono::milliseconds(unsigned_number(retry, "initial_backoff_ms"));
         document.retry.max_backoff = std::chrono::milliseconds(unsigned_number(retry, "max_backoff_ms"));
+        document.retry.max_interruptions = static_cast<std::uint32_t>(
+            unsigned_number_or(retry, "max_interruptions", BatchRetryPolicy{}.max_interruptions));
+        document.single_export = boolean_or(in, "single_export", false);
         const Json& excluded = member(in, "excluded");
         if (!excluded.is_array()) {
             corrupt("member 'excluded' is not an array");

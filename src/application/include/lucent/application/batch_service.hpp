@@ -26,15 +26,16 @@
 //      the destination. Their combination is the job identity (catalog::compute_job_identity).
 //   4. With ExistingOutputs::Skip, a job whose identity already has a receipt for a file that is
 //      still in the destination folder and still hashes to that receipt is skipped ("already
-//      exported") instead of being rendered again.
+//      exported") instead of being rendered again; the skipped job names that file.
 //   5. The batch and all of its jobs are written in one catalog transaction and the batch starts
 //      (BatchRequest::start) or stays a draft.
-// plan() runs steps 1 to 4 without writing anything (no hashing, no folder creation) and returns
-// example destination paths and counts for the user interface.
+// plan() runs steps 1 to 4 without writing anything (no hashing, no folder creation: an existing
+// output whose size matches its receipt counts as already exported, which submit() confirms by
+// hashing) and returns example destination paths and counts for the user interface.
 //
 // Scheduling (ADR 0012, "Scheduler and memory budget")
-//   * One coordinator thread claims jobs (oldest running batch first, then batch order) and hands
-//     them to worker slots; each slot thread drives one WorkerHost (one worker process, reused for
+//   * One coordinator thread claims jobs (single exports first, then the oldest running batch, then
+//     batch order) and hands them to worker slots; each slot thread drives one WorkerHost (one worker process, reused for
 //     its jobs, restarted after a fault) and runs the job's publication. Threads are bounded:
 //     1 + max_workers.
 //   * Aggregate memory budget: BatchMemoryOptions::total_bytes (default half the physical memory,
@@ -49,14 +50,21 @@
 //   * While interactive_busy() is true (the editor is waiting for a render) no new job is admitted;
 //     running jobs continue. Worker processes run below normal priority.
 //   * Leases: a claimed job carries a catalog lease renewed every lease_renewal while its worker's
-//     heartbeats arrive; a coordinator that dies leaves leases that the next start reclaims.
+//     heartbeats arrive and while the coordinator verifies and publishes its output; a coordinator
+//     that dies leaves leases that the next start reclaims. An attempt that ends without an outcome
+//     (Lucent stopped, or the lease expired, for example while the computer slept) is an
+//     interruption: requeued without using up the transient-retry budget, and bounded on its own
+//     (BatchRetryPolicy::max_interruptions, then the job fails).
 //   * Failures: deterministic ones (unsupported or corrupt input, a refused recipe, a changed or
 //     missing source) fail the job at once with an actionable reason; transient ones (a worker crash
 //     or hang, a timeout, I/O, memory pressure) are retried with exponential back-off up to
 //     BatchRetryPolicy::max_transient_failures, then fail. Destination problems (disk full, the
 //     folder or its drive gone, no permission) give the job back without counting a failure and
 //     pause the batch with a BatchAttention, so the remaining jobs wait instead of all failing;
-//     resume() after fixing it continues. Other jobs of other batches continue.
+//     resume() after fixing it continues. The output folder itself is never created after
+//     submission (only mirrored subfolders below it): a folder deleted meanwhile is reported, and
+//     one created again (another file object at that path) is used only after
+//     use_replaced_folder(). Other jobs of other batches continue.
 //
 // Publication (ADR 0012, "Publication protocol"; journal steps in brackets)
 //   [Reserved]   the final name: the pattern's name, or with CollisionPolicy::UniqueName the first
@@ -79,12 +87,16 @@
 //
 // Recovery (when the service opens, on the coordinator thread before it dispatches anything, so
 // open() never waits for a slow destination; ADR 0012, "Recovery"). Every job leased by a previous
-// session is reconciled
-// from its journal: a published output is verified against the journal or receipt (size and
-// SHA-256) before the job counts as complete; an output renamed into place whose Published step
-// never committed is the attempt's own verified bytes and is removed (nothing unrecorded stays
-// published); temporary files, scratch folders and stale "~lucent-*.tmp" files are removed; the job
-// is queued again with its interruption recorded. Outputs are never published twice.
+// session is reconciled from its journal: a published output is verified against the journal or
+// receipt (size and SHA-256) before the job counts as complete; an output renamed into place whose
+// Published step never committed is the attempt's own verified bytes and is removed (nothing
+// unrecorded stays published); temporary files, scratch folders and stale "~lucent-*.tmp" files are
+// removed; the job is queued again with its interruption recorded. Nothing is decided while the
+// batch's output folder cannot be reached (a drive not plugged in yet, a share not reconnected,
+// another folder at its path) or an output cannot be read (a sharing violation, an I/O error): the
+// job keeps its lease and is reconciled once the folder is back (checked every reclaim_interval),
+// so outputs are never published twice and verified outputs are never failed for being out of
+// reach. A batch that finished just before Lucent stopped gets its report files then.
 //
 // Pause lets running jobs finish their current attempt (their outputs are published) and
 // dispatches nothing new. Cancel cancels queued jobs and asks running workers to stop (they are
@@ -178,6 +190,9 @@ struct BatchRequest {
     bool allow_unsupported = false;
     bool start = true;               // false: a Draft batch, started with start()
     bool write_report_files = true;  // the report files in the output folder when it finishes
+    // An interactive single export (ExportService): dispatched before other batches' jobs and
+    // shown as one photo rather than as a batch (BatchStatus::single_export).
+    bool single_export = false;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -190,10 +205,23 @@ inline constexpr std::size_t kMaxListedExclusions = 1000;
 struct PlannedOutput {
     ItemId item;
     std::filesystem::path source;
-    // The path the output gets if the folder does not change before it is published.
+    // The path the output gets if the folder does not change before it is published; for an
+    // output already exported, the existing file.
     std::filesystem::path destination;
     bool renamed = false;            // a "_n" suffix was needed (inside the batch or in the folder)
     bool replaces_existing = false;  // CollisionPolicy::Overwrite will replace an existing file
+    bool already_exported = false;   // ExistingOutputs::Skip: not rendered; `destination` exists
+};
+
+// Facts about a plan the user interface words itself (stable codes; BatchPlan::warnings has the
+// developer-facing English).
+enum class PlanNotice : std::uint8_t {
+    NetworkDestination = 1,    // keep the connection up; files are verified when written
+    RemovableDestination = 2,  // keep the drive connected until the batch finishes
+    ReplacesExisting = 3,      // CollisionPolicy::Overwrite (never an original, never an own output)
+    WritesGps = 4,             // GPS positions are written into the outputs
+    MayRunOutOfSpace = 5,      // free_bytes < estimated_output_bytes (an upper bound)
+    TooFullForOne = 6,         // free_bytes < largest_output_bytes + reserve: submit() refuses
 };
 
 struct PlanExclusion {
@@ -206,7 +234,9 @@ struct BatchPlan {
     std::filesystem::path folder;  // canonical when it exists
     bool folder_exists = false;
     core::StorageKind storage = core::StorageKind::Unknown;
-    std::vector<PlannedOutput> examples;  // the first kPlanExamples outputs
+    // kPlanExamples outputs: the first ones that will be written, then (when fewer will be
+    // written) the first already exported ones.
+    std::vector<PlannedOutput> examples;
     std::uint64_t outputs = 0;            // photographs that will be rendered
     std::uint64_t to_hash = 0;            // sources submit() hashes first
     std::uint64_t already_exported = 0;   // identical outputs found (skipped under ExistingOutputs::Skip)
@@ -217,6 +247,7 @@ struct BatchPlan {
     std::uint64_t estimated_output_bytes = 0;  // upper bound: the uncompressed size of every output
     std::uint64_t largest_output_bytes = 0;
     std::optional<std::uint64_t> free_bytes;  // of the destination volume (when it exists)
+    std::vector<PlanNotice> notices;          // in PlanNotice order
     std::vector<std::string> warnings;        // developer-facing English (network destination, ...)
 };
 
@@ -245,8 +276,11 @@ using BatchSubmitProgressCallback = std::function<void(const BatchSubmitProgress
 enum class BatchAttention : std::uint8_t {
     None = 0,
     DestinationFull = 1,         // free space below what the next output needs
-    DestinationUnavailable = 2,  // the folder or its drive is gone, or another folder took its path
+    DestinationUnavailable = 2,  // the folder or its drive is gone (resume() once it is back)
     DestinationPermission = 3,   // files can no longer be created there
+    // Another folder object is at the output folder's path (it was deleted and created again, or
+    // another drive got its letter): use_replaced_folder() continues there, resume() checks again.
+    DestinationReplaced = 4,
 };
 
 [[nodiscard]] std::string_view to_string(BatchAttention attention) noexcept;
@@ -266,10 +300,23 @@ struct BatchStatus {
     catalog::BatchRecord record;  // state, counts, timestamps, documents
     std::filesystem::path folder;
     BatchAttention attention = BatchAttention::None;
-    std::optional<Error> attention_error;
+    std::optional<Error> attention_error;  // developer-facing
+    // DestinationFull: the free space seen and what the next output may need (bytes).
+    std::optional<std::uint64_t> attention_free_bytes;
+    std::uint64_t attention_needed_bytes = 0;
     std::vector<RunningJob> running;
-    // Remaining time at the measured pace of this session, once three jobs have completed.
+    // Remaining time at the measured pace of this session, once three jobs have completed; only
+    // while the batch runs without an attention.
     std::optional<double> eta_seconds;
+    bool single_export = false;            // BatchRequest::single_export
+    std::uint64_t excluded = 0;            // photographs left out when the batch was created
+    std::uint64_t review_recommended = 0;  // exported outputs whose receipt recommends a review
+    std::uint64_t retryable = 0;           // failed jobs retry_failed() requeues
+    // A batch of one photograph: its output once exported (or the existing file it was skipped
+    // for), and why it was not exported (failed, skipped or cancelled with a reason).
+    std::optional<std::filesystem::path> output;
+    std::optional<Error> outcome_error;
+    std::string outcome_reason;  // user-facing English for outcome_error (as ReportEntry::reason)
 };
 
 enum class BatchEventKind : std::uint8_t {
@@ -295,6 +342,9 @@ struct BatchEvent {
     workers::JobStage worker_stage = workers::JobStage::Preparing;
     double fraction = 0.0;
     BatchAttention attention = BatchAttention::None;
+    // Attention (DestinationFull): the free space seen and what the next output may need.
+    std::optional<std::uint64_t> attention_free_bytes;
+    std::uint64_t attention_needed_bytes = 0;
     std::optional<Error> error;                   // JobFinished / Attention: why
     std::optional<std::filesystem::path> output;  // JobFinished (Complete) / ReportWritten
 };
@@ -428,6 +478,9 @@ struct BatchRetryPolicy {
     std::uint32_t max_transient_failures = 3;  // the job fails at the next transient failure
     std::chrono::milliseconds initial_backoff{2'000};
     std::chrono::milliseconds max_backoff{60'000};
+    // Interruptions (Lucent stopped, or the lease expired) a job may have; the next one fails it
+    // ("Lucent was interrupted repeatedly while exporting this photo").
+    std::uint32_t max_interruptions = 5;
 };
 
 // Test-only seams. Never set in production.
@@ -455,6 +508,9 @@ struct BatchServiceOptions {
     std::chrono::milliseconds heartbeat_interval{500};   // worker heartbeats
     std::chrono::milliseconds heartbeat_timeout{15'000};
     std::chrono::milliseconds cancel_grace{5'000};
+    // How often leases nobody renews are reconciled, and reconciliations that waited for an
+    // unreachable output folder are tried again.
+    std::chrono::milliseconds reclaim_interval{30'000};
     // True while interactive editing waits for a render (no new job is admitted meanwhile).
     // Called on the coordinator thread; must be cheap and thread-safe.
     std::function<bool()> interactive_busy;
@@ -479,6 +535,10 @@ struct RecoveryReport {
     std::uint64_t publications_closed = 0;  // journal attempts marked Abandoned
     std::uint64_t leftovers_removed = 0;    // temporary files and scratch folders
     std::uint64_t restored_aside = 0;       // files an interrupted overwrite had moved aside
+    // Leases and publications left for later because the output folder was out of reach or an
+    // output could not be read (reconciled every reclaim_interval once it is back).
+    std::uint64_t deferred = 0;
+    std::uint64_t reports_written = 0;  // reports of batches that finished just before a stop
 };
 
 struct BatchSchedulerStats {
@@ -535,13 +595,23 @@ public:
     [[nodiscard]] Status start(catalog::BatchId batch);
     [[nodiscard]] Status pause(catalog::BatchId batch);
     [[nodiscard]] Status resume(catalog::BatchId batch);  // also clears a BatchAttention
-    [[nodiscard]] Status cancel(catalog::BatchId batch);
-    // Queues the batch's failed jobs again; returns how many.
+    // Accepts the folder object now at the output folder's path as the batch's output folder (after
+    // BatchAttention::DestinationReplaced: the user created it again, or wants another drive's
+    // folder of that name), records it in the batch and resumes. NotFound when no folder is there.
+    [[nodiscard]] Status use_replaced_folder(catalog::BatchId batch);
+    // With `reason`, the jobs it cancels record it (reports then say why, for example the full
+    // disk that made a single export give up).
+    [[nodiscard]] Status cancel(catalog::BatchId batch, const std::optional<Error>& reason = std::nullopt);
+    // Queues the batch's failed jobs again; returns how many. A job whose published output was
+    // lost after its receipt committed stays failed (export the photo again).
     [[nodiscard]] Expected<std::uint64_t> retry_failed(catalog::BatchId batch);
 
     [[nodiscard]] Expected<BatchStatus> status(catalog::BatchId batch) const;
-    // Newest first.
-    [[nodiscard]] Expected<std::vector<BatchStatus>> list(std::uint32_t limit = 50) const;
+    // Newest first: at most `limit` batches with ids below `before` (0: from the newest).
+    [[nodiscard]] Expected<std::vector<BatchStatus>> list(std::uint32_t limit = 50, catalog::BatchId before = {}) const;
+    // Every batch with work left (Draft, Running, Paused, or Cancelled with a job still running),
+    // whatever its age, newest first.
+    [[nodiscard]] Expected<std::vector<BatchStatus>> list_unfinished() const;
 
     [[nodiscard]] Expected<BatchReport> report(catalog::BatchId batch) const;
     // Writes "Lucent-batch-<id>-report.json" and ".html" into the batch's output folder (replacing

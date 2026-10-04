@@ -15,6 +15,7 @@
 #include <lucent/core/text.hpp>
 
 #include "batch_service_impl.hpp"
+#include "win32_paths.hpp"
 
 namespace lucent::app {
 
@@ -92,7 +93,13 @@ detail::Wording detail::describe_failure(const Error& error) {
                 return {"The photo is no longer in the library.", ""};
             }
             if (where == kWhereOutputLost) {
-                return {"The exported file is missing or was changed after it was published.", "Export the photo again."};
+                return {"The exported file is missing or was changed after it was published.",
+                        "Export the photo again (in a new export: Retry failed cannot export it twice in one batch)."};
+            }
+            if (where == kWhereDestinationReplaced) {
+                return {"Another folder took the output folder's place (it was created again, or another drive got "
+                        "its letter).",
+                        "Choose Use this folder to continue there, or reconnect the original drive and resume."};
             }
             if (where == kWhereDestination) {
                 return {"The output folder is not available.", "Reconnect the drive, then resume the batch."};
@@ -134,6 +141,15 @@ detail::Wording detail::describe_failure(const Error& error) {
         case ErrorCode::Timeout:
             if (where == kWhereInterrupted) {
                 return {"Lucent stopped during the export; the photo was queued again.", ""};
+            }
+            if (where == kWhereLeaseExpired) {
+                return {"The export was interrupted (for example while the computer slept); the photo was queued "
+                        "again.",
+                        ""};
+            }
+            if (where == kWhereInterruptedTooOften) {
+                return {"Lucent was interrupted repeatedly while exporting this photo.",
+                        "Choose Retry failed; if it happens again, export the photo on its own."};
             }
             return {"The export took too long or its process stopped responding.", "Choose Retry failed."};
         case ErrorCode::Internal:
@@ -227,13 +243,29 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
                 case catalog::JobStage::Skipped:
                     entry.outcome = ReportOutcome::Skipped;
                     if (entry.error && entry.error->where == detail::kWhereExisting) {
+                        // The existing output submission verified in this batch's folder (the job
+                        // names it), with the receipt that describes it.
                         auto receipts = catalog->query([&](catalog::ReadTransaction& tx) {
                             return tx.find_receipts_by_identity(job.identity_sha256);
                         });
-                        if (receipts && !receipts->empty()) {
-                            entry.output = receipts->back().final_path;
-                            entry.size_bytes = receipts->back().size_bytes;
-                            entry.sha256 = receipts->back().output_sha256;
+                        const catalog::ReceiptRecord* match = nullptr;
+                        if (receipts) {
+                            for (const catalog::ReceiptRecord& receipt : *receipts) {
+                                if (job.final_path ? detail::same_path_text(receipt.final_path, *job.final_path)
+                                                   : detail::is_same_or_within(receipt.final_path, ctx.destination.folder)) {
+                                    match = &receipt;
+                                    if (job.final_path) {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (match != nullptr) {
+                            entry.output = match->final_path;
+                            entry.size_bytes = match->size_bytes;
+                            entry.sha256 = match->output_sha256;
+                        } else if (job.final_path) {
+                            entry.output = job.final_path;
                         }
                     }
                     break;

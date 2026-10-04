@@ -263,7 +263,8 @@ Status HeldOutput::read_exact_at(std::uint64_t offset, std::span<std::byte> buff
     return ok();
 }
 
-Expected<OutputDigest> HeldOutput::digest(const core::CancellationToken& cancel) const {
+Expected<OutputDigest> HeldOutput::digest(const core::CancellationToken& cancel,
+                                          const std::function<void()>& between_reads) const {
     auto before = identity();
     if (!before) {
         return Unexpected(std::move(before.error()));
@@ -277,6 +278,9 @@ Expected<OutputDigest> HeldOutput::digest(const core::CancellationToken& cancel)
     core::Sha256 hasher;
     std::uint64_t offset = 0;
     while (offset < before->size_bytes) {
+        if (between_reads) {
+            between_reads();
+        }
         if (Status s = cancel.check(kWhereVerify); !s) {
             return Unexpected(std::move(s.error()));
         }

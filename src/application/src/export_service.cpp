@@ -446,6 +446,7 @@ Expected<ExportRecord> export_through_batch(BatchService& batches, Library& libr
     batch.existing_outputs = ExistingOutputs::ExportAgain;
     batch.allow_unsupported = request.allow_unsupported;
     batch.write_report_files = false;
+    batch.single_export = true;
 
     struct Shared {
         std::mutex mutex;
@@ -514,8 +515,9 @@ Expected<ExportRecord> export_through_batch(BatchService& batches, Library& libr
         }
         if ((cancel.is_cancelled() || attention) && !cancel_sent) {
             // A single export does not wait for a full disk or a reconnected drive: it fails, as in W3.
+            // The reason is recorded on the cancelled job, so the Exports view and the report say why.
             cancel_sent = true;
-            if (Status cancelled = batches.cancel(id); !cancelled) {
+            if (Status cancelled = batches.cancel(id, attention); !cancelled) {
                 core::log_warn(kWhere, "cannot cancel batch {}: {}", id.value, cancelled.error().describe());
             }
         }
