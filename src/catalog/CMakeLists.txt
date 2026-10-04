@@ -50,6 +50,7 @@ lucent_add_test(lucent_catalog_tests
         tests/migration_v2_test.cpp
         tests/migration_v3_test.cpp
         tests/jobs_test.cpp
+        tests/auto_jobs_test.cpp
         tests/repository_test.cpp
         tests/revision_test.cpp
         tests/transaction_test.cpp

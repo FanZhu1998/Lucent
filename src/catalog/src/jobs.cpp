@@ -103,6 +103,44 @@ std::string_view to_string(PublicationStep value) noexcept {
     return "invalid";
 }
 
+std::string_view to_string(AutoMode value) noexcept {
+    switch (value) {
+        case AutoMode::None:
+            return "none";
+        case AutoMode::Auto:
+            return "auto";
+        case AutoMode::AnalyzeOnly:
+            return "analyze_only";
+    }
+    return "invalid";
+}
+
+std::string_view to_string(AutoJobState value) noexcept {
+    switch (value) {
+        case AutoJobState::None:
+            return "none";
+        case AutoJobState::Pending:
+            return "pending";
+        case AutoJobState::Analysed:
+            return "analysed";
+        case AutoJobState::Frozen:
+            return "frozen";
+    }
+    return "invalid";
+}
+
+std::string_view to_string(AutoCheckOutcome value) noexcept {
+    switch (value) {
+        case AutoCheckOutcome::Passed:
+            return "passed";
+        case AutoCheckOutcome::Failed:
+            return "failed";
+        case AutoCheckOutcome::NotRun:
+            return "not_run";
+    }
+    return "invalid";
+}
+
 namespace detail {
 
 namespace {
@@ -128,6 +166,15 @@ std::optional<FailureClass> parse_failure_class(std::string_view text) noexcept 
 }
 std::optional<PublicationStep> parse_publication_step(std::string_view text) noexcept {
     return parse_enum<PublicationStep, 1, 6>(text);
+}
+std::optional<AutoMode> parse_auto_mode(std::string_view text) noexcept {
+    return parse_enum<AutoMode, 1, 2>(text);
+}
+std::optional<AutoJobState> parse_auto_job_state(std::string_view text) noexcept {
+    return parse_enum<AutoJobState, 1, 3>(text);
+}
+std::optional<AutoCheckOutcome> parse_auto_check_outcome(std::string_view text) noexcept {
+    return parse_enum<AutoCheckOutcome, 1, 3>(text);
 }
 
 ErrorCode error_code_from_db(std::int64_t value) noexcept {
@@ -224,7 +271,46 @@ Status NewBatch::validate() const {
     if (renderer_version.empty()) {
         return detail::invalid(where, "renderer_version must not be empty");
     }
+    if (automatic != AutoMode::None && automatic != AutoMode::Auto && automatic != AutoMode::AnalyzeOnly) {
+        return detail::invalid(where, "unknown automatic-settings mode");
+    }
     return check_size(renderer_version, kMaxJobLabelBytes, "renderer_version", where);
+}
+
+Status NewAutoAnalysis::validate() const {
+    constexpr std::string_view where = "catalog.auto_analysis";
+    if (!revision.valid()) {
+        return detail::invalid(where, "an analysis record needs its revision");
+    }
+    if (policy.empty() || policy.size() > kMaxJobLabelBytes) {
+        return detail::invalid(where, std::format("policy must be 1 ... {} bytes", kMaxJobLabelBytes));
+    }
+    for (const auto& [text, field] : {std::pair<std::string_view, std::string_view>{policy, "policy"},
+                                      {flags_json, "flags_json"},
+                                      {record_json, "record_json"}}) {
+        if (Status s = detail::check_text(text, field, where); !s) {
+            return s;
+        }
+    }
+    if (policy_version == 0 || search_version == 0 || metric_contract_version == 0 ||
+        develop_pipeline_version == 0 || develop_settings_version == 0 ||
+        (consistency_version && *consistency_version == 0)) {
+        return detail::invalid(where, "every version of an analysis record must be at least 1");
+    }
+    if (!(confidence >= 0.0 && confidence <= 1.0)) {
+        return detail::invalid(where, "confidence must lie in [0, 1]");
+    }
+    if (final_check != AutoCheckOutcome::Passed && final_check != AutoCheckOutcome::Failed &&
+        final_check != AutoCheckOutcome::NotRun) {
+        return detail::invalid(where, "unknown final-check outcome");
+    }
+    for (const auto& [text, field] : {std::pair<std::string_view, std::string_view>{flags_json, "flags_json"},
+                                      {record_json, "record_json"}}) {
+        if (Status s = check_size(text, kMaxAnalysisJsonBytes, field, where); !s) {
+            return s;
+        }
+    }
+    return ok();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -242,14 +328,14 @@ using detail::sql;
 constexpr std::string_view kBatchColumns =
     "b.id, b.name, b.selection_description, b.destination_json, b.export_settings_json, "
     "b.export_settings_sha256, b.policy_json, b.renderer_version, b.state, b.job_count, b.created_at, "
-    "b.updated_at, b.started_at, b.finished_at, b.reported_at";
+    "b.updated_at, b.started_at, b.finished_at, b.reported_at, b.auto_mode";
 
 constexpr std::string_view kJobColumns =
     "j.id, j.batch_id, j.ordinal, j.item_id, j.subimage, j.revision_id, j.settings_sha256, j.source_sha256, "
     "j.assets_json, j.identity_sha256, j.stage, j.attempts, j.transient_failures, j.deterministic_failures, "
     "j.last_failure_class, j.last_error_code, j.last_error_where, j.last_error_message, j.last_error_native, "
     "j.last_error_at, j.lease_owner, j.lease_expires_at, j.heartbeat_at, j.not_before, j.temp_path, "
-    "j.final_path, j.created_at, j.updated_at, j.interruptions";
+    "j.final_path, j.created_at, j.updated_at, j.interruptions, j.auto_state, j.analysis_json";
 
 constexpr std::string_view kEventColumns =
     "e.id, e.job_id, e.batch_id, e.at, e.from_stage, e.to_stage, e.attempt, e.lease_owner, e.failure_class, "
@@ -382,6 +468,9 @@ Expected<BatchRecord> read_batch_row(const Statement& row, const RowDecoder& dec
     batch.started_at = r.optional_time(12);
     batch.finished_at = r.optional_time(13);
     batch.reported_at = r.optional_time(14);
+    if (!row.is_null(15)) {
+        batch.automatic = r.parsed(detail::parse_auto_mode(row.column_text(15)), 15, "batches.auto_mode", AutoMode::None);
+    }
     if (r.failed()) {
         return Unexpected(r.take_error());
     }
@@ -425,6 +514,11 @@ Expected<JobRecord> read_job_row(const Statement& row, const RowDecoder& decode)
     job.created_at = r.time(26);
     job.updated_at = r.time(27);
     job.interruptions = r.u32(28, "jobs.interruptions");
+    if (!row.is_null(29)) {
+        job.auto_state =
+            r.parsed(detail::parse_auto_job_state(row.column_text(29)), 29, "jobs.auto_state", AutoJobState::None);
+    }
+    job.analysis_json = r.optional_text(30);
     if (r.failed()) {
         return Unexpected(r.take_error());
     }
@@ -707,7 +801,10 @@ Expected<BatchJobFacts> ReadTransaction::batch_job_facts(BatchId id, std::string
         " AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.job_id = j.id)), "
         "(SELECT count(*) FROM jobs j JOIN receipts r ON r.job_id = j.id WHERE j.batch_id = ?1 "
         " AND j.stage = 'complete' AND json_valid(r.settings_json) "
-        " AND json_type(r.settings_json, ?2) = 'array' AND json_array_length(r.settings_json, ?2) > 0)",
+        " AND json_type(r.settings_json, ?2) = 'array' AND json_array_length(r.settings_json, ?2) > 0), "
+        "(SELECT count(*) FROM jobs j JOIN auto_analyses a ON a.revision_id = j.revision_id WHERE j.batch_id = ?1 "
+        " AND j.stage = 'complete' AND j.auto_state = 'frozen' AND a.review = 1 "
+        " AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.job_id = j.id))",
         where);
     if (!statement) {
         return Unexpected(std::move(statement.error()));
@@ -723,6 +820,7 @@ Expected<BatchJobFacts> ReadTransaction::batch_job_facts(BatchId id, std::string
     BatchJobFacts facts;
     facts.failed_retryable = static_cast<std::uint64_t>(statement->column_int64(1));
     facts.flagged_receipts = static_cast<std::uint64_t>(statement->column_int64(2));
+    facts.flagged_analyses = static_cast<std::uint64_t>(statement->column_int64(3));
     return facts;
 }
 
@@ -757,6 +855,23 @@ Expected<std::vector<JobRecord>> ReadTransaction::list_jobs(const JobQuery& quer
             }
             text += i == 0 ? "?" : ", ?";
             parameters.emplace_back(std::string(stage));
+        }
+        text += ")";
+    }
+    if (!query.auto_states.empty()) {
+        text += " AND (";
+        for (std::size_t i = 0; i < query.auto_states.size(); ++i) {
+            text += i == 0 ? "" : " OR ";
+            if (query.auto_states[i] == AutoJobState::None) {
+                text += "j.auto_state IS NULL";
+                continue;
+            }
+            const std::string_view state = to_string(query.auto_states[i]);
+            if (state == "invalid") {
+                return Unexpected(invalid(where, "unknown automatic state in the filter").error());
+            }
+            text += "j.auto_state = ?";
+            parameters.emplace_back(std::string(state));
         }
         text += ")";
     }
@@ -919,6 +1034,161 @@ Expected<std::vector<PublicationInProgress>> ReadTransaction::list_publications_
         });
 }
 
+// ---- Automatic settings (schema v5) -----------------------------------------------------------
+
+namespace {
+
+constexpr std::string_view kAnalysisColumns =
+    "a.id, a.revision_id, a.item_id, a.job_id, a.created_at, a.policy, a.policy_version, a.search_version, "
+    "a.metric_contract_version, a.consistency_version, a.develop_pipeline_version, a.develop_settings_version, "
+    "a.attempt, a.final_check, a.confidence, a.review, a.flags_json, a.record_json";
+
+Expected<AutoAnalysisRecord> read_analysis_row(const Statement& row, const RowDecoder& decode) {
+    Reader r(row, decode);
+    AutoAnalysisRecord record;
+    record.id = AutoAnalysisId{r.int64(0)};
+    record.revision = RevisionId{r.int64(1)};
+    record.item = ItemId{r.int64(2)};
+    if (!row.is_null(3)) {
+        record.job = JobId{r.int64(3)};
+    }
+    record.created_at = r.time(4);
+    record.policy = r.text(5);
+    record.policy_version = r.u32(6, "auto_analyses.policy_version");
+    record.search_version = r.u32(7, "auto_analyses.search_version");
+    record.metric_contract_version = r.u32(8, "auto_analyses.metric_contract_version");
+    if (!row.is_null(9)) {
+        record.consistency_version = r.u32(9, "auto_analyses.consistency_version");
+    }
+    record.develop_pipeline_version = r.u32(10, "auto_analyses.develop_pipeline_version");
+    record.develop_settings_version = r.u32(11, "auto_analyses.develop_settings_version");
+    record.attempt = r.u32(12, "auto_analyses.attempt");
+    record.final_check = r.parsed(detail::parse_auto_check_outcome(row.column_text(13)), 13, "auto_analyses.final_check",
+                                  AutoCheckOutcome::NotRun);
+    record.confidence = row.column_double(14);
+    record.review = row.column_int64(15) != 0;
+    record.flags_json = r.text(16);
+    record.record_json = r.text(17);
+    if (r.failed()) {
+        return Unexpected(r.take_error());
+    }
+    return record;
+}
+
+}  // namespace
+
+Expected<AutoJobCounts> ReadTransaction::auto_job_counts(BatchId id) const {
+    constexpr std::string_view where = "catalog.auto_job_counts";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<Statement> exists = connection_->prepare("SELECT count(*) FROM batches WHERE id = ?1", where);
+    if (!exists) {
+        return Unexpected(std::move(exists.error()));
+    }
+    exists->bind_int64(1, id.value);
+    Expected<bool> found = exists->step();
+    if (!found) {
+        return Unexpected(std::move(found.error()));
+    }
+    if (exists->column_int64(0) == 0) {
+        return fail(ErrorCode::NotFound, std::format("no batch with id {}", id.value), std::string(where));
+    }
+    exists->reset();
+    AutoJobCounts counts;
+    {
+        Expected<Statement> documents = connection_->prepare(
+            "SELECT count(*) FROM jobs WHERE batch_id = ?1 AND analysis_json IS NOT NULL", where);
+        if (!documents) {
+            return Unexpected(std::move(documents.error()));
+        }
+        documents->bind_int64(1, id.value);
+        Expected<bool> row = documents->step();
+        if (!row) {
+            return Unexpected(std::move(row.error()));
+        }
+        counts.documents = static_cast<std::uint64_t>(documents->column_int64(0));
+    }
+    Expected<Statement> statement = connection_->prepare(
+        sql({"SELECT auto_state, count(*) FROM jobs WHERE batch_id = ?1 AND auto_state IS NOT NULL "
+             "AND (stage = 'queued' OR stage IN ",
+             kLeasedStagesSql, ") GROUP BY auto_state"}),
+        where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, id.value);
+    const RowDecoder decode(newer_schema_, where);
+    for (;;) {
+        Expected<bool> row = statement->step();
+        if (!row) {
+            return Unexpected(std::move(row.error()));
+        }
+        if (!*row) {
+            return counts;
+        }
+        const std::optional<AutoJobState> state = detail::parse_auto_job_state(statement->column_text(0));
+        if (!state) {
+            return Unexpected(decode.bad("jobs.auto_state", statement->column_text(0)));
+        }
+        const auto n = static_cast<std::uint64_t>(statement->column_int64(1));
+        switch (*state) {
+            case AutoJobState::Pending:
+                counts.pending = n;
+                break;
+            case AutoJobState::Analysed:
+                counts.analysed = n;
+                break;
+            case AutoJobState::Frozen:
+                counts.frozen = n;
+                break;
+            case AutoJobState::None:
+                break;
+        }
+    }
+}
+
+Expected<std::optional<AutoAnalysisRecord>> ReadTransaction::find_auto_analysis(RevisionId revision) const {
+    constexpr std::string_view where = "catalog.find_auto_analysis";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<Statement> statement =
+        connection_->prepare(sql({"SELECT ", kAnalysisColumns, " FROM auto_analyses a WHERE a.revision_id = ?1"}), where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, revision.value);
+    return first<AutoAnalysisRecord>(*statement, RowDecoder(newer_schema_, where), read_analysis_row);
+}
+
+Expected<std::vector<AutoAnalysisRecord>> ReadTransaction::list_auto_analyses(ItemId item) const {
+    constexpr std::string_view where = "catalog.list_auto_analyses";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Expected<Statement> exists = connection_->prepare("SELECT count(*) FROM items WHERE id = ?1", where);
+    if (!exists) {
+        return Unexpected(std::move(exists.error()));
+    }
+    exists->bind_int64(1, item.value);
+    Expected<bool> found = exists->step();
+    if (!found) {
+        return Unexpected(std::move(found.error()));
+    }
+    if (exists->column_int64(0) == 0) {
+        return fail(ErrorCode::NotFound, std::format("no item with id {}", item.value), std::string(where));
+    }
+    exists->reset();
+    Expected<Statement> statement = connection_->prepare(
+        sql({"SELECT ", kAnalysisColumns, " FROM auto_analyses a WHERE a.item_id = ?1 ORDER BY a.id"}), where);
+    if (!statement) {
+        return Unexpected(std::move(statement.error()));
+    }
+    statement->bind_int64(1, item.value);
+    return detail::collect<AutoAnalysisRecord>(*statement, RowDecoder(newer_schema_, where), read_analysis_row);
+}
+
 // ---------------------------------------------------------------------------------------------
 // WriteTransaction: shared steps
 // ---------------------------------------------------------------------------------------------
@@ -932,6 +1202,7 @@ constexpr std::string_view kJournalOrder = "catalog.job.journal_order";
 constexpr std::string_view kBatchCancelled = "catalog.job.batch_cancelled";
 constexpr std::string_view kBatchTransition = "catalog.batch.invalid_transition";
 constexpr std::string_view kReceiptConflict = "catalog.receipt.conflict";
+constexpr std::string_view kAutoState = "catalog.job.auto_state";
 
 // `text` cut to at most `limit` bytes at a code-point boundary (valid UTF-8 in, valid UTF-8 out).
 std::string truncate_utf8(std::string_view text, std::size_t limit) {
@@ -968,12 +1239,14 @@ struct JobState {
     std::optional<Timestamp> lease_expires_at;
     BatchState batch_state = BatchState::Draft;
     core::Digest256 identity{};
+    AutoJobState auto_state = AutoJobState::None;  // schema v5
+    AutoMode auto_mode = AutoMode::None;           // the batch's
 };
 
 Expected<JobState> load_state(Connection& connection, JobId id, std::string_view where) {
     Expected<Statement> statement = connection.prepare(
-        "SELECT j.batch_id, j.stage, j.attempts, j.lease_owner, j.lease_expires_at, b.state, j.identity_sha256 "
-        "FROM jobs j JOIN batches b ON b.id = j.batch_id WHERE j.id = ?1",
+        "SELECT j.batch_id, j.stage, j.attempts, j.lease_owner, j.lease_expires_at, b.state, j.identity_sha256, "
+        "j.auto_state, b.auto_mode FROM jobs j JOIN batches b ON b.id = j.batch_id WHERE j.id = ?1",
         where);
     if (!statement) {
         return Unexpected(std::move(statement.error()));
@@ -998,6 +1271,14 @@ Expected<JobState> load_state(Connection& connection, JobId id, std::string_view
     state.batch_state =
         r.parsed(detail::parse_batch_state(statement->column_text(5)), 5, "batches.state", BatchState::Draft);
     state.identity = r.digest(6, "jobs.identity_sha256");
+    if (!statement->is_null(7)) {
+        state.auto_state = r.parsed(detail::parse_auto_job_state(statement->column_text(7)), 7, "jobs.auto_state",
+                                    AutoJobState::None);
+    }
+    if (!statement->is_null(8)) {
+        state.auto_mode =
+            r.parsed(detail::parse_auto_mode(statement->column_text(8)), 8, "batches.auto_mode", AutoMode::None);
+    }
     if (r.failed()) {
         return Unexpected(r.take_error());
     }
@@ -1454,10 +1735,18 @@ Expected<CreatedBatch> WriteTransaction::create_batch(const NewBatch& batch, std
     Connection& connection = *connection_;
     return in_savepoint(connection, where, [&]() -> Expected<CreatedBatch> {
         const std::int64_t now = detail::to_db(batch.created_at);
+        // The automatic-settings columns (schema v5) are named only for an automatic batch: an
+        // export batch is written exactly as before.
+        const bool automatic = batch.automatic != AutoMode::None;
         Expected<Statement> insert = connection.prepare(
-            "INSERT INTO batches (name, selection_description, destination_json, export_settings_json, "
-            "export_settings_sha256, policy_json, renderer_version, state, job_count, created_at, updated_at, "
-            "started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11) RETURNING id",
+            automatic ? "INSERT INTO batches (name, selection_description, destination_json, export_settings_json, "
+                        "export_settings_sha256, policy_json, renderer_version, state, job_count, created_at, "
+                        "updated_at, started_at, auto_mode) "
+                        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12) RETURNING id"
+                      : "INSERT INTO batches (name, selection_description, destination_json, export_settings_json, "
+                        "export_settings_sha256, policy_json, renderer_version, state, job_count, created_at, "
+                        "updated_at, started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11) "
+                        "RETURNING id",
             where);
         if (!insert) {
             return Unexpected(std::move(insert.error()));
@@ -1476,6 +1765,9 @@ Expected<CreatedBatch> WriteTransaction::create_batch(const NewBatch& batch, std
             insert->bind_int64(11, now);
         } else {
             insert->bind_null(11);
+        }
+        if (automatic) {
+            insert->bind_text(12, to_string(batch.automatic));
         }
         Expected<bool> row = insert->step();
         if (!row) {
@@ -1566,9 +1858,13 @@ Expected<CreatedBatch> WriteTransaction::create_batch(const NewBatch& batch, std
             }
 
             Expected<Statement> add = connection.prepare(
-                "INSERT INTO jobs (batch_id, ordinal, item_id, subimage, revision_id, settings_sha256, source_sha256, "
-                "assets_json, identity_sha256, stage, not_before, created_at, updated_at) "
-                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?10, ?10) RETURNING id",
+                automatic ? "INSERT INTO jobs (batch_id, ordinal, item_id, subimage, revision_id, settings_sha256, "
+                            "source_sha256, assets_json, identity_sha256, stage, not_before, created_at, updated_at, "
+                            "auto_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?10, ?10, "
+                            "'pending') RETURNING id"
+                          : "INSERT INTO jobs (batch_id, ordinal, item_id, subimage, revision_id, settings_sha256, "
+                            "source_sha256, assets_json, identity_sha256, stage, not_before, created_at, updated_at) "
+                            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?10, ?10) RETURNING id",
                 where);
             if (!add) {
                 return Unexpected(std::move(add.error()));
@@ -1587,6 +1883,7 @@ Expected<CreatedBatch> WriteTransaction::create_batch(const NewBatch& batch, std
             } else {
                 add->bind_null(5);
             }
+
             Expected<bool> added = add->step();
             if (!added) {
                 Error error = std::move(added.error());
@@ -1886,7 +2183,11 @@ Expected<std::optional<ClaimedJob>> WriteTransaction::claim_next_job(const Claim
         Expected<Statement> next = connection.prepare(
             "SELECT j.id FROM jobs j JOIN batches b ON b.id = j.batch_id "
             "WHERE j.stage = 'queued' AND b.state = 'running' AND j.not_before <= ?1 "
-            "AND (?2 IS NULL OR j.batch_id = ?2) ORDER BY j.batch_id, j.ordinal LIMIT 1",
+            "AND (?2 IS NULL OR j.batch_id = ?2) "
+            "AND (?3 = 0 OR ((?3 & 1) <> 0 AND j.auto_state IS 'pending') "
+            "OR ((?3 & 2) <> 0 AND j.auto_state IS 'analysed') OR ((?3 & 4) <> 0 AND j.auto_state IS 'frozen') "
+            "OR ((?3 & 8) <> 0 AND j.auto_state IS NULL)) "
+            "ORDER BY j.batch_id, j.ordinal LIMIT 1",
             where);
         if (!next) {
             return Unexpected(std::move(next.error()));
@@ -1897,6 +2198,24 @@ Expected<std::optional<ClaimedJob>> WriteTransaction::claim_next_job(const Claim
         } else {
             next->bind_null(2);
         }
+        std::int64_t states = 0;
+        for (const AutoJobState state : request.auto_states) {
+            switch (state) {
+                case AutoJobState::Pending:
+                    states |= 1;
+                    break;
+                case AutoJobState::Analysed:
+                    states |= 2;
+                    break;
+                case AutoJobState::Frozen:
+                    states |= 4;
+                    break;
+                case AutoJobState::None:
+                    states |= 8;
+                    break;
+            }
+        }
+        next->bind_int64(3, states);
         Expected<bool> row = next->step();
         if (!row) {
             return Unexpected(std::move(row.error()));
@@ -2071,6 +2390,16 @@ Status WriteTransaction::record_publication_step(const JobLease& lease, const Pu
         }
         if (entry.step == PublicationStep::Published && state->stage != JobStage::Publishing) {
             return stage_conflict(lease.job, state->stage, "publishing");
+        }
+        // An automatic job publishes only once its identity is bound to its effective revision, and a
+        // job of an analyse-only batch never does.
+        if (state->auto_mode == AutoMode::AnalyzeOnly ||
+            (state->auto_state != AutoJobState::None && state->auto_state != AutoJobState::Frozen)) {
+            return fail(ErrorCode::InvalidArgument,
+                        std::format("job {} is an automatic job ({}, batch {}): nothing is published before it is "
+                                    "frozen, and an analyse-only batch publishes nothing",
+                                    lease.job.value, to_string(state->auto_state), to_string(state->auto_mode)),
+                        std::string(kAutoState));
         }
         Expected<std::optional<PublicationRecord>> latest = latest_entry(connection, lease.job, lease.attempt, where);
         if (!latest) {
@@ -2410,6 +2739,320 @@ Status WriteTransaction::abandon_publication(JobId job, std::uint32_t attempt, T
         }
         update->bind_int64(1, job.value).bind_int64(2, attempt).bind_int64(3, detail::to_db(now));
         return update->run();
+    });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic settings (schema v5)
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+Status auto_state_conflict(JobId job, AutoJobState state, std::string_view expected) {
+    return fail(ErrorCode::InvalidArgument,
+                std::format("job {} is in automatic state {}, not {}", job.value, to_string(state), expected),
+                std::string(kAutoState));
+}
+
+}  // namespace
+
+Status WriteTransaction::record_job_analysis(const JobLease& lease, std::string_view analysis_json, Timestamp now) {
+    constexpr std::string_view where = "catalog.record_job_analysis";
+    if (Status s = check_active(connection_, where); !s) {
+        return s;
+    }
+    if (Status s = detail::check_text(analysis_json, "analysis_json", where); !s) {
+        return s;
+    }
+    if (Status s = check_size(analysis_json, kMaxAnalysisJsonBytes, "analysis_json", where); !s) {
+        return s;
+    }
+    Connection& connection = *connection_;
+    return in_savepoint(connection, where, [&]() -> Status {
+        Expected<JobState> state = check_lease(connection, lease, now, true, where);
+        if (!state) {
+            return Unexpected(std::move(state.error()));
+        }
+        if (state->auto_state != AutoJobState::Pending) {
+            return auto_state_conflict(lease.job, state->auto_state, "pending");
+        }
+        Expected<Statement> update = connection.prepare(
+            "UPDATE jobs SET analysis_json = ?2, auto_state = 'analysed', updated_at = ?3 "
+            "WHERE id = ?1 AND attempts = ?4 AND auto_state = 'pending'",
+            where);
+        if (!update) {
+            return Unexpected(std::move(update.error()));
+        }
+        update->bind_int64(1, lease.job.value)
+            .bind_text(2, analysis_json)
+            .bind_int64(3, detail::to_db(now))
+            .bind_int64(4, lease.attempt);
+        if (Status s = update->run(); !s) {
+            Error error = std::move(s.error());
+            if (error.code == ErrorCode::InvalidArgument) {
+                error.message = "the analysis document must be valid JSON: " + error.message;
+            }
+            return Unexpected(std::move(error));
+        }
+        if (connection.changes() != 1) {
+            return fail(ErrorCode::Internal,
+                        std::format("job {} changed while its analysis was recorded", lease.job.value),
+                        std::string(where));
+        }
+        return ok();
+    });
+}
+
+Expected<core::Digest256> WriteTransaction::freeze_auto_job(const JobLease& lease, const AutoFreeze& freeze,
+                                                            Timestamp now) {
+    constexpr std::string_view where = "catalog.freeze_auto_job";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    if (freeze.analysis_json) {
+        if (Status s = detail::check_text(*freeze.analysis_json, "analysis_json", where); !s) {
+            return Unexpected(std::move(s.error()));
+        }
+        if (Status s = check_size(*freeze.analysis_json, kMaxAnalysisJsonBytes, "analysis_json", where); !s) {
+            return Unexpected(std::move(s.error()));
+        }
+    }
+    Connection& connection = *connection_;
+    return in_savepoint(connection, where, [&]() -> Expected<core::Digest256> {
+        Expected<JobState> state = check_lease(connection, lease, now, true, where);
+        if (!state) {
+            return Unexpected(std::move(state.error()));
+        }
+        if (state->auto_state != AutoJobState::Analysed) {
+            return Unexpected(auto_state_conflict(lease.job, state->auto_state, "analysed").error());
+        }
+        // The job's identity inputs besides the settings.
+        Expected<Statement> job = connection.prepare(
+            "SELECT j.item_id, j.subimage, j.source_sha256, j.assets_json, b.renderer_version, "
+            "b.export_settings_sha256 FROM jobs j JOIN batches b ON b.id = j.batch_id WHERE j.id = ?1",
+            where);
+        if (!job) {
+            return Unexpected(std::move(job.error()));
+        }
+        job->bind_int64(1, lease.job.value);
+        Expected<bool> row = job->step();
+        if (!row) {
+            return Unexpected(std::move(row.error()));
+        }
+        if (!*row) {
+            return fail(ErrorCode::NotFound, std::format("no job with id {}", lease.job.value), std::string(where));
+        }
+        if (job->is_null(0)) {
+            return fail(ErrorCode::NotFound, std::format("the item of job {} was removed", lease.job.value),
+                        std::string(where));
+        }
+        const RowDecoder decode(false, where);
+        const ItemId item{job->column_int64(0)};
+        JobIdentityInput identity;
+        identity.subimage = static_cast<std::uint32_t>(job->column_int64(1));
+        Expected<core::Digest256> source = decode.blob<32>("jobs.source_sha256", job->column_blob(2));
+        if (!source) {
+            return Unexpected(std::move(source.error()));
+        }
+        identity.source_sha256 = *source;
+        identity.assets_json = std::string(job->column_text(3));
+        identity.renderer_version = std::string(job->column_text(4));
+        Expected<core::Digest256> export_digest =
+            decode.blob<32>("batches.export_settings_sha256", job->column_blob(5));
+        if (!export_digest) {
+            return Unexpected(std::move(export_digest.error()));
+        }
+        identity.export_settings_sha256 = *export_digest;
+        job->reset();
+
+        // The effective revision: the job's item, origin Auto, the given settings.
+        Expected<Statement> revision =
+            connection.prepare("SELECT item_id, origin, settings_sha256 FROM recipe_revisions WHERE id = ?1", where);
+        if (!revision) {
+            return Unexpected(std::move(revision.error()));
+        }
+        revision->bind_int64(1, freeze.revision.value);
+        Expected<bool> has = revision->step();
+        if (!has) {
+            return Unexpected(std::move(has.error()));
+        }
+        if (!*has) {
+            return fail(ErrorCode::NotFound, std::format("no recipe revision with id {}", freeze.revision.value),
+                        std::string(where));
+        }
+        const bool same_item = revision->column_int64(0) == item.value;
+        const bool automatic = revision->column_text(1) == to_string(RevisionOrigin::Auto);
+        const std::span<const std::uint8_t> stored = revision->column_blob(2);
+        const bool same_settings = stored.size() == freeze.settings_sha256.size() &&
+                                   std::equal(stored.begin(), stored.end(), freeze.settings_sha256.begin());
+        revision->reset();
+        if (!same_item || !automatic || !same_settings) {
+            return Unexpected(invalid(where, std::format("recipe revision {} is not an automatic revision of item {} "
+                                                         "with the given settings",
+                                                         freeze.revision.value, item.value))
+                                  .error());
+        }
+        identity.settings_sha256 = freeze.settings_sha256;
+        Expected<core::Digest256> digest = compute_job_identity(identity);
+        if (!digest) {
+            return Unexpected(std::move(digest.error()));
+        }
+        Expected<Statement> update = connection.prepare(
+            "UPDATE jobs SET revision_id = ?2, settings_sha256 = ?3, identity_sha256 = ?4, auto_state = 'frozen', "
+            "analysis_json = coalesce(?5, analysis_json), updated_at = ?6 "
+            "WHERE id = ?1 AND attempts = ?7 AND auto_state = 'analysed'",
+            where);
+        if (!update) {
+            return Unexpected(std::move(update.error()));
+        }
+        update->bind_int64(1, lease.job.value)
+            .bind_int64(2, freeze.revision.value)
+            .bind_blob(3, detail::bytes_of(freeze.settings_sha256))
+            .bind_blob(4, detail::bytes_of(*digest))
+            .bind_optional_text(5, freeze.analysis_json)
+            .bind_int64(6, detail::to_db(now))
+            .bind_int64(7, lease.attempt);
+        if (Status s = update->run(); !s) {
+            return Unexpected(std::move(s.error()));
+        }
+        if (connection.changes() != 1) {
+            return fail(ErrorCode::Internal, std::format("job {} changed while it was frozen", lease.job.value),
+                        std::string(where));
+        }
+        return *digest;
+    });
+}
+
+Status WriteTransaction::complete_without_output(const JobLease& lease, Timestamp now) {
+    constexpr std::string_view where = "catalog.complete_without_output";
+    if (Status s = check_active(connection_, where); !s) {
+        return s;
+    }
+    Connection& connection = *connection_;
+    return in_savepoint(connection, where, [&]() -> Status {
+        Expected<JobState> state = check_lease(connection, lease, now, true, where);
+        if (!state) {
+            return Unexpected(std::move(state.error()));
+        }
+        if (state->auto_mode != AutoMode::AnalyzeOnly || state->auto_state != AutoJobState::Frozen) {
+            return auto_state_conflict(lease.job, state->auto_state, "frozen in an analyse-only batch");
+        }
+        if (state->stage != JobStage::Rendering) {
+            return stage_conflict(lease.job, state->stage, "rendering");
+        }
+        Transition transition;
+        transition.to = JobStage::Complete;
+        return apply_transition(connection, *state, transition, now, where);
+    });
+}
+
+Expected<AutoAnalysisId> WriteTransaction::record_auto_analysis(const NewAutoAnalysis& analysis) {
+    constexpr std::string_view where = "catalog.record_auto_analysis";
+    if (Status s = check_active(connection_, where); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    if (Status s = analysis.validate(); !s) {
+        return Unexpected(std::move(s.error()));
+    }
+    Connection& connection = *connection_;
+    return in_savepoint(connection, where, [&]() -> Expected<AutoAnalysisId> {
+        Expected<Statement> revision =
+            connection.prepare("SELECT item_id, origin FROM recipe_revisions WHERE id = ?1", where);
+        if (!revision) {
+            return Unexpected(std::move(revision.error()));
+        }
+        revision->bind_int64(1, analysis.revision.value);
+        Expected<bool> has = revision->step();
+        if (!has) {
+            return Unexpected(std::move(has.error()));
+        }
+        if (!*has) {
+            return fail(ErrorCode::NotFound, std::format("no recipe revision with id {}", analysis.revision.value),
+                        std::string(where));
+        }
+        const ItemId item{revision->column_int64(0)};
+        const bool automatic = revision->column_text(1) == to_string(RevisionOrigin::Auto);
+        revision->reset();
+        if (!automatic) {
+            return Unexpected(invalid(where, std::format("recipe revision {} is not an automatic revision",
+                                                         analysis.revision.value))
+                                  .error());
+        }
+        if (analysis.job) {
+            Expected<Statement> job = connection.prepare("SELECT item_id FROM jobs WHERE id = ?1", where);
+            if (!job) {
+                return Unexpected(std::move(job.error()));
+            }
+            job->bind_int64(1, analysis.job->value);
+            Expected<bool> found = job->step();
+            if (!found) {
+                return Unexpected(std::move(found.error()));
+            }
+            if (!*found) {
+                return fail(ErrorCode::NotFound, std::format("no job with id {}", analysis.job->value),
+                            std::string(where));
+            }
+            const bool same_item = !job->is_null(0) && job->column_int64(0) == item.value;
+            job->reset();
+            if (!same_item) {
+                return Unexpected(
+                    invalid(where, std::format("job {} is not a job of item {}", analysis.job->value, item.value))
+                        .error());
+            }
+        }
+        Expected<Statement> insert = connection.prepare(
+            "INSERT INTO auto_analyses (revision_id, item_id, job_id, created_at, policy, policy_version, "
+            "search_version, metric_contract_version, consistency_version, develop_pipeline_version, "
+            "develop_settings_version, attempt, final_check, confidence, review, flags_json, record_json) "
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) RETURNING id",
+            where);
+        if (!insert) {
+            return Unexpected(std::move(insert.error()));
+        }
+        insert->bind_int64(1, analysis.revision.value)
+            .bind_int64(2, item.value)
+            .bind_int64(4, detail::to_db(analysis.created_at))
+            .bind_text(5, analysis.policy)
+            .bind_int64(6, analysis.policy_version)
+            .bind_int64(7, analysis.search_version)
+            .bind_int64(8, analysis.metric_contract_version)
+            .bind_int64(10, analysis.develop_pipeline_version)
+            .bind_int64(11, analysis.develop_settings_version)
+            .bind_int64(12, analysis.attempt)
+            .bind_text(13, to_string(analysis.final_check))
+            .bind_double(14, analysis.confidence)
+            .bind_int64(15, analysis.review ? 1 : 0)
+            .bind_text(16, analysis.flags_json)
+            .bind_text(17, analysis.record_json);
+        if (analysis.job) {
+            insert->bind_int64(3, analysis.job->value);
+        } else {
+            insert->bind_null(3);
+        }
+        if (analysis.consistency_version) {
+            insert->bind_int64(9, *analysis.consistency_version);
+        } else {
+            insert->bind_null(9);
+        }
+        Expected<bool> row = insert->step();
+        if (!row) {
+            Error error = std::move(row.error());
+            if (error.code == ErrorCode::AlreadyExists) {
+                error.message = std::format("recipe revision {} already has an analysis record: {}",
+                                            analysis.revision.value, error.message);
+            } else if (error.code == ErrorCode::InvalidArgument) {
+                error.message =
+                    "analysis record rejected (flags_json must be a JSON array and record_json valid JSON): " +
+                    error.message;
+            }
+            return Unexpected(std::move(error));
+        }
+        if (!*row) {
+            return fail(ErrorCode::Internal, "INSERT ... RETURNING returned no row", std::string(where));
+        }
+        const AutoAnalysisId id{insert->column_int64(0)};
+        insert->reset();
+        return id;
     });
 }
 

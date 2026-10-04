@@ -428,12 +428,101 @@ Status migrate_to_v4(Connection& connection) {
     return connection.exec(kSchemaV4, kWhereMigrate);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Version 5 (W8 application wiring): automatic settings in batches and analysis records. Adds
+// only and changes nothing about what renders of items mean, so min_reader_version stays 2.
+//
+// batches.auto_mode: NULL for an export batch, 'auto' or 'analyze_only' (jobs.hpp, AutoMode).
+// jobs.auto_state: NULL for a job of an export batch; otherwise 'pending', 'analysed' or 'frozen',
+//   moving only forward (trigger jobs_auto_state_moves_forward).
+// jobs.analysis_json: the application's analysis document, set when the job becomes analysed (the
+//   durable pre-pass: related-shot grouping and a restart read it instead of analysing again).
+// jobs_identity_is_immutable is replaced: the identity columns still never change, except once,
+//   in the update that moves an automatic job from 'analysed' to 'frozen' (freeze_auto_job), which
+//   may replace settings_sha256 and identity_sha256 (and revision_id, never guarded) with those of
+//   its effective automatic revision. Nothing is published before that: the export identity is
+//   always the effective revision's.
+// auto_analyses: one analysis record per automatic revision (UNIQUE revision_id), immutable except
+//   for job_id (ON DELETE SET NULL), and deleted only with the item (like its revision).
+// ---------------------------------------------------------------------------------------------
+constexpr std::string_view kSchemaV5 = R"sql(
+ALTER TABLE batches ADD COLUMN auto_mode TEXT;
+ALTER TABLE jobs ADD COLUMN auto_state TEXT;
+ALTER TABLE jobs ADD COLUMN analysis_json TEXT CHECK (analysis_json IS NULL OR json_valid(analysis_json));
+
+DROP TRIGGER jobs_identity_is_immutable;
+CREATE TRIGGER jobs_identity_is_immutable
+BEFORE UPDATE OF batch_id, ordinal, subimage, settings_sha256, source_sha256, assets_json,
+                 identity_sha256, created_at ON jobs
+WHEN NOT (OLD.auto_state IS 'analysed' AND NEW.auto_state IS 'frozen'
+          AND NEW.batch_id = OLD.batch_id AND NEW.ordinal = OLD.ordinal AND NEW.subimage = OLD.subimage
+          AND NEW.source_sha256 = OLD.source_sha256 AND NEW.assets_json = OLD.assets_json
+          AND NEW.created_at = OLD.created_at)
+BEGIN
+    SELECT RAISE(ABORT, 'the identity of a job never changes');
+END;
+
+CREATE TRIGGER jobs_auto_state_moves_forward BEFORE UPDATE OF auto_state ON jobs
+WHEN NOT (OLD.auto_state IS NEW.auto_state
+          OR (OLD.auto_state IS 'pending' AND NEW.auto_state IS 'analysed')
+          OR (OLD.auto_state IS 'analysed' AND NEW.auto_state IS 'frozen'))
+BEGIN
+    SELECT RAISE(ABORT, 'an automatic job only moves from pending to analysed to frozen');
+END;
+
+CREATE TABLE auto_analyses (
+    id                       INTEGER PRIMARY KEY,
+    revision_id              INTEGER NOT NULL UNIQUE REFERENCES recipe_revisions (id) ON DELETE CASCADE,
+    item_id                  INTEGER NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    job_id                   INTEGER REFERENCES jobs (id) ON DELETE SET NULL,
+    created_at               INTEGER NOT NULL,
+    policy                   TEXT    NOT NULL CHECK (length(policy) > 0),
+    policy_version           INTEGER NOT NULL CHECK (policy_version >= 1),
+    search_version           INTEGER NOT NULL CHECK (search_version >= 1),
+    metric_contract_version  INTEGER NOT NULL CHECK (metric_contract_version >= 1),
+    consistency_version      INTEGER CHECK (consistency_version IS NULL OR consistency_version >= 1),
+    develop_pipeline_version INTEGER NOT NULL CHECK (develop_pipeline_version >= 1),
+    develop_settings_version INTEGER NOT NULL CHECK (develop_settings_version >= 1),
+    attempt                  INTEGER NOT NULL CHECK (attempt >= 0),
+    final_check              TEXT    NOT NULL,
+    confidence               REAL    NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    review                   INTEGER NOT NULL CHECK (review IN (0, 1)),
+    flags_json               TEXT    NOT NULL CHECK (json_valid(flags_json) AND json_type(flags_json) = 'array'),
+    record_json              TEXT    NOT NULL CHECK (json_valid(record_json))
+) STRICT;
+
+CREATE INDEX auto_analyses_by_item ON auto_analyses (item_id, id);
+-- Foreign-key lookups when jobs are deleted with their batch.
+CREATE INDEX auto_analyses_by_job ON auto_analyses (job_id);
+
+CREATE TRIGGER auto_analyses_are_immutable
+BEFORE UPDATE OF revision_id, item_id, created_at, policy, policy_version, search_version,
+                 metric_contract_version, consistency_version, develop_pipeline_version,
+                 develop_settings_version, attempt, final_check, confidence, review, flags_json,
+                 record_json ON auto_analyses
+BEGIN
+    SELECT RAISE(ABORT, 'analysis records are immutable');
+END;
+
+-- Deletion only by cascade from the item (its row is gone when the cascade runs).
+CREATE TRIGGER auto_analyses_are_kept BEFORE DELETE ON auto_analyses
+WHEN EXISTS (SELECT 1 FROM items WHERE id = OLD.item_id)
+BEGIN
+    SELECT RAISE(ABORT, 'analysis records are kept while their item exists');
+END;
+)sql";
+
+Status migrate_to_v5(Connection& connection) {
+    return connection.exec(kSchemaV5, kWhereMigrate);
+}
+
 constexpr Migration kBuiltinMigrations[] = {
     {1, 1, "catalog metadata, imports, sources and items (W4)", &migrate_to_v1},
     {2, 2, "recipe revisions and capture settings (W6)", &migrate_to_v2},
     {3, 2, "durable batch journal: batches, jobs, events, publication journal, receipts (W7)",
      &migrate_to_v3},
     {4, 2, "job interruption counts and batch report emission (W7)", &migrate_to_v4},
+    {5, 2, "automatic settings: batch modes, the analysis pre-pass and analysis records (W8)", &migrate_to_v5},
 };
 static_assert(std::size(kBuiltinMigrations) == static_cast<std::size_t>(kSchemaVersion),
               "every schema version needs exactly one migration");

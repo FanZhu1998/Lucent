@@ -27,6 +27,11 @@ namespace lucent::catalog::detail {
 [[nodiscard]] std::optional<JobStage> parse_job_stage(std::string_view text) noexcept;
 [[nodiscard]] std::optional<FailureClass> parse_failure_class(std::string_view text) noexcept;
 [[nodiscard]] std::optional<PublicationStep> parse_publication_step(std::string_view text) noexcept;
+// Automatic settings spellings (schema v5; defined in jobs.cpp). AutoMode::None and
+// AutoJobState::None are stored as NULL and never parsed.
+[[nodiscard]] std::optional<AutoMode> parse_auto_mode(std::string_view text) noexcept;
+[[nodiscard]] std::optional<AutoJobState> parse_auto_job_state(std::string_view text) noexcept;
+[[nodiscard]] std::optional<AutoCheckOutcome> parse_auto_check_outcome(std::string_view text) noexcept;
 // A stored numeric lucent::ErrorCode; codes this build does not know read as ErrorCode::Unknown.
 [[nodiscard]] ErrorCode error_code_from_db(std::int64_t value) noexcept;
 
