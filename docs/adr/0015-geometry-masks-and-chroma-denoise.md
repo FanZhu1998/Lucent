@@ -1,6 +1,7 @@
 # ADR 0015: Geometry, masks and guided chroma denoising (DevelopSettings v2)
 
-- **Status:** Accepted (amended 2026-10-05: "Amendment: phase 2 of 4, the application" below)
+- **Status:** Accepted (amended 2026-10-05: "Amendment: phase 2 of 4, the application" and
+  "Amendment: the closing review of W9 part 2" below)
 - **Date:** 2026-10-05
 - **Workflow:** W9 part 2 (Masks, geometry, chroma denoise), phase 1 of 4 (engine)
 - **Amends:** ADR 0010 decision 1 (stage two gains three operations) and its recipe contract
@@ -80,7 +81,8 @@ interface follow in phases 2 and 3.
      the same canvas, counter-clockwise as displayed for positive angles.
    - **C, cropped:** the crop rectangle, normalised in S, rounded to whole render pixels
      ([round(left W), round(right W)) and likewise in y, halves away from zero, at least one
-     pixel).
+     pixel); with straightening, a crop on the image's edge rounds inward (closing amendment,
+     decision 2).
    - **O, output:** C with the user orientation, `flip_horizontal` first and then
      `quarter_turns` clockwise (`user_orientation()`), on top of the camera orientation.
    Masks are defined before straightening and cropping, so a crop, a straighten angle or a
@@ -96,7 +98,8 @@ interface follow in phases 2 and 3.
    back (`output_from_normalized()`, `normalized_from_output()`), exposes the crop rectangle,
    output size and `revision()`, and is what the editor uses to draw overlays and to turn pointer
    positions into brush points; `mask_outline()` gives the shapes' outlines (ellipses, the three
-   gradient lines, stroke centre lines) in normalised coordinates. `rotated_clockwise()`,
+   gradient lines through the transition band's edges and middle, stroke centre lines) in
+   normalised coordinates. `rotated_clockwise()`,
    `rotated_counter_clockwise()` and `flipped_horizontally()` give the setting after turning or
    mirroring the image as displayed. `crop_inside_image()` and `largest_inside_crop()` (centred,
    any aspect ratio) help the editor keep a straightened crop inside the image; the aspect
@@ -201,7 +204,9 @@ interface follow in phases 2 and 3.
    base layer, the geometry's output); a new `estimate_develop_memory(metadata, request, settings,
    options)` overload uses the settings, the old one assumes denoising at its largest radius and
    no brush raster. `render_develop` checks the settings-aware estimate; stage two checks its own
-   allocation against `memory_budget_bytes` from the settings.
+   allocation against `memory_budget_bytes` from the settings. (Closing amendment, decision 1:
+   brush rasters and the base layer are counted over the masks' extents, and
+   `render_develop_file` checks the settings-aware estimate too.)
 
 9. **Preview against export.** Full-resolution interactive renders equal the export apart from
    the highlight clip's placement (ADR 0010); proxies differ because filtering and downscaling do
@@ -382,7 +387,8 @@ and recorded what the recipe layer, the editor services, the automatic settings 
 
 2. **Copy and paste** (`RecipeService`, `recipe.hpp`). Categories gain `detail` (6: chroma
    denoising) and `geometry` (7: straighten, crop, quarter turns, flip); the masks join `local`
-   with highlights and shadows. `kDefaultRecipeCategories` is every category but `geometry` (a crop
+   with highlights and shadows (superseded by the closing amendment, decision 5: `masks` is a
+   category of its own, not pasted by default). `kDefaultRecipeCategories` is every category but `geometry` (a crop
    rarely belongs on another photo). The new members are *parts* (`RecipePart`: `chroma_denoise`,
    `masks`, `geometry`), edited as a whole, with `category_of()`, `parts_of()`, `same_value()`,
    `copy_value()` and `changed_parts()` beside the controls' functions. A pasted category's every
@@ -428,7 +434,9 @@ and recorded what the recipe layer, the editor services, the automatic settings 
    geometry's output frame: the image context (saturation coverage, signal, the white-balance
    evidence's neutral surfaces) is mapped through the same `GeometryMapping`
    (`analysis::map_image_context()`: the upright pixel each output pixel centre maps back to;
-   uncovered canvas has no signal, no saturation and is not neutral). `estimate_automatic_memory()`
+   uncovered canvas has no signal, no saturation and is not neutral); a white-balance change the
+   whole frame's neutral evidence supports does not fail there for lack of neutral surfaces inside
+   the crop (closing amendment, decision 4). `estimate_automatic_memory()`
    gains an overload for the current settings (the check's stage two with their brush rasters,
    base layer and denoising radius), which `AutoService` and `run_automatic()` use. The engine
    change phase 1 suggested (a stage-one region of a larger frame, so masks could be evaluated on
@@ -485,3 +493,102 @@ and recorded what the recipe layer, the editor services, the automatic settings 
   positions into brush points with `DevelopFrame::geometry` (`normalized_from_output()`); crop and
   straighten tools keep the crop inside the image with `largest_inside_crop()` and edit through
   `set_transient()`/`commit()`; brush input is simplified before it reaches the recipe.
+
+## Amendment: the closing review of W9 part 2 (2026-10-05)
+
+- **Workflow:** W9 part 2, closure (independent review of the engine and the editor, findings
+  GEO-1 to GEO-4 and TLS-01 to TLS-11)
+- **Amends:** decisions 2 (frame C), 8 (memory estimates) and `mask_outline()` above; the phase-2
+  amendment's decisions 2 (copy and paste) and 5 (Auto); ADR 0010's phase-2 amendment (decision 5)
+
+### Context
+
+The closing review measured three engine behaviours that broke a documented contract or refused
+valid work, an Auto outcome that depended on the crop, and a paste default that could delete masks
+silently. The editor's own findings are recorded in ADR 0007 (decision 15).
+
+### Decision
+
+1. **Memory estimates follow the masks' extents** (GEO-1). `local_adjustments_working_bytes()`
+   counted every brush mask as a whole-image float plane and the base layer as three whole planes,
+   so on a 45 MP photo 18 small brush masks with shadows passed the default 4 GiB budget (the 100 %
+   view, exports, library previews and Auto were refused) while the real render peaked at 1.2 GiB.
+   It now takes the base layer's guided-filter radius and counts each brush raster over
+   `mask_support()` (new: the bounds `rasterize_mask()` gives, its Add strokes' boxes, computed
+   without rasterising; the analytic shapes' bounds likewise), the base layer's three planes over
+   the tone masks' supports expanded by twice the radius (the whole image for an inverted one, or
+   when the radius is unknown) and the per-row counters. `stage_two_working_bytes()` passes
+   `local_tone_radius()` of the render. It stays an upper bound of what `apply_local_adjustments()`
+   allocates (unit test against a render's own record; 32 small brush masks on a 45 MP render
+   estimate below half a plane). `render_develop_file()` now checks the same settings-aware
+   export estimate as `render_develop()` before decoding; `render_stage_one_file()` keeps the
+   settings-agnostic check, as its header says.
+
+2. **A crop on the image's edge rounds inward** (GEO-2; frame C). Rounding the crop to the
+   nearest render pixels can move an edge up to half a pixel beyond the straightened image, and
+   apply_geometry()'s coverage term then darkened those edge pixels (by up to half on a
+   `largest_inside_crop()`; more at a proxy, whose sides round its aspect ratio): the contract
+   "largest_inside_crop() gives the largest crop that avoids them" did not hold. With straightening,
+   when the image does not cover the nearest-rounded rectangle but covers the crop rounded inward
+   (ceil left/top, floor right/bottom, a bound within 1e-6 pixels of a whole pixel taken as that
+   pixel), the inward rectangle is used; and a coverage within 1e-4 of 1 counts as covered. Crops
+   well inside the image or beyond it (black corners by design) keep the nearest pixels, so
+   positions and proxy alignment are unchanged for them; a crop on the edge differs between scales
+   by up to a pixel of each (before: half). Test: `largest_inside_crop()` at six angles, four aspect
+   ratios and five sizes, each at full size and at a quarter-size proxy, renders with no partially
+   covered pixel. The operation version stays 1 (unreleased).
+
+3. **The linear gradient's outline marks its transition band** (TLS-08). `mask_outline()` draws
+   the three perpendicular lines at t = 0.5 - h, 0.5 and 0.5 + h, h the coverage's half-width
+   (max(feather / 2, 0.5 / length)): through the start and the end for feather 1, close to the
+   middle for a hard edge, so changing the feather moves the outline. The editor keeps the start and
+   end handles where the shape defines them.
+
+4. **Auto's outcome does not depend on the crop for white balance** (GEO-4; the phase-2
+   amendment's decision 5). The analysis decides white balance on the whole frame's neutral
+   evidence, but the final check measured inside the photographer's crop and failed any white-
+   balance change with fewer than `kMinNeutralPixels` near-neutral pixels there, so a crop without
+   the neutral surfaces (foliage, sky, a face) dropped the choice and its fallbacks to the baseline.
+   The check now sets `NaturalV1Context::neutral_evidence_beyond_crop` when the geometry is not the
+   identity and the whole frame's evidence mask held at least `kMinNeutralPixels` pixels; the
+   white-balance metric is then `InsufficientEvidence` without failing the rung ("the neutral
+   evidence of the whole frame lies outside the crop"). Neutral surfaces inside the crop are still
+   checked for their shift, and without evidence anywhere a change still fails. Tests: the metric
+   (analysis) and an application run on a synthetic grey card beside foliage cropped to the foliage
+   (the chosen white balance passes; without the flag the run ended at the baseline). The other
+   whole-image checks keep their minimum: a crop smaller than `kMinPixels` (4096) output pixels
+   cannot verify any change, and Auto then keeps the baseline there.
+
+5. **Masks are a paste category of their own** (TLS-10; the phase-2 amendment's decision 2).
+   `local` pasted the copied mask list also when it was empty, and was selected by default, so a
+   routine "copy all, paste" from a photo without masks deleted the target's masks, reported only as
+   "Highlights, shadows and masks" pasted. `RecipeCategory::Masks` (8, "masks", the part `masks`)
+   now holds them; `local` is highlights and shadows again (as in version 1); like `geometry`,
+   `masks` is not in `kDefaultRecipeCategories` (placed on one photo's content). Chosen, it replaces
+   the target's masks by the copied list, an empty one included (a deliberate way to clear them),
+   and is skipped as a whole for another shape when the list is not empty. The editor's copy dialog
+   offers "Masks", unchecked; a geometry skipped for another shape is reported as "the crop and
+   rotation were not pasted".
+
+6. **The mask weight overlay is laid on the frame** (GEO-3). `mask_overlay_image()` rasterised the
+   weights at 1024 pixels of the uncropped upright image and cropped them at that scale, so on a
+   small crop the overlay was coarse and off by up to an overlay pixel (24 to 67 pixels of a
+   1600-pixel view at crops of 5 % to 2 %). It now samples each overlay pixel at its centre mapped
+   back through the frame's own `GeometryMapping` (bilinear in a weight plane made at the overlay's
+   density, at most 2048 pixels on its long edge): the overlay is about 1024 pixels across the
+   visible crop and aligned with the frame (test: a 5 % crop of a 45 MP frame within 4 of 153 alpha
+   levels of the analytic gradient at every column).
+
+7. **Export review notes know the geometry** (TLS-03). The batch attempt's size note compares the
+   output with the size the frozen recipe's geometry gives the photo as catalogued
+   (`GeometryMapping` of its geometry at the probe's upright size), so a crop or a quarter turn no
+   longer marks every export "Review".
+
+### Consequences
+
+- Exports, previews and Auto of photos with many brush masks are admitted by their real working
+  memory; the batch scheduler's per-pixel model (ADR 0012) is unchanged.
+- Straightened crops on the image's edge lose up to one render pixel per side at the edge instead
+  of showing darkened pixels there; their output is a pixel smaller at most.
+- Copy settings no longer pastes masks unless asked; pasting "Masks" from a photo without masks
+  clears them.

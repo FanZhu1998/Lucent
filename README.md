@@ -3,15 +3,19 @@
 Offline, camera-independent RAW photo development for Windows.
 
 > **Status: pre-alpha, under active development.** Lucent has completed its eighth development
-> increment (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches),
-> pending the commit and merge of its integration, and the DNG opcode part of W9: a Qt Quick
+> increment (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches)
+> and the ninth except lens corrections (W9: DNG opcode lists, then crop and straighten, masks and
+> colour noise reduction, the latter pending commit and merge; lens corrections wait for a decision
+> on their third-party dependency): a Qt Quick
 > `Lucent.exe` that adds RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
 > removable-media badges and relinking, and browses them with labelled camera previews and support
 > states. Opening a photo edits it: white balance (temperature and tint where the camera's
 > calibration defines them), exposure, contrast, highlights and shadows, a tone curve, saturation
-> and vibrance, with a histogram, clipping overlay, before/after, undo/redo over an immutable
-> revision history and copy/paste by category. Thumbnails, previews and JPEG or 16-bit TIFF exports
+> and vibrance, crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks
+> with their own exposure, contrast, highlights, shadows, saturation, temperature and tint, and
+> colour noise reduction, with a histogram, clipping overlay, before/after, undo/redo over an
+> immutable revision history and copy/paste by category. Thumbnails, previews and JPEG or 16-bit TIFF exports
 > render each photo's recipe. Exports run as durable batches: a selection, every photo or a folder
 > is exported to JPEG or 16-bit TIFF in isolated `lucent-worker.exe` processes under a memory
 > budget, each output verified before it is published without overwriting anything, with pause,
@@ -19,7 +23,8 @@ Offline, camera-independent RAW photo development for Windows.
 > is closed or stops, and a completion report. **Auto** in the editor, and batches set to Auto or
 > Analyse only, choose each photo's settings with the deterministic Natural v1 optimiser (locks are
 > respected and reported), check the result at full size with a bounded conservative fallback,
-> and save it as an ordinary, undoable revision with its analysis record; related shots can be
+> and save it as an ordinary, undoable revision with its analysis record (it adjusts the global
+> settings and keeps the photographer's crop, masks and noise reduction); related shots can be
 > kept consistent, and uncertain results are marked for review. Natural v1 is deliberately
 > conservative and **not yet calibrated** against photographers' preferences. DNG opcode lists are
 > applied at the stages the specification defines. It runs from a source build or from an unsigned
@@ -70,8 +75,8 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W5 | Per-user Inno Setup installer with Qt deployment, dependency audit, licences and SBOM (ADR 0009) | Done except the clean-machine test |
 | W6 | Develop settings v1 and editing operations (white balance, exposure, guided-filter highlights and shadows, contrast, tone curve, saturation and vibrance, base look "neutral" v1), two-stage interactive rendering, versioned recipes with immutable revisions (catalog schema v2), undo/redo, copy/paste, the Edit view (ADR 0010) | Done, pending commit and merge |
 | W7 | Durable batch export: `lucent-worker.exe` and its versioned pipe protocol, memory-budgeted scheduling, catalog job journal (schema v3 and v4) with leases, a publication journal and receipts, verified no-clobber publication, restart recovery, pause / cancel / resume and destination attentions, EXIF capture metadata with an explicit GPS policy, completion reports, the Export batch dialog and the Exports view (ADR 0012) | Done, pending commit and merge |
-| W8 | Natural v1 automatic settings (`lucent_analysis`: metric contract, proposals, bounded deterministic search with rechecks, confidence and review flags, related-shot consistency; ADR 0011) and their integration: the editor's Auto with a full-resolution final check and conservative fallbacks, automatic revisions with analysis records (catalog schema v5), automatic batches (Auto, Analyse only, related shots kept consistent) analysed in the worker (protocol v2), the Automatic settings panel and Review badges (ADR 0013) | Done, integration pending commit and merge; the blind preference test and the calibration of Natural v1 are pending |
-| W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); masks, crop and straighten, lens corrections and chroma denoise | Opcode part done; the rest planned |
+| W8 | Natural v1 automatic settings (`lucent_analysis`: metric contract, proposals, bounded deterministic search with rechecks, confidence and review flags, related-shot consistency; ADR 0011) and their integration: the editor's Auto with a full-resolution final check and conservative fallbacks, automatic revisions with analysis records (catalog schema v5), automatic batches (Auto, Analyse only, related shots kept consistent) analysed in the worker (protocol v2), the Automatic settings panel and Review badges (ADR 0013) | Done; the blind preference test and the calibration of Natural v1 are pending |
+| W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks, guided chroma denoise, recipes version 2 (ADR 0015); lens corrections | Done except lens corrections (pending a decision on the Lensfun dependency); masks, geometry and denoise pending commit and merge |
 | W10–W12 | Qualification, learned appearance, release hardening | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
@@ -80,7 +85,8 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 edits are stored there as recipe revisions, so a library opened by Lucent W6 can no longer be
 opened by an earlier build, W7 adds the batch journal (catalog schema v4) and W8 the automatic
 settings' job states and analysis records (catalog schema v5); earlier builds open such a library
-read-only. Photos are rendered with their recipe and the base look "neutral" v1.
+read-only. W9 writes edits as "lucent.develop" version 2 recipes (crop, masks, noise reduction),
+which earlier builds show read-only; version-1 edits open and are upgraded. Photos are rendered with their recipe and the base look "neutral" v1.
 The developer command-line tools `lucent-probe`, `lucent-render` and `lucent-auto` remain; they
 are not installed.
 

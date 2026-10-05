@@ -7,7 +7,10 @@
   2026-10-04 for the W7 batch interface (decisions 3 and 10 amended, decision 14 added; decision 14
   revised by the W7 closing review: unfinished batches and paging, attentions outside the Exports
   view, keyboard selection, single-export marker); amended 2026-10-05 for W9 part 2's editor
-  (decisions 4, 10 and 13 amended, decision 15 added)
+  (decisions 4, 10 and 13 amended, decision 15 added; decision 15 revised by the W9 part 2 closing
+  review: brushing cost independent of the mask's size, Enter and Esc left to editors, the crop
+  ratio's orientation, keyboard mask selection, tool panels brought into view, the paste category
+  "Masks")
 - **Workflow:** W3 (Application shell); W6 (Recipes and editor), phase 3; W7 (Durable batch),
   phase 3; W9 part 2 (Masks, geometry, chroma denoise), phase 3
 
@@ -287,8 +290,9 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       library is read-only. Exports and other messages name the edit, not the file, as what cannot
       be read ("This photo's edit was made by a newer version of Lucent", "... is damaged").
     - *Copy and paste.* Ctrl+Shift+C opens a category dialog (white balance, exposure, tone,
-      colour, highlights and shadows; W9: "Highlights, shadows and masks", "Noise reduction" and
-      "Crop and rotation", the last unchecked by default); Ctrl+Shift+V pastes into the photo. The
+      colour, highlights and shadows; W9: "Masks", "Noise reduction" and "Crop and rotation", the
+      masks and the crop unchecked by default and pasted masks replacing the photo's own, ADR 0015's
+      closing amendment); Ctrl+Shift+V pastes into the photo. The
       result message (panel and status line) lists the categories pasted and, with the reason, anything not
       pasted: a camera-specific balance is never pasted to another camera model, a Kelvin balance
       never to a camera without a colour-temperature calibration. Auto is present but disabled
@@ -435,7 +439,15 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       angle as the engine's `largest_inside_crop()` of its aspect ratio, another shrinks about its
       centre until `crop_inside_image()` holds); Reset. Enter closes the tool keeping the result; Esc
       restores the geometry it was opened with (one revision when it changed) before Esc returns to
-      the library.
+      the library. A ratio's orientation is the current crop's as displayed (taller than wide is
+      portrait), never a separate flag, so it follows a quarter turn, Esc, undo and another photo; the
+      chosen ratio stays for the next photo. A custom ratio applies on Enter, Set or leaving its field,
+      and a value being typed is not replaced by arriving frames.
+    - *Keys of an open tool.* Enter and Esc are window shortcuts while a tool is open, but an editor
+      with the focus keeps them (`Keys.onShortcutOverride`): a slider's value field (Enter applies
+      the typed value, Esc abandons it), the custom ratio's fields, the masks list and the history
+      list (Enter selects). Opening a tool (R, B, G, Shift+R, the panel buttons) scrolls the side
+      panel to the tool's section, expanded, unless its title and most of it are in view.
     - *Masks* (panel "Masks"; B brush, G linear gradient, Shift+R radial gradient; R stays the crop
       tool). The list shows every mask in the order they apply, named by kind and place ("Radial 2":
       the recipe stores no names), with enable, invert, move up and down, duplicate and delete; the
@@ -444,16 +456,29 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       and the others; no locks: Auto never changes masks, ADR 0015). Handles: a radial mask's centre,
       its first semi-axis end (size and angle) and its second (size); a linear gradient's start, end
       and middle. The selected mask's outline is the frame's own while it is still and the engine's
-      `mask_outline()` of the local settings while a handle or the brush moves it, clipped to the
-      image. Brush: size (percent of the long edge, logarithmic slider), feather (1 - hardness) and
-      flow, Erase or Alt to erase, a cursor circle of the brush's size on screen; a stroke into another
-      kind's selection starts a new brush mask in the same revision. Strokes are simplified as drawn
-      (a point is kept 0.15 brush radii from the previous one), continue as a new stroke at the
-      engine's 4096 points per stroke and stop at 65536 points per photo. O tints the selected mask's
-      weights over the photo (`set_mask_overlay`): `engine::mask_weights()` with the mask shown even
-      when switched off, at most 1024 pixels on the long edge, mapped through the frame's geometry with
-      `engine::apply_geometry()` and tinted on the edit adapter's conversion thread; it is re-sent for
-      the newest frame when switched on and follows the selection.
+      `mask_outline()` of the local settings while a handle moves it, clipped to the image. While a
+      stroke is painted the mask's earlier strokes are one outline that does not change for the
+      gesture and the stroke being painted is drawn on a layer of its own (`MaskEditor.strokeOutline`,
+      `OverlayPathItem` items), so a pointer move redraws that stroke only; the painter skips points
+      closer than 0.75 pixels to the last one drawn and segments outside the visible part of the image,
+      so a paint costs what is seen, not the mask's points (the review measured a 3003-point mask
+      redrawn whole on every move: strokes slowing from 30 to 72 s per 1000 moves, UI gaps to 215 ms).
+      New masks are placed on the photo as it is about to be shown (the settings' geometry, not the
+      crop tool's uncropped frame). The list works from the keyboard: Tab reaches a row, Space or
+      Enter selects its mask, Up and Down select the neighbours, and the row's accessible press action
+      selects it. Brush: size (percent of the long edge, logarithmic slider), feather (1 - hardness)
+      and flow, Erase or Alt to erase, a cursor circle of the brush's size on screen; painting needs a
+      brush mask or no selection (B selects or adds one; with nothing selected a stroke starts a new
+      brush mask in the same revision). Strokes are simplified as drawn (a point is kept 0.15 brush
+      radii from the previous one), continue as a new stroke at the engine's 4096 points per stroke
+      (the continuation's two points counted) and stop at 65536 points per photo; the first stop
+      says so ("Painting stopped: ..."), and a refused stroke names the limit reached (this mask's 256
+      strokes, or the photo's brush points). O tints the selected mask's weights over the photo
+      (`set_mask_overlay`): `engine::mask_weights()` with the mask shown even when switched off,
+      sampled at each overlay pixel's centre mapped back through the frame's own geometry, about 1024
+      pixels across the visible crop (ADR 0015's closing amendment, decision 6), tinted on the edit
+      adapter's conversion thread; it is re-sent for the newest frame when switched on and follows
+      the selection.
     - *Detail.* "Colour noise reduction": Amount 0..100 (strength, 0 = off) and Radius in full-image
       pixels (1..64, logarithmic slider, default 8), one revision per gesture like every slider.
     - *Gestures and revisions.* A crop handle drag, a straighten drag, a mask handle drag and a brush
@@ -470,6 +495,7 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       | What | Result |
       |---|---|
       | Brush stroke, 60 synthetic mouse moves over 1.17 s (`--brush`) | 29 quick frames; pointer to frame on screen median 69 ms, 90th percentile 94 ms, max 99 ms; develop service median 47 ms; final frame 128 ms after the release; UI thread largest gap 31 ms |
+      | Five strokes of 1000 synthetic moves each into one brush mask (`--brush-size 0.3 --drag-steps 1000`; the mask grows from 0 to 5005 points), closing review | 26.7, 26.4, 27.6, 27.4 and 27.9 s per stroke (no slowdown as the mask grows); UI thread gap median 26 to 29 ms, largest 64 to 81 ms, none over 100 ms; develop service median about 50 ms (before the fix: 29.9, 51.1 and 72.2 s for three strokes, largest gap 215 ms, 406 gaps over 100 ms in the third) |
       | Straighten drag over a third of the slider (`--drag straighten`, constrained crop following) | 24 quick frames; median 98 ms, 90th percentile 130 ms; develop service median 76 ms; UI thread largest gap 40 ms |
       | Mask exposure drag with a radial mask and noise reduction 50 (`--drag maskExposure`) | 31 quick frames; median 96 ms, 90th percentile 116 ms; develop service median 60 ms; UI thread largest gap 50 ms |
       | One-step edits to their final frame on screen | straighten 78 ms, crop 61 ms, add a mask 70 to 98 ms (two revisions with its shape), the crop tool's uncropped frame 64 ms, the mask overlay 129 to 137 ms, noise reduction 132 ms |

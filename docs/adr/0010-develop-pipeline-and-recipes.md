@@ -317,10 +317,12 @@ ADR 0015 extends this record; its "Amendment: phase 2 of 4" holds the details. I
   `InvalidArgument`, a newer one `VersionMismatch` (read-only), as decided here.
 - **Decision 4 (revisions).** Notes gain `parts=<chroma_denoise|masks|geometry>`; a mask stroke or
   a crop drag is a gesture (`set_transient()` per position, one revision at `commit()`).
-- **Decision 5 (copy and paste).** Categories `detail` (chroma denoising) and `geometry` (not
-  pasted by default) are added and the masks join `local`; masks are pasted only to a photo of the
-  same upright aspect ratio (within 0.5 %), a cropping geometry likewise, and what is not pasted is
-  reported. The new parts have no locks.
+- **Decision 5 (copy and paste).** Categories `detail` (chroma denoising), `geometry` and `masks`
+  are added; `local` stays highlights and shadows, and neither `geometry` nor `masks` is pasted by
+  default (both are placed on one photo's content; ADR 0015's closing amendment, decision 5:
+  pasting `masks` replaces the target's masks, also by none). Masks are pasted only to a photo of
+  the same upright aspect ratio (within 0.5 %), a cropping geometry likewise, and what is not
+  pasted is reported. The new parts have no locks.
 - **Decisions 6 and 7 (edit sessions, memory).** Each session keeps a brush-raster cache and the
   denoised proxy image for its proxy renders, claimed as retained memory; stage-two claims use the
   engine's settings-aware estimate; frames carry their `GeometryMapping` and mask outlines;
