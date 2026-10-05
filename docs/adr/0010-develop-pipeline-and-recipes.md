@@ -192,7 +192,8 @@ while another workflow was building on the same machine (so the upper ends are p
    `ThumbnailCache` (generator `LucentRender`, version 1) under a key whose variant is the SHA-256
    of the settings identity (which covers the operation and base-look versions), every other
    engine algorithm version (`engine::kDevelopEngineVersions`: stage graph, sensor normalisation,
-   white balance, demosaic routes, camera colour, working space, guided filter, downscale) and the
+   white balance, demosaic routes, camera colour, working space, guided filter, downscale and, since
+   W9, DNG opcode processing, ADR 0014) and the
    decoder build: a changed recipe or engine never shows an old thumbnail, and the next session shows edited
    photos without rendering. The JPEG is written by the exporter's own writer through a scratch
    file (no in-memory JPEG encoder is public yet).

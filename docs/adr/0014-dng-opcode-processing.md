@@ -45,8 +45,11 @@ FixBadPixelsList (111-112), TrimBounds, MapTable (113), MapPolynomial (114), Gai
 DeltaPerRow/Column and ScalePerRow/Column (116-119), WarpRectilinear2 (120-122). Chapter 7 does
 not define the coordinate frames of the lists; the tags (chapter 4, OpcodeList1/2/3) place List
 1 on "raw values exactly as read from the file", List 2 after mapping to linear reference values
-and List 3 after demosaicing. The Adobe DNG SDK is not available in this environment, so
-conventions the text leaves open are decided below and labelled as Lucent's.
+and List 3 after demosaicing. The Adobe DNG SDK is not part of the build; where the text leaves a
+convention open, the closing review of phase 1 (below) checked it against the SDK's source
+(`dng_misc_opcodes.cpp`, `dng_gain_map.cpp`, `dng_lens_correction.cpp`, `dng_pixel_buffer.cpp`
+of the AOSP `external/dng_sdk` copy) and the decisions follow the SDK unless they are labelled as
+Lucent's own.
 
 ## Decision
 
@@ -58,9 +61,13 @@ conventions the text leaves open are decided below and labelled as Lucent's.
    against the remaining bytes before anything is allocated (so no count read from a file can
    allocate more than the payload holds); every float and double must be finite; coefficient
    sets N in 1..4; BayerPhase 0..3; TableSize 1..65536; Degree 0..8; GainMap points and planes
-   >= 1 with positive spacing where there is more than one point; per-row/column Count equal to
-   the area's affected rows/columns; areas not inverted with planes and pitches >= 1; normalised
-   optical centres in [0, 1]; WarpRectilinear2 `0 <= min_valid_radius < max_valid_radius <= 1`.
+   >= 1 with positive spacing where there is more than one point, and the gain count
+   points_v x points_h x MapPlanes checked against the remaining bytes before it is formed (three
+   file-controlled factors can wrap a 64-bit product: 2^22 x 2^21 x 2^21 = 2^64 would otherwise
+   parse as zero gains); per-row/column Count equal to the area's affected rows/columns; areas not
+   inverted with planes and pitches >= 1, and an empty area rectangle with pitch 1 (as the SDK's
+   `dng_area_spec` requires); normalised optical centres in [0, 1]; WarpRectilinear2
+   `0 <= min_valid_radius < max_valid_radius <= 1`.
    The TIFF inspector decodes the parameters of every opcode whose ID it knows and whose version
    does not exceed 1.7.1.0 ("a DNG reader should never attempt to process an opcode with a version
    higher than DNG specification it was written to support", p. 105). A malformed parameter area
@@ -102,7 +109,24 @@ conventions the text leaves open are decided below and labelled as Lucent's.
    tone curve); List 2 is unavailable when the decoder applied an opcode of List 2 (lossy DNG);
    Lists 2 and 3 need the visible area inside the ActiveArea; List 3 needs the colour planes R,
    G, B in that order (CFAPlaneColor absent or 0, 1, 2). Bad-pixel opcodes need the image's green
-   sites where BayerPhase puts them (red/blue may swap: the repair uses the same lattice).
+   sites where BayerPhase puts them (red/blue may swap: the repair uses the same lattice). The
+   radial opcodes (warps, FixVignetteRadial) need square pixels: the SDK scales the vertical axis
+   by the pixel aspect ratio before it measures r, which Lucent does not implement, so on a file
+   whose `geometry.pixel_aspect` is not 1 they are not supported (reported, never mis-corrected).
+   Per-row/per-column opcodes with an empty area are not supported (the SDK reads the area as the
+   whole image but the opcode then holds no values for it, decision 4). The decoded parameters
+   must keep the parser's invariants (a GainMap's gains fill its grid, one value per affected row
+   or column, table and coefficient counts in range), so an opcode built or altered otherwise is
+   never applied; the engine checks the same invariants again and fails with `Internal` instead of
+   reading out of bounds.
+
+   The assessment walks each file's lists in processing order (List 1, 2, 3, each by index)
+   against the stage image the engine will have at that point: a TrimBounds Lucent applies makes
+   its rectangle the stage image of the rest of its list, and a List 2 one also of List 3; a later
+   TrimBounds that does not fit the trimmed image, or one that keeps no pixel of the part Lucent
+   holds (the visible area), is not supported. So `Complete` implies renderable: the engine's own
+   `Corrupt` checks for such trims remain only as a defence. `check_consistency` uses the same
+   walk.
 
 3. **Stages.** Both render paths (`engine::render_*`, ADR 0006, and the develop pipeline's stage
    one, ADR 0010) run `engine::DngOpcodeProcessor` (`engine/dng_opcode_processing.hpp`):
@@ -122,7 +146,8 @@ conventions the text leaves open are decided below and labelled as Lucent's.
    them). Opcodes run in list order. All kinds of stage one (interactive, export, proxies)
    apply the same opcodes at full resolution, so previews and exports agree. Preview-skippable
    opcodes are always applied. `kRenderPipelineVersion` and `kDevelopPipelineVersion` become 2,
-   `kDngOpcodeProcessingVersion` is 1.
+   `kDngOpcodeProcessingVersion` is 1 and is one of `engine::kDevelopEngineVersions` (so rendered
+   thumbnails are keyed by it).
 
 4. **Coordinates.** List 1 processes the whole stored raw image; Lists 2 and 3 the ActiveArea
    (the whole image without one), as in the DNG SDK's stage images. Lucent's buffer is the raw
@@ -132,18 +157,29 @@ conventions the text leaves open are decided below and labelled as Lucent's.
    coordinates (rows and columns the buffer does not hold are simply not written). A List 2
    TrimBounds makes the trimmed rectangle the stage image for the rest of List 2 and for List 3
    (the sensor image, its saturation mask and CFA are cut and `NormalizationRecord::source_area`
-   follows).
+   follows). An empty area rectangle stands for the whole stage image, as in the SDK
+   (`dng_area_spec::Overlap`: "if the fArea is empty, then dng_area_spec covers the entire
+   image"), for MapTable, MapPolynomial and GainMap; it is recorded as such ("empty area rectangle
+   = the whole image").
 
 5. **Values.** List 1 keeps the specification's 16-bit logical range: every result is rounded
-   to nearest (halves away from zero) and limited to [0, 65535]; the real-valued opcodes see
-   value / 65535 where the SDK converts to its float range (MapPolynomial x = v / 65535,
-   Delta adds delta x 65535; ScalePer*/GainMap/FixVignetteRadial multiply). Lists 2 and 3 work on
-   Lucent's normalised floats (1.0 = white). DNG clips to [0, 1] after every opcode; Lucent does
-   not clip linear opcodes (gains, scales, deltas, warps), keeping its unclipped convention
-   (results inside [0, 1] are identical; the export highlight clip and stage two's clip still limit
-   highlights afterwards), but value maps are defined on the logical range only: MapTable and
-   MapPolynomial limit their input and output to [0, 1] (MapTable on floats maps
-   round(x x 65535), the SDK's 16-bit path). Limited samples are counted.
+   to nearest (halves away from zero) and limited to [0, 65535]. MapTable maps the stored value,
+   MapPolynomial is evaluated on the stored value (y = sum c_k v^k) and a Delta adds stored units;
+   ScalePer*/GainMap/FixVignetteRadial multiply. This is what the SDK computes: it converts the
+   16-bit stage-1 image to [0, 1] floats (v / 65535), but `BufferPixelType` rescales the
+   polynomial's coefficients (c_k x 65535^(k - 1)) and the deltas (d / 65535) for that buffer, so
+   in stored units both are unit-free round trips. (Phase 1 evaluated the polynomial on v / 65535
+   and multiplied deltas by 65535: a delta of 5 saturated the image. Corrected by the closing
+   review, OPC-2.) Lists 2 and 3 work on Lucent's normalised floats (1.0 = white). DNG clips to
+   [0, 1] after every opcode; Lucent does not clip linear opcodes (gains, scales, deltas, warps),
+   keeping its unclipped convention (results inside [0, 1] are identical; the export highlight
+   clip and stage two's clip still limit highlights afterwards), but bounds their results to
+   +-`kDngOpcodeValueBound` (65536, 2^16 x white): no physical correction comes near it, and a
+   huge but finite coefficient (a vignette k0 of 1e300) can then never overflow a later stage, so
+   the W2 render path (whose Neutral v0 stage reported such a file as `Internal`) and the develop
+   pipeline treat it alike. Value maps are defined on the logical range only: MapTable and
+   MapPolynomial limit their input and output to [0, 1] (MapTable on floats maps round(x x 65535),
+   the SDK's 16-bit path). Limited samples are counted.
    * *White balance.* Lucent balances the mosaic before demosaicing, so List 3 receives camera
      RGB multiplied by the stage-one multipliers m_p. Gains, scales and warps commute with that;
      Delta* add delta x m_p and value maps act on v / m_p and multiply back, so every opcode acts
@@ -154,14 +190,19 @@ conventions the text leaves open are decided below and labelled as Lucent's.
      channel's saturation level when an opcode lowered it (`list2_resaturated_samples`), so
      highlights clipped in the sensor stay neutral after the highlight clip whatever gain an
      opcode applied (with the per-opcode [0, 1] clip of the SDK a gain below 1 would turn them
-     grey or tinted).
+     grey or tinted). A bad-pixel repair does not correct a measured value but replaces it: the
+     saturation flag of a repaired pixel is derived again from its new value (set when it reaches
+     the channel's saturation level), so a hot pixel that read white and was repaired from its
+     neighbours keeps its repair (phase 1 raised it back to white, OPC-3).
 
 6. **Per opcode.**
    * *GainMap:* bilinear in the grid at the pixel centre, v = ((row + 0.5) / H - MapOriginV) /
      MapSpacingV and h likewise with the width (the image being modified, not the area); indices
      are clamped to the grid ("outside the gain map bounds, values are replicated from the
-     edges"); modified plane Plane + i uses map plane min(i, MapPlanes - 1) ("If Planes >
-     MapPlanes, the last gain map plane is used for any remaining planes").
+     edges"); image plane p (the absolute plane index, Plane <= p < Plane + Planes) uses map
+     plane min(p, MapPlanes - 1) ("If Planes > MapPlanes, the last gain map plane is used for any
+     remaining planes"), as `dng_opcode_GainMap::ProcessArea` indexes it. (Phase 1 indexed by
+     p - Plane; the two agree for Plane = 0, which every corpus GainMap has. OPC-6.)
    * *FixVignetteRadial:* g = 1 + k0 r^2 + ... + k4 r^10 on every plane.
    * *WarpRectilinear / WarpRectilinear2:* the specification's formulas (p. 106-107, 120-121) with
      (x0, y0) = (0, 0) and (x1, y1) = (W - 1, H - 1), the stage image's corner pixel indices
@@ -205,9 +246,24 @@ conventions the text leaves open are decided below and labelled as Lucent's.
    `apply_dng_opcodes` (default true) for comparisons with decoders that apply none. When false,
    every opcode that would have been applied is recorded `Disabled` and becomes an issue of the
    report's interpretation (never reported complete); the develop pipeline has no such switch.
+   `lucent-render --legacy-neutral-v0 --no-dng-opcodes` sets it (the report's
+   `render.settings.apply_dng_opcodes` says so), and `research/tools/render_reference.py` renders
+   with it, so its rawpy comparison stays like for like.
 
 10. **Memory.** `estimate_render_memory` adds `opcode_peak`: a List 3 warp or trim needs a second
     RGB image, a List 2 trim a second sensor image and mask; the develop estimate includes it.
+
+11. **Support statuses stored before W9 are renewed.** The catalog keeps each item's probe
+    contract with its decoder version (`decoder_version` = "<LibRaw version>; decoded-RAW 1.3"; the
+    schema is unchanged and a value without the suffix has an unknown contract). An item whose
+    probe has no contract or an older one (`app::probe_outdated`) is probed again by the start-up
+    presence check (`refresh_sources`, `RefreshOptions::reprobe_outdated`, on the Background lane
+    of the maintenance service): the file is re-read through the import pipeline
+    (`ImportRequest::reprobe_known`) and its items are refreshed in place, keeping ids, flags,
+    hash, identity and recipes; the new probe carries the current contract, so each file is re-read
+    once. The refresh is published as `Refreshed` like any re-read, so in-memory previews of those
+    items are dropped and an open edit session reloads its source (a one-time cost on the first
+    start after an upgrade). The decoder version alone does not make a probe outdated.
 
 ## Consequences
 
@@ -246,30 +302,60 @@ conventions the text leaves open are decided below and labelled as Lucent's.
   (12 MP, shared sets) and 0.46 s (20 MP, per-plane sets), FixVignetteRadial 0.02 s, GainMap
   0.07 s, FixBadPixelsList (2169 points) 0.003 s. A warp holds a second RGB image at the List 3
   stage (`opcode_peak`), below the demosaic peak.
-- The rawpy gates of `lucent_render_integration_tests` render with `apply_dng_opcodes = false`
-  (the committed statistics in `render_reference.json` were measured without opcodes). Follow-up:
-  `research/tools/render_reference.py` renders through `lucent-render --legacy-neutral-v0
-  --dump-linear`, which now applies the opcodes; `lucent-render` needs a `--no-dng-opcodes`
-  option (apps/lucent-render, outside this increment) before the statistics are regenerated.
-- Items imported before W9 keep the interpretation status their import probe stored in the
-  catalog ("unsupported" for the drone DNGs) until they are probed again; renders and exports
-  already apply the opcodes.
+- The rawpy gates of `lucent_render_integration_tests` render with `apply_dng_opcodes = false`,
+  and `research/tools/render_reference.py` with `lucent-render --no-dng-opcodes`: both compare
+  Lucent with LibRaw like for like. Re-run on all tiers with the closing build (2026-10-04, rawpy
+  0.27.1): Lucent's measurements equal the committed `render_reference.json` for all 34 fixtures
+  (32 compared, 2 refused by both decoders as committed); only rawpy's own reference region means
+  of the two X-Trans fixtures differ, by at most 2e-7 (rawpy's X-Trans output varies between runs;
+  an earlier run moved one X-Trans region Delta E by 1e-4 for the same reason). The statistics
+  were therefore not regenerated.
+- Items imported before W9 kept the interpretation status their import probe stored in the
+  catalog ("unsupported" for the drone DNGs); decision 11 renews it in the background when the
+  library opens.
 - Every render of a file with opcodes changes (pipeline versions 2), so Lucent-rendered
-  thumbnails are re-rendered. `kDngOpcodeProcessingVersion` is not yet appended to
-  `kDevelopEngineVersions`: the application test that recomputes the thumbnail key lists that
-  array's members explicitly; appending it is a follow-up together with that test. Until then a
-  change of opcode semantics must also bump `kDevelopPipelineVersion`.
+  thumbnails are re-rendered; `kDngOpcodeProcessingVersion` is part of their key.
 - Not supported (the file stays unsupported when such an opcode is mandatory; optional ones are
   skipped with a note): WarpFisheye; any opcode newer than DNG 1.7.1.0; List 1 on floating-point
   stored data or after the decoder linearised the values; TrimBounds in List 1; warps in Lists 1
   and 2; FixBadPixelsConstant outside List 1 and bad-pixel repair on non-Bayer CFAs; List 2 of a
   lossy DNG (LibRaw applies its MapPolynomial while unpacking); List 3 with CFA colour planes
-  other than R, G, B. Also still open: DefaultCrop (DNG crops after the warps), ProfileGainTableMap,
-  lens-profile corrections, and verification against the Adobe DNG SDK's own conventions (gain-map
-  pixel centres, map-plane indexing, warp centre and edge handling, bad-pixel interpolation):
-  where the text leaves them open, Lucent's choice is documented above.
+  other than R, G, B; radial opcodes on non-square pixels; per-row/per-column opcodes with an
+  empty area. Also still open: DefaultCrop (DNG crops after the warps), ProfileGainTableMap,
+  lens-profile corrections, and parity with the SDK's own bad-pixel interpolation and warp edge
+  handling (Lucent's choices are documented above; the other conventions, gain-map pixel centres
+  and map-plane indexing, area semantics and the List 1 units, were checked against the SDK's
+  source by the closing review).
 - Revisit when a corpus file carries WarpRectilinear2, an OpcodeList2 or WarpFisheye, when the
   DNG SDK becomes available for a parity check, or when Lensfun corrections are added.
+
+## Closing review of phase 1 (2026-10-04)
+
+An independent review crafted DNGs from the dji-fc220 fixture and compared the conventions with
+the SDK source. Outcomes:
+
+| ID | Finding | Outcome |
+|---|---|---|
+| OPC-1 (critical) | A GainMap whose points_v x points_h x MapPlanes wraps to 0 in 64 bits parsed with no gains, was assessed supported and crashed both render paths | Fixed: the count is overflow-checked against the payload (decision 1), the assessment and the engine check that the gains fill the grid |
+| OPC-2 (high) | OpcodeList1 deltas were multiplied by 65535 | Fixed: stored units (decision 5); the same review of `BufferPixelType` found List 1 MapPolynomial evaluated on v / 65535 instead of v, fixed with it |
+| OPC-3 (medium) | The post-List-2 resaturation undid List 2 bad-pixel repairs of saturated pixels | Fixed: repaired pixels' flags are derived again (decision 5) |
+| OPC-4 (medium) | Empty-area opcodes affected nothing but were recorded Applied; the SDK reads them as the whole image | Fixed: the SDK's semantics (decision 4); per-row/column opcodes with an empty area are not supported |
+| OPC-5 (medium) | A second TrimBounds was assessed against the untrimmed image, so a Complete file failed to render | Fixed: in-order assessment with the running stage geometry (decision 2) |
+| OPC-6 (low) | GainMap map plane relative to the area's Plane, the SDK uses the absolute plane | Fixed: absolute index (decision 6) |
+| OPC-7 (low) | Radial opcodes ignored the pixel aspect ratio | Fixed by gating: not supported on non-square pixels (decision 2) |
+| OPC-8 (low) | A huge finite coefficient overflowed later stages: the W2 path failed with `Internal`, the develop path rendered white | Fixed: results bounded to +-65536 (decision 5); both paths render the file alike |
+
+After the fixes the review's crafted files were re-run through `lucent-probe` and both render
+paths: the overflowing GainMap is `Corrupt` (the file `RequiresUnsupportedOperation`, no crash);
+a List 1 DeltaPerRow of 5 no longer saturates; a List 2 FixBadPixelsList of saturated hot pixels
+renders bit-identically to the same list in List 1; the empty-area GainMap applies its gain; the
+second of two TrimBounds is reported unsupported before rendering; the vignette with k0 = 1e300
+renders on both paths. `tests/tools/dng_opcode_reference.py` follows the same GainMap plane and
+empty-area conventions.
+
+`kDngOpcodeProcessingVersion` stays 1: the semantics above were corrected before the increment
+was merged, so no rendering under the earlier ones was ever persisted outside development
+builds.
 
 ## Alternatives considered
 
