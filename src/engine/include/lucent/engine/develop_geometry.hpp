@@ -16,6 +16,12 @@
 //   C  cropped: the crop rectangle of S rounded to whole render pixels,
 //          [X0, X1) x [Y0, Y1),  X0 = round(left W), X1 = round(right W) (likewise Y with H),
 //      rounding halves away from zero and keeping at least one pixel; p_C = p_S - (X0, Y0).
+//      With straightening, when the straightened image does not cover that rectangle but covers
+//      the crop rounded inward, X0 = ceil(left W), X1 = floor(right W) (likewise Y; a bound within
+//      1e-6 pixels of a whole pixel is that pixel; the nearest pixels when that leaves none), the
+//      crop rounds inward: a crop on the image's edge (largest_inside_crop(), a crop constrained to
+//      the image), also at a proxy whose sides round its aspect ratio, has no partially covered
+//      output pixel.
 //   O  output: C with the user orientation (user_orientation(): flip_horizontal, then the
 //      quarter turns clockwise), image::map_to_oriented(p_C, crop size, orientation).
 // Every step is affine, so straight lines stay straight, ellipses stay ellipses and lengths are
@@ -32,10 +38,12 @@
 //     image's max(R, G, B) <= 1 holds). Output pixels whose centre lies within half a pixel of the
 //     image's edge or outside it are weighted by their coverage clamp(0.5 + d, 0, 1), d the signed
 //     distance (pixels) from the centre to the image's edge, towards black (0): canvas areas the
-//     rotated image does not cover are black, with an antialiased border. largest_inside_crop()
-//     gives the largest crop that avoids them.
+//     rotated image does not cover are black, with an antialiased border (a coverage within 1e-4
+//     of 1 counts as 1). largest_inside_crop() gives the largest crop that avoids them, at every
+//     render scale (the inward rounding above).
 // Proxies: positions scale per axis and lengths with the long edge, so a proxy's output shows the
-// same content as the full-resolution output within the crop rounding (half a pixel of each).
+// same content as the full-resolution output within the crop rounding (half a pixel of each; a
+// pixel of each for a straightened crop on the image's edge, which rounds inward).
 //
 // Thread-safety: GeometryMapping is an immutable value; functions are reentrant.
 

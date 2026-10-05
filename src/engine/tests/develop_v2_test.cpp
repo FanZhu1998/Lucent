@@ -439,13 +439,69 @@ TEST(DevelopPipelineV2, MemoryEstimatesCoverTheNewOperations) {
     }
     auto masked = estimate_develop_memory(decoded.metadata, request, brushes);
     ASSERT_TRUE(masked);
-    // Three full planes for the brush rasters (an upper bound) and the base layer's three.
-    EXPECT_GE(masked->stage_two_bytes, rgb + 6 * static_cast<std::uint64_t>(320 * 240) * sizeof(float));
     EXPECT_GE(masked->export_peak, masked->stage_one_bytes);
+    // An upper bound of what the render allocates: its brush rasters (over the strokes' extent, not
+    // the image) and the base layer over the masks' support with its halo.
+    StageOneImage one = interactive(textured_scene(320, 240));
+    auto rendered = render_stage_two(one, brushes);
+    ASSERT_TRUE(rendered) << rendered.error().describe();
+    ASSERT_TRUE(rendered->report.local_adjustments);
+    const LocalAdjustmentsRecord& record = *rendered->report.local_adjustments;
+    EXPECT_GT(record.raster_bytes, 0u);
+    EXPECT_LT(record.raster_bytes, 3 * static_cast<std::uint64_t>(320 * 240) * sizeof(float));
+    EXPECT_GE(masked->stage_two_bytes,
+              rgb + record.raster_bytes + 3 * static_cast<std::uint64_t>(record.tone_region.size().area()) * sizeof(float));
+    EXPECT_LT(masked->stage_two_bytes, unknown->stage_two_bytes + rgb);
     DevelopOptions tight;
     tight.memory_budget_bytes = rgb + 1024;
-    StageOneImage one = interactive(textured_scene(320, 240));
     ts::expect_error(render_stage_two(one, brushes, tight), ErrorCode::LimitExceeded, "engine.develop.memory");
+}
+
+// Many small brush masks on a 45 MP photo (ADR 0015 memory): each raster is estimated over its
+// strokes, so the estimate stays far below the default budget (a full plane per mask refused 18
+// such masks with shadows).
+TEST(DevelopPipelineV2, ManySmallBrushMasksFitTheDefaultBudgetOnALargePhoto) {
+    raw::DecodedRaw decoded = textured_scene(64, 48);
+    raw::RawMetadata metadata = decoded.metadata;
+    metadata.geometry.raw_width = 8192;
+    metadata.geometry.raw_height = 5464;
+    metadata.geometry.visible_area = image::PixelRect{0, 0, 8192, 5464};
+    DevelopSettings settings;
+    settings.shadows = 0.2;
+    settings.chroma_denoise.strength = 0.5;
+    for (std::uint32_t id = 1; id <= kMaxLocalAdjustments; ++id) {
+        const double x = 0.04 + 0.029 * id;
+        LocalAdjustment a;
+        a.id = id;
+        a.shape = BrushMask{{stroke({{x, 0.5}, {x + 0.005, 0.505}}, 0.004, 0.5, 1.0)}};
+        a.controls.shadows = 0.3;
+        settings.local_adjustments.push_back(a);
+    }
+    ASSERT_TRUE(settings.validate());
+    StageOneRequest interactive_request;
+    auto interactive_estimate = estimate_develop_memory(metadata, interactive_request, settings);
+    StageOneRequest export_request;
+    export_request.kind = StageOneKind::Export;
+    auto export_estimate = estimate_develop_memory(metadata, export_request, settings);
+    ASSERT_TRUE(interactive_estimate && export_estimate);
+    const DevelopOptions defaults;
+    const std::uint64_t rgb = 8192ull * 5464ull * 3ull * sizeof(float);
+    // Stage two: its RGB image plus the largest operation, here the global shadows' three planes:
+    // the masks' rasters and base layer are smaller and do not raise it.
+    DevelopSettings unmasked = settings;
+    unmasked.local_adjustments.clear();
+    auto unmasked_estimate = estimate_develop_memory(metadata, interactive_request, unmasked);
+    ASSERT_TRUE(unmasked_estimate);
+    EXPECT_EQ(interactive_estimate->stage_two_bytes, unmasked_estimate->stage_two_bytes);
+    EXPECT_LE(interactive_estimate->stage_two_bytes, rgb + rgb);
+    EXPECT_LT(export_estimate->export_peak, defaults.memory_budget_bytes / 2);
+    // Without the global shadows the masks' own working memory shows: a fraction of one plane.
+    DevelopSettings local_only = settings;
+    local_only.shadows = 0.0;
+    local_only.chroma_denoise = ChromaDenoiseSetting{};
+    auto local_estimate = estimate_develop_memory(metadata, interactive_request, local_only);
+    ASSERT_TRUE(local_estimate);
+    EXPECT_LT(local_estimate->stage_two_bytes, rgb + rgb / 6);
 }
 
 TEST(DevelopPipelineV2, MonochromeDataSkipsChromaDenoising) {

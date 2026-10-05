@@ -258,26 +258,47 @@ struct StrokeGeometry {
     image::PixelRect box;
 };
 
+// The stroke's falloff band in pixels: full alpha up to `inner`, none from `outer`.
+void stroke_band(const BrushStroke& stroke, image::Size size, double& inner, double& outer) noexcept {
+    const double radius = stroke.radius * long_edge(size);
+    inner = stroke.hardness * radius;
+    outer = radius;
+    widen(inner, outer, 1.0);
+}
+
+// The pixels a stroke can touch: its points' box widened by the outer radius and a pixel, clipped
+// to the image (no allocation: the memory estimate uses it too).
+image::PixelRect stroke_box(const BrushStroke& stroke, image::Size size) noexcept {
+    double inner = 0.0;
+    double outer = 1.0;
+    stroke_band(stroke, size, inner, outer);
+    double x_min = std::numeric_limits<double>::infinity();
+    double y_min = x_min;
+    double x_max = -x_min;
+    double y_max = -x_min;
+    for (const MaskPoint& p : stroke.points) {
+        const double x = p.x * size.width;
+        const double y = p.y * size.height;
+        x_min = std::min(x_min, x);
+        y_min = std::min(y_min, y);
+        x_max = std::max(x_max, x);
+        y_max = std::max(y_max, y);
+    }
+    if (!(x_max >= x_min) || !(y_max >= y_min)) {
+        return image::PixelRect{};
+    }
+    const double m = outer + 1.0;
+    return clip_to(size, x_min - m, y_min - m, x_max + m, y_max + m);
+}
+
 Expected<StrokeGeometry> stroke_geometry(const BrushStroke& stroke, image::Size size) {
     try {
         StrokeGeometry g;
-        const double radius = stroke.radius * long_edge(size);
-        g.inner = stroke.hardness * radius;
-        g.outer = radius;
-        widen(g.inner, g.outer, 1.0);
-        double x_min = std::numeric_limits<double>::infinity();
-        double y_min = x_min;
-        double x_max = -x_min;
-        double y_max = -x_min;
+        stroke_band(stroke, size, g.inner, g.outer);
         std::vector<image::PointD> points;
         points.reserve(stroke.points.size());
         for (const MaskPoint& p : stroke.points) {
-            const image::PointD q{p.x * size.width, p.y * size.height};
-            points.push_back(q);
-            x_min = std::min(x_min, q.x);
-            y_min = std::min(y_min, q.y);
-            x_max = std::max(x_max, q.x);
-            y_max = std::max(y_max, q.y);
+            points.push_back(image::PointD{p.x * size.width, p.y * size.height});
         }
         if (points.size() == 1) {
             g.segments.push_back(Segment{points[0].x, points[0].y, points[0].x, points[0].y});
@@ -285,8 +306,7 @@ Expected<StrokeGeometry> stroke_geometry(const BrushStroke& stroke, image::Size 
         for (std::size_t i = 1; i < points.size(); ++i) {
             g.segments.push_back(Segment{points[i - 1].x, points[i - 1].y, points[i].x, points[i].y});
         }
-        const double m = g.outer + 1.0;
-        g.box = clip_to(size, x_min - m, y_min - m, x_max + m, y_max + m);
+        g.box = stroke_box(stroke, size);
         return g;
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "cannot allocate the brush stroke's segments", kWhere);
@@ -633,7 +653,9 @@ MaskOutline mask_outline(const MaskShape& shape, image::Size size, std::int32_t 
         const double reach = 2.0 * std::hypot(w, h) + len;
         const double nx = len > 0.0 ? -(ey - sy) / len : 0.0;
         const double ny = len > 0.0 ? (ex - sx) / len : 1.0;
-        for (const double t : {0.0, 0.5, 1.0}) {
+        // The transition band's edges (the coverage's t0 and t1) and its middle.
+        const LinearShape band = prepare_linear(*linear, size);
+        for (const double t : {band.t0, 0.5, band.t1}) {
             const double px = sx + t * (ex - sx);
             const double py = sy + t * (ey - sy);
             outline.polylines.push_back(
@@ -759,25 +781,62 @@ Expected<LocalWhiteAxes> local_white_axes() {
     return axes;
 }
 
-std::uint64_t local_adjustments_working_bytes(std::span<const LocalAdjustment> adjustments,
-                                              image::Size size) noexcept {
+image::PixelRect mask_support(const MaskShape& shape, image::Size size) noexcept {
+    if (size.empty() || shape.valueless_by_exception()) {
+        return image::PixelRect{};
+    }
+    if (const auto* linear = std::get_if<LinearGradientMask>(&shape)) {
+        return linear_bounds(prepare_linear(*linear, size), size);
+    }
+    if (const auto* radial = std::get_if<RadialGradientMask>(&shape)) {
+        return prepare_radial(*radial, size).bounds;
+    }
+    image::PixelRect bounds;
+    for (const BrushStroke& stroke : std::get<BrushMask>(shape).strokes) {
+        if (stroke.mode == BrushMode::Add && stroke.flow > 0.0) {
+            bounds = unite(bounds, stroke_box(stroke, size));
+        }
+    }
+    return bounds;
+}
+
+std::uint64_t local_adjustments_working_bytes(std::span<const LocalAdjustment> adjustments, image::Size size,
+                                              std::int32_t tone_radius) noexcept {
     if (size.empty()) {
         return 0;
     }
-    const std::uint64_t plane = static_cast<std::uint64_t>(size.area()) * sizeof(float);
+    // A float plane over `r` with 64-byte rows (image::ImageBuffer's layout).
+    const auto plane_bytes = [](const image::PixelRect& r) -> std::uint64_t {
+        if (r.empty()) {
+            return 0;
+        }
+        const std::uint64_t row = (static_cast<std::uint64_t>(r.width) * sizeof(float) + 63) / 64 * 64;
+        return row * static_cast<std::uint64_t>(r.height);
+    };
+    const image::PixelRect whole = image::PixelRect::from_size(size);
     std::uint64_t bytes = 0;
     bool tone = false;
+    image::PixelRect tone_support;
     for (const LocalAdjustment& a : adjustments) {
         if (!a.has_effect()) {
             continue;
         }
+        const image::PixelRect support = mask_support(a.shape, size);
         if (a.kind() == MaskKind::Brush) {
-            bytes += plane;
+            bytes += plane_bytes(support);  // the raster covers its Add strokes' boxes only
         }
-        tone = tone || a.controls.highlights != 0.0 || a.controls.shadows != 0.0;
+        if (a.controls.highlights != 0.0 || a.controls.shadows != 0.0) {
+            tone = true;
+            tone_support = unite(tone_support, a.invert ? whole : support);
+        }
     }
-    // The base layer: the log-luminance plane and the guided filter's two-channel working plane.
-    return bytes + (tone ? 3 * plane : 0);
+    // The base layer: the log-luminance plane and the guided filter's two-channel working plane over
+    // the tone masks' support plus its halo (the whole image when the radius is not known).
+    if (tone && !tone_support.empty()) {
+        bytes += 3 * plane_bytes(tone_radius > 0 ? expand(tone_support, 2 * tone_radius, size) : whole);
+    }
+    // The per-row counters of the per-pixel pass.
+    return bytes + static_cast<std::uint64_t>(size.height) * sizeof(std::uint64_t);
 }
 
 Expected<LocalAdjustmentsRecord> apply_local_adjustments(ColorImage& image,

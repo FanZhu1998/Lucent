@@ -340,6 +340,21 @@ TEST(MaskRaster, OutlinesFollowTheShapes) {
         const double ly = (line[1].y - line[0].y) * 200.0;
         EXPECT_NEAR(lx * 60.0 + ly * 60.0, 0.0, 1e-6);  // start -> end is (60, 60) pixels
     }
+    // The lines mark where the effect fades: through start and end for feather 1, the transition
+    // band's edges (t = 0.5 -+ feather / 2) for a smaller feather.
+    const auto t_of = [](const std::vector<MaskPoint>& line) {
+        const double px = 0.5 * (line[0].x + line[1].x) * 300.0;
+        const double py = 0.5 * (line[0].y + line[1].y) * 200.0;
+        return ((px - 60.0) * 60.0 + (py - 40.0) * 60.0) / (60.0 * 60.0 * 2.0);
+    };
+    EXPECT_NEAR(t_of(lines.polylines[0]), 0.0, 1e-9);
+    EXPECT_NEAR(t_of(lines.polylines[1]), 0.5, 1e-9);
+    EXPECT_NEAR(t_of(lines.polylines[2]), 1.0, 1e-9);
+    const MaskOutline narrow = mask_outline(LinearGradientMask{{0.2, 0.2}, {0.4, 0.5}, 0.2}, size);
+    ASSERT_EQ(narrow.polylines.size(), 3u);
+    EXPECT_NEAR(t_of(narrow.polylines[0]), 0.4, 1e-9);
+    EXPECT_NEAR(t_of(narrow.polylines[1]), 0.5, 1e-9);
+    EXPECT_NEAR(t_of(narrow.polylines[2]), 0.6, 1e-9);
     BrushMask brush{{stroke({{0.1, 0.1}, {0.2, 0.3}}, 0.01, 0.5, 1.0)}};
     EXPECT_EQ(mask_outline(brush, size).polylines.front(), brush.strokes[0].points);
 }
@@ -537,6 +552,68 @@ TEST(LocalAdjustments, TheBaseLayerRegionCoversTheMaskWithItsHalo) {
         }
     }
     EXPECT_LT(worst, 2e-5);
+}
+
+// The working-memory estimate follows the shapes' own extents (mask_support(): the raster bounds
+// without rasterising) and stays an upper bound of what apply_local_adjustments() allocates.
+TEST(LocalAdjustments, TheWorkingMemoryEstimateFollowsTheMasksExtents) {
+    const image::Size size{97, 71};
+    LinearGradientMask linear;
+    linear.start = {0.1, 0.9};
+    linear.end = {0.4, 0.6};
+    linear.feather = 0.3;
+    RadialGradientMask radial;
+    radial.center = {0.95, 0.1};
+    radial.radius_x = 0.2;
+    radial.radius_y = 0.1;
+    radial.angle_degrees = 30.0;
+    radial.feather = 0.4;
+    BrushStroke erase = stroke({{0.1, 0.1}, {0.9, 0.9}}, 0.2, 0.5, 1.0);
+    erase.mode = BrushMode::Erase;
+    const std::vector<MaskShape> shapes = {
+        linear, radial, BrushMask{{stroke({{0.2, 0.3}, {0.35, 0.4}}, 0.03, 0.5, 1.0)}},
+        BrushMask{{stroke({{0.0, 0.0}}, 0.02, 1.0, 1.0), stroke({{1.1, 0.5}}, 0.05, 0.0, 0.5), erase}},
+        BrushMask{{stroke({{0.5, 0.5}}, 0.1, 0.5, 0.0)}}};  // no flow: nothing to cover
+    for (const MaskShape& shape : shapes) {
+        auto raster = rasterize_mask(shape, size);
+        ASSERT_TRUE(raster) << raster.error().describe();
+        EXPECT_EQ(mask_support(shape, size), raster->bounds);
+    }
+    EXPECT_TRUE(mask_support(shapes[2], image::Size{}).empty());
+
+    // An upper bound of the rasters and the base layer apply_local_adjustments() makes.
+    const ColorImage source = textured(size.width, size.height);
+    std::vector<LocalAdjustment> list;
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        LocalAdjustment a = adjustment(i + 1, shapes[i]);
+        a.controls.shadows = 0.4;
+        list.push_back(a);
+    }
+    ColorImage image = clone(source);
+    auto record = apply_local_adjustments(image, list, parameters_for(1.0, 3));
+    ASSERT_TRUE(record) << record.error().describe();
+    const std::uint64_t base = 3 * static_cast<std::uint64_t>(record->tone_region.size().area()) * sizeof(float);
+    EXPECT_GE(local_adjustments_working_bytes(list, size, 3), record->raster_bytes + base);
+    // Without a radius the base layer is counted over the whole image.
+    EXPECT_GE(local_adjustments_working_bytes(list, size), local_adjustments_working_bytes(list, size, 3));
+
+    // Thirty-two small brush masks with shadows on a 45 MP render: a small fraction of one image
+    // plane, not one plane per mask (ADR 0015 memory).
+    const image::Size large{8192, 5464};
+    std::vector<LocalAdjustment> brushes;
+    for (std::uint32_t i = 0; i < kMaxLocalAdjustments; ++i) {
+        const double x = 0.05 + 0.028 * i;
+        LocalAdjustment a = adjustment(i + 1, BrushMask{{stroke({{x, 0.3}, {x + 0.01, 0.31}}, 0.004, 0.5, 1.0)}});
+        a.controls.shadows = 0.3;
+        brushes.push_back(a);
+    }
+    const std::uint64_t plane = static_cast<std::uint64_t>(large.area()) * sizeof(float);
+    const std::uint64_t estimate = local_adjustments_working_bytes(brushes, large, 41);
+    EXPECT_LT(estimate, plane / 2);
+    EXPECT_GT(estimate, 32u * 70u * 70u * sizeof(float));  // each raster is about 100 x 100 pixels
+    // An inverted tone mask needs the base layer over the whole image.
+    brushes[0].invert = true;
+    EXPECT_GE(local_adjustments_working_bytes(brushes, large, 41), 3 * plane);
 }
 
 TEST(LocalAdjustments, OverlappingMasksAddAndAreLimitedToTheControlRange) {

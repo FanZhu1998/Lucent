@@ -62,7 +62,7 @@
 // Memory: linear and radial masks are evaluated analytically (no plane); a brush mask is a float
 // plane over its bounding box at the render scale (MaskRaster), cached by its shape and size in a
 // MaskRasterCache when the caller provides one; the base layer needs three float planes over its
-// region (local_adjustments_working_bytes()).
+// region (local_adjustments_working_bytes() estimates both from the shapes' extents).
 //
 // Thread-safety: reentrant; a MaskRasterCache is internally synchronised.
 
@@ -102,6 +102,13 @@ struct MaskRaster {
     [[nodiscard]] std::uint64_t byte_size() const noexcept { return coverage.byte_size(); }
 };
 
+// The pixels of an upright image of `size` where the coverage of `shape` (valid) can be above 0,
+// clipped to the image, computed without rasterising (memory estimates): the MaskRaster::bounds
+// rasterize_mask() gives a brush (the boxes of its Add strokes: their points widened by the outer
+// radius and a pixel) and the analytic shapes' bounds (radial: the ellipse's box; linear: the image
+// clipped to the half-plane it covers). Empty for an empty size.
+[[nodiscard]] image::PixelRect mask_support(const MaskShape& shape, image::Size size) noexcept;
+
 // Rasterises `shape` (valid as DevelopSettings::validate() requires) on an upright image of
 // `size`: the bounds are the shape's support (brush: its Add strokes' boxes; radial: the
 // ellipse's box; linear: the box of the image clipped to the half-plane it covers), clipped to
@@ -122,9 +129,11 @@ struct MaskRaster {
 // Outlines of a shape for the editor's overlay, in normalised upright coordinates (map them with
 // GeometryMapping::output_from_normalized()): radial: the ellipse (rho = 1) and, for a feather
 // strictly between 0 and 1, the inner ellipse (rho = 1 - feather), each closed (`segments` + 1
-// points); linear: the lines through start, the middle and end, perpendicular to start -> end,
-// each long enough to cross the image; brush: every stroke's centre line. `size` gives the
-// aspect ratio (ellipses and perpendiculars are defined in pixels).
+// points); linear: three lines perpendicular to start -> end, each long enough to cross the
+// image, through the transition band's edges and its middle (t = 0.5 - h, 0.5 and 0.5 + h with h
+// as the coverage defines it: the start and the end for feather 1, close to the middle for a hard
+// edge); brush: every stroke's centre line. `size` gives the aspect ratio (ellipses and
+// perpendiculars are defined in pixels).
 struct MaskOutline {
     std::vector<std::vector<MaskPoint>> polylines;
 };
@@ -217,10 +226,14 @@ struct LocalAdjustmentsRecord {
     std::uint64_t changed_pixels = 0;  // pixels with a weight above 0
 };
 
-// Working memory of apply_local_adjustments() for an upright render of `size` (bytes, an upper
-// bound: brush rasters as full planes, the base layer over the whole image).
+// Working memory of apply_local_adjustments() for an upright render of `size` whose base layer has
+// the guided-filter radius `tone_radius` (LocalAdjustmentsParameters::tone_radius; 0 when it is
+// not known), bytes, an upper bound: every brush raster over its mask_support() (the strokes'
+// extent, so many small brush masks stay small), the base layer's three planes over the tone
+// masks' supports (the whole image for an inverted one) expanded by 2 tone_radius (the whole image
+// without a radius), and the per-row counters. A raster the cache already holds is counted too.
 [[nodiscard]] std::uint64_t local_adjustments_working_bytes(std::span<const LocalAdjustment> adjustments,
-                                                            image::Size size) noexcept;
+                                                            image::Size size, std::int32_t tone_radius = 0) noexcept;
 
 // Applies `adjustments` (valid, in order) to `image` (scene_linear_rec2020_d65(), 3 channels, the
 // upright render) in place, as the file comment defines. Brush rasters come from `cache` when it

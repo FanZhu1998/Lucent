@@ -15,6 +15,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -73,6 +74,10 @@ struct SyntheticDngSpec {
     // this order: NewSubFileType 1, Compression 7, YCbCr (or BlackIsZero for 1 component), one
     // strip holding the stream. Used by the embedded-preview tests.
     std::vector<SyntheticJpegPreview> jpeg_previews;
+    // A scene instead of expected_sample() (16-bit integer samples only): the stored value of pixel
+    // (x, y) for `color`, the CFA colour at (x, y) for Cfa data (cfa_pattern: 0 red, 1 green, 2
+    // blue) and the sample's channel otherwise. Every raw image stores it.
+    std::function<std::uint16_t(std::uint32_t x, std::uint32_t y, std::uint32_t color)> scene;
 };
 
 // Stored value of sample (x, y, channel) of raw image `image`: varied, within 12 bits, never 0.
@@ -113,7 +118,11 @@ inline std::vector<std::byte> build_synthetic_dng(const SyntheticDngSpec& spec) 
         for (std::uint32_t y = 0; y < spec.height; ++y) {
             for (std::uint32_t x = 0; x < spec.width; ++x) {
                 for (std::uint32_t c = 0; c < spp; ++c) {
-                    if (spec.float_samples) {
+                    if (spec.scene && !spec.float_samples) {
+                        const std::uint32_t color =
+                            spec.kind == SyntheticKind::Cfa ? spec.cfa_pattern[(y % 2) * 2 + x % 2] : c;
+                        push(spec.scene(x, y, color), 2);
+                    } else if (spec.float_samples) {
                         push(std::bit_cast<std::uint32_t>(expected_float_sample(x, y, c, image)), 4);
                     } else {
                         push(expected_sample(x, y, c, image), 2);

@@ -24,14 +24,50 @@ constexpr const char* kWhere = "engine.develop.geometry";
 
 std::int32_t long_edge(image::Size size) noexcept { return std::max(size.width, size.height); }
 
-// [round(lo n), round(hi n)) with at least one pixel, inside [0, n).
-void crop_span(double lo, double hi, std::int32_t n, std::int32_t& first, std::int32_t& count) noexcept {
+// A bound within this many pixels of a whole pixel is that pixel when a crop rounds inward.
+constexpr double kInwardSlack = 1e-6;
+// An output pixel whose coverage falls short of 1 by less than this is covered: crops placed on the
+// image's edge (largest_inside_crop()) touch it up to floating-point rounding.
+constexpr double kCoverageSlack = 1e-4;
+
+// [round(lo n), round(hi n)) with at least one pixel, inside [0, n); `inward`: [ceil(lo n),
+// floor(hi n)) instead (the nearest pixels when that is empty).
+void crop_span(double lo, double hi, std::int32_t n, bool inward, std::int32_t& first, std::int32_t& count) noexcept {
     auto a = static_cast<std::int32_t>(std::lround(lo * n));
     auto b = static_cast<std::int32_t>(std::lround(hi * n));
+    if (inward) {
+        const auto ia = static_cast<std::int32_t>(std::ceil(lo * n - kInwardSlack));
+        const auto ib = static_cast<std::int32_t>(std::floor(hi * n + kInwardSlack));
+        if (ib > ia) {
+            a = ia;
+            b = ib;
+        }
+    }
     a = std::clamp(a, 0, n - 1);
     b = std::clamp(b, a + 1, n);
     first = a;
     count = b - a;
+}
+
+// True when the image of `size` straightened by the angle (cosine `cs`, sine `sn`) covers the
+// rectangle [x0, x1] x [y0, y1] of the straightened frame (pixels): its corners lie inside the image
+// (within 1e-9 of its long edge), and the image is convex.
+bool covers(image::Size size, double cs, double sn, double x0, double y0, double x1, double y1) noexcept {
+    const double w = size.width;
+    const double h = size.height;
+    const double tolerance = 1e-9 * std::max(w, h);
+    for (const double u : {x0, x1}) {
+        for (const double v : {y0, y1}) {
+            const double dx = u - 0.5 * w;
+            const double dy = v - 0.5 * h;
+            const double x = 0.5 * w + cs * dx - sn * dy;
+            const double y = 0.5 * h + sn * dx + cs * dy;
+            if (x < -tolerance || y < -tolerance || x > w + tolerance || y > h + tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 // Keys cubic convolution weights, a = -0.5 (Catmull-Rom), for taps at -1, 0, 1, 2 around a
@@ -77,18 +113,36 @@ Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometr
     GeometryMapping m;
     m.setting_ = geometry;
     m.upright_ = upright_size;
+    const double radians = geometry.straighten_degrees * std::numbers::pi / 180.0;
+    m.cos_ = std::cos(radians);
+    m.sin_ = std::sin(radians);
     std::int32_t x0 = 0;
     std::int32_t w = 0;
     std::int32_t y0 = 0;
     std::int32_t h = 0;
-    crop_span(c.left, c.right, upright_size.width, x0, w);
-    crop_span(c.top, c.bottom, upright_size.height, y0, h);
+    crop_span(c.left, c.right, upright_size.width, false, x0, w);
+    crop_span(c.top, c.bottom, upright_size.height, false, y0, h);
+    // A straightened crop on the image's edge keeps every output pixel covered: when rounding to the
+    // nearest pixels moves an edge beyond the image and rounding inward does not, the crop rounds
+    // inward (also at a proxy, whose aspect ratio differs from the full image's by the rounding of
+    // its sides, so a crop inside the full image may reach a fraction of a pixel beyond it).
+    if (geometry.straighten_degrees != 0.0 && !covers(upright_size, m.cos_, m.sin_, x0, y0, x0 + w, y0 + h)) {
+        std::int32_t ix = 0;
+        std::int32_t iw = 0;
+        std::int32_t iy = 0;
+        std::int32_t ih = 0;
+        crop_span(c.left, c.right, upright_size.width, true, ix, iw);
+        crop_span(c.top, c.bottom, upright_size.height, true, iy, ih);
+        if (covers(upright_size, m.cos_, m.sin_, ix, iy, ix + iw, iy + ih)) {
+            x0 = ix;
+            w = iw;
+            y0 = iy;
+            h = ih;
+        }
+    }
     m.crop_ = image::PixelRect{x0, y0, w, h};
     m.orientation_ = user_orientation(geometry);
     m.output_ = image::oriented_size(image::Size{w, h}, m.orientation_);
-    const double radians = geometry.straighten_degrees * std::numbers::pi / 180.0;
-    m.cos_ = std::cos(radians);
-    m.sin_ = std::sin(radians);
     std::uint64_t r = geometry_revision(geometry);
     for (const std::int32_t v : {upright_size.width, upright_size.height}) {
         r ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(v)) + 0x9e3779b97f4a7c15ull + (r << 6) + (r >> 2);
@@ -145,22 +199,8 @@ bool crop_inside_image(const GeometrySetting& geometry, image::Size size) noexce
     const double w = size.width;
     const double h = size.height;
     const double radians = geometry.straighten_degrees * std::numbers::pi / 180.0;
-    const double cs = std::cos(radians);
-    const double sn = std::sin(radians);
-    const double tolerance = 1e-9 * std::max(w, h);
     const CropRect& c = geometry.crop;
-    for (const double u : {c.left, c.right}) {
-        for (const double v : {c.top, c.bottom}) {
-            const double dx = u * w - 0.5 * w;
-            const double dy = v * h - 0.5 * h;
-            const double x = 0.5 * w + cs * dx - sn * dy;
-            const double y = 0.5 * h + sn * dx + cs * dy;
-            if (x < -tolerance || y < -tolerance || x > w + tolerance || y > h + tolerance) {
-                return false;
-            }
-        }
-    }
-    return true;
+    return covers(size, std::cos(radians), std::sin(radians), c.left * w, c.top * h, c.right * w, c.bottom * h);
 }
 
 CropRect largest_inside_crop(double straighten_degrees, image::Size size, double aspect) noexcept {
@@ -253,7 +293,7 @@ Expected<GeometryRecord> apply_geometry(ColorImage& image, const GeometryMapping
                 const double py = a.origin.y + ox * a.dx.y + oy * a.dy.y;
                 // Coverage: the signed distance of the sample point to the image's edge.
                 const double d = std::min(std::min(px, width - px), std::min(py, height - py));
-                const double coverage = std::clamp(0.5 + d, 0.0, 1.0);
+                const double coverage = d >= 0.5 - kCoverageSlack ? 1.0 : std::clamp(0.5 + d, 0.0, 1.0);
                 if (coverage < 1.0) {
                     ++partial;
                 }

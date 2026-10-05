@@ -281,6 +281,62 @@ TEST(DevelopGeometry, LargestInsideCropIsInsideAndMaximal) {
     EXPECT_TRUE(largest_inside_crop(0.0, image::Size{300, 200}).is_full());
 }
 
+// A crop the straightened image covers has no partially covered (darkened) output pixel at any
+// render scale: rounding it to the nearest pixels could move an edge up to half a pixel beyond the
+// image, so such a crop rounds inward (develop_geometry.hpp, frame C).
+TEST(DevelopGeometry, CropsInsideTheImageHaveNoPartiallyCoveredPixelAtAnyScale) {
+    const auto flat = [](image::Size size) {
+        auto buffer = image::ImageBuffer<float>::create(size.width, size.height, 1);
+        EXPECT_TRUE(buffer);
+        for (std::int32_t y = 0; y < size.height; ++y) {
+            std::fill_n(buffer->row(y), size.width, 0.5f);
+        }
+        return ColorImage{std::move(*buffer), image::ColorEncoding::scene_linear_rec2020_d65()};
+    };
+    const std::vector<image::Size> sizes = {{2048, 1366}, {1366, 2048}, {1024, 683}, {301, 199}, {97, 61}};
+    std::size_t inward = 0;
+    for (const image::Size size : sizes) {
+        for (const double angle : {0.3, 1.0, 2.5, -7.0, 15.0, 44.9}) {
+            for (const double aspect : {0.0, 1.0, 1.5, 0.8}) {
+                GeometrySetting g;
+                g.straighten_degrees = angle;
+                g.crop = largest_inside_crop(angle, size, aspect);
+                ASSERT_TRUE(crop_inside_image(g, size));
+                const image::Size proxy = proxy_size(size, std::max(size.width, size.height) / 4);
+                for (const image::Size render : {size, proxy}) {
+                    SCOPED_TRACE(testing::Message() << render.width << "x" << render.height << " " << angle
+                                                    << " deg, aspect " << aspect);
+                    const GeometryMapping m = mapping_of(g, render);
+                    const image::PixelRect crop = m.crop_pixels();
+                    inward += crop.x != static_cast<std::int32_t>(std::lround(g.crop.left * render.width)) ||
+                                      crop.right() != std::lround(g.crop.right * render.width)
+                                  ? 1
+                                  : 0;
+                    ColorImage image = flat(render);
+                    auto record = apply_geometry(image, m);
+                    ASSERT_TRUE(record) << record.error().describe();
+                    EXPECT_EQ(record->uncovered_pixels, 0u);
+                    float darkest = 1.0f;
+                    for (std::int32_t y = 0; y < image.pixels.height(); ++y) {
+                        const float* row = image.pixels.row(y);
+                        darkest = std::min(darkest, *std::min_element(row, row + image.pixels.width()));
+                    }
+                    EXPECT_EQ(darkest, 0.5f);
+                }
+            }
+        }
+    }
+    EXPECT_GT(inward, 0u) << "some crops on the edge round inward";
+    // A crop well inside the image keeps the nearest pixels.
+    GeometrySetting g;
+    g.straighten_degrees = 12.0;
+    g.crop = CropRect{0.2, 0.15, 0.8, 0.85};
+    EXPECT_EQ(mapping_of(g, image::Size{400, 300}).crop_pixels(), (image::PixelRect{80, 45, 240, 210}));
+    // A crop beyond the image keeps them too (its corners are black by design).
+    g.crop = CropRect{};
+    EXPECT_EQ(mapping_of(g, image::Size{400, 300}).crop_pixels(), (image::PixelRect{0, 0, 400, 300}));
+}
+
 TEST(DevelopGeometry, ProxyAndFullResolutionShowTheSameContent) {
     // A smooth scene at 400 x 300 and its 100 x 75 box proxy through the same geometry: the full
     // output, box-downscaled to the proxy output's size, matches the proxy output. Positions agree

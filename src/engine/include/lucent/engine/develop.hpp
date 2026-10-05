@@ -320,8 +320,9 @@ struct DevelopMemoryEstimate {
     std::uint64_t stage_one_peak = 0;   // render stage one (with the proxy downscale)
     std::uint64_t stage_one_bytes = 0;  // the StageOneImage kept (full or proxy)
     // New allocations of stage two at that size: its RGB image and the largest operation's working
-    // memory (local tone, chroma denoising, local adjustments, the geometry's output). Without
-    // settings: chroma denoising at kMaxChromaDenoiseRadius and no brush raster.
+    // memory (local tone, chroma denoising, local adjustments with each brush raster over its
+    // strokes' extent, the geometry's output). Without settings: chroma denoising at
+    // kMaxChromaDenoiseRadius and no brush raster.
     std::uint64_t stage_two_bytes = 0;
     std::uint64_t export_peak = 0;  // render_develop: max(stage one, stage one kept + stage two)
 };
@@ -361,7 +362,10 @@ struct DevelopMemoryEstimate {
                                                        const core::CancellationToken& cancel = {});
 
 // Selects a decoder, checks the memory estimate from its probe, decodes image `subimage` and
-// runs stage one. Errors: those of the registry and decoder, and of render_stage_one().
+// runs stage one. The check knows no settings (estimate_develop_memory() without them: an export
+// request is checked against its export_peak for the worst chroma denoising and no brush raster);
+// render_develop_file() checks with its settings instead. Errors: those of the registry and
+// decoder, and of render_stage_one().
 [[nodiscard]] Expected<StageOneImage> render_stage_one_file(const raw::DecoderRegistry& registry,
                                                             const std::filesystem::path& path,
                                                             std::optional<std::uint32_t> subimage,
@@ -393,7 +397,8 @@ struct DevelopMemoryEstimate {
                                                      const DevelopOptions& options = {},
                                                      const core::CancellationToken& cancel = {});
 
-// render_develop() for a file (decoder selection, probe memory check, decode).
+// render_develop() for a file (decoder selection, decode): the probe's memory check is the one
+// render_develop() makes, the export_peak of estimate_develop_memory() with `settings`.
 [[nodiscard]] Expected<DevelopResult> render_develop_file(const raw::DecoderRegistry& registry,
                                                           const std::filesystem::path& path,
                                                           std::optional<std::uint32_t> subimage,
