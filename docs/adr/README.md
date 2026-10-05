@@ -23,12 +23,12 @@ product authority. The current module structure is described in
 | [0007](0007-application-shell.md) | Application shell: UI adapters over in-process application services | Accepted | 2026-09-27 | W3 |
 | [0008](0008-catalog-and-source-identity.md) | Persistent library: catalog, source identity, duplicates, relinking and thumbnail cache | Accepted | 2026-10-03 | W4 |
 | [0009](0009-windows-packaging.md) | Windows packaging: installed layout, dependency audit and per-user Inno Setup installer | Accepted | 2026-10-03 | W5 |
-| [0010](0010-develop-pipeline-and-recipes.md) | Develop pipeline, recipes and interactive previews | Accepted | 2026-10-03 | W6 |
+| [0010](0010-develop-pipeline-and-recipes.md) | Develop pipeline, recipes and interactive previews | Accepted (amended for DevelopSettings v2, see 0015) | 2026-10-03 | W6 |
 | [0011](0011-natural-v1-automatic-settings.md) | Natural v1 automatic settings: metric contract, proposals, bounded search and confidence | Accepted | 2026-10-03 | W8 |
 | [0012](0012-durable-batch-and-workers.md) | Durable batch export: worker processes, memory-budgeted scheduling, journaled publication and recovery | Accepted | 2026-10-04 | W7 |
-| [0013](0013-automatic-settings-integration.md) | Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches | Accepted (amended for the W8 integration closure) | 2026-10-04 | W8 application wiring |
+| [0013](0013-automatic-settings-integration.md) | Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches | Accepted (amended for the W8 integration closure and for geometry and masks, W9 part 2) | 2026-10-04 | W8 application wiring |
 | [0014](0014-dng-opcode-processing.md) | DNG opcode processing at the stages the specification defines (amends 0005 decision 8, 0006 sections 1 and 5) | Accepted | 2026-10-04 | W9 |
-| [0015](0015-geometry-masks-and-chroma-denoise.md) | Geometry, masks and guided chroma denoising: DevelopSettings v2, coordinate frames, operation order and preview tolerances (amends 0010) | Accepted | 2026-10-05 | W9 part 2 |
+| [0015](0015-geometry-masks-and-chroma-denoise.md) | Geometry, masks and guided chroma denoising: DevelopSettings v2, coordinate frames, operation order and preview tolerances (amends 0010) | Accepted (amended for phase 2: recipes, paste, editor services, Auto) | 2026-10-05 | W9 part 2 |
 
 ## Conventions
 

@@ -1,6 +1,7 @@
 # ADR 0013: Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches
 
-- **Status:** Accepted (amended 2026-10-04: "Amendment: W8 integration closure" below)
+- **Status:** Accepted (amended 2026-10-04: "Amendment: W8 integration closure" below; amended
+  2026-10-05: "Amendment: geometry, masks and chroma denoising" below)
 - **Date:** 2026-10-04
 - **Workflow:** W8 application wiring (services and UI), after the W8 core (ADR 0011) and W7 (ADR 0012)
 
@@ -390,3 +391,23 @@ whose outcome was already determined.
 - Remaining costs, deferred to W12: `measure_render()` (two calls, about 3.9 s of the R5's run), the
   check's stage one and upright source pass that the analysis already computed, and the check's
   26 bytes per pixel that refuse Auto above about 69 MP (GFX100-class files) on the 4 GiB budget.
+
+## Amendment: geometry, masks and chroma denoising (W9 part 2, 2026-10-05)
+
+DevelopSettings v2 (ADR 0015) adds the photographer's geometry (crop, straighten, quarter turns,
+flip), masks and chroma denoising. Their interplay with the automatic settings (ADR 0015,
+"Amendment: phase 2 of 4", decision 5):
+
+- **Decision 1.** Auto adjusts global controls only. `AutoSession::open` evaluates the current
+  settings without their geometry and local adjustments (`analysis::evaluation_settings()`):
+  native crops are stage-one sub-rectangles, so a crop or rotation would not line up with them and a
+  mask would land on other content; and the decision is then the same whatever the crop. Chroma
+  denoising is global and stays in the evaluation. Every settings value the analysis returns carries
+  the current geometry, masks and denoising unchanged, so the revisions Auto writes keep them (their
+  notes never list a part). An anchor's appearance is measured the same way.
+- **Decision 2.** The final check renders the full settings (geometry and masks included) for every
+  rung and for the baseline, which carries them too, and measures them in the geometry's output
+  frame: the image context and the neutral-surface mask are mapped through the same
+  `GeometryMapping` (`analysis::map_image_context()`). Its memory estimate uses the current settings
+  (`estimate_automatic_memory(metadata, current, options)`).
+- No new locks: Auto never changes the parts, so there is nothing to lock.

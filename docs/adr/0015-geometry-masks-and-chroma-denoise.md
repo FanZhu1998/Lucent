@@ -1,6 +1,6 @@
 # ADR 0015: Geometry, masks and guided chroma denoising (DevelopSettings v2)
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-05: "Amendment: phase 2 of 4, the application" below)
 - **Date:** 2026-10-05
 - **Workflow:** W9 part 2 (Masks, geometry, chroma denoise), phase 1 of 4 (engine)
 - **Amends:** ADR 0010 decision 1 (stage two gains three operations) and its recipe contract
@@ -331,3 +331,157 @@ interface follow in phases 2 and 3.
 - **Keeping DevelopSettings at version 1 with an optional extension type.** Two settings types
   through every layer; the version and the conversion are what the forward-compatibility rules
   (section 8) are for.
+
+## Amendment: phase 2 of 4, the application (2026-10-05)
+
+- **Workflow:** W9 part 2, phase 2 (recipes, copy and paste, editor services, Auto, `lucent-render`)
+- **Amends:** ADR 0010 decisions 2, 3, 5, 6, 7 and 10; ADR 0013 decisions 1 and 2
+
+### Context
+
+Phase 1 left the application on an interim state (version-2 documents without the new members)
+and recorded what the recipe layer, the editor services, the automatic settings and
+`lucent-render` needed ("Needs for the next phases" above). This phase makes those decisions.
+
+### Decision
+
+1. **Recipe document "lucent.develop" version 2** (`application/recipe.hpp`). The document gains
+   three members and three operation names (`chroma_denoise`, `local_adjustments`, `geometry`):
+   - `"chroma_denoise": {"radius": <n>, "strength": <n>}`;
+   - `"geometry": {"crop": {"bottom", "left", "right", "top"}, "flip_horizontal": <bool>,
+     "quarter_turns": <unsigned>, "straighten_degrees": <n>}`;
+   - `"local_adjustments"`: the ordered list of `{"controls": {"contrast", "exposure_ev",
+     "highlights", "saturation", "shadows", "temperature", "tint"}, "enabled": <bool>, "id":
+     <unsigned>, "invert": <bool>, "mask": <mask>, "opacity": <n>}`, the mask one of
+     `{"kind": "brush", "strokes": [{"flow", "hardness", "mode": "add"|"erase", "points": [[x, y],
+     ...], "radius"}]}`, `{"kind": "linear", "end": [x, y], "feather", "start": [x, y]}` and
+     `{"kind": "radial", "angle_degrees", "center": [x, y], "feather", "radius_x", "radius_y"}`.
+   The canonical form is ADR 0010's (RFC 8785, every member written, arrays in their order: masks,
+   strokes and points are ordered values), so every recipe identity changes once: the default
+   recipe's moved from `671dbaa8...` to `3104dbcc...` (pinned by a test). Integers (ids, quarter
+   turns) must be unsigned integers without a fraction, flags JSON booleans, points `[x, y]` pairs;
+   mask, stroke and point counts beyond the engine's bounds are refused before anything is
+   allocated for them.
+   - *Version 1 stays readable.* A version-1 document is read with version 1's exact member and
+     operation lists (a version-2 member or operation in it is `InvalidArgument`) and converted with
+     `engine::upgrade_develop_settings()`: `read_recipe()` always returns version-2 settings, and
+     `write_recipe()` writes version 2 only (a version-1 value is upgraded first), so a version-1
+     recipe and its conversion have one identity. A version-2 document without the new members is
+     `InvalidArgument`; a newer document version, a newer operation version (also of the three new
+     operations) or base look is `VersionMismatch` and opens the item read-only, as before.
+   - The catalog keeps every stored revision's text as written (immutable); a version-1 revision is
+     read through the conversion and identified by the canonical version-2 text (ADR 0010: the
+     identity is the canonical document's hash, not the stored text's). New revisions are stored
+     with `schema_version` 2. Export records state the canonical document's version (2).
+   - Size: the largest recipe the bounds allow (16 brush masks of 4096 points, 65 536 points with
+     17-digit coordinates) is 2.66 MB of canonical text; it writes in 65 ms and reads in 130 ms
+     (reference laptop, RelWithDebInfo, `RecipeDocument.TheLargestRecipeStaysAFewMegabytes`). A
+     gesture's `set_transient()` writes the document once per position, so the editor should
+     simplify brush input ("Needs for the next phases", editor services, above) and keep a
+     stroke's points well below the bound.
+
+2. **Copy and paste** (`RecipeService`, `recipe.hpp`). Categories gain `detail` (6: chroma
+   denoising) and `geometry` (7: straighten, crop, quarter turns, flip); the masks join `local`
+   with highlights and shadows. `kDefaultRecipeCategories` is every category but `geometry` (a crop
+   rarely belongs on another photo). The new members are *parts* (`RecipePart`: `chroma_denoise`,
+   `masks`, `geometry`), edited as a whole, with `category_of()`, `parts_of()`, `same_value()`,
+   `copy_value()` and `changed_parts()` beside the controls' functions. A pasted category's every
+   value becomes the copied one (the `local` category replaces the target's masks by the copied
+   list, an empty one included). Normalised positions keep their place only on an image of the
+   same shape, so:
+   - the masks are pasted only when the source's and the target's upright sizes have the same
+     aspect ratio within 0.5 % (`same_upright_aspect()`, `kPasteAspectTolerance`: 3:2 sensors of
+     different pixel counts agree within 0.25 %; a normalised position then lands within 15 pixels
+     of 6000 of the same relative place); otherwise highlights and shadows are pasted, the target's
+     own masks stay, and the skip is reported with `PasteSkip::part` = `masks`;
+   - the geometry is pasted when its crop is the whole image (an angle and quarter turns fit any
+     photo) or the aspect ratios agree; otherwise the category is skipped (`part` = `geometry`);
+   - an unknown size (no probe) counts as another shape. The upright size comes with the camera
+     capabilities (`CameraCapabilities::upright_size`: the probe's visible area after the camera
+     orientation, or an edit session's decode).
+   Chroma denoising is camera independent like every user value (it is not a noise profile).
+
+3. **No locks for the new parts.** `DevelopControl` (the engine's lockable controls) stays at nine:
+   the automatic settings never change chroma denoising, masks or geometry (decision 5), so a lock
+   would protect nothing. A later policy that sets the denoising strength from a validated noise
+   model (blueprint section 5) adds a control and its lock then.
+
+4. **Gestures and history.** A brush stroke or a crop drag is a gesture like a slider's:
+   `set_transient()` per pointer position, `commit()` at its end, so a stroke is exactly one
+   revision; the preview's requests of the stroke coalesce latest-wins like any other. Revision
+   notes gain `parts=<names>` (written only when a part changed; readers ignore unknown keys) and
+   `HistoryEntry::parts` lists them; an automatic revision never has one.
+
+5. **Auto adjusts global controls only** (`analysis/auto_settings.hpp`,
+   `application/auto_develop.hpp`; amends ADR 0013 decisions 1 and 2). The analysis evaluates
+   `analysis::evaluation_settings()` of the current settings (the identity geometry, no local
+   adjustment; chroma denoising kept, it is global): the baseline, every candidate, the recheck on
+   native crops, the appearances and the consistency stage. Native crops therefore line up, masks
+   never land on the wrong content of a crop, and the decision is the same whatever the crop or the
+   masks are (tests: identical candidates, terms and choice with and without them, analysis and
+   application level). Every settings value of a result (`AutoResult::settings`, every
+   `CandidateRecord::settings`, `ConsistencyRecord::independent_settings`) carries the current
+   geometry, masks and denoising unchanged (`AutoResult::set_aside_geometry` / `set_aside_masks`
+   record that there was something to set aside), so the conservative fallbacks and the baseline
+   carry them too. The full-resolution final check renders the full settings, geometry and masks
+   included, for every rung and for the baseline it judges them against, and measures them in the
+   geometry's output frame: the image context (saturation coverage, signal, the white-balance
+   evidence's neutral surfaces) is mapped through the same `GeometryMapping`
+   (`analysis::map_image_context()`: the upright pixel each output pixel centre maps back to;
+   uncovered canvas has no signal, no saturation and is not neutral). `estimate_automatic_memory()`
+   gains an overload for the current settings (the check's stage two with their brush rasters,
+   base layer and denoising radius), which `AutoService` and `run_automatic()` use. The engine
+   change phase 1 suggested (a stage-one region of a larger frame, so masks could be evaluated on
+   native crops) is not needed while Auto sets masks aside.
+
+6. **Editor services** (`DevelopPreviewService`, `SourceRenderer`).
+   - *Session caches.* Every session owns a `MaskRasterCache` (`DevelopPreviewOptions::
+     mask_cache_bytes`, 64 MiB) and a `StageTwoCache` (`stage_two_cache_bytes`, 64 MiB: a
+     2048-pixel proxy's denoised image is 32 MiB), passed to its proxy renders only (Quick and the
+     Fit Final; `SourceRenderer::render_stage_two_cached()`, whose default ignores them); a proxy
+     rebuild drops the denoised image (another stage one), a changed file or `close()` both.
+   - *Retained memory.* A proxy render whose settings can fill a cache (denoising applied, or a
+     brush mask with an effect) claims, with its working memory, room for the caches up to their
+     capacities; afterwards the bytes the caches hold stay claimed as the session's retained memory
+     (a claim made of retained leases that shrinks without waiting) and the rest is returned.
+     `DevelopSessionStats` reports `cache_bytes` (included in `retained_bytes`) and the caches' hits.
+   - *Settings-aware estimates.* A stage-two render claims the engine's settings-aware estimate
+     (`estimate_develop_memory()` with the settings, from the stage one's own metadata) plus the
+     8-bit image and clipping mask, instead of a fixed 28 bytes per pixel. `SourceRenderer::
+     estimate_for()` (default: `estimate()`) gives the settings-aware export estimate, which exports,
+     library previews and the worker's develop jobs now admit.
+   - *Frames.* `DevelopFrame::geometry` is the render's `GeometryMapping` (the settings' geometry
+     for the upright size of the stage one it was rendered from, so at the frame's scale; its
+     output size is the image's) and `DevelopFrame::masks` the outline of every mask
+     (`MaskOverlay`: id, kind, enabled, invert, `mask_outline()` mapped to the frame's pixels), in
+     the settings' order. `RenderSummary::rendered_size` is the full-resolution size of the
+     developed image, after the geometry (`rendered_full_size()`: the render's output size at full
+     resolution, the geometry mapped for the full size otherwise), as exports and the library
+     report it.
+
+7. **`lucent-render`.** `--develop` reads version-1 and version-2 documents; the report's recipe
+   states the canonical document's version (2) and the file's own (`file_version`); the develop
+   report gains `upright_size` and the `chroma_denoise`, `local_adjustments` and `geometry` records
+   (null when the operation was not applied). The report keeps `schema_version` 2 (additions only).
+
+### Consequences
+
+- Every recipe identity changes once with this build. Rendered thumbnails are rendered again (they
+  are anyway: pipeline version 3). Export receipts of earlier builds keep the identity they
+  recorded. A batch job frozen by an earlier build carries the version-1 canonical text's SHA-256,
+  which this build cannot reproduce: the job fails with `VersionMismatch` ("cannot be reproduced by
+  this version of Lucent", ADR 0012) and has to be queued again; edits themselves survive the
+  update (their revisions are read through the conversion).
+- The paste rule uses the probe's upright size; a DNG trim (ADR 0014) can make stage one's frame a
+  few pixels smaller, which the tolerance absorbs.
+- The batch scheduler's per-pixel memory model (ADR 0012) does not see masks or denoising; the
+  worker's own admission inside a develop job does (`estimate_for()`).
+- Auto never sets chroma denoising: the photographer's strength is kept, and the default stays 0
+  until a validated noise estimate exists.
+- **Needs for phase 3 (user interface):** the editor offers five categories
+  (`SettingsCategory` mirrors seven; `detail` and `geometry` appear in paste reports only, and the
+  `local` label still says "Highlights and shadows" although it pastes masks too); the history shows
+  no parts yet (`HistoryEntry::parts`); overlays draw `DevelopFrame::masks` and turn pointer
+  positions into brush points with `DevelopFrame::geometry` (`normalized_from_output()`); crop and
+  straighten tools keep the crop inside the image with `largest_inside_crop()` and edit through
+  `set_transient()`/`commit()`; brush input is simplified before it reaches the recipe.
