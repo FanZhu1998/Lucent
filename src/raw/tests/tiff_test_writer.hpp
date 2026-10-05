@@ -406,6 +406,156 @@ inline std::vector<std::byte> filler(std::size_t size, std::uint8_t seed = 0x5A)
     return out;
 }
 
+// ---- Opcode parameters (big-endian, layouts of DNG 1.7.1.0 chapter 7) ----------------------
+
+class ParameterWriter {
+public:
+    ParameterWriter& u32(std::uint32_t v) {
+        put_be32(bytes_, v);
+        return *this;
+    }
+    ParameterWriter& u16(std::uint16_t v) {
+        bytes_.push_back(static_cast<std::byte>(v >> 8));
+        bytes_.push_back(static_cast<std::byte>(v & 0xFF));
+        return *this;
+    }
+    ParameterWriter& f32(float v) { return u32(std::bit_cast<std::uint32_t>(v)); }
+    ParameterWriter& f64(double v) {
+        const auto bits = std::bit_cast<std::uint64_t>(v);
+        u32(static_cast<std::uint32_t>(bits >> 32));
+        return u32(static_cast<std::uint32_t>(bits));
+    }
+    [[nodiscard]] std::vector<std::byte> bytes() const { return bytes_; }
+
+private:
+    std::vector<std::byte> bytes_;
+};
+
+// Area of the area-based opcodes: rows [top, bottom), columns [left, right), planes, pitches.
+struct AreaSpec {
+    std::uint32_t top = 0;
+    std::uint32_t left = 0;
+    std::uint32_t bottom = 0;
+    std::uint32_t right = 0;
+    std::uint32_t plane = 0;
+    std::uint32_t planes = 1;
+    std::uint32_t row_pitch = 1;
+    std::uint32_t col_pitch = 1;
+};
+
+inline ParameterWriter with_area(const AreaSpec& a) {
+    ParameterWriter w;
+    w.u32(a.top).u32(a.left).u32(a.bottom).u32(a.right).u32(a.plane).u32(a.planes).u32(a.row_pitch).u32(a.col_pitch);
+    return w;
+}
+
+// WarpRectilinear: per set {kr0, kr1, kr2, kr3, kt0, kt1}, then the normalised centre.
+inline std::vector<std::byte> warp_rectilinear_parameters(const std::vector<std::array<double, 6>>& sets,
+                                                          double cx = 0.5, double cy = 0.5) {
+    ParameterWriter w;
+    w.u32(static_cast<std::uint32_t>(sets.size()));
+    for (const auto& set : sets) {
+        for (const double k : set) {
+            w.f64(k);
+        }
+    }
+    return w.f64(cx).f64(cy).bytes();
+}
+
+// WarpRectilinear2: per set 15 radial, 2 tangential, min and max valid radius; the centre; the
+// reciprocalRadial flag.
+struct Warp2Set {
+    std::array<double, 15> radial{1.0};
+    std::array<double, 2> tangential{};
+    double min_valid_radius = 0.0;
+    double max_valid_radius = 1.0;
+};
+inline std::vector<std::byte> warp_rectilinear2_parameters(const std::vector<Warp2Set>& sets, double cx = 0.5,
+                                                           double cy = 0.5, std::uint32_t reciprocal = 0) {
+    ParameterWriter w;
+    w.u32(static_cast<std::uint32_t>(sets.size()));
+    for (const Warp2Set& set : sets) {
+        for (const double k : set.radial) {
+            w.f64(k);
+        }
+        w.f64(set.tangential[0]).f64(set.tangential[1]).f64(set.min_valid_radius).f64(set.max_valid_radius);
+    }
+    return w.f64(cx).f64(cy).u32(reciprocal).bytes();
+}
+
+inline std::vector<std::byte> vignette_parameters(const std::array<double, 5>& k, double cx = 0.5, double cy = 0.5) {
+    ParameterWriter w;
+    for (const double v : k) {
+        w.f64(v);
+    }
+    return w.f64(cx).f64(cy).bytes();
+}
+
+inline std::vector<std::byte> bad_pixels_constant_parameters(std::uint32_t constant, std::uint32_t phase) {
+    return ParameterWriter().u32(constant).u32(phase).bytes();
+}
+
+// Points as {row, column}; rectangles as {top, left, bottom, right}.
+inline std::vector<std::byte> bad_pixels_list_parameters(std::uint32_t phase,
+                                                         const std::vector<std::array<std::uint32_t, 2>>& points,
+                                                         const std::vector<std::array<std::uint32_t, 4>>& rects = {}) {
+    ParameterWriter w;
+    w.u32(phase).u32(static_cast<std::uint32_t>(points.size())).u32(static_cast<std::uint32_t>(rects.size()));
+    for (const auto& p : points) {
+        w.u32(p[0]).u32(p[1]);
+    }
+    for (const auto& r : rects) {
+        w.u32(r[0]).u32(r[1]).u32(r[2]).u32(r[3]);
+    }
+    return w.bytes();
+}
+
+inline std::vector<std::byte> trim_bounds_parameters(std::uint32_t top, std::uint32_t left, std::uint32_t bottom,
+                                                     std::uint32_t right) {
+    return ParameterWriter().u32(top).u32(left).u32(bottom).u32(right).bytes();
+}
+
+inline std::vector<std::byte> map_table_parameters(const AreaSpec& a, const std::vector<std::uint16_t>& table) {
+    ParameterWriter w = with_area(a);
+    w.u32(static_cast<std::uint32_t>(table.size()));
+    for (const std::uint16_t v : table) {
+        w.u16(v);
+    }
+    return w.bytes();
+}
+
+inline std::vector<std::byte> map_polynomial_parameters(const AreaSpec& a, const std::vector<double>& coefficients) {
+    ParameterWriter w = with_area(a);
+    w.u32(static_cast<std::uint32_t>(coefficients.size() - 1));
+    for (const double c : coefficients) {
+        w.f64(c);
+    }
+    return w.bytes();
+}
+
+// Gains row by row, the planes of one point together.
+inline std::vector<std::byte> gain_map_parameters(const AreaSpec& a, std::uint32_t points_v, std::uint32_t points_h,
+                                                  double spacing_v, double spacing_h, double origin_v,
+                                                  double origin_h, std::uint32_t map_planes,
+                                                  const std::vector<float>& gains) {
+    ParameterWriter w = with_area(a);
+    w.u32(points_v).u32(points_h).f64(spacing_v).f64(spacing_h).f64(origin_v).f64(origin_h).u32(map_planes);
+    for (const float g : gains) {
+        w.f32(g);
+    }
+    return w.bytes();
+}
+
+// DeltaPerRow/Column and ScalePerRow/Column.
+inline std::vector<std::byte> row_column_parameters(const AreaSpec& a, const std::vector<float>& values) {
+    ParameterWriter w = with_area(a);
+    w.u32(static_cast<std::uint32_t>(values.size()));
+    for (const float v : values) {
+        w.f32(v);
+    }
+    return w.bytes();
+}
+
 // ---- Reference DNG ---------------------------------------------------------------------------
 //
 // A small but complete DNG: IFD 0 is an RGB thumbnail carrying the camera-profile tags, SubIFD 0
@@ -417,20 +567,26 @@ namespace dng {
 inline constexpr std::uint32_t kRawWidth = 4032;
 inline constexpr std::uint32_t kRawHeight = 3024;
 
+// Mandatory opcodes carry well-formed parameters; the two optional ones carry malformed ones
+// (filler bytes), which the inspector records in DngOpcode::parameter_error instead of failing.
 inline std::vector<std::byte> list1() {
-    return opcode_list({{4, 0x01030000, 0, filler(8)}});  // FixBadPixelsConstant, mandatory
+    return opcode_list({{4, 0x01030000, 0, bad_pixels_constant_parameters(0, 0)}});  // FixBadPixelsConstant
+}
+inline std::vector<std::byte> gain_map() {  // 2 x 2 points, one map plane: 92 bytes
+    return gain_map_parameters({0, 0, kRawHeight - 12, kRawWidth - 16, 0, 1, 1, 1}, 2, 2, 1.0, 1.0, 0.0, 0.0, 1,
+                               {1.25f, 1.0f, 1.0f, 1.5f});
 }
 inline std::vector<std::byte> list2() {
     return opcode_list({
-        {9, 0x01030000, 0, filler(76)},  // GainMap, mandatory
-        {8, 0x01030000, 3, filler(36)},  // MapPolynomial, optional + preview-skippable
+        {9, 0x01030000, 0, gain_map()},  // GainMap, mandatory
+        {8, 0x01030000, 3, filler(36)},  // MapPolynomial, optional + preview-skippable, malformed
     });
 }
 inline std::vector<std::byte> list3() {
     return opcode_list({
-        {14, 0x01060000, 1, filler(52)},  // WarpRectilinear2, optional
-        {1, 0x01030000, 0, filler(52)},   // WarpRectilinear, mandatory, follows optional WR2
-        {3, 0x01030000, 2, filler(56)},   // FixVignetteRadial, preview-skippable
+        {14, 0x01060000, 1, filler(52)},  // WarpRectilinear2, optional, malformed
+        {1, 0x01030000, 0, warp_rectilinear_parameters({{1.0, -0.01, 0.0, 0.0, 0.0, 0.0}})},  // mandatory
+        {3, 0x01030000, 2, vignette_parameters({0.5, 0.0, 0.0, 0.0, 0.0})},  // preview-skippable
     });
 }
 

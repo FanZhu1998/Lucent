@@ -58,6 +58,33 @@ std::string lower_ascii(std::string text) {
     return text;
 }
 
+// The catalog keeps a probe's decoded-RAW contract with its decoder version, in the same text
+// column (the schema is unchanged): "<decoder version>; decoded-RAW <major>.<minor>". A stored
+// value without the suffix (written before W9) has an unknown contract.
+constexpr std::string_view kContractMarker = "; decoded-RAW ";
+
+std::string stored_decoder_version(const ProbeSummary& probe) {
+    std::string text = core::sanitize_utf8(probe.decoder_version);
+    if (probe.contract) {
+        text += kContractMarker;
+        text += probe.contract->to_string();
+    }
+    return text;
+}
+
+void read_decoder_version(std::string_view stored, ProbeSummary& probe) {
+    const std::size_t at = stored.rfind(kContractMarker);
+    if (at != std::string_view::npos) {
+        if (auto contract = core::ContractVersion::parse(stored.substr(at + kContractMarker.size()))) {
+            probe.decoder_version = std::string(stored.substr(0, at));
+            probe.contract = *contract;
+            return;
+        }
+    }
+    probe.decoder_version = std::string(stored);
+    probe.contract.reset();
+}
+
 }  // namespace
 
 catalog::SupportStatus to_catalog(SupportStatus status) noexcept {
@@ -256,7 +283,7 @@ catalog::ItemMetadata to_metadata(const SourceItem& item, catalog::Timestamp pro
         metadata.orientation = orientation >= 1 && orientation <= 8 ? orientation : std::uint8_t{1};
         metadata.format = lower_ascii(core::sanitize_utf8(probe.extension_hint));
         metadata.decoder_id = core::sanitize_utf8(probe.decoder);
-        metadata.decoder_version = core::sanitize_utf8(probe.decoder_version);
+        metadata.decoder_version = stored_decoder_version(probe);
     }
     if (metadata.format.empty()) {
         std::string extension = core::path_to_utf8_lossy(item.path.extension());
@@ -276,7 +303,7 @@ std::optional<ProbeSummary> probe_from_metadata(const catalog::ItemMetadata& met
     ProbeSummary probe;
     probe.extension_hint = metadata.format;
     probe.decoder = metadata.decoder_id;
-    probe.decoder_version = metadata.decoder_version;
+    read_decoder_version(metadata.decoder_version, probe);
     probe.camera_make = metadata.make;
     probe.camera_model = metadata.model;
     probe.lens = metadata.lens;

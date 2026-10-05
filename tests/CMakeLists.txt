@@ -6,7 +6,9 @@
 #
 # lucent_render_integration_tests renders fixtures end to end through the engine and the exporter,
 # checks gross-error gates against committed rawpy statistics (integration/data/
-# render_reference.json, research/tools/render_reference.py), and exercises lucent-render.exe.
+# render_reference.json, research/tools/render_reference.py), exercises lucent-render.exe, and
+# runs synthetic DNG files with opcodes through decoder and engine (ADR 0014; the drone fixtures'
+# opcodes are compared with rawpy by tests/tools/dng_opcode_reference.py).
 # Its tests hold the RESOURCE_LOCK lucent_full_resolution_render so that ctest never runs two of
 # its full-resolution renders at once (about 1 GB each for a 45 MP file).
 #
@@ -46,6 +48,7 @@ find_package(TIFF REQUIRED)
 add_executable(lucent_render_integration_tests
     integration/color_difference.cpp
     integration/color_difference.hpp
+    integration/dng_opcode_synthetic_tests.cpp
     integration/fixture_manifest.cpp
     integration/fixture_manifest.hpp
     integration/image_readers.cpp
@@ -68,6 +71,9 @@ target_link_libraries(lucent_render_integration_tests PRIVATE
 target_compile_definitions(lucent_render_integration_tests PRIVATE
     LUCENT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     LUCENT_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/fixtures")
+# The synthetic DNG writer of the raw module's tests (integration/dng_opcode_synthetic_tests.cpp,
+# ADR 0014).
+target_include_directories(lucent_render_integration_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/raw/tests")
 set_target_properties(lucent_render_integration_tests PROPERTIES FOLDER "tests")
 # The CLI tests run bin/lucent-render.exe from the same output directory.
 add_dependencies(lucent_render_integration_tests lucent-render)

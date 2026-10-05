@@ -7,7 +7,7 @@
 //                 [--quality N] [--subimage N] [--develop <settings.json>] [--exposure EV]
 //                 [--report <file.json>]
 //   lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV] [--dump-linear <file.tiff>]
-//                 [other options as above, without --develop]
+//                 [--no-dng-opcodes] [other options as above, without --develop]
 //
 //   --develop F        the settings to render: a "lucent.develop" recipe document (recipe.hpp),
 //                      read strictly (an unknown field or operation, or a newer version, is an
@@ -28,6 +28,11 @@
 //   --dump-linear F    --legacy-neutral-v0 only: also write the scene-linear image before display
 //                      rendering, converted to linear sRGB primaries (D65), as a 32-bit float TIFF
 //                      (float_tiff.hpp), for reference comparisons (research/tools/render_reference.py).
+//   --no-dng-opcodes   --legacy-neutral-v0 only: do not apply the file's DNG opcodes
+//                      (RenderSettings::apply_dng_opcodes = false, ADR 0014), for comparisons with
+//                      decoders that apply none (rawpy / LibRaw, render_reference.py). Every opcode
+//                      is then recorded as disabled and the render is never reported complete. The
+//                      develop pipeline always applies them.
 //   --report F         write the lucent.render-report JSON (render_json.hpp), also for failures.
 //
 // Nothing is ever overwritten: an existing export, report or dump file is an error
@@ -155,7 +160,8 @@ struct Arguments {
     std::optional<std::uint32_t> subimage;
     std::optional<double> exposure_ev;
     std::optional<std::filesystem::path> develop;
-    bool legacy = false;  // --legacy-neutral-v0
+    bool legacy = false;          // --legacy-neutral-v0
+    bool no_dng_opcodes = false;  // --no-dng-opcodes
     std::optional<std::filesystem::path> dump_linear;
     std::optional<std::filesystem::path> report;
     bool help = false;
@@ -167,7 +173,7 @@ void print_usage(std::FILE* stream) {
         "                     [--quality N] [--subimage N] [--develop <settings.json>] [--exposure EV]\n"
         "                     [--report <file.json>]\n"
         "       lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV]\n"
-        "                     [--dump-linear <file.tiff>] [other options]\n"
+        "                     [--dump-linear <file.tiff>] [--no-dng-opcodes] [other options]\n"
         "Renders a RAW file (develop pipeline, neutral v1 look; --legacy-neutral-v0: the W2 render path)\n"
         "and exports <stem>_Lucent.jpg|.tif to <dir> without overwriting anything. Prints one\n"
         "lucent.render-result JSON line.\n"
@@ -272,6 +278,8 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
             args.develop = std::filesystem::path(argv[++i]);
         } else if (arg == L"--legacy-neutral-v0") {
             args.legacy = true;
+        } else if (arg == L"--no-dng-opcodes") {
+            args.no_dng_opcodes = true;
         } else if (arg == L"--dump-linear" && has_value) {
             args.dump_linear = std::filesystem::path(argv[++i]);
         } else if (arg == L"--report" && has_value) {
@@ -291,6 +299,11 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
     }
     if (args.legacy && args.develop) {
         return std::string("--develop applies to the develop pipeline, not to --legacy-neutral-v0");
+    }
+    if (args.no_dng_opcodes && !args.legacy) {
+        return std::string(
+            "--no-dng-opcodes switches the W2 path's opcode processing off for reference comparisons; add "
+            "--legacy-neutral-v0 (the develop pipeline always applies the DNG opcodes)");
     }
     if (args.dump_linear && !args.legacy) {
         return std::string(
@@ -520,6 +533,7 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
         // The W2 render path (ADR 0006).
         lucent::engine::RenderSettings legacy;
         legacy.exposure_ev = args.exposure_ev.value_or(0.0);
+        legacy.apply_dng_opcodes = !args.no_dng_opcodes;
         lucent::engine::RenderOptions options;
         options.keep_scene_linear = args.dump_linear.has_value();
         auto rendered =

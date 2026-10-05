@@ -756,7 +756,7 @@ TEST(PreviewRecipes, RenderedThumbnailsAreKeyedBySettingsAndSurviveTheSession) {
              {engine::kDevelopPipelineVersion, engine::kSensorNormalizationVersion, engine::kWhiteBalanceVersion,
               engine::kMalvarHeCutlerVersion, engine::kXTransBaselineVersion, engine::kBypassVersion,
               engine::kCameraColorVersion, engine::kWorkingSpaceVersion, engine::kGuidedFilterVersion,
-              engine::kBoxDownscaleVersion}) {
+              engine::kBoxDownscaleVersion, engine::kDngOpcodeProcessingVersion}) {
             const std::uint8_t le[4] = {static_cast<std::uint8_t>(version), static_cast<std::uint8_t>(version >> 8),
                                         static_cast<std::uint8_t>(version >> 16),
                                         static_cast<std::uint8_t>(version >> 24)};

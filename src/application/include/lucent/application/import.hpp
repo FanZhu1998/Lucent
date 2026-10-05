@@ -140,6 +140,11 @@ struct ImportRequest {
     // Record the import in the library's journal (Library::begin_import). Maintenance re-reads of
     // changed files set it to false.
     bool record = true;
+    // Maintenance re-reads (refresh_sources): a file the library already has at its path with its
+    // identity is probed again and its items are refreshed in place (ImportReport::refreshed)
+    // instead of being skipped as a duplicate, so an outdated support status (probe_outdated())
+    // is renewed. Ignored with copy_to.
+    bool reprobe_known = false;
 };
 
 // Why a path was not imported (append only).

@@ -29,6 +29,11 @@ set(LUCENT_ENGINE_SOURCES
     src/camera_color.cpp
     src/dng_color.cpp
 
+    # DNG opcode lists 1-3 at their DNG stages (ADR 0014).
+    include/lucent/engine/dng_opcode_processing.hpp
+    src/dng_opcode_processing.cpp
+    src/opcode_stages.hpp
+
     # Display rendering (Neutral v0, provisional), orientation and the render pipeline (ADR 0006).
     include/lucent/engine/display_rendering.hpp
     src/display_rendering.cpp
@@ -88,6 +93,9 @@ set(LUCENT_ENGINE_TEST_SOURCES
     tests/tone_curves_test.cpp
     tests/develop_operations_test.cpp
     tests/develop_test.cpp
+    # DNG opcode processing (ADR 0014).
+    tests/dng_opcode_test_support.hpp
+    tests/dng_opcode_processing_test.cpp
 )
 
 lucent_add_test(lucent_engine_tests
@@ -116,6 +124,7 @@ set(LUCENT_ENGINE_FIXTURE_TEST_SOURCES
     tests/demosaic_fixture_test.cpp
     tests/guided_filter_reference_test.cpp
     tests/develop_fixture_test.cpp
+    tests/dng_opcode_fixture_test.cpp
 )
 
 lucent_add_test(lucent_engine_fixture_tests

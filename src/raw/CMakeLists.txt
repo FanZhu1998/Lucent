@@ -80,6 +80,7 @@ lucent_add_test(lucent_raw_tiff_tests
         tests/tiff_test_writer.hpp
         tests/capture_metadata_test.cpp
         tests/dng_opcodes_test.cpp
+        tests/dng_opcode_parameters_test.cpp
         tests/tiff_corrupt_test.cpp
         tests/tiff_inspector_test.cpp
         tests/tiff_mutation_test.cpp

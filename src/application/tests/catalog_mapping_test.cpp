@@ -135,5 +135,49 @@ TEST(CatalogMapping, ProbeSummarySurvivesWhatTheCatalogStores) {
     EXPECT_FALSE(detail::probe_from_metadata(failed_metadata, failed.support));
 }
 
+TEST(CatalogMapping, TheProbeContractIsStoredWithTheDecoderVersion) {
+    SourceItem item;
+    item.path = L"C:\\Photos\\DJI_0001.DNG";
+    item.support.status = SupportStatus::Supported;
+    item.support.interpretation = raw::InterpretationStatus::Complete;
+    ProbeSummary probe;
+    probe.extension_hint = "dng";
+    probe.decoder = "libraw";
+    probe.decoder_version = "0.22.2-Release";
+    probe.contract = raw::kDecodedRawContractVersion;
+    item.probe = probe;
+
+    const catalog::ItemMetadata metadata = detail::to_metadata(item, catalog::Timestamp{});
+    EXPECT_EQ(metadata.decoder_version, "0.22.2-Release; decoded-RAW " + raw::kDecodedRawContractVersion.to_string());
+    const std::optional<ProbeSummary> restored = detail::probe_from_metadata(metadata, item.support);
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->decoder_version, "0.22.2-Release");
+    EXPECT_EQ(restored->contract, raw::kDecodedRawContractVersion);
+    item.probe = restored;
+    EXPECT_FALSE(probe_outdated(item));
+
+    // What a build before W9 stored: no contract, so the support status is outdated.
+    catalog::ItemMetadata old = metadata;
+    old.decoder_version = "0.22.2-Release";
+    const std::optional<ProbeSummary> before = detail::probe_from_metadata(old, item.support);
+    ASSERT_TRUE(before);
+    EXPECT_EQ(before->decoder_version, "0.22.2-Release");
+    EXPECT_FALSE(before->contract);
+    item.probe = before;
+    EXPECT_TRUE(probe_outdated(item));
+    // An older contract is outdated as well; a suffix that is not a contract stays decoder text.
+    item.probe->contract = core::ContractVersion{1, 2};
+    EXPECT_TRUE(probe_outdated(item));
+    old.decoder_version = "odd; decoded-RAW x.y";
+    const std::optional<ProbeSummary> odd = detail::probe_from_metadata(old, item.support);
+    ASSERT_TRUE(odd);
+    EXPECT_EQ(odd->decoder_version, "odd; decoded-RAW x.y");
+    EXPECT_FALSE(odd->contract);
+    // An item whose probe failed has no interpretation to renew.
+    SourceItem failed;
+    failed.support = assess_probe_failure(Error{ErrorCode::Corrupt, "bad", "raw.probe", 0});
+    EXPECT_FALSE(probe_outdated(failed));
+}
+
 }  // namespace
 }  // namespace lucent::app

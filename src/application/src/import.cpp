@@ -684,12 +684,16 @@ private:
         return ok();
     }
 
-    // In place: a file the library knows is probed again only when it changed (see the header).
+    // In place: a file the library knows is probed again only when it changed, or when a
+    // maintenance re-read asks for it (reprobe_known; see the header).
     Status import_in_place(const Candidate& candidate) {
         if (auto identity = core::stat_file(candidate.path)) {
             const KnownFile known = known_file(candidate.path, *identity);
             switch (known.kind) {
                 case Known::Same:
+                    if (request_.reprobe_known && !request_.copy_to) {
+                        break;  // probed again and refreshed in place
+                    }
                     return restore(*known.item, candidate.path);
                 case Known::OtherPath:
                     skip(candidate.path, SkipReason::Duplicate, std::nullopt, known.item->id);
@@ -1062,8 +1066,9 @@ private:
     }
 
     // True when `item` is a new description of an existing item (same canonical path and image)
-    // whose file changed since it was imported, which is then refreshed (or reported as a
-    // duplicate when the library refuses the refresh). Errors: OutOfMemory.
+    // whose file changed since it was imported, or whose file a maintenance re-read probed again
+    // (reprobe_known), which is then refreshed (or reported as a duplicate when the library
+    // refuses the refresh). Errors: OutOfMemory.
     Expected<bool> refresh_if_changed(SourceItem& item) {
         const std::optional<ItemId> existing =
             library_.find_source(item.path, core::FileIdentity{}, item.subimage);
@@ -1071,7 +1076,8 @@ private:
             return false;
         }
         const std::optional<SourceItem> current = library_.find(*existing);
-        if (!current || current->identity == item.identity) {
+        const bool reprobe = request_.reprobe_known && !request_.copy_to;
+        if (!current || (current->identity == item.identity && !reprobe)) {
             return false;  // add() reports the duplicate
         }
         item.id = *existing;
