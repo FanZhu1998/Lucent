@@ -292,7 +292,9 @@ void merge_library_facts(LibraryItem& current, const LibraryItem& fresh) {
     current.focal_length_mm = fresh.focal_length_mm;
     current.support = fresh.support;
     current.support_detail = fresh.support_detail;
-    current.flags = fresh.flags;
+    // ReviewRecommended follows the recipe (W8), not the source facts.
+    current.flags = (fresh.flags & ~flag_bit(ItemFlag::ReviewRecommended)) |
+                    (current.flags & flag_bit(ItemFlag::ReviewRecommended));
     current.pick = fresh.pick;
     current.rating = fresh.rating;
     current.copied = fresh.copied;

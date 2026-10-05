@@ -125,6 +125,10 @@ constexpr int kMaxRememberedTokens = 1024;
 
 EditSession::EditSession(EditService& service, std::shared_ptr<FrameStore> store, QObject* parent)
     : QObject(parent), service_(service), store_(std::move(store)), history_(std::make_unique<EditHistoryModel>()) {
+    automatic_ = std::make_unique<AutoSettingsModel>(
+        service_, [this](EditControl control) { return describe_committed(control); });
+    connect(automatic_.get(), &AutoSettingsModel::runningChanged, this, &EditSession::canRunAutoChanged);
+    connect(automatic_.get(), &AutoSettingsModel::finished, this, &EditSession::notice);
     clock_.start();
     nudge_timer_.setSingleShot(true);
     nudge_timer_.setInterval(kNudgeCommitMs);
@@ -168,6 +172,7 @@ void EditSession::set_item(ItemId item) {
     selected_point_ = -1;
     reset_frames();
     set_local(EditSettings{});
+    automatic_->set_item(item_);
     if (item_ != 0) {
         service_.open(item_);
         send_comparison();
@@ -179,6 +184,7 @@ void EditSession::set_item(ItemId item) {
     emit stateChanged();
     emit whiteBalanceChanged();
     emit selectedCurvePointChanged();
+    emit canRunAutoChanged();
 }
 
 void EditSession::reset_frames() {
@@ -311,14 +317,21 @@ double EditSession::value(const QString& key) const {
 }
 
 QString EditSession::valueText(const QString& key) const {
-    const ControlSpec* spec = spec_of(key);
-    if (spec == nullptr) {
+    if (spec_of(key) == nullptr) {
         return {};
     }
     if (!settings_known()) {
         return QStringLiteral("–");
     }
-    const double v = round_to(display_value(settings_, key), spec->decimals);
+    return value_text_of(settings_, key);
+}
+
+QString EditSession::value_text_of(const EditSettings& settings, const QString& key) const {
+    const ControlSpec* spec = spec_of(key);
+    if (spec == nullptr) {
+        return {};
+    }
+    const double v = round_to(display_value(settings, key), spec->decimals);
     QLocale locale;
     locale.setNumberOptions(QLocale::OmitGroupSeparator);
     QString text = locale.toString(v, 'f', spec->decimals);
@@ -881,6 +894,73 @@ void EditSession::clearMessage() {
     set_message({});
 }
 
+// ---- Auto ----------------------------------------------------------------------------------------------
+
+bool EditSession::can_run_auto() const {
+    return item_ != 0 && can_edit() && settings_known() && !automatic_->running();
+}
+
+void EditSession::runAuto() {
+    if (!can_run_auto()) {
+        return;
+    }
+    // Auto starts from the committed settings: a gesture in progress is committed first (the service
+    // runs Auto after the commit).
+    endNudge();
+    commit_gesture();
+    automatic_->start();
+    service_.run_auto(item_);
+}
+
+void EditSession::cancelAuto() {
+    automatic_->cancel();
+}
+
+QString EditSession::describe_committed(EditControl control) const {
+    const EditSettings& settings = state_ ? state_->committed : settings_;
+    const auto with_unit = [&](const char* key) {
+        const QString name = QString::fromLatin1(key);
+        const ControlSpec* spec = spec_of(name);
+        QString text = tr_text(spec->label) + u' ' + value_text_of(settings, name);
+        if (spec->unit[0] != '\0') {
+            text += u' ' + QString::fromLatin1(spec->unit);
+        }
+        return text;
+    };
+    switch (control) {
+    case EditControl::WhiteBalance:
+        switch (settings.white_balance) {
+        case WhiteBalanceMode::Kelvin:
+            return tr_text("White balance %1 K, tint %2")
+                .arg(value_text_of(settings, QStringLiteral("temperature")),
+                     value_text_of(settings, QStringLiteral("tint")));
+        case WhiteBalanceMode::CameraNeutral:
+            return tr_text("White balance: blue–amber %1, green–magenta %2")
+                .arg(value_text_of(settings, QStringLiteral("redBlue")),
+                     value_text_of(settings, QStringLiteral("greenMagenta")));
+        case WhiteBalanceMode::AsShot:
+            break;
+        }
+        return tr_text("White balance as shot");
+    case EditControl::Exposure:
+        return with_unit("exposure");
+    case EditControl::Contrast:
+        return with_unit("contrast");
+    case EditControl::Highlights:
+        return with_unit("highlights");
+    case EditControl::Shadows:
+        return with_unit("shadows");
+    case EditControl::Saturation:
+        return with_unit("saturation");
+    case EditControl::Vibrance:
+        return with_unit("vibrance");
+    case EditControl::ToneCurve:
+    case EditControl::BaseLook:
+        break;
+    }
+    return control_label(control);
+}
+
 void EditSession::set_message(const QString& message) {
     if (message == message_) {
         return;
@@ -907,6 +987,7 @@ void EditSession::on_state(const EditState& state) {
         return;
     }
     answered_token_ = std::max(answered_token_, state.token);
+    const bool committed_changed = !state_ || state_->committed != state.committed;
     state_ = state;
     // A gesture that has not changed anything yet (a drag that began while an undo was on its way)
     // takes the new values too, so its changes build on them.
@@ -914,6 +995,10 @@ void EditSession::on_state(const EditState& state) {
         set_local(state.settings);
     }
     emit stateChanged();
+    emit canRunAutoChanged();
+    if (committed_changed) {
+        automatic_->values_changed();
+    }
 }
 
 void EditSession::on_history(ItemId item, const QList<EditHistoryEntry>& entries) {

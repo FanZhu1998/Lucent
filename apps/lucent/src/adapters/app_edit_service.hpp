@@ -35,12 +35,21 @@
 // 100 %. set_full_resolution(true) asks for full-resolution Final frames; 30 seconds after the view
 // left 100 % the session's full-resolution stage one is released (ADR 0010, "Consequences").
 //
+// Auto (W8, ADR 0013). run_auto() starts the Backend's AutoService for the photo on the command
+// thread (after the commands queued before it, so a gesture committed just before is the run's
+// starting point); the service's progress and completion are relayed to the UI thread. The automatic
+// revisions are published by the recipe service (a change of origin Auto): for a photo with an open
+// session the adapter then publishes its state, history and Auto summary and renders the new
+// settings, exactly as it does when an automatic batch writes a photo's revisions. The summary of the
+// current revision (its analysis record) accompanies every published history.
+//
 // Lifetime: lives on the UI thread. The destructor closes the dispatcher, lets the commands already
 // queued finish (so a commit of a pending gesture, an apply or an undo still reaches the recipes;
 // nothing is rendered or opened any more meanwhile), stops the command thread, closes every session
 // (waiting for running sink calls), and waits for the conversion thread; it must run on the UI
 // thread (it may release the last reference to the Backend).
 
+#include <QHash>
 #include <QThreadPool>
 #include <QTimer>
 #include <memory>
@@ -84,6 +93,10 @@ public:
     [[nodiscard]] bool has_clipboard() const override { return has_clipboard_; }
     void paste_settings(const QList<ItemId>& targets) override;
 
+    void run_auto(ItemId item) override;
+    void cancel_auto(ItemId item) override;
+    [[nodiscard]] bool is_auto_running(ItemId item = 0) const override;
+
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
     [[nodiscard]] bool is_busy() const override { return busy_; }
 
@@ -92,13 +105,19 @@ public:
 private:
     void set_busy(bool busy);
     void release_idle_full_resolution();
+    // UI thread: the relayed Auto events.
+    void note_auto_progress(const AutoProgress& progress);
+    void note_auto_finished(const AutoOutcome& outcome);
 
     std::shared_ptr<Backend> backend_;
     std::shared_ptr<UiDispatcher> dispatcher_;
     std::unique_ptr<QThreadPool> commands_;
     std::unique_ptr<QThreadPool> conversions_;
     std::shared_ptr<State> state_;
+    app::Subscription auto_subscription_;
+    app::Subscription recipe_subscription_;
     QTimer release_timer_;
+    QHash<ItemId, AutoProgress> auto_runs_;  // runs in progress, as last reported
     bool has_clipboard_ = false;
     bool busy_ = false;
 };

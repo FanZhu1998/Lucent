@@ -1,13 +1,17 @@
 // lucent_batch_test_coordinator: a coordinator process for the recovery tests (batch_recovery_test.cpp).
 //
-//   lucent_batch_test_coordinator.exe <catalog> <output folder> <kill point> [<pattern> <collisions>]
+//   lucent_batch_test_coordinator.exe <catalog> <output folder> <kill point> [<pattern> <collisions>
+//                                     [<automatic> [consistent]]]
 //
 // Opens the catalog prepared by the test (items imported and hashed), opens a BatchService over it,
 // submits one batch of every library item into <output folder> and ends the whole process with
 // TerminateProcess (exit code 77, no clean-up of any kind, like a crash or a power cut seen from the
-// journal) when the publication protocol of the batch's first job reaches <kill point> ("reserved",
-// "temp_written", "verified", "before_rename", "after_rename", "published", "receipt" or
-// "complete"). Exit code 0: the batch finished without reaching the point; 1: a setup error.
+// journal) when the batch's first job reaches <kill point>: a step of the publication protocol
+// ("reserved", "temp_written", "verified", "before_rename", "after_rename", "published", "receipt"
+// or "complete") or of automatic settings ("answered", "analysed", "frozen"). <automatic> is "off"
+// (default), "auto" or "analyze-only"; with "consistent" the batch keeps related shots consistent
+// (every photo in one user group). Exit code 0: the batch finished without reaching the point; 1: a
+// setup error.
 
 #include <windows.h>
 
@@ -39,6 +43,8 @@ int wmain(int argc, wchar_t** argv) {
     const std::string kill_at = core::wide_to_utf8_lossy(argv[3]);
     const std::string pattern = argc > 4 ? core::wide_to_utf8_lossy(argv[4]) : std::string(app::kDefaultNamePattern);
     const std::string collisions = argc > 5 ? core::wide_to_utf8_lossy(argv[5]) : std::string("unique_name");
+    const std::string automatic = argc > 6 ? core::wide_to_utf8_lossy(argv[6]) : std::string("off");
+    const bool consistent = argc > 7 && core::wide_to_utf8_lossy(argv[7]) == "consistent";
 
     catalog::OpenOptions open;
     open.path = catalog_path;
@@ -102,8 +108,20 @@ int wmain(int argc, wchar_t** argv) {
     });
     app::BatchRequest request;
     for (const app::SourceItem& item : (*library)->items()) {
-        request.items.push_back(app::BatchItem{item.id, std::nullopt});
+        app::BatchItem entry{item.id, std::nullopt};
+        if (consistent) {
+            entry.group = "series";
+        }
+        request.items.push_back(std::move(entry));
     }
+    if (automatic == "auto") {
+        request.automatic = app::AutomaticSettings::Auto;
+    } else if (automatic == "analyze-only") {
+        request.automatic = app::AutomaticSettings::AnalyzeOnly;
+    } else if (automatic != "off") {
+        return 1;
+    }
+    request.keep_consistent = consistent;
     request.destination.folder = output;
     request.destination.name_pattern = pattern;
     auto policy = app::collision_policy_from_string(collisions);

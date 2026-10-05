@@ -48,6 +48,24 @@ bool is_edited(const app::RecipeState& state) {
     return state.revision.has_value() && (state.recipe_unreadable || !state.committed.is_as_shot());
 }
 
+// W8: the current revision is an automatic one whose analysis record recommends a review
+// (ItemFlag::ReviewRecommended). One catalog read of the item's records.
+bool recommends_review(const app::RecipeService& recipes, const app::RecipeState& state) {
+    if (!state.revision) {
+        return false;
+    }
+    auto records = recipes.automatic_analyses(state.item);
+    if (!records) {
+        return false;
+    }
+    for (const catalog::AutoAnalysisRecord& record : *records) {
+        if (record.revision == *state.revision) {
+            return record.review;
+        }
+    }
+    return false;
+}
+
 QString describe_library_problem(const Error& error) {
     switch (error.code) {
         case ErrorCode::VersionMismatch:
@@ -117,16 +135,21 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
     });
     // Committed recipes (an edit, undo/redo, a paste) change what the thumbnail must show. Runs on
     // the thread that made the change; `this` is only used by the posted function.
-    recipe_subscription_ =
-        backend_->recipes().subscribe([this, dispatcher = dispatcher_](const app::RecipeChange& change) {
+    recipe_subscription_ = backend_->recipes().subscribe(
+        [this, dispatcher = dispatcher_, recipes = &backend_->recipes()](const app::RecipeChange& change) {
             if (change.kind != app::RecipeChangeKind::Committed && change.kind != app::RecipeChangeKind::Moved) {
                 return;
             }
             const app::RecipeState& state = change.state;
+            // A revision the photographer made is never automatic: only automatic revisions and moves
+            // through the history (onto or off one) need its record.
+            const bool review = (change.kind == app::RecipeChangeKind::Moved ||
+                                 change.origin == catalog::RevisionOrigin::Auto) &&
+                                recommends_review(*recipes, state);
             dispatcher->post([this, item = state.item.value, edited = is_edited(state),
                               identity = identity_bytes(state.committed_sha256),
-                              readable = !state.recipe_unreadable] {
-                apply_recipe(item, edited, identity, readable);
+                              readable = !state.recipe_unreadable, review] {
+                apply_recipe(item, edited, identity, readable, review);
             });
         });
 }
@@ -587,8 +610,8 @@ void AppLibraryService::scan_recipes() {
             }
             dispatcher->post([this, item = id.value, edited = is_edited(*state),
                               identity = identity_bytes(state->committed_sha256),
-                              readable = !state->recipe_unreadable] {
-                apply_recipe(item, edited, identity, readable);
+                              readable = !state->recipe_unreadable, review = recommends_review(*recipes, *state)] {
+                apply_recipe(item, edited, identity, readable, review);
             });
         }
     };
@@ -597,7 +620,8 @@ void AppLibraryService::scan_recipes() {
     }
 }
 
-void AppLibraryService::apply_recipe(ItemId item_id, bool edited, const QByteArray& identity, bool readable) {
+void AppLibraryService::apply_recipe(ItemId item_id, bool edited, const QByteArray& identity, bool readable,
+                                     bool review) {
     const auto found = items_.find(item_id);
     if (found == items_.end()) {
         return;
@@ -605,6 +629,8 @@ void AppLibraryService::apply_recipe(ItemId item_id, bool edited, const QByteArr
     LibraryItem& item = *found;
     const LibraryItem before = item;
     item.edited = edited;
+    item.flags = review ? (item.flags | flag_bit(ItemFlag::ReviewRecommended))
+                        : (item.flags & ~flag_bit(ItemFlag::ReviewRecommended));
     if (readable) {
         const auto known = recipe_identity_.constFind(item_id);
         const bool changed = known == recipe_identity_.cend() ? edited : *known != identity;
@@ -616,7 +642,7 @@ void AppLibraryService::apply_recipe(ItemId item_id, bool edited, const QByteArr
         }
     }
     if (item.edited != before.edited || item.thumbnail_generation != before.thumbnail_generation ||
-        item.thumbnail_is_camera_preview != before.thumbnail_is_camera_preview) {
+        item.thumbnail_is_camera_preview != before.thumbnail_is_camera_preview || item.flags != before.flags) {
         emit item_changed(item);
     }
 }

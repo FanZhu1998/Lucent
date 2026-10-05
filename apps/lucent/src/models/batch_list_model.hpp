@@ -7,7 +7,9 @@
 // cancel, retry failed). Single exports (marked by the service) read as one photo. Submissions that
 // have not created their batch yet (importing a folder, fingerprinting originals) are shown as
 // "preparing". The service lists the newest batches and every unfinished one; older ones are
-// loaded on request (loadOlder).
+// loaded on request (loadOlder). W8: automatic batches say so ("Auto", "Analyse only"), an
+// analysing-only batch counts its photos as analysed, and the related-shot pre-pass shows its
+// progress (each running photo's stage, "Analysing" or "Checking at full size", is in the stage).
 //
 // The service already coalesces its updates (a few per second per batch); this model only updates
 // the row that changed and emits summaryChanged when the summary moved.
@@ -84,6 +86,11 @@ public:
         TimesLabelRole,
         IsActiveRole,
         AccessibleLabelRole,
+        // W8: automatic batches.
+        AutomaticKeyRole,     // presentation::automatic_key
+        AutomaticLabelRole,   // "Auto", "Analyse only", with ", related shots kept consistent"; empty when off
+        CompletedLabelRole,   // "3 exported" or "3 analysed"
+        AnalysisRole,         // the related-shot pre-pass's progress; empty otherwise
     };
     Q_ENUM(Role)
 

@@ -37,9 +37,22 @@ namespace lucent::ui::presentation {
 // time only while the batch runs).
 [[nodiscard]] QString batch_accessible_label(const BatchSnapshot& batch, const QLocale& locale);
 
-// "exported", "skipped", "failed", "cancelled", "pending" and their labels.
+// "exported", "skipped", "failed", "cancelled", "pending", "analysed" and their labels.
 [[nodiscard]] QString outcome_key(BatchOutcome outcome);
 [[nodiscard]] QString outcome_label(BatchOutcome outcome);
+
+// ---- Automatic batches (W8) ---------------------------------------------------------------------
+
+// "off", "auto", "analyzeOnly".
+[[nodiscard]] QString automatic_key(BatchAutomatic automatic);
+// "Auto", "Analyse only" (", related shots kept consistent" when they are); empty when off.
+[[nodiscard]] QString automatic_label(const BatchSnapshot& batch);
+// "3 exported", or "3 analysed" for an analysing-only batch.
+[[nodiscard]] QString completed_label(const BatchSnapshot& batch, const QLocale& locale);
+// The related-shot pre-pass of a running batch: "Analysing related shots together first: 3 of 5
+// analysed"; empty otherwise (each photo's own stage, "Analysing" or "Checking at full size", is in
+// batch_stage_label).
+[[nodiscard]] QString analysis_label(const BatchSnapshot& batch, const QLocale& locale);
 
 // "Created 4 Oct 2026 14:03 · finished 14:05".
 [[nodiscard]] QString batch_times_label(const QDateTime& created, const QDateTime& finished, const QLocale& locale);

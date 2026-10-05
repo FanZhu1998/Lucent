@@ -76,8 +76,11 @@ TEST_F(BatchSetupTest, DefaultsAreTheSharingPresetUniqueNamesAndNoGps) {
     EXPECT_TRUE(described.include_rights);
     EXPECT_FALSE(described.include_gps);
     EXPECT_EQ(described.output_folder, QStringLiteral("D:/Out"));
-    EXPECT_FALSE(setup.automatic_settings_available());
-    EXPECT_EQ(setup.automatic_settings_note(), QStringLiteral("Available when Natural v1 is integrated"));
+    // Automatic settings are off unless chosen: each photo's own edit is exported.
+    EXPECT_EQ(setup.automatic(), BatchSetupModel::AutomaticOff);
+    EXPECT_EQ(described.automatic, BatchAutomatic::Off);
+    EXPECT_FALSE(described.keep_consistent);
+    EXPECT_TRUE(setup.automatic_note().startsWith(QStringLiteral("Each photo is exported with its own current edit")));
 
     // One photo selected (just the current one): every listed photo.
     setup.prepare({2}, {1, 2, 3});
@@ -247,6 +250,72 @@ TEST_F(BatchSetupTest, APlanErrorBlocksStart) {
     EXPECT_EQ(setup.start_hint(), QStringLiteral("Choose an output folder."));
 }
 
+// W8: automatic settings (Off, Auto, Analyse only; related shots kept consistent only with them).
+TEST_F(BatchSetupTest, AutomaticSettingsAreChosenHereAndThePlanSaysWhatTheAnalysisAdds) {
+    setup.setKeepConsistent(true);
+    EXPECT_FALSE(setup.setup().keep_consistent);  // needs automatic settings
+    setup.setAutomatic(BatchSetupModel::AutomaticAuto);
+    EXPECT_EQ(setup.setup().automatic, BatchAutomatic::Auto);
+    EXPECT_TRUE(setup.setup().keep_consistent);
+    EXPECT_TRUE(setup.automatic_note().contains(QStringLiteral("checks the result at full size")));
+    EXPECT_FALSE(setup.analyze_only());
+
+    setup.setActive(true);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !service.plans.empty(); }, kWaitMs));
+    EXPECT_EQ(service.plans.back().automatic, BatchAutomatic::Auto);
+    EXPECT_TRUE(service.plans.back().keep_consistent);
+    BatchPlanInfo plan;
+    plan.ok = true;
+    plan.outputs = 2;
+    plan.automatic_notes = {QStringLiteral("Each photo is analysed first.")};
+    service.answer_plan(setup.plan_token(), plan);
+    EXPECT_EQ(setup.analysis_notes(), plan.automatic_notes);
+    EXPECT_EQ(setup.counts_text(), QStringLiteral("2 photos will be analysed and exported"));
+    EXPECT_TRUE(setup.can_start());
+
+    // Analysing only: nothing is exported; the selected photos not left out are analysed.
+    const std::size_t asked = service.plans.size();
+    setup.setAutomatic(BatchSetupModel::AutomaticAnalyzeOnly);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return service.plans.size() > asked; }, kWaitMs));
+    EXPECT_EQ(service.plans.back().automatic, BatchAutomatic::AnalyzeOnly);
+    EXPECT_TRUE(setup.analyze_only());
+    BatchPlanInfo analyse;
+    analyse.ok = true;
+    analyse.excluded = 1;
+    service.answer_plan(setup.plan_token(), analyse);
+    EXPECT_EQ(setup.counts_text(), QStringLiteral("1 photo will be analysed; nothing is exported · 1 left out"));
+    EXPECT_TRUE(setup.can_start());  // no output, yet something to do
+    EXPECT_EQ(setup.batch_label(), QStringLiteral("Analysis of 2 photos"));
+    EXPECT_EQ(setup.setup().name, QStringLiteral("Analysis of 2 photos"));
+    // Only the report is written: the folder asked for is the report's, and the name pattern (not
+    // used) never blocks the start.
+    EXPECT_TRUE(setup.automatic_note().contains(QStringLiteral("only the batch report")));
+    const QUrl folder = setup.output_folder();
+    const QString pattern = setup.name_pattern();
+    setup.setNamePattern(QStringLiteral("{unknown-token}"));
+    EXPECT_FALSE(setup.pattern_problem().isEmpty());
+    EXPECT_NE(setup.start_hint(), setup.pattern_problem());
+    setup.setOutputFolder({});
+    EXPECT_EQ(setup.start_hint(), QStringLiteral("Choose a folder for the batch report."));
+    setup.setOutputFolder(folder);
+    setup.setNamePattern(pattern);
+
+    // Every photo left out: nothing to analyse.
+    const std::size_t asked_again = service.plans.size();
+    setup.setIncludeCapture(false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return service.plans.size() > asked_again; }, kWaitMs));
+    analyse.excluded = 2;
+    service.answer_plan(setup.plan_token(), analyse);
+    EXPECT_FALSE(setup.can_start());
+    EXPECT_EQ(setup.start_hint(), QStringLiteral("None of these photos can be analysed (see the reasons below)."));
+
+    // Off again: the choice to keep shots consistent is remembered, not sent.
+    setup.setAutomatic(BatchSetupModel::AutomaticOff);
+    EXPECT_TRUE(setup.keep_consistent());
+    EXPECT_FALSE(setup.setup().keep_consistent);
+    EXPECT_TRUE(setup.setup().name.isEmpty());
+}
+
 // --- BatchListModel ------------------------------------------------------------------------------
 
 class BatchListTest : public ::testing::Test {
@@ -254,6 +323,38 @@ protected:
     RecordingBatchService service;
     BatchListModel model{service};
 };
+
+TEST_F(BatchListTest, AutomaticBatchesAreTaggedCountWhatTheyDidAndShowTheRelatedShotPrePass) {
+    BatchSnapshot analysing = batch(6, BatchState::Running, 5, 0, 5);
+    analysing.automatic = BatchAutomatic::AnalyzeOnly;
+    analysing.keep_consistent = true;
+    analysing.analysis_pending = 3;
+    analysing.analysis_recorded = 2;
+    service.change(analysing);
+    ASSERT_EQ(model.count(), 1);
+    EXPECT_EQ(role(model, 0, BatchListModel::AutomaticKeyRole).toString(), QStringLiteral("analyzeOnly"));
+    EXPECT_EQ(role(model, 0, BatchListModel::AutomaticLabelRole).toString(),
+              QStringLiteral("Analyse only, related shots kept consistent"));
+    EXPECT_EQ(role(model, 0, BatchListModel::AnalysisRole).toString(),
+              QStringLiteral("Analysing related shots together first: 2 of 5 analysed"));
+    EXPECT_EQ(role(model, 0, BatchListModel::CompletedLabelRole).toString(), QStringLiteral("0 analysed"));
+
+    analysing.state = BatchState::Completed;
+    analysing.completed = 5;
+    analysing.queued = 0;
+    analysing.analysis_pending = -1;
+    analysing.analysis_recorded = -1;
+    service.change(analysing);
+    EXPECT_TRUE(role(model, 0, BatchListModel::AnalysisRole).toString().isEmpty());
+    EXPECT_EQ(role(model, 0, BatchListModel::CompletedLabelRole).toString(), QStringLiteral("5 analysed"));
+    EXPECT_TRUE(
+        role(model, 0, BatchListModel::AccessibleLabelRole).toString().contains(QStringLiteral("5 of 5 analysed")));
+
+    service.change(batch(7, BatchState::Completed, 2, 2));
+    EXPECT_EQ(role(model, 0, BatchListModel::AutomaticKeyRole).toString(), QStringLiteral("off"));
+    EXPECT_TRUE(role(model, 0, BatchListModel::AutomaticLabelRole).toString().isEmpty());
+    EXPECT_EQ(role(model, 0, BatchListModel::CompletedLabelRole).toString(), QStringLiteral("2 exported"));
+}
 
 TEST_F(BatchListTest, ListsNewestFirstAndInsertsNewBatchesAtTheTop) {
     service.list({batch(3, BatchState::Completed, 5, 5), batch(1, BatchState::Completed, 1, 1)});
@@ -529,6 +630,56 @@ TEST(BatchReportModelTest, ShowsTheSelectedBatchsReportWithFilters) {
     model.clear();
     EXPECT_EQ(model.count(), 0);
     EXPECT_FALSE(model.has_report());
+}
+
+TEST(BatchReportModelTest, AnAutomaticBatchsRowsSayWhatAutoDid) {
+    RecordingBatchService service;
+    BatchReportModel model(service);
+    BatchReportInfo report;
+    report.id = 9;
+    report.ok = true;
+    report.automatic = BatchAutomatic::AnalyzeOnly;
+    report.analysed = 1;
+    report.failed = 1;
+    BatchReportEntry analysed;
+    analysed.source_name = QStringLiteral("A.CR3");
+    analysed.outcome = BatchOutcome::Analysed;
+    analysed.automatic = true;
+    analysed.revision_number = 3;
+    analysed.confidence = 0.82;
+    analysed.attempt = 1;
+    analysed.review = {QStringLiteral("Lucent made a large automatic change; check that it suits the photo.")};
+    analysed.flags = {analysed.review.front(), QStringLiteral("Parts of the photo were overexposed in the camera.")};
+    analysed.locks = {QStringLiteral("Exposure is locked.")};
+    analysed.locks_prevented = true;
+    analysed.group = QStringLiteral("time-1");
+    BatchReportEntry failed;
+    failed.source_name = QStringLiteral("B.CR3");
+    failed.outcome = BatchOutcome::Failed;
+    failed.automatic = true;
+    report.entries = {analysed, failed};
+    model.show(9);
+    service.answer_report(9, report);
+    ASSERT_TRUE(model.has_report());
+    EXPECT_TRUE(model.automatic());
+    EXPECT_EQ(model.analysed(), 1);
+    EXPECT_EQ(role(model, 0, BatchReportModel::OutcomeKeyRole).toString(), QStringLiteral("analysed"));
+    EXPECT_EQ(role(model, 0, BatchReportModel::OutcomeLabelRole).toString(), QStringLiteral("Analysed"));
+    EXPECT_TRUE(role(model, 0, BatchReportModel::AutomaticRole).toBool());
+    EXPECT_EQ(role(model, 0, BatchReportModel::AutomaticSummaryRole).toString(),
+              QStringLiteral("Automatic revision 3 · confidence 82 % · conservative fallback after a failed full-size "
+                             "check · matched to related shots (time-1)"));
+    // The findings not already given as review reasons, and what the locks did.
+    EXPECT_EQ(role(model, 0, BatchReportModel::AutoNotesRole).toStringList(),
+              QStringList{QStringLiteral("Parts of the photo were overexposed in the camera.")});
+    EXPECT_EQ(role(model, 0, BatchReportModel::LockNotesRole).toStringList(),
+              QStringList{QStringLiteral("Exposure is locked.")});
+    EXPECT_TRUE(role(model, 0, BatchReportModel::LocksPreventedRole).toBool());
+    EXPECT_TRUE(role(model, 1, BatchReportModel::AutomaticSummaryRole).toString().isEmpty());
+    model.setFilter(QStringLiteral("analysed"));
+    EXPECT_EQ(model.filter(), QStringLiteral("analysed"));
+    ASSERT_EQ(model.count(), 1);
+    EXPECT_EQ(role(model, 0, BatchReportModel::SourceNameRole).toString(), QStringLiteral("A.CR3"));
 }
 
 TEST(BatchReportModelTest, AReloadUpdatesRowsInPlaceAndAnotherBatchResetsTheFilter) {

@@ -35,7 +35,7 @@ TEST(WorkerLaunch, ArgumentsRoundTrip) {
     launch.response_handle = 0x1B8;
     launch.parent_handle = 0x2C0;
     for (const char* spec : {"hang-job", "freeze", "crash-job", "allocate:1048576", "render-delay:250",
-                             "fake-commit:deadbee", "protocol:2-3"}) {
+                             "fake-commit:deadbee", "protocol:2-3", "fail-final-check:2"}) {
         ASSERT_TRUE(apply_test_hook(spec, launch.hooks)) << spec;
     }
     auto arguments = worker_arguments(launch);
@@ -98,7 +98,8 @@ TEST(WorkerLaunch, TestHookSpecsAreValidated) {
     for (const char* spec : {"", "hang", "hang-job:1", "allocate", "allocate:", "allocate:0", "allocate:x",
                              "allocate:1099511627777", "render-delay:0", "render-delay:600001", "fake-commit:",
                              "fake-commit:a b", "fake-commit:\"x\"", "protocol:0-1", "protocol:2-1", "protocol:1",
-                             "protocol:1-", "freeze:yes"}) {
+                             "protocol:1-", "freeze:yes", "fail-final-check:0", "fail-final-check:17",
+                             "fail-final-check"}) {
         TestHooks hooks;
         auto applied = apply_test_hook(spec, hooks);
         EXPECT_FALSE(applied) << spec;

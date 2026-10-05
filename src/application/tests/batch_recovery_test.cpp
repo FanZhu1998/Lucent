@@ -2,6 +2,8 @@
 // (lucent_batch_test_coordinator) is killed between the steps of the publication protocol; a new
 // BatchService over the same catalog must finish the batch with no duplicate success, no output
 // published twice, no unrecorded or partial output left in the folder, and the originals intact.
+// Automatic batches are killed after an analysis was answered, recorded (the related-shot pre-pass)
+// or frozen: one freeze per photo, recorded analyses never repeated.
 
 #include <windows.h>
 
@@ -9,14 +11,17 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include <lucent/analysis/consistency.hpp>
 #include <lucent/application/batch_service.hpp>
 
 #include "batch_test_support.hpp"
@@ -90,6 +95,16 @@ struct Crash {
         const std::optional<DWORD> code =
             run_coordinator({(root / L"data\\lucent.catalog").wstring(), out.wstring(),
                              std::wstring(point.begin(), point.end()), L"{original-stem}_Lucent_{revision}", collisions});
+        ASSERT_TRUE(code.has_value()) << "the coordinator did not end";
+        ASSERT_EQ(*code, 77u) << "the coordinator did not reach " << point;
+    }
+
+    // The same for an automatic batch: `automatic` "auto" or "analyze-only", `mode` "consistent"
+    // (related shots kept consistent, one user group) or "independent".
+    void kill_automatic_at(const std::string& point, const std::wstring& automatic, const std::wstring& mode) {
+        const std::optional<DWORD> code = run_coordinator(
+            {(root / L"data\\lucent.catalog").wstring(), out.wstring(), std::wstring(point.begin(), point.end()),
+             L"{original-stem}_Lucent_{revision}", L"unique_name", automatic, mode});
         ASSERT_TRUE(code.has_value()) << "the coordinator did not end";
         ASSERT_EQ(*code, 77u) << "the coordinator did not reach " << point;
     }
@@ -309,6 +324,134 @@ TEST(BatchRecoveryLocked, AnOutputHeldByAnotherProgramIsCheckedWhenItIsFree) {
     const catalog::JobRecord first = check_recovered(crash, h);
     EXPECT_EQ(first.attempts, 1u);
     EXPECT_EQ(first.stage, catalog::JobStage::Complete);
+}
+
+// ---- Automatic batches (ADR 0013): the coordinator is killed after a photo's analysis was answered
+// but before anything of it was written, after the related-shot pre-pass recorded it, or after the
+// job was frozen. The restarted service finishes the batch with exactly one set of automatic
+// revisions per photo (no second freeze), every recorded analysis unchanged (never repeated), and
+// receipts bound to the effective revisions.
+
+class AutoRecovery : public ::testing::TestWithParam<std::tuple<const char*, const wchar_t*>> {};
+
+TEST_P(AutoRecovery, FinishesWithOneFreezePerPhotoAfterACrash) {
+    const std::string point = std::get<0>(GetParam());
+    const std::wstring mode = std::get<1>(GetParam());
+    Crash crash;
+    crash.kill_automatic_at(point, L"auto", mode);
+    if (HasFatalFailure()) {
+        return;
+    }
+    // What the killed coordinator had recorded.
+    std::map<std::int64_t, std::string> recorded;
+    std::map<std::int64_t, catalog::AutoJobState> states;
+    {
+        auto catalog = ts::open_catalog(crash.root / L"data" / L"lucent.catalog");
+        ASSERT_NE(catalog, nullptr);
+        catalog::JobQuery query;
+        auto jobs = catalog->query([&](catalog::ReadTransaction& tx) { return tx.list_jobs(query); });
+        ASSERT_TRUE(jobs);
+        for (const catalog::JobRecord& job : *jobs) {
+            states.emplace(job.id.value, job.auto_state);
+            if (job.analysis_json) {
+                recorded.emplace(job.id.value, *job.analysis_json);
+            }
+        }
+    }
+    if (point == "answered") {
+        EXPECT_TRUE(recorded.empty()) << "nothing of an answered analysis is written before it is recorded";
+    } else {
+        EXPECT_EQ(recorded.size(), 1u);
+    }
+    if (point == "frozen") {
+        EXPECT_EQ(std::count_if(states.begin(), states.end(),
+                                [](const auto& s) { return s.second == catalog::AutoJobState::Frozen; }),
+                  1);
+    }
+
+    ts::BatchHarness h(crash.root);
+    const RecoveryReport recovery = h.batches().last_recovery();
+    if (point == "analysed") {
+        // The pre-pass recorded the analysis and gave the job back in one transaction: no lease left.
+        EXPECT_EQ(recovery.reclaimed, 0u);
+    } else {
+        EXPECT_EQ(recovery.reclaimed, 1u);
+        EXPECT_EQ(recovery.requeued, 1u);
+    }
+    auto batches = h.batches().list();
+    ASSERT_TRUE(batches && batches->size() == 1u);
+    const catalog::BatchId id = batches->front().record.id;
+    ASSERT_TRUE(wait_completed(h.batches(), id, 300s));
+    EXPECT_EQ(h.record(id).counts.complete, 2u);
+    for (const catalog::JobRecord& job : h.jobs(id)) {
+        EXPECT_EQ(job.auto_state, catalog::AutoJobState::Frozen);
+        EXPECT_LE(job.interruptions, 1u);
+        ASSERT_TRUE(job.revision);
+        if (const auto kept = recorded.find(job.id.value); kept != recorded.end()) {
+            EXPECT_EQ(job.analysis_json, std::optional<std::string>(kept->second)) << "never analysed again";
+        }
+        // One freeze: every record of the photo is this job's, with one optimiser's choice.
+        auto records = h.catalog().query([&](catalog::ReadTransaction& tx) { return tx.list_auto_analyses(*job.item); });
+        ASSERT_TRUE(records);
+        ASSERT_FALSE(records->empty());
+        EXPECT_EQ(std::count_if(records->begin(), records->end(),
+                                [](const catalog::AutoAnalysisRecord& r) { return r.attempt == 0; }),
+                  1)
+            << "job " << job.id.value << " was frozen once";
+        for (const catalog::AutoAnalysisRecord& r : *records) {
+            EXPECT_EQ(r.job, job.id);
+        }
+        EXPECT_EQ(records->back().revision, *job.revision);
+        if (mode == L"consistent") {
+            EXPECT_EQ(records->back().consistency_version, analysis::kConsistencyVersion);
+        }
+        // The receipt is the effective revision's.
+        auto receipt = h.catalog().query([&](catalog::ReadTransaction& tx) { return tx.find_receipt(job.id); });
+        ASSERT_TRUE(receipt && *receipt);
+        EXPECT_EQ((*receipt)->identity_sha256, job.identity_sha256);
+        auto details = read_receipt_details((*receipt)->settings_json);
+        ASSERT_TRUE(details);
+        EXPECT_EQ(details->revision, job.revision);
+        EXPECT_EQ(details->recipe_sha256, job.settings_sha256);
+        EXPECT_EQ(ts::file_sha256((*receipt)->final_path), (*receipt)->output_sha256);
+    }
+    EXPECT_TRUE(ts::leftovers(crash.out).empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(AutomaticSteps, AutoRecovery,
+                         ::testing::Values(std::make_tuple("answered", L"independent"),
+                                           std::make_tuple("frozen", L"independent"),
+                                           std::make_tuple("answered", L"consistent"),
+                                           std::make_tuple("analysed", L"consistent")),
+                         [](const ::testing::TestParamInfo<std::tuple<const char*, const wchar_t*>>& info) {
+                             return std::string(std::get<0>(info.param)) +
+                                    (std::wstring(std::get<1>(info.param)) == L"consistent" ? "_consistent"
+                                                                                            : "_independent");
+                         });
+
+// An interrupted job of an Analyse only batch publishes nothing: it is requeued at once, even while
+// the batch's (report) folder cannot be reached.
+TEST(AutoRecoveryAnalyzeOnly, IsNotHeldBackByAnUnreachableReportFolder) {
+    Crash crash;
+    crash.kill_automatic_at("answered", L"analyze-only", L"independent");
+    if (HasFatalFailure()) {
+        return;
+    }
+    const std::filesystem::path away = crash.dir.path() / L"away";
+    if (std::filesystem::exists(crash.out)) {
+        std::filesystem::rename(crash.out, away);
+    }
+    ts::BatchHarness h(crash.root, reconnecting_options());
+    const RecoveryReport recovery = h.batches().last_recovery();
+    EXPECT_EQ(recovery.deferred, 0u) << "nothing of an analysis is in the output folder";
+    EXPECT_EQ(recovery.reclaimed, 1u);
+    auto batches = h.batches().list();
+    ASSERT_TRUE(batches && batches->size() == 1u);
+    const catalog::BatchId id = batches->front().record.id;
+    ASSERT_TRUE(ts::eventually([&] { return h.record(id).counts.complete == 2u; }, 300s));
+    for (const catalog::JobRecord& job : h.jobs(id)) {
+        EXPECT_EQ(job.auto_state, catalog::AutoJobState::Frozen);
+    }
 }
 
 TEST(BatchRecoveryReport, ABatchThatFinishedJustBeforeAStopGetsItsReport) {

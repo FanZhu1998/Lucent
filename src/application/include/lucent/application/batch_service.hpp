@@ -98,6 +98,36 @@
 // so outputs are never published twice and verified outputs are never failed for being out of
 // reach. A batch that finished just before Lucent stopped gets its report files then.
 //
+// Automatic settings (BatchRequest::automatic; blueprint section 2, "Automatic batch development";
+// section 6 steps 5-7; ADR 0013). In Auto and AnalyzeOnly batches every job is analysed in its
+// worker (an analyze job, protocol version 2: app::run_automatic) from the recipe frozen at
+// submission (its locks and locked values), before anything is rendered for export:
+//   * The job's automatic state moves Pending -> Analysed -> Frozen in the journal
+//     (catalog/jobs.hpp). Freezing writes, in ONE catalog transaction, an automatic revision per
+//     attempt of the full-resolution final check up to the effective one (origin Auto, derived from
+//     the frozen recipe, each with its analysis record: versions, confidence, flags with reasons,
+//     compact diagnostics) and rebinds the job's revision, settings and identity to the effective
+//     revision: the export identity, the output name's revision number and the receipt are the
+//     effective revision's. The effective revision becomes the item's current one unless the
+//     photographer edited it meanwhile (the editing rule of blueprint section 2). A low-confidence
+//     result is the restrained edit, exported with its review flags in the receipt and report; a
+//     photo whose final check passes no attempt fails; an undecodable or unsupported photo is
+//     skipped with its reason; the others continue.
+//   * Without keep_consistent the analysis and the final check run in one analyze job and the same
+//     attempt goes on to export. With keep_consistent the batch first runs the related-shot
+//     pre-pass: every job is analysed (analysis only) and its analysis document is recorded
+//     (Analysed) before it is given back, so a restart never analyses it again; while any job of
+//     the batch is still Pending, only Pending jobs are claimed. Then the groups (capture time,
+//     visual similarity, illumination; BatchItem::group overrides; BatchItem::anchor marks anchors)
+//     and each member's consistency target are computed from the recorded documents (deterministic,
+//     so the same after a restart), and each job's second analyze job regularises it towards its
+//     target and runs the final check before it is frozen and exported.
+//   * AnalyzeOnly batches stop there: a frozen job completes without an output (its automatic
+//     revisions are the result, editable in the editor); the report lists it as analysed with its
+//     review flags.
+// Existing outputs (ExistingOutputs::Skip) are not looked up for automatic jobs at submission,
+// since their identity is known only once they are frozen.
+//
 // Pause lets running jobs finish their current attempt (their outputs are published) and
 // dispatches nothing new. Cancel cancels queued jobs and asks running workers to stop (they are
 // terminated after cancel_grace); outputs already published stay valid. Resume continues.
@@ -161,12 +191,27 @@ struct FrozenRecipe {
 struct BatchItem {
     ItemId item;
     std::optional<FrozenRecipe> recipe;  // std::nullopt: submit() freezes the current recipe
+    // Automatic batches keeping related shots consistent: a related-shot group chosen by the user
+    // (items with the same group form exactly that group; analysis::group_related_shots), and
+    // whether the photo is an anchor of its group (its current settings set the group's look and are
+    // kept). Ignored otherwise. A group name is 1..64 bytes of UTF-8.
+    std::optional<std::string> group;
+    bool anchor = false;
 };
 
 struct BatchFolder {
     std::filesystem::path path;  // imported (with BatchServiceOptions::registry) before selection
     bool include_subfolders = true;
 };
+
+// Automatic settings of a batch (see "Automatic settings" above).
+enum class AutomaticSettings : std::uint8_t {
+    Off = 0,          // export the recipe frozen at submission
+    Auto = 1,         // analyse, freeze as an automatic revision, check at full resolution, export
+    AnalyzeOnly = 2,  // analyse and freeze as automatic revisions; export nothing
+};
+
+[[nodiscard]] std::string_view to_string(AutomaticSettings value) noexcept;  // "off", "auto", "analyze_only"
 
 // What happens to a job whose identical output (same identity) is already in the destination.
 enum class ExistingOutputs : std::uint8_t {
@@ -193,6 +238,10 @@ struct BatchRequest {
     // An interactive single export (ExportService): dispatched before other batches' jobs and
     // shown as one photo rather than as a batch (BatchStatus::single_export).
     bool single_export = false;
+    // Automatic settings (see "Automatic settings" above) and whether related photographs are kept
+    // visually consistent (needs Auto or AnalyzeOnly; InvalidArgument otherwise).
+    AutomaticSettings automatic = AutomaticSettings::Off;
+    bool keep_consistent = false;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -222,6 +271,11 @@ enum class PlanNotice : std::uint8_t {
     WritesGps = 4,             // GPS positions are written into the outputs
     MayRunOutOfSpace = 5,      // free_bytes < estimated_output_bytes (an upper bound)
     TooFullForOne = 6,         // free_bytes < largest_output_bytes + reserve: submit() refuses
+    // Every photo is analysed first (a few seconds each, about as long as its export); outputs are
+    // named after the automatic revisions, so example names may show an earlier revision number.
+    AutomaticSettings = 7,
+    AnalyzeOnly = 8,       // nothing is exported: automatic revisions and a report only
+    KeepConsistent = 9,    // related photographs are analysed together first (a second analysis each)
 };
 
 struct PlanExclusion {
@@ -310,8 +364,15 @@ struct BatchStatus {
     std::optional<double> eta_seconds;
     bool single_export = false;            // BatchRequest::single_export
     std::uint64_t excluded = 0;            // photographs left out when the batch was created
-    std::uint64_t review_recommended = 0;  // exported outputs whose receipt recommends a review
+    // Exported outputs whose receipt recommends a review, plus analysed photos (AnalyzeOnly) whose
+    // automatic revision's record does.
+    std::uint64_t review_recommended = 0;
     std::uint64_t retryable = 0;           // failed jobs retry_failed() requeues
+    catalog::AutoMode automatic = catalog::AutoMode::None;
+    bool keep_consistent = false;
+    // Automatic batches: their unfinished jobs by automatic state (the pre-pass progresses while
+    // pending falls).
+    std::optional<catalog::AutoJobCounts> automatic_counts;
     // A batch of one photograph: its output once exported (or the existing file it was skipped
     // for), and why it was not exported (failed, skipped or cancelled with a reason).
     std::optional<std::filesystem::path> output;
@@ -401,10 +462,32 @@ enum class ReportOutcome : std::uint8_t {
     Skipped = 2,  // already exported, or excluded at submission
     Failed = 3,
     Cancelled = 4,
-    Pending = 5,  // queued or running (a report of an unfinished batch)
+    Pending = 5,   // queued or running (a report of an unfinished batch)
+    Analysed = 6,  // AnalyzeOnly: automatic revisions written, nothing exported
 };
 
 [[nodiscard]] std::string_view to_string(ReportOutcome outcome) noexcept;
+
+// What automatic settings did to one photo (automatic batches), from its effective revision's
+// analysis record.
+struct AutomaticReport {
+    catalog::AutoJobState state = catalog::AutoJobState::None;
+    std::optional<catalog::RevisionId> revision;  // the effective automatic revision (once frozen)
+    std::uint32_t revision_number = 0;
+    double confidence = 0.0;
+    std::uint32_t attempt = 0;     // the effective attempt (0: the optimiser's choice; n: a fallback)
+    std::uint32_t attempts = 0;    // automatic revisions written (failed attempts included)
+    bool review = false;           // the record recommends a review
+    std::vector<std::string> flags;  // user-facing English, one per flag
+    std::optional<std::string> group;    // the related-shot group it was regularised in (or, for an anchor, set)
+    bool locks_prevented_targets = false;
+    std::vector<std::string> locks;      // user-facing English: what the locks did
+    // The photo was edited while the batch ran: its automatic revisions are a branch of its history,
+    // not its current recipe (recipe_store.hpp, kAutomaticBranchNote).
+    bool branch = false;
+    // A caller-marked related-shot anchor: its own settings were kept (AutoAttemptKind::Anchor).
+    bool anchor = false;
+};
 
 struct ReportEntry {
     std::optional<catalog::JobId> job;  // std::nullopt for an exclusion
@@ -421,6 +504,7 @@ struct ReportEntry {
     std::vector<std::string> review;  // why a review is recommended (empty: not recommended)
     std::uint32_t attempts = 0;
     std::optional<ReceiptDetails> details;  // Exported: what the receipt records
+    std::optional<AutomaticReport> automatic;  // automatic batches
 };
 
 struct BatchReport {
@@ -431,7 +515,8 @@ struct BatchReport {
     std::uint64_t failed = 0;
     std::uint64_t cancelled = 0;
     std::uint64_t pending = 0;
-    std::uint64_t review_recommended = 0;  // exported outputs with review notes
+    std::uint64_t analysed = 0;            // AnalyzeOnly: photos with automatic revisions
+    std::uint64_t review_recommended = 0;  // exported (or analysed) photos with review notes
     std::vector<ReportEntry> entries;      // jobs in batch order, then exclusions
     std::vector<std::string> notes;        // batch-level notes (weaker durability of the destination, ...)
     catalog::Timestamp generated_at{};
@@ -467,6 +552,10 @@ struct BatchMemoryOptions {
     // 24 bytes per pixel for an export render (1 GiB for 45 MP); the W7 measurement of the 45 MP
     // fixture's JPEG export was 731 MiB of peak commit.
     double default_bytes_per_pixel = 24.0;
+    // The same for attempts that run an automatic analysis (automatic batches): the full-resolution
+    // final check holds stage one, the image context, the baseline's features and one stage two
+    // (app::estimate_automatic_memory: about 60-70 bytes per pixel).
+    double default_auto_bytes_per_pixel = 72.0;
     // Margin of measured estimates (1.15: 15 % above the largest measured job).
     double measured_margin = 1.15;
     // A further worker is admitted only while the system's available physical memory exceeds its
@@ -490,7 +579,9 @@ struct BatchTestHooks {
     std::vector<std::vector<std::string>> worker_hooks_by_start;
     // Called on the slot thread at the named points of the publication protocol: "reserved",
     // "temp_written", "verified", "before_rename", "after_rename", "published", "receipt",
-    // "complete". A test coordinator process ends itself here to simulate a crash.
+    // "complete"; and of automatic jobs: "answered" (the worker's analysis arrived; nothing of it is
+    // written yet), "analysed" (the pre-pass recorded a job's analysis), "frozen". A test coordinator
+    // process ends itself here to simulate a crash.
     std::function<void(std::string_view point, catalog::JobId job)> on_point;
     // Replaces the free-space query of destination folders (bytes available; std::nullopt:
     // unknown).

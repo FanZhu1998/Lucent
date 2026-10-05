@@ -346,7 +346,8 @@ TEST_F(QmlShellTest, TheEditPanelMakesOneRevisionPerGestureAndComparesBeforeAndA
                              "field_exposure", "lock_exposure", "autoButton"}) {
         EXPECT_FALSE(visual_items(name, true).isEmpty()) << name;
     }
-    EXPECT_FALSE(visual_items("autoButton", true).front()->isEnabled());  // W8
+    EXPECT_TRUE(visual_items("autoButton", true).front()->isEnabled());  // W8
+    EXPECT_FALSE(child<QQuickItem>("autoSettingsPanel")->isVisible());   // nothing automatic yet
     EXPECT_FALSE(child<QQuickItem>("readOnlyBanner")->isVisible());
     QQuickItem* slider = visual_items("slider_exposure", true).front();
 
@@ -513,7 +514,9 @@ TEST_F(QmlShellTest, TheBatchDialogShowsExamplesAndTheExportsViewListsTheBatchWi
     EXPECT_EQ(setup.outputs(), 3);
     EXPECT_EQ(setup.excluded_count(), 1);  // the Unsupported photo, with its reason
     EXPECT_TRUE(child("batchStart")->property("enabled").toBool());
-    EXPECT_FALSE(child<QQuickItem>("batchAutomaticSettings")->isEnabled());
+    // W8: automatic settings are offered, off by default; keeping shots consistent needs them.
+    EXPECT_TRUE(child("batchAutomaticOff")->property("checked").toBool());
+    EXPECT_FALSE(child("batchKeepConsistent")->property("enabled").toBool());
     EXPECT_FALSE(child("batchIncludeGps")->property("checked").toBool());
 
     // Replacing files asks first; keeping them changes nothing.
@@ -554,6 +557,127 @@ TEST_F(QmlShellTest, TheBatchDialogShowsExamplesAndTheExportsViewListsTheBatchWi
     EXPECT_EQ(child("reportEntries")->property("count").toInt(), 4);
     EXPECT_TRUE(controller->status_message().contains(QStringLiteral("finished")));
     EXPECT_FALSE(visual_items("batchRetry", true).isEmpty());  // a failed photo can be retried
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// W8: Auto from the Edit view (Ctrl+Shift+A): its run with Cancel in the Automatic settings panel,
+// then the automatic revision with its summary (confidence, review, fallback), undo back to the
+// recipe before it; the library's Review badge; the batch dialog's automatic settings and an
+// analysing-only batch in the Exports view. Without a warning.
+TEST_F(QmlShellTest, AutoShowsItsRunAndWhatItDidAndBatchesOfferAutomaticSettings) {
+    write_photos(12);
+    import_folder();
+    // The Review badge marks the flagged photos (the simulation flags some).
+    int flagged = -1;
+    for (int row = 0; row < controller->library()->count(); ++row) {
+        if (controller->library()->data(controller->library()->index(row), LibraryModel::ReviewRole).toBool()) {
+            flagged = row;
+            break;
+        }
+    }
+    if (flagged >= 0) {
+        controller->set_current_index(flagged);
+        EXPECT_TRUE(QTest::qWaitFor([this] { return !visual_items("reviewBadge", true).isEmpty(); }, kWaitMs));
+        // The badge says it; the card's flag line does not repeat it.
+        for (QQuickItem* line : visual_items("flagLine", true)) {
+            EXPECT_FALSE(line->property("text").toString().contains(QStringLiteral("Review recommended")));
+        }
+    }
+
+    window->requestActivate();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window));
+    ASSERT_TRUE(controller->openItem(0));
+    auto* viewer = child<QQuickItem>("previewViewer");
+    ASSERT_TRUE(QTest::qWaitFor([viewer] { return viewer->property("status").toInt() == kImageStatusReady; },
+                                kWaitMs));
+    ASSERT_TRUE(settle());
+    auto* edits = dynamic_cast<fakes::FakeEditService*>(&controller->edit_service());
+    ASSERT_NE(edits, nullptr);
+    EditSession& edit = *controller->edit();
+    AutoSettingsModel& automatic = *edit.automatic();
+    auto* panel = child<QQuickItem>("autoSettingsPanel");
+    ASSERT_NE(panel, nullptr);
+    EXPECT_FALSE(panel->isVisible());
+
+    // A run in progress: the panel shows it with Cancel; the button waits for it.
+    edits->hold_auto(true);
+    viewer->forceActiveFocus(Qt::OtherFocusReason);
+    QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier | Qt::ShiftModifier);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return automatic.running() && automatic.progress() > 0.0; }, kWaitMs));
+    EXPECT_TRUE(panel->isVisible());
+    EXPECT_FALSE(visual_items("autoProgressRow", true).isEmpty());
+    EXPECT_FALSE(visual_items("autoCancelButton", true).isEmpty());
+    EXPECT_FALSE(visual_items("autoButton", true).front()->isEnabled());
+    EXPECT_TRUE(controller->busy());
+
+    // It ends: the automatic revision is shown with what Auto did.
+    edits->hold_auto(false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !automatic.running() && automatic.has_summary(); }, kWaitMs));
+    ASSERT_TRUE(settle());
+    EXPECT_NEAR(edit.value(QStringLiteral("exposure")), 0.5, 1e-9);
+    EXPECT_EQ(edit.history()->count(), 2);  // the automatic revision and "As shot"
+    EXPECT_TRUE(edit.history()->data(edit.history()->index(0), EditHistoryModel::TitleRole)
+                    .toString()
+                    .startsWith(QStringLiteral("Auto: ")));
+    EXPECT_FALSE(visual_items("autoSummary", true).isEmpty());
+    EXPECT_EQ(child("autoConfidence")->property("text").toString(), QStringLiteral("Confidence: high (82 %)"));
+    EXPECT_TRUE(child("autoChanged")->property("text").toString().contains(QStringLiteral("Exposure +0.50 EV")));
+    EXPECT_FALSE(child<QQuickItem>("autoReview")->isVisible());
+    EXPECT_TRUE(controller->status_message().startsWith(QStringLiteral("Auto saved its settings")));
+    EXPECT_TRUE(visual_items("autoButton", true).front()->isEnabled());
+
+    // Undo returns to the recipe before Auto.
+    QTest::keyClick(window, Qt::Key_Z, Qt::ControlModifier);
+    ASSERT_TRUE(settle());
+    EXPECT_DOUBLE_EQ(edit.value(QStringLiteral("exposure")), 0.0);
+    EXPECT_FALSE(automatic.has_summary());
+
+    // A failed full-size check: the conservative fallback, recommended for review, with why.
+    edits->fail_next_auto();
+    QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier | Qt::ShiftModifier);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !automatic.running() && automatic.has_summary(); }, kWaitMs));
+    ASSERT_TRUE(settle());
+    EXPECT_TRUE(automatic.review());
+    EXPECT_TRUE(child<QQuickItem>("autoReview")->isVisible());
+    EXPECT_TRUE(child<QQuickItem>("autoFallback")->isVisible());
+    EXPECT_EQ(edit.history()->count(), 4);  // both attempts are kept
+
+    // The batch dialog: automatic settings with their note; keeping shots consistent needs them.
+    auto* dialog = child("batchExportDialog");
+    ASSERT_NE(dialog, nullptr);
+    controller->showView(AppController::Library);
+    ASSERT_TRUE(controller->openBatchExport());
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    BatchSetupModel& setup = *controller->batch_setup();
+    setup.setOutputFolder(QUrl::fromLocalFile(folder.filePath(QStringLiteral("out"))));
+    EXPECT_FALSE(child("batchKeepConsistent")->property("enabled").toBool());
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("batchAutomaticAnalyze"), "clicked"));
+    EXPECT_EQ(setup.automatic(), BatchSetupModel::AutomaticAnalyzeOnly);
+    EXPECT_TRUE(child("batchKeepConsistent")->property("enabled").toBool());
+    EXPECT_EQ(child("batchStart")->property("text").toString(), QStringLiteral("Start analysis"));
+    // Nothing is exported: no export settings are asked for.
+    EXPECT_EQ(dialog->property("title").toString(), QStringLiteral("Analyse batch"));
+    EXPECT_FALSE(child<QQuickItem>("batchPresetJpeg")->isVisible());
+    EXPECT_FALSE(child<QQuickItem>("batchNamePattern")->isVisible());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return setup.plan_valid() && !setup.planning(); }, kWaitMs));
+    EXPECT_FALSE(setup.analysis_notes().isEmpty());
+    EXPECT_EQ(child("batchAnalysisNotes")->property("count").toInt(), setup.analysis_notes().size());
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("batchStart"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return !dialog->property("visible").toBool(); }, kWaitMs));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return controller->batches()->count() == 1; }, kWaitMs));
+    ASSERT_TRUE(settle());
+    EXPECT_FALSE(visual_items("batchAutomaticTag", true).isEmpty());
+    const BatchSnapshot* batch = controller->batches()->batch_at(0);
+    ASSERT_NE(batch, nullptr);
+    EXPECT_EQ(batch->automatic, BatchAutomatic::AnalyzeOnly);
+    EXPECT_TRUE(controller->status_message().contains(QStringLiteral("analysed")))
+        << controller->status_message().toStdString();
+    // The finished batch's report: every photo analysed, with what Auto did.
+    ASSERT_TRUE(QTest::qWaitFor(
+        [this] { return controller->batch_report()->has_report() && controller->batch_report()->analysed() == 12; },
+        kWaitMs));
+    ASSERT_TRUE(settle());
+    EXPECT_TRUE(QTest::qWaitFor([this] { return !visual_items("reportAutomatic", true).isEmpty(); }, kWaitMs));
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

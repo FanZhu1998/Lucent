@@ -9,6 +9,10 @@
 namespace lucent::ui {
 namespace {
 
+QString tr_text(const char* text) {
+    return QCoreApplication::translate("lucent::ui::BatchReportModel", text);
+}
+
 bool same_progress(const BatchSnapshot& a, const BatchSnapshot& b) {
     return a.state == b.state && a.completed == b.completed && a.failed == b.failed && a.skipped == b.skipped &&
            a.cancelled == b.cancelled && a.queued == b.queued && a.review == b.review;
@@ -81,11 +85,50 @@ QVariant BatchReportModel::data(const QModelIndex& index, int role) const {
             parts << entry->action;
         }
         parts << entry->review;
+        if (entry->automatic) {
+            if (const QString summary = automatic_summary(*entry); !summary.isEmpty()) {
+                parts << summary;
+            }
+        }
         return parts.join(QStringLiteral(", "));
     }
+    case AutomaticRole:
+        return entry->automatic;
+    case AutomaticSummaryRole:
+        return entry->automatic ? automatic_summary(*entry) : QString();
+    case AutoNotesRole: {
+        QStringList notes;
+        for (const QString& flag : entry->flags) {
+            if (!entry->review.contains(flag)) {
+                notes << flag;
+            }
+        }
+        return notes;
+    }
+    case LockNotesRole:
+        return entry->locks;
+    case LocksPreventedRole:
+        return entry->locks_prevented;
     default:
         return {};
     }
+}
+
+QString BatchReportModel::automatic_summary(const BatchReportEntry& entry) const {
+    QStringList parts;
+    if (entry.revision_number > 0) {
+        parts << tr_text("Automatic revision %1").arg(entry.revision_number);
+    }
+    if (entry.confidence >= 0.0) {
+        parts << tr_text("confidence %1 %").arg(locale_.toString(qRound(entry.confidence * 100.0)));
+    }
+    if (entry.attempt > 0) {
+        parts << tr_text("conservative fallback after a failed full-size check");
+    }
+    if (!entry.group.isEmpty()) {
+        parts << tr_text("matched to related shots (%1)").arg(entry.group);
+    }
+    return parts.join(QStringLiteral(" · "));
 }
 
 QHash<int, QByteArray> BatchReportModel::roleNames() const {
@@ -94,6 +137,8 @@ QHash<int, QByteArray> BatchReportModel::roleNames() const {
         {OutcomeLabelRole, "outcomeLabel"}, {OutputRole, "output"},         {OutputNameRole, "outputName"},
         {ReasonRole, "reason"},             {ActionRole, "action"},         {ReviewRole, "review"},
         {HasReviewRole, "hasReview"},       {AttemptsRole, "attempts"},     {AccessibleLabelRole, "accessibleLabel"},
+        {AutomaticRole, "automatic"},       {AutomaticSummaryRole, "automaticSummary"},
+        {AutoNotesRole, "autoNotes"},       {LockNotesRole, "lockNotes"},   {LocksPreventedRole, "locksPrevented"},
     };
 }
 
@@ -144,7 +189,7 @@ void BatchReportModel::reload() {
 
 void BatchReportModel::setFilter(const QString& filter) {
     const QString valid = filter == u"exported" || filter == u"skipped" || filter == u"failed" ||
-                                  filter == u"review" || filter == u"cancelled"
+                                  filter == u"review" || filter == u"cancelled" || filter == u"analysed"
                               ? filter
                               : QStringLiteral("all");
     if (valid == filter_) {

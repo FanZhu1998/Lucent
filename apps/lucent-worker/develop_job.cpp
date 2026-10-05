@@ -24,6 +24,7 @@
 #include <lucent/raw/capture_metadata.hpp>
 #include <lucent/workers/job_output.hpp>
 
+#include "analysis_job.hpp"
 #include "export_metadata.hpp"
 
 namespace lucent::worker_app {
@@ -173,6 +174,17 @@ private:
 
 DevelopJobRunner::DevelopJobRunner(std::shared_ptr<const raw::DecoderRegistry> registry, DevelopJobOptions options)
     : registry_(std::move(registry)), options_(std::move(options)) {}
+
+Expected<workers::AnalysisResult> DevelopJobRunner::analyze(const workers::AnalysisRequest& request,
+                                                            workers::JobContext& context) {
+    if (!registry_) {
+        return fail(ErrorCode::InvalidArgument, "the worker has no decoder registry", std::string(kWhere));
+    }
+    AnalysisJobOptions options;
+    options.decode_limits = options_.decode_limits;
+    options.parallel = options_.parallel;
+    return run_analysis_job(*registry_, request, context, options);
+}
 
 Expected<workers::JobResult> DevelopJobRunner::run(const workers::JobRequest& request, workers::JobContext& context) {
     const auto started = Clock::now();

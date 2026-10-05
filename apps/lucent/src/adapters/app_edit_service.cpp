@@ -89,12 +89,22 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         // The newest current frame, for the clipping overlay toggle.
         EditFramePtr last_frame;
         std::shared_ptr<const app::ClippingMask> last_mask;
+        // The current revision of the newest published state (0: as shot), once one was published.
+        quint64 revision = 0;
+        bool revision_known = false;
+    };
+
+    // An Auto run this adapter started (until it finished).
+    struct AutoRun {
+        std::uint64_t ticket = 0;  // 0 until AutoService::run() answered
+        bool cancel = false;       // cancel_auto() before the ticket was known
     };
 
     State(Backend& backend, QThreadPool& command_pool, QThreadPool& conversion_pool,
           std::shared_ptr<UiDispatcher> ui, AppEditService* service, RenderEventSink sink)
         : recipes(&backend.recipes()),
           develop(&backend.develop()),
+          automatic(backend.automatic()),
           library(&backend.library()),
           registry(&backend.registry()),
           activity(&backend.interactive()),
@@ -107,6 +117,7 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
     // Valid while the owner lives (it waits for every task before releasing them).
     app::RecipeService* recipes;
     app::DevelopPreviewService* develop;
+    app::AutoService* automatic;  // null: Auto is unavailable in this session
     app::Library* library;
     const raw::DecoderRegistry* registry;
     InteractiveActivity* activity;
@@ -131,6 +142,7 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
     std::optional<app::RecipeClipboard> clipboard;
     std::unordered_map<ItemId, Session> sessions;
     std::unordered_map<ItemId, PendingTransient> transients;
+    std::unordered_map<ItemId, AutoRun> auto_runs;
 
     // ---- Helpers --------------------------------------------------------------------------------
 
@@ -187,7 +199,144 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             return;
         }
         QList<EditHistoryEntry> entries = to_edit_history(*history);
-        dispatcher->post([owner = owner, item, entries] { emit owner->history_changed(item, entries); });
+        AutoSummary summary = auto_summary(item, *history);
+        dispatcher->post([owner = owner, item, entries, summary] {
+            emit owner->history_changed(item, entries);
+            emit owner->auto_summary_changed(item, summary);
+        });
+    }
+
+    // What automatic settings did to the current revision (empty unless it is an automatic one).
+    AutoSummary auto_summary(ItemId item, const app::RecipeHistory& history) {
+        for (const app::HistoryEntry& entry : history.entries) {
+            if (!entry.current || entry.info.origin != catalog::RevisionOrigin::Auto) {
+                continue;
+            }
+            auto records = recipes->automatic_analyses(app_id(item));
+            if (!records) {
+                core::log_warn(kLog, "the analysis records of item {} cannot be read: {}", item,
+                               records.error().describe());
+                return {};
+            }
+            for (const catalog::AutoAnalysisRecord& record : *records) {
+                if (record.revision == entry.info.id) {
+                    return to_auto_summary(record, entry);
+                }
+            }
+            return {};  // an automatic revision without a record (written by a newer Lucent)
+        }
+        return {};
+    }
+
+    // ---- Auto -------------------------------------------------------------------------------------
+
+    void post_auto_finished(const AutoOutcome& outcome) {
+        dispatcher->post([owner = owner, outcome] { owner->note_auto_finished(outcome); });
+    }
+
+    // Command thread: starts the run run_auto() registered.
+    void start_auto(ItemId item) {
+        bool cancelled = false;
+        {
+            const std::lock_guard lock(mutex);
+            const auto found = auto_runs.find(item);
+            if (found == auto_runs.end()) {
+                return;
+            }
+            // Shutting down: a run queued behind the last commands is not started any more.
+            cancelled = found->second.cancel || draining;
+        }
+        std::optional<Error> refused;
+        std::uint64_t ticket = 0;
+        if (automatic == nullptr) {
+            refused = Error{ErrorCode::Unsupported, "automatic settings are unavailable", "ui.auto.unavailable", 0};
+        } else if (cancelled) {
+            refused = Error{ErrorCode::Cancelled, "cancelled before it started", "ui.auto", 0};
+        } else if (auto started = automatic->run(app_id(item)); started) {
+            ticket = *started;
+        } else {
+            refused = started.error();
+        }
+        if (refused) {
+            if (refused->code != ErrorCode::Cancelled) {
+                core::log_warn(kLog, "Auto of item {} did not start: {}", item, refused->describe());
+            }
+            {
+                const std::lock_guard lock(mutex);
+                auto_runs.erase(item);
+            }
+            AutoOutcome outcome;
+            outcome.item = item;
+            outcome.cancelled = refused->code == ErrorCode::Cancelled;
+            outcome.message = describe_auto_error(*refused);
+            post_auto_finished(outcome);
+            return;
+        }
+        bool cancel_now = false;
+        {
+            const std::lock_guard lock(mutex);
+            // Gone already when the run finished before this (its event names the item).
+            if (const auto found = auto_runs.find(item); found != auto_runs.end() && found->second.ticket == 0) {
+                found->second.ticket = ticket;
+                cancel_now = found->second.cancel;
+            }
+        }
+        if (cancel_now) {
+            automatic->cancel(ticket);
+        }
+    }
+
+    // An executor thread (AutoService observer): relays the progress and the end of a run.
+    void on_auto_event(const app::AutoEvent& event) {
+        const ItemId item = event.status.item.value;
+        {
+            const std::lock_guard lock(mutex);
+            if (stopped) {
+                return;
+            }
+            const auto found = auto_runs.find(item);
+            if (found == auto_runs.end() ||
+                (found->second.ticket != 0 && found->second.ticket != event.status.ticket)) {
+                return;  // not a run of this adapter
+            }
+            if (event.kind == app::AutoEvent::Kind::Finished) {
+                auto_runs.erase(found);
+            }
+        }
+        if (event.kind == app::AutoEvent::Kind::Progress) {
+            const AutoProgress progress{item, to_auto_stage(event.status.stage),
+                                        std::clamp(event.status.fraction, 0.0, 1.0)};
+            dispatcher->post([owner = owner, progress] { owner->note_auto_progress(progress); });
+            return;
+        }
+        AutoOutcome outcome;
+        if (event.result) {
+            outcome = to_auto_outcome(item, *event.result);
+        } else {
+            outcome.item = item;
+            outcome.message = describe_auto_error(Error{ErrorCode::Internal, "no result", "ui.auto", 0});
+        }
+        post_auto_finished(outcome);
+    }
+
+    // Command thread: an automatic revision was written for `item` (the editor's Auto, or an automatic
+    // batch): its open session shows the item's state, history and summary, and renders the new
+    // settings when the current revision changed.
+    void refresh_after_auto(ItemId item) {
+        auto state = recipes->state(app_id(item));
+        bool request = true;
+        {
+            const std::lock_guard lock(mutex);
+            const Session* s = find_locked(item);
+            if (s == nullptr) {
+                return;
+            }
+            if (state && !state->transient && s->revision_known) {
+                const quint64 revision = state->revision ? static_cast<quint64>(state->revision->value) : 0;
+                request = revision != s->revision;  // a branch only: nothing new to show
+            }
+        }
+        finish(item, 0, state, request, true);
     }
 
     // Runs `body` on the command thread, in call order.
@@ -319,6 +468,8 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
                 if (!result->recipe_unreadable) {
                     s->committed = result->committed;
                 }
+                s->revision = result->revision ? static_cast<quint64>(result->revision->value) : 0;
+                s->revision_known = true;
                 if (request) {
                     if (result->recipe_unreadable && s->open) {
                         s->current_done = true;
@@ -630,9 +781,55 @@ AppEditService::AppEditService(std::shared_ptr<Backend> backend, RenderEventSink
     release_timer_.setSingleShot(true);
     release_timer_.setInterval(std::max(0, options.release_full_resolution_ms));
     connect(&release_timer_, &QTimer::timeout, this, &AppEditService::release_idle_full_resolution);
+
+    // Auto's progress and completion (an executor thread; relayed to the UI thread).
+    if (app::AutoService* automatic = backend_->automatic(); automatic != nullptr) {
+        auto_subscription_ = automatic->subscribe([weak = std::weak_ptr<State>(state_)](const app::AutoEvent& event) {
+            if (auto self = weak.lock()) {
+                self->on_auto_event(event);
+            }
+        });
+    }
+    // Automatic revisions written for a photo being edited (by Auto or an automatic batch): runs on
+    // the thread that wrote them; the session's update is queued on the command thread.
+    recipe_subscription_ =
+        backend_->recipes().subscribe([weak = std::weak_ptr<State>(state_)](const app::RecipeChange& change) {
+            if (change.kind != app::RecipeChangeKind::Committed || change.origin != catalog::RevisionOrigin::Auto) {
+                return;
+            }
+            auto self = weak.lock();
+            if (!self) {
+                return;
+            }
+            const ItemId item = change.state.item.value;
+            {
+                const std::lock_guard lock(self->mutex);
+                if (self->stopped || self->draining || self->find_locked(item) == nullptr) {
+                    return;
+                }
+            }
+            self->queue([item](State& s) { s.refresh_after_auto(item); });
+        });
 }
 
 AppEditService::~AppEditService() {
+    // No relayed event or queued refresh after this point (each reset waits for a call in progress).
+    recipe_subscription_.reset();
+    auto_subscription_.reset();
+    std::vector<std::uint64_t> tickets;
+    {
+        const std::lock_guard lock(state_->mutex);
+        for (const auto& [item, run] : state_->auto_runs) {
+            if (run.ticket != 0) {
+                tickets.push_back(run.ticket);
+            }
+        }
+    }
+    if (app::AutoService* automatic = backend_->automatic(); automatic != nullptr) {
+        for (const std::uint64_t ticket : tickets) {
+            automatic->cancel(ticket);  // the Backend waits for them when it closes
+        }
+    }
     dispatcher_->close();
     release_timer_.stop();
     // Queued commands still run first: a commit of a pending gesture (EditSession::set_item(0) from
@@ -884,6 +1081,63 @@ void AppEditService::copy_settings(ItemId item, quint32 categories) {
 
 void AppEditService::paste_settings(const QList<ItemId>& targets) {
     state_->queue([targets](State& self) { self.paste(targets); });
+}
+
+void AppEditService::run_auto(ItemId item) {
+    if (item == 0) {
+        return;
+    }
+    {
+        const std::lock_guard lock(state_->mutex);
+        if (state_->stopped || state_->auto_runs.contains(item)) {
+            return;  // one run per photo at a time
+        }
+        state_->auto_runs[item] = State::AutoRun{};
+    }
+    const AutoProgress queued{item, AutoStage::Queued, 0.0};
+    auto_runs_.insert(item, queued);
+    // Signals never come from inside the call that caused them (edit_service.hpp).
+    dispatcher_->post([this, queued] {
+        if (auto_runs_.contains(queued.item)) {
+            emit auto_progress(queued);
+        }
+    });
+    // After the commands queued before it: a gesture committed just before is the run's start.
+    state_->queue([item](State& self) { self.start_auto(item); });
+}
+
+void AppEditService::cancel_auto(ItemId item) {
+    std::uint64_t ticket = 0;
+    {
+        const std::lock_guard lock(state_->mutex);
+        const auto found = state_->auto_runs.find(item);
+        if (found == state_->auto_runs.end()) {
+            return;
+        }
+        found->second.cancel = true;
+        ticket = found->second.ticket;
+    }
+    if (app::AutoService* automatic = backend_->automatic(); automatic != nullptr && ticket != 0) {
+        automatic->cancel(ticket);
+    }
+}
+
+bool AppEditService::is_auto_running(ItemId item) const {
+    return item == 0 ? !auto_runs_.isEmpty() : auto_runs_.contains(item);
+}
+
+void AppEditService::note_auto_progress(const AutoProgress& progress) {
+    const auto found = auto_runs_.find(progress.item);
+    if (found == auto_runs_.end() || progress.fraction < found->fraction) {
+        return;  // finished already, or never backwards
+    }
+    *found = progress;
+    emit auto_progress(progress);
+}
+
+void AppEditService::note_auto_finished(const AutoOutcome& outcome) {
+    auto_runs_.remove(outcome.item);
+    emit auto_finished(outcome);
 }
 
 QList<double> AppEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {

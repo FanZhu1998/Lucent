@@ -8,6 +8,7 @@
 #include <mutex>
 #include <new>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -564,7 +565,7 @@ struct WorkerHost::State {
     }
 
     // Classifies the end of a worker that went away during a job.
-    JobFailure lost(const JobRequest& request, std::optional<Error> protocol_error) {
+    JobFailure lost(std::string_view job_id, std::optional<Error> protocol_error) {
         JobFailure failure;
         if (protocol_error) {
             failure.error = std::move(*protocol_error);
@@ -577,7 +578,7 @@ struct WorkerHost::State {
         failure.exit_code = worker->exit_code();
         if (memory_limit_reached()) {
             failure.error = memory_limit_error(
-                std::format("the worker ended ({}) running job '{}'", exit_text(failure.exit_code), request.job_id));
+                std::format("the worker ended ({}) running job '{}'", exit_text(failure.exit_code), job_id));
             failure.failure_class = FailureClass::Deterministic;
             failure.fault = WorkerFault::MemoryLimit;
             return failure;
@@ -585,7 +586,7 @@ struct WorkerHost::State {
         if (failure.exit_code == static_cast<std::uint32_t>(WorkerExitCode::ProtocolViolation)) {
             failure.error = Error{ErrorCode::Corrupt,
                                   std::format("the worker refused a message of job '{}' as a protocol violation",
-                                              request.job_id),
+                                              job_id),
                                   "workers.protocol.refused", 0};
             failure.failure_class = FailureClass::Deterministic;
             failure.fault = WorkerFault::ProtocolViolation;
@@ -593,7 +594,7 @@ struct WorkerHost::State {
         }
         failure.error = Error{ErrorCode::Internal,
                               std::format("the worker process ended unexpectedly ({}) running job '{}'",
-                                          exit_text(failure.exit_code), request.job_id),
+                                          exit_text(failure.exit_code), job_id),
                               "workers.worker.crashed",
                               failure.exit_code ? static_cast<std::int64_t>(*failure.exit_code) : 0};
         failure.failure_class = FailureClass::Transient;
@@ -620,20 +621,51 @@ struct WorkerHost::State {
                      "workers.worker.memory_limit", 0};
     }
 
-    JobOutcome run_job(const JobRequest& request, const JobCallbacks& callbacks, const core::CancellationToken& cancel,
-                       std::chrono::milliseconds timeout);
+    // An export job (JobRequest -> JobOutcome) or an analyze job (AnalysisRequest ->
+    // AnalysisOutcome): the same supervision.
+    template <class Outcome, class Request>
+    Outcome run_request(const Request& request, const JobCallbacks& callbacks, const core::CancellationToken& cancel,
+                        std::chrono::milliseconds timeout);
 };
 
-JobOutcome WorkerHost::State::run_job(const JobRequest& request, const JobCallbacks& callbacks,
-                                      const core::CancellationToken& cancel, std::chrono::milliseconds timeout) {
+namespace {
+
+// The protocol violation when a job's answer names anything but the job's own output, recipe and
+// source (the caller publishes or records what the answer describes); std::nullopt when it matches.
+std::optional<Error> mismatch(const JobRequest& request, const JobResult& result) {
+    if (result.output.temp_path != request.temp_path || result.recipe_sha256 != request.recipe.sha256 ||
+        result.source_identity != request.source.identity) {
+        return Error{ErrorCode::Corrupt,
+                     std::format("the result of job '{}' names another output, recipe or source than the job",
+                                 request.job_id),
+                     "workers.protocol.result", 0};
+    }
+    return std::nullopt;
+}
+
+std::optional<Error> mismatch(const AnalysisRequest& request, const AnalysisResult& result) {
+    if (result.recipe_sha256 != request.recipe.sha256 || result.source_identity != request.source.identity) {
+        return Error{ErrorCode::Corrupt,
+                     std::format("the analysis of job '{}' names another recipe or source than the job", request.job_id),
+                     "workers.protocol.result", 0};
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+template <class Outcome, class Request>
+Outcome WorkerHost::State::run_request(const Request& request, const JobCallbacks& callbacks,
+                                       const core::CancellationToken& cancel, std::chrono::milliseconds timeout) {
+    using Result = typename decltype(Outcome::result)::value_type;
     const auto entered = Clock::now();
-    JobOutcome outcome;
-    const auto finish = [&](JobOutcome& done) -> JobOutcome {
+    Outcome outcome;
+    const auto finish = [&](Outcome& done) -> Outcome {
         done.metrics.wall_seconds = seconds_since(entered);
         return std::move(done);
     };
 
-    if (auto encoded = encode_message(request); !encoded) {
+    if (auto encoded = encode_message(Message(request)); !encoded) {
         outcome.failure = JobFailure{std::move(encoded.error()), FailureClass::Deterministic, WorkerFault::None};
         return finish(outcome);
     }
@@ -668,7 +700,7 @@ JobOutcome WorkerHost::State::run_job(const JobRequest& request, const JobCallba
     bool answered = false;
     const auto dispatched = Clock::now();
 
-    if (auto sent = w.channel->send(request); !sent) {
+    if (auto sent = w.channel->send(Message(request)); !sent) {
         if (!is_channel_closed(sent.error())) {
             core::log_warn(kWhere, "cannot send job '{}': {}", request.job_id, sent.error().describe());
         }
@@ -706,18 +738,14 @@ JobOutcome WorkerHost::State::run_job(const JobRequest& request, const JobCallba
                 if (callbacks.heartbeat) {
                     callbacks.heartbeat(*heartbeat);
                 }
-            } else if (auto* result = std::get_if<JobResult>(&message)) {
+            } else if (auto* result = std::get_if<Result>(&message)) {
                 if (result->job_id != request.job_id) {
                     continue;  // a late answer to an earlier job
                 }
-                // The caller publishes output.temp_path: a result about anything else is never trusted.
-                if (result->output.temp_path != request.temp_path || result->recipe_sha256 != request.recipe.sha256 ||
-                    result->source_identity != request.source.identity) {
-                    protocol_error = Error{ErrorCode::Corrupt,
-                                           std::format("the result of job '{}' names another output, recipe or "
-                                                       "source than the job",
-                                                       request.job_id),
-                                           "workers.protocol.result", 0};
+                // The caller publishes or records what the answer describes: an answer about anything
+                // else is never trusted.
+                if (auto wrong = mismatch(request, *result)) {
+                    protocol_error = std::move(*wrong);
                     gone = true;
                     break;
                 }
@@ -799,7 +827,7 @@ JobOutcome WorkerHost::State::run_job(const JobRequest& request, const JobCallba
         if (protocol_error) {
             w.terminate();
         }
-        outcome.failure = lost(request, std::move(protocol_error));
+        outcome.failure = lost(request.job_id, std::move(protocol_error));
     }
     w.poll_port();
     {
@@ -826,12 +854,14 @@ JobOutcome WorkerHost::State::run_job(const JobRequest& request, const JobCallba
             outcome.failure->exit_code = worker->exit_code();
         }
         discard_worker();
-        if (outcome.failure) {
-            if (auto removed = remove_job_output(request.temp_path); removed) {
-                outcome.failure->output_removed = true;
-            } else {
-                core::log_warn(kWhere, "cannot remove the output of job '{}': {}", request.job_id,
-                               removed.error().describe());
+        if constexpr (std::is_same_v<Request, JobRequest>) {
+            if (outcome.failure) {
+                if (auto removed = remove_job_output(request.temp_path); removed) {
+                    outcome.failure->output_removed = true;
+                } else {
+                    core::log_warn(kWhere, "cannot remove the output of job '{}': {}", request.job_id,
+                                   removed.error().describe());
+                }
             }
         }
     }
@@ -848,7 +878,12 @@ Status WorkerHost::start() { return state_->start(); }
 
 JobOutcome WorkerHost::run_job(const JobRequest& request, const JobCallbacks& callbacks,
                                const core::CancellationToken& cancel, std::chrono::milliseconds timeout) {
-    return state_->run_job(request, callbacks, cancel, timeout);
+    return state_->run_request<JobOutcome>(request, callbacks, cancel, timeout);
+}
+
+AnalysisOutcome WorkerHost::run_analysis(const AnalysisRequest& request, const JobCallbacks& callbacks,
+                                         const core::CancellationToken& cancel, std::chrono::milliseconds timeout) {
+    return state_->run_request<AnalysisOutcome>(request, callbacks, cancel, timeout);
 }
 
 Status WorkerHost::ping(std::chrono::milliseconds timeout) {

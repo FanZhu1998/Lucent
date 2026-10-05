@@ -53,6 +53,8 @@ BatchOutcome to_ui_outcome(app::ReportOutcome outcome) {
             return BatchOutcome::Failed;
         case app::ReportOutcome::Cancelled:
             return BatchOutcome::Cancelled;
+        case app::ReportOutcome::Analysed:
+            return BatchOutcome::Analysed;
         case app::ReportOutcome::Pending:
             break;
     }
@@ -110,7 +112,32 @@ app::BatchRequest to_batch_request(const BatchSetup& setup) {
     request.allow_unsupported = false;  // blueprint section 3: never exported silently
     request.start = true;
     request.write_report_files = true;
+    switch (setup.automatic) {
+        case BatchAutomatic::Auto:
+            request.automatic = app::AutomaticSettings::Auto;
+            break;
+        case BatchAutomatic::AnalyzeOnly:
+            request.automatic = app::AutomaticSettings::AnalyzeOnly;
+            break;
+        case BatchAutomatic::Off:
+            request.automatic = app::AutomaticSettings::Off;
+            break;
+    }
+    // Keeping related photos consistent is part of the automatic settings only.
+    request.keep_consistent = request.automatic != app::AutomaticSettings::Off && setup.keep_consistent;
     return request;
+}
+
+BatchAutomatic to_ui_automatic(catalog::AutoMode mode) noexcept {
+    switch (mode) {
+        case catalog::AutoMode::Auto:
+            return BatchAutomatic::Auto;
+        case catalog::AutoMode::AnalyzeOnly:
+            return BatchAutomatic::AnalyzeOnly;
+        case catalog::AutoMode::None:
+            break;
+    }
+    return BatchAutomatic::Off;
 }
 
 BatchState to_ui_state(catalog::BatchState state) noexcept {
@@ -189,6 +216,10 @@ QString describe_worker_stage(workers::JobStage stage) {
             return tr_text("Writing");
         case workers::JobStage::Verifying:
             return tr_text("Verifying");
+        case workers::JobStage::Analysing:
+            return tr_text("Analysing");
+        case workers::JobStage::Checking:
+            return tr_text("Checking at full size");
     }
     return tr_text("Preparing");
 }
@@ -334,7 +365,31 @@ BatchPlanInfo to_plan_info(const app::BatchPlan& plan) {
             case app::PlanNotice::ReplacesExisting:
             case app::PlanNotice::WritesGps:
                 break;
+            case app::PlanNotice::AutomaticSettings:
+                info.automatic_notes << tr_text("Each photo is analysed and its result checked at full size before "
+                                                "anything is written: a few seconds per photo, for large photos about "
+                                                "twice as long as their export.");
+                break;
+            case app::PlanNotice::AnalyzeOnly:
+                info.automatic_notes << tr_text("Nothing is exported: each photo gets an automatic revision to review "
+                                                "and adjust in Edit. Only the batch report is saved, in the report "
+                                                "folder.");
+                break;
+            case app::PlanNotice::KeepConsistent:
+                info.automatic_notes << tr_text("Related photos are analysed together first, then each again towards "
+                                                "its group's look: about twice the analysis time.");
+                break;
         }
+    }
+    const bool automatic = std::find(plan.notices.begin(), plan.notices.end(), app::PlanNotice::AutomaticSettings) !=
+                           plan.notices.end();
+    const bool analyze_only =
+        std::find(plan.notices.begin(), plan.notices.end(), app::PlanNotice::AnalyzeOnly) != plan.notices.end();
+    if (automatic && !analyze_only && !plan.examples.empty()) {
+        // The examples are named after the photos' current edits; the outputs after their new
+        // automatic revisions.
+        info.automatic_notes << tr_text("The example names show each photo's current edit number; its file is named "
+                                        "after the automatic revision it gets.");
     }
     return info;
 }
@@ -398,6 +453,12 @@ BatchSnapshot to_snapshot(const app::BatchStatus& status) {
     if (record.finished_at) {
         snapshot.finished = to_qdatetime(*record.finished_at);
     }
+    snapshot.automatic = to_ui_automatic(status.automatic);
+    snapshot.keep_consistent = status.keep_consistent;
+    if (status.automatic_counts) {
+        snapshot.analysis_pending = to_qint(status.automatic_counts->pending);
+        snapshot.analysis_recorded = to_qint(status.automatic_counts->documents);
+    }
     return snapshot;
 }
 
@@ -414,6 +475,8 @@ BatchReportInfo to_report_info(const app::BatchReport& report) {
     info.cancelled = to_qint(report.cancelled);
     info.pending = to_qint(report.pending);
     info.review = to_qint(report.review_recommended);
+    info.analysed = to_qint(report.analysed);
+    info.automatic = to_ui_automatic(report.batch.automatic);
     info.created = to_qdatetime(report.batch.created_at);
     if (report.batch.finished_at) {
         info.finished = to_qdatetime(*report.batch.finished_at);
@@ -437,6 +500,25 @@ BatchReportInfo to_report_info(const app::BatchReport& report) {
             out.review << from_utf8(note);
         }
         out.attempts = static_cast<int>(entry.attempts);
+        if (entry.automatic) {
+            const app::AutomaticReport& automatic = *entry.automatic;
+            out.automatic = true;
+            out.revision_number = automatic.revision_number;
+            if (automatic.revision) {
+                out.confidence = std::clamp(automatic.confidence, 0.0, 1.0);
+            }
+            out.attempt = static_cast<int>(automatic.attempt);
+            for (const std::string& flag : automatic.flags) {
+                if (const QString text = from_utf8(flag); !text.isEmpty() && !out.flags.contains(text)) {
+                    out.flags << text;
+                }
+            }
+            out.locks_prevented = automatic.locks_prevented_targets;
+            for (const std::string& lock : automatic.locks) {
+                out.locks << from_utf8(lock);
+            }
+            out.group = automatic.group ? from_utf8(*automatic.group) : QString();
+        }
         if (info.format.isEmpty() && entry.details) {
             info.format = format_of(*entry.details);
         }

@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 
 #include <windows.h>
 #include <psapi.h>
@@ -28,7 +29,8 @@ using Clock = std::chrono::steady_clock;
 struct ServerState {
     std::mutex mutex;
     std::condition_variable changed;
-    std::optional<JobRequest> pending;
+    // The next job: an export job or an analyze job.
+    std::optional<std::variant<JobRequest, AnalysisRequest>> pending;
     std::optional<std::string> running_id;
     core::CancellationSource running_cancel;
     bool stop = false;
@@ -71,6 +73,10 @@ JobError fatal_error(Error error) {
     return JobError{std::nullopt, std::move(error), FailureClass::Deterministic};
 }
 
+const std::string& job_id_of(const std::variant<JobRequest, AnalysisRequest>& job) {
+    return std::visit([](const auto& request) -> const std::string& { return request.job_id; }, job);
+}
+
 class Context final : public JobContext {
 public:
     Context(MessageChannel& channel, std::string job_id, core::CancellationToken token, const TestHooks& hooks)
@@ -108,8 +114,11 @@ private:
     double last_sent_ = 0.0;  // the fraction of the last message sent
 };
 
-Expected<JobResult> run_one(const JobRequest& job, JobRunner& runner, Context& context, const TestHooks& hooks,
-                            ServerState& state) {
+// The answer to one job: a result or an analysis.
+using Answer = std::variant<JobResult, AnalysisResult>;
+
+Expected<Answer> run_one(const std::variant<JobRequest, AnalysisRequest>& job, JobRunner& runner, Context& context,
+                         const TestHooks& hooks, ServerState& state) {
     if (hooks.freeze) {
         state.frozen = true;
         block_forever();
@@ -128,11 +137,21 @@ Expected<JobResult> run_one(const JobRequest& job, JobRunner& runner, Context& c
                 block[offset] = std::byte{1};  // commit and touch every page
             }
         }
-        auto result = runner.run(job, context);
-        if (result) {
-            result->job_id = job.job_id;
+        if (const auto* request = std::get_if<JobRequest>(&job)) {
+            auto result = runner.run(*request, context);
+            if (!result) {
+                return Unexpected(std::move(result.error()));
+            }
+            result->job_id = request->job_id;
+            return Answer(std::move(*result));
         }
-        return result;
+        const auto& request = std::get<AnalysisRequest>(job);
+        auto analysis = runner.analyze(request, context);
+        if (!analysis) {
+            return Unexpected(std::move(analysis.error()));
+        }
+        analysis->job_id = request.job_id;
+        return Answer(std::move(*analysis));
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "the job ran out of memory", std::string(kWhere));
     } catch (const std::exception& e) {
@@ -165,12 +184,18 @@ void reader_loop(MessageChannel& channel, ServerState& state) {
             break;
         }
         Message& message = **received;
-        if (auto* job = std::get_if<JobRequest>(&message)) {
+        std::optional<std::variant<JobRequest, AnalysisRequest>> job;
+        if (auto* export_job = std::get_if<JobRequest>(&message)) {
+            job.emplace(std::move(*export_job));
+        } else if (auto* analyze_job = std::get_if<AnalysisRequest>(&message)) {
+            job.emplace(std::move(*analyze_job));
+        }
+        if (job) {
             if (state.stop) {
                 continue;  // shutting down: the host gets no answer and does not wait for one
             }
             if (state.pending || state.running_id) {
-                JobError busy{job->job_id,
+                JobError busy{job_id_of(*job),
                               Error{ErrorCode::InvalidArgument, "a job is already running", "workers.worker.busy", 0},
                               FailureClass::Deterministic};
                 lock.unlock();
@@ -182,7 +207,7 @@ void reader_loop(MessageChannel& channel, ServerState& state) {
         } else if (auto* cancel = std::get_if<CancelJob>(&message)) {
             if (state.running_id == cancel->job_id) {
                 state.running_cancel.cancel();
-            } else if (state.pending && state.pending->job_id == cancel->job_id) {
+            } else if (state.pending && job_id_of(*state.pending) == cancel->job_id) {
                 state.pending.reset();
                 JobError cancelled{cancel->job_id,
                                    Error{ErrorCode::Cancelled, "the job was cancelled before it started",
@@ -300,16 +325,23 @@ std::optional<WorkerExitCode> handshake(MessageChannel& channel, const WorkerSer
 
 }  // namespace
 
+Expected<AnalysisResult> JobRunner::analyze(const AnalysisRequest& request, JobContext&) {
+    return fail(ErrorCode::Unsupported, std::format("this worker does not analyse photos (job '{}')", request.job_id),
+                "workers.worker.analyze");
+}
+
 MemorySnapshot current_process_memory() noexcept {
     MemorySnapshot snapshot;
     PROCESS_MEMORY_COUNTERS_EX counters{};
     counters.cb = sizeof(counters);
     if (::GetProcessMemoryInfo(::GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
                                sizeof(counters))) {
+        // The counters are not read atomically: a page faulted in by another thread can make the
+        // current value exceed the peak sampled with it. A peak is never below the current value.
         snapshot.working_set = counters.WorkingSetSize;
-        snapshot.peak_working_set = counters.PeakWorkingSetSize;
+        snapshot.peak_working_set = std::max<std::uint64_t>(counters.PeakWorkingSetSize, counters.WorkingSetSize);
         snapshot.commit = counters.PrivateUsage;
-        snapshot.peak_commit = counters.PeakPagefileUsage;
+        snapshot.peak_commit = std::max<std::uint64_t>(counters.PeakPagefileUsage, counters.PrivateUsage);
     }
     return snapshot;
 }
@@ -348,23 +380,24 @@ WorkerExitCode run_worker_server(MessageChannel& channel, JobRunner& runner, con
         if (state.stop) {
             break;
         }
-        JobRequest job = std::move(*state.pending);
+        std::variant<JobRequest, AnalysisRequest> job = std::move(*state.pending);
         state.pending.reset();
-        state.running_id = job.job_id;
+        const std::string job_id = job_id_of(job);
+        state.running_id = job_id;
         state.running_cancel = core::CancellationSource();
-        Context context(channel, job.job_id, state.running_cancel.token(), options.hooks);
+        Context context(channel, job_id, state.running_cancel.token(), options.hooks);
         lock.unlock();
 
-        Expected<JobResult> result = run_one(job, runner, context, options.hooks, state);
+        Expected<Answer> result = run_one(job, runner, context, options.hooks, state);
 
         lock.lock();
         state.running_id.reset();
         lock.unlock();
         if (result) {
-            send_quietly(channel, std::move(*result));
+            std::visit([&](auto& answer) { send_quietly(channel, Message(std::move(answer))); }, *result);
         } else {
             const FailureClass failure_class = default_failure_class(result.error());
-            send_quietly(channel, JobError{job.job_id, std::move(result.error()), failure_class});
+            send_quietly(channel, JobError{job_id, std::move(result.error()), failure_class});
         }
     }
 

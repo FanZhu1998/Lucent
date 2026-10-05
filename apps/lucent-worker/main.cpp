@@ -8,6 +8,7 @@
 // (the exception code, or 0xC0000409 / 0xC0000417), which the host reports as a crash. The worker
 // ends by itself when its host closes the pipe or exits (worker_server.hpp).
 
+#include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <memory>
@@ -70,6 +71,11 @@ std::vector<std::wstring> arguments() {
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     using lucent::workers::WorkerExitCode;
     harden_process();
+    // The MSVC x64 runtime picks FMA3 or SSE2 code for cbrt, log and exp at run time, so a
+    // measurement could differ in its last bit between machines and a near-tie of the automatic
+    // settings resolve differently (ADR 0011 item 28): the worker always uses the SSE2 code, so a
+    // batch's analyses do not depend on the computer that ran them.
+    _set_FMA3_enable(0);
 
     auto launch = lucent::workers::parse_worker_arguments(arguments());
     if (!launch) {

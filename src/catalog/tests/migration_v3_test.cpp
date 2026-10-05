@@ -37,6 +37,14 @@ std::vector<std::int32_t> versions_after_v2() {
     return versions;
 }
 
+std::vector<std::int32_t> versions_after_v3() {
+    std::vector<std::int32_t> versions;
+    for (std::int32_t v = 4; v <= kSchemaVersion; ++v) {
+        versions.push_back(v);
+    }
+    return versions;
+}
+
 std::string file_digest(const std::filesystem::path& path) {
     Expected<core::FileHashResult> hash = core::hash_file(path, core::CancellationToken{});
     return hash ? core::to_hex(hash->digest) : hash.error().describe();
@@ -316,7 +324,7 @@ TEST(CatalogSchemaV4, KeepsAV3JournalAndCountsItsFinishedBatchesAsReported) {
     std::unique_ptr<Catalog> catalog = open_or_fail(path);
     ASSERT_NE(catalog, nullptr);
     EXPECT_EQ(catalog->schema().found_version, 3);
-    EXPECT_EQ(catalog->schema().migrations_applied, (std::vector<std::int32_t>{4}));
+    EXPECT_EQ(catalog->schema().migrations_applied, versions_after_v3());
     Expected<std::optional<BatchRecord>> done = catalog->query([&](ReadTransaction& tx) { return tx.find_batch(finished); });
     LUCENT_ASSERT_OK(done);
     ASSERT_TRUE(done->has_value());

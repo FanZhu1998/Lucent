@@ -80,6 +80,7 @@ set(_lucent_qml_files
     qml/AdjustmentSlider.qml
     qml/AdjustPanel.qml
     qml/AppHeader.qml
+    qml/AutoSettingsPanel.qml
     qml/Badge.qml
     qml/BatchExportDialog.qml
     qml/BatchReportPane.qml
@@ -136,6 +137,8 @@ qt_add_qml_module(lucent_ui
         src/imaging/image_provider.hpp
         src/imaging/tone_curve_plot.cpp
         src/imaging/tone_curve_plot.hpp
+        src/models/auto_settings_model.cpp
+        src/models/auto_settings_model.hpp
         src/models/batch_list_model.cpp
         src/models/batch_list_model.hpp
         src/models/batch_presentation.cpp

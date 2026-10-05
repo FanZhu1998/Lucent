@@ -23,10 +23,12 @@ namespace lucent::ui::adapters {
 
 // The request for `setup`: the items, or the input folder (imported first); the destination; the
 // preset with the metadata choices (capture, Artist / Copyright, GPS only when chosen); the
-// existing-output policy. An empty artist or copyright keeps what the camera recorded.
+// existing-output policy; the automatic settings (keeping related shots consistent only with Auto or
+// AnalyzeOnly). An empty artist or copyright keeps what the camera recorded.
 [[nodiscard]] app::BatchRequest to_batch_request(const BatchSetup& setup);
 
 [[nodiscard]] BatchState to_ui_state(catalog::BatchState state) noexcept;
+[[nodiscard]] BatchAutomatic to_ui_automatic(catalog::AutoMode mode) noexcept;
 [[nodiscard]] BatchAttention to_ui_attention(app::BatchAttention attention) noexcept;
 
 // What happened and what to do, naming the output folder (native separators); empty for None.
@@ -35,7 +37,7 @@ namespace lucent::ui::adapters {
                                          std::optional<std::uint64_t> free_bytes = std::nullopt,
                                          std::uint64_t needed_bytes = 0);
 
-// "Preparing", "Rendering", "Encoding", "Writing", "Verifying".
+// "Preparing", "Rendering", "Encoding", "Writing", "Verifying", "Analysing", "Checking at full size".
 [[nodiscard]] QString describe_worker_stage(workers::JobStage stage);
 
 // Why a photo is left out of a batch (PlanExclusion::reason).

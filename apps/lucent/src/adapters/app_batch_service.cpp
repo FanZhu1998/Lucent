@@ -681,6 +681,10 @@ void AppBatchService::apply_status(const std::vector<StatusResult>& results) {
         snapshot.review = fresh.review;
         snapshot.excluded = fresh.excluded;
         snapshot.outcome_reason = fresh.outcome_reason;
+        snapshot.automatic = fresh.automatic;
+        snapshot.keep_consistent = fresh.keep_consistent;
+        snapshot.analysis_pending = fresh.analysis_pending;
+        snapshot.analysis_recorded = fresh.analysis_recorded;
         if (!fresh.last_output.isEmpty()) {
             snapshot.last_output = fresh.last_output;
         }

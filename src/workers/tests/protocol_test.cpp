@@ -98,6 +98,79 @@ TEST(WorkerProtocol, EveryMessageTypeRoundTrips) {
     expect_round_trip(JobError{std::nullopt, Error{ErrorCode::VersionMismatch, "no", "workers.handshake.build", 0},
                                FailureClass::Deterministic});
     expect_round_trip(Pong{12});
+
+    // Version 2: analyze jobs.
+    AnalysisRequest analyze;
+    analyze.job_id = "b1-j2-a1-auto";
+    analyze.source = sample_job().source;
+    analyze.source.sha256 = digest_of("content");
+    analyze.recipe = sample_job().recipe;
+    analyze.request = R"({"schema":"lucent.auto-request","version":1,"final_check":true})";
+    analyze.memory_budget_bytes = 4ull << 30;
+    analyze.allow_unsupported = true;
+    expect_round_trip(analyze);
+    AnalysisResult analysis;
+    analysis.job_id = "b1-j2-a1-auto";
+    analysis.source_identity = sample_job().source.identity;
+    analysis.source_sha256 = digest_of("content");
+    analysis.recipe_sha256 = sample_job().recipe.sha256;
+    analysis.document = R"({"schema":"lucent.auto-run","version":1,"nested":{"deep":[1,[2,[3,[4,[5]]]]]}})";
+    analysis.seconds = 3.25;
+    analysis.memory = MemorySnapshot{5, 6, 7, 8};
+    expect_round_trip(analysis);
+    expect_round_trip(JobProgress{"b1-j2-a1-auto", JobStage::Analysing, 0.25});
+    expect_round_trip(JobProgress{"b1-j2-a1-auto", JobStage::Checking, 0.75});
+}
+
+TEST(WorkerProtocol, AnalyzeJobsCarryTheirDocumentsAsText) {
+    AnalysisRequest analyze;
+    analyze.job_id = "job-9";
+    analyze.source = sample_job().source;
+    analyze.recipe = sample_job().recipe;
+    analyze.request = "{}";
+    const std::string text = encode_ok(analyze);
+    const Json json = Json::parse(text);
+    EXPECT_EQ(json["type"], "analyze");
+    EXPECT_TRUE(json["request"].is_string()) << "the application's document travels as text";
+    auto decoded = decode_message(text, Direction::HostToWorker);
+    ASSERT_TRUE(decoded) << decoded.error().describe();
+    const auto& back = std::get<AnalysisRequest>(*decoded);
+    EXPECT_EQ(back.request, "{}");
+    EXPECT_EQ(back.source.identity, analyze.source.identity);
+    // Empty or oversized documents and a recipe whose digest does not match are refused.
+    AnalysisRequest empty = analyze;
+    empty.request.clear();
+    EXPECT_FALSE(encode_message(empty));
+    AnalysisRequest huge = analyze;
+    huge.request.assign(kMaxAnalysisRequestBytes + 1, 'x');
+    EXPECT_FALSE(encode_message(huge));
+    AnalysisRequest tampered = analyze;
+    tampered.recipe.document += " ";
+    EXPECT_FALSE(encode_message(tampered));
+    Json mutated = json;
+    mutated["recipe"]["document"] = "{}";
+    expect_corrupt(mutated);
+    mutated = json;
+    mutated["extra"] = 1;
+    expect_corrupt(mutated);
+    // An analysis travels from the worker only.
+    AnalysisResult analysis;
+    analysis.job_id = "job-9";
+    analysis.document = "{}";
+    const Error wrong = decode_error(encode_ok(analysis), Direction::HostToWorker);
+    EXPECT_EQ(wrong.code, ErrorCode::Corrupt);
+    AnalysisResult no_document = analysis;
+    no_document.document.clear();
+    EXPECT_FALSE(encode_message(no_document));
+}
+
+TEST(WorkerProtocol, VersionTwoIsSpoken) {
+    EXPECT_EQ(kMinProtocolVersion, 2u);
+    EXPECT_EQ(kMaxProtocolVersion, 2u);
+    // A version-1 peer (export jobs only) is refused: it could not answer analyze jobs.
+    auto refused = negotiate_version(kMinProtocolVersion, kMaxProtocolVersion, 1, 1);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, ErrorCode::VersionMismatch);
 }
 
 TEST(WorkerProtocol, DecodedJobHasTheSentValues) {
@@ -218,7 +291,7 @@ TEST(WorkerProtocol, ResultAndProgressValuesAreRangeChecked) {
     progress["fraction"] = 1.5;
     expect_corrupt(progress, Direction::WorkerToHost);
     progress["fraction"] = 0.5;
-    progress["stage"] = 6;
+    progress["stage"] = 8;  // 6 and 7 are the analysis stages of version 2
     expect_corrupt(progress, Direction::WorkerToHost);
 
     Json error = Json::parse(encode_ok(JobError{std::string("j"), Error{ErrorCode::Corrupt, "m", "w", 0},

@@ -97,7 +97,14 @@ public:
         ++calls;
         return behaviour_(request, context);
     }
+    // Analyze jobs: `analysis` when set, otherwise the default refusal.
+    Expected<AnalysisResult> analyze(const AnalysisRequest& request, JobContext& context) override {
+        ++analyses;
+        return analysis ? analysis(request, context) : JobRunner::analyze(request, context);
+    }
+    std::function<Expected<AnalysisResult>(const AnalysisRequest&, JobContext&)> analysis;
     std::atomic<int> calls{0};
+    std::atomic<int> analyses{0};
 
 private:
     Behaviour behaviour_;

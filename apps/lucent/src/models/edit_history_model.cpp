@@ -55,6 +55,17 @@ QString EditHistoryModel::title_of(const EditHistoryEntry& entry) {
         return changed.isEmpty() ? tr_text("Pasted settings") : tr_text("Pasted: %1").arg(changed);
     }
     if (entry.origin == u"auto") {
+        if (entry.auto_failed) {
+            // An attempt the full-size check rejected: kept with its reason, never used.
+            return tr_text("Auto, failed the quality check");
+        }
+        if (entry.auto_kind == u"anchor") {
+            // An automatic batch kept the photo's own settings: it set its related shots' look.
+            return tr_text("Auto batch: kept as anchor");
+        }
+        if (entry.auto_kind == u"fallback" || entry.auto_kind == u"baseline") {
+            return changed.isEmpty() ? tr_text("Auto (conservative)") : tr_text("Auto (conservative): %1").arg(changed);
+        }
         return changed.isEmpty() ? tr_text("Auto") : tr_text("Auto: %1").arg(changed);
     }
     if (entry.origin == u"import") {

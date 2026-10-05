@@ -7,7 +7,9 @@ import Lucent
 
 // The report of the batch selected in the Exports view (blueprint section 2, step 5): exported,
 // skipped, failed and review-recommended photos with their reasons and suggested actions, filtered
-// by outcome, with Open output folder and Open report.
+// by outcome, with Open output folder and Open report. W8: an automatic batch's photos also say what
+// Auto did (its revision and confidence, a fallback, the locks, the other findings); an analysing-
+// only batch lists its photos as analysed.
 Rectangle {
     id: pane
 
@@ -98,7 +100,8 @@ Rectangle {
             Repeater {
                 model: [
                     { key: "all", label: qsTr("All %1").arg(pane.report.total), shown: true },
-                    { key: "exported", label: qsTr("Exported %1").arg(pane.report.exported), shown: true },
+                    { key: "exported", label: qsTr("Exported %1").arg(pane.report.exported), shown: pane.report.analysed === 0 || pane.report.exported > 0 },
+                    { key: "analysed", label: qsTr("Analysed %1").arg(pane.report.analysed), shown: pane.report.analysed > 0 },
                     { key: "skipped", label: qsTr("Skipped %1").arg(pane.report.skipped), shown: pane.report.skipped > 0 },
                     { key: "failed", label: qsTr("Failed %1").arg(pane.report.failed), shown: pane.report.failed > 0 },
                     { key: "review", label: qsTr("For review %1").arg(pane.report.review), shown: pane.report.review > 0 },
@@ -173,6 +176,11 @@ Rectangle {
                 required property var review
                 required property bool hasReview
                 required property string accessibleLabel
+                required property bool automatic
+                required property string automaticSummary
+                required property var autoNotes
+                required property var lockNotes
+                required property bool locksPrevented
 
                 width: ListView.view.width
                 implicitHeight: entryColumn.implicitHeight + 12
@@ -235,10 +243,10 @@ Rectangle {
                         }
                     }
 
-                    // The outcome label already says "Exported" or "Waiting".
+                    // The outcome label already says "Exported", "Analysed" or "Waiting".
                     Text {
                         visible: entry.reason.length > 0 && entry.outcomeKey !== "exported"
-                                 && entry.outcomeKey !== "pending"
+                                 && entry.outcomeKey !== "pending" && entry.outcomeKey !== "analysed"
                         text: entry.reason
                         color: entry.outcomeKey === "failed" ? Theme.unsupported : Theme.textSecondary
                         font.pixelSize: Theme.fontSmall
@@ -259,6 +267,36 @@ Rectangle {
                         visible: entry.hasReview
                         text: entry.review.join("\n")
                         color: Theme.attention
+                        font.pixelSize: Theme.fontSmall
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    // W8: what Auto did (the revision, its confidence, a fallback, the group).
+                    Text {
+                        objectName: "reportAutomatic"
+                        visible: entry.automatic && entry.automaticSummary.length > 0
+                        text: entry.automaticSummary
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSmall
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        visible: entry.automatic && entry.lockNotes.length > 0
+                        text: entry.lockNotes.join("\n")
+                        color: entry.locksPrevented ? Theme.attention : Theme.textSecondary
+                        font.pixelSize: Theme.fontSmall
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        objectName: "reportAutoNotes"
+                        visible: entry.automatic && entry.autoNotes.length > 0
+                        text: entry.autoNotes.join("\n")
+                        color: Theme.textTertiary
                         font.pixelSize: Theme.fontSmall
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true

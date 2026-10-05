@@ -141,6 +141,89 @@ TEST(BatchFixtures, SmokeFixturesExportThroughWorkers) {
     }
 }
 
+// Automatic settings over the smoke fixtures (ADR 0013): every supported photo is analysed in its
+// worker, checked at full resolution, frozen as an automatic revision and exported with it.
+TEST(BatchFixtures, SmokeFixturesAutomaticBatch) {
+    const std::vector<std::filesystem::path> files = smoke_fixtures();
+    if (files.empty()) {
+        GTEST_SKIP() << "fixtures are not downloaded; run tools\\fetch-fixtures.ps1";
+    }
+    ts::ScratchDir dir;
+    ts::BatchHarness h(dir.path() / L"lucent", fixture_options());
+    const std::vector<ItemId> ids = h.import(files);
+    ASSERT_EQ(ids.size(), files.size());
+    BatchRequest request = h.request(ids, dir.path() / L"out");
+    request.automatic = AutomaticSettings::Auto;
+    const auto start = std::chrono::steady_clock::now();
+    const catalog::BatchId id = h.run(request, 1800s);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    ASSERT_TRUE(id.valid());
+    std::size_t unsupported = 0;
+    for (const ItemId item : ids) {
+        unsupported += h.library().find(item)->support.status == SupportStatus::Unsupported ? 1 : 0;
+    }
+    const catalog::BatchRecord record = h.record(id);
+    EXPECT_EQ(record.state, catalog::BatchState::Completed);
+    EXPECT_EQ(record.counts.complete, files.size() - unsupported);
+    for (const catalog::JobRecord& job : h.jobs(id)) {
+        ASSERT_EQ(job.stage, catalog::JobStage::Complete) << (job.last_error ? job.last_error->message : "");
+        EXPECT_EQ(job.auto_state, catalog::AutoJobState::Frozen);
+        auto receipt = h.catalog().query([&](catalog::ReadTransaction& tx) { return tx.find_receipt(job.id); });
+        ASSERT_TRUE(receipt && *receipt);
+        EXPECT_EQ((*receipt)->identity_sha256, job.identity_sha256);
+        EXPECT_EQ(ts::file_sha256((*receipt)->final_path), (*receipt)->output_sha256);
+    }
+    const BatchSchedulerStats stats = h.batches().stats();
+    std::printf("  %zu smoke fixtures, automatic settings, JPEG: %.1f s for the batch; peak worker commit %.0f MB; "
+                "at most %u workers; %llu worker starts\n",
+                files.size(), seconds, static_cast<double>(stats.peak_worker_commit_bytes) / 1048576.0,
+                stats.peak_active_workers, static_cast<unsigned long long>(stats.worker_starts));
+    auto report = h.batches().report(id);
+    ASSERT_TRUE(report);
+    for (const ReportEntry& entry : report->entries) {
+        if (entry.outcome != ReportOutcome::Exported) {
+            std::printf("    not exported: %ls: %s\n", entry.source.filename().c_str(), entry.reason.c_str());
+            continue;
+        }
+        ASSERT_TRUE(entry.automatic);
+        std::printf("    %-40ls revision %u, confidence %.2f, attempt %u of %u, %zu flag(s)%s\n",
+                    entry.source.filename().c_str(), entry.automatic->revision_number, entry.automatic->confidence,
+                    entry.automatic->attempt, entry.automatic->attempts, entry.automatic->flags.size(),
+                    entry.review.empty() ? "" : " (review)");
+    }
+    print_receipts(h, id);
+    RecordProperty("auto_batch_seconds_x10", static_cast<int>(seconds * 10));
+    RecordProperty("auto_peak_worker_commit_mb", static_cast<int>(stats.peak_worker_commit_bytes >> 20));
+}
+
+// Related shots (the Nikon Z 6 pair, taken seconds apart) analysed only, kept consistent: the
+// pre-pass groups them and each is regularised towards the pair's look (ADR 0011 phase 2, ADR 0013).
+TEST(BatchFixtures, RelatedNikonPairAnalysedConsistently) {
+    LUCENT_REQUIRE_FIXTURE(first, "nikon-z-6-nef-compressed");
+    LUCENT_REQUIRE_FIXTURE(second, "nikon-z-6-nef-lossless");
+    ts::ScratchDir dir;
+    ts::BatchHarness h(dir.path() / L"lucent", fixture_options());
+    const std::vector<ItemId> ids = h.import({first, second});
+    ASSERT_EQ(ids.size(), 2u);
+    BatchRequest request = h.request(ids, dir.path() / L"out");
+    request.automatic = AutomaticSettings::AnalyzeOnly;
+    request.keep_consistent = true;
+    const catalog::BatchId id = h.run(request, 1800s);
+    ASSERT_TRUE(id.valid());
+    EXPECT_EQ(h.record(id).counts.complete, 2u);
+    auto report = h.batches().report(id);
+    ASSERT_TRUE(report);
+    EXPECT_EQ(report->analysed, 2u);
+    for (const ReportEntry& entry : report->entries) {
+        ASSERT_TRUE(entry.automatic);
+        std::printf("    %-40ls revision %u, confidence %.2f, group %s\n", entry.source.filename().c_str(),
+                    entry.automatic->revision_number, entry.automatic->confidence,
+                    entry.automatic->group ? entry.automatic->group->c_str() : "(none)");
+        EXPECT_TRUE(entry.automatic->group.has_value()) << "the pair is one related group";
+    }
+    EXPECT_TRUE(h.receipts(id).empty());
+}
+
 TEST(BatchFixtures, CanonR5As16BitTiff) {
     LUCENT_REQUIRE_FIXTURE(path, "canon-eos-r5-cr3-raw");
     ts::ScratchDir dir;

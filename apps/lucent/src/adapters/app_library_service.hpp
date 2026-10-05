@@ -51,7 +51,9 @@
 // recipe (the camera preview is no longer shown: it does not show the edit). An item whose recipe
 // this Lucent cannot read keeps its thumbnail. start() also looks up the items of a persistent
 // library that already have revisions (in the background), so edited photos show their edits
-// from the start of a session.
+// from the start of a session. W8: an item whose current revision is an automatic one (Auto, or an
+// automatic batch) whose analysis record recommends a review gets ItemFlag::ReviewRecommended (the
+// library's "Review" badge); another current revision (the photographer's edit, an undo) clears it.
 //
 // W4 operations: relink() runs the maintenance service's relink; set_pick() writes the item's
 // flags on the executor's Quick lane; back_up_catalog() writes a verified catalog backup on the
@@ -149,8 +151,9 @@ private:
     void update_items(const QList<LibraryItem>& items);
     void refresh_items(const QList<LibraryItem>& items);
     void apply(const RenderEvent& event);
-    // An item's committed recipe (W6): edited flag, settings identity, readable.
-    void apply_recipe(ItemId item, bool edited, const QByteArray& settings, bool readable);
+    // An item's committed recipe (W6): edited flag, settings identity, readable; W8: whether its
+    // current (automatic) revision recommends a review.
+    void apply_recipe(ItemId item, bool edited, const QByteArray& settings, bool readable, bool review);
     void scan_recipes();
     void on_maintenance(const app::MaintenanceEvent& event);
     void queue_hashing(const std::vector<app::ItemId>& items);

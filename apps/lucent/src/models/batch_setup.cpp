@@ -5,7 +5,9 @@
 #include <QFileInfo>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QSet>
 #include <QVariantMap>
+#include <algorithm>
 
 #include "models/batch_presentation.hpp"
 
@@ -68,8 +70,65 @@ void BatchSetupModel::set_plan_delay(std::chrono::milliseconds delay) {
     plan_timer_.setInterval(static_cast<int>(delay.count()));
 }
 
-QString BatchSetupModel::automatic_settings_note() const {
-    return tr_text("Available when Natural v1 is integrated");
+QString BatchSetupModel::automatic_note() const {
+    switch (automatic_) {
+    case AutomaticAuto:
+        return tr_text("Lucent analyses each photo, chooses its settings (Natural), saves them as a new revision, "
+                       "checks the result at full size and exports it. Locked controls keep their values; photos "
+                       "it is unsure about are marked for review.");
+    case AutomaticAnalyzeOnly:
+        return tr_text("Lucent analyses each photo and saves its settings as a new revision you can review and "
+                       "adjust in Edit. Nothing is exported: only the batch report is written to the report folder.");
+    case AutomaticOff:
+        break;
+    }
+    return tr_text("Each photo is exported with its own current edit (as shot when it was never edited).");
+}
+
+QStringList BatchSetupModel::analysis_notes() const {
+    if (!plan_.automatic_notes.isEmpty() || automatic_ == AutomaticOff || !plan_.folder_not_listed) {
+        return plan_.automatic_notes;
+    }
+    // The service plans the folder only once its photos are listed: the cost is said here meanwhile.
+    QStringList notes{tr_text("Each photo is analysed and its result checked at full size before anything is "
+                              "written: a few seconds per photo, more for large photos.")};
+    if (keep_consistent_) {
+        notes << tr_text("Related photos are analysed together first, then each again towards its group's look: "
+                         "about twice the analysis time.");
+    }
+    return notes;
+}
+
+void BatchSetupModel::setAutomatic(Automatic automatic) {
+    if (automatic != AutomaticOff && automatic != AutomaticAuto && automatic != AutomaticAnalyzeOnly) {
+        return;
+    }
+    if (automatic != automatic_) {
+        automatic_ = automatic;
+        changed();
+    }
+}
+
+void BatchSetupModel::setKeepConsistent(bool keep) {
+    if (keep != keep_consistent_) {
+        keep_consistent_ = keep;
+        changed();
+    }
+}
+
+qint64 BatchSetupModel::photos_to_analyse() const {
+    qint64 selected = 0;
+    switch (scope_) {
+    case Selection:
+        selected = QSet<ItemId>(selection_.cbegin(), selection_.cend()).size();
+        break;
+    case AllPhotos:
+        selected = QSet<ItemId>(all_.cbegin(), all_.cend()).size();
+        break;
+    case Folder:
+        return -1;
+    }
+    return std::max<qint64>(0, selected - plan_.excluded);
 }
 
 QString BatchSetupModel::outputFolderText() const {
@@ -278,10 +337,15 @@ BatchSetup BatchSetupModel::setup() const {
         setup.include_subfolders = include_subfolders_;
         if (!setup.input_folder.isEmpty()) {
             const QString name = QFileInfo(setup.input_folder).fileName();
-            setup.name = tr_text("Export of %1")
-                             .arg(name.isEmpty() ? QDir::toNativeSeparators(setup.input_folder) : name);
+            const QString folder = name.isEmpty() ? QDir::toNativeSeparators(setup.input_folder) : name;
+            setup.name = automatic_ == AutomaticAnalyzeOnly ? tr_text("Analysis of %1").arg(folder)
+                                                            : tr_text("Export of %1").arg(folder);
         }
         break;
+    }
+    if (setup.name.isEmpty() && automatic_ == AutomaticAnalyzeOnly) {
+        // Nothing is exported: not "Export of ..." (the service's default name).
+        setup.name = tr_text("Analysis of %1").arg(presentation::photo_count_label(setup.items.size()));
     }
     setup.output_folder = output_folder_.isLocalFile() ? QDir::cleanPath(output_folder_.toLocalFile()) : QString();
     if (preset_ == Tiff16) {
@@ -302,6 +366,8 @@ BatchSetup BatchSetupModel::setup() const {
     setup.artist = artist_;
     setup.copyright = copyright_;
     setup.include_gps = include_gps_;
+    setup.automatic = static_cast<BatchAutomatic>(automatic_);
+    setup.keep_consistent = automatic_ != AutomaticOff && keep_consistent_;
     return setup;
 }
 
@@ -332,9 +398,11 @@ QString BatchSetupModel::basic_problem() const {
         break;
     }
     if (!output_folder_.isLocalFile()) {
-        return tr_text("Choose an output folder.");
+        return automatic_ == AutomaticAnalyzeOnly ? tr_text("Choose a folder for the batch report.")
+                                                  : tr_text("Choose an output folder.");
     }
-    return pattern_problem_;
+    // Analyse only names no output: its file-name pattern is not used.
+    return automatic_ == AutomaticAnalyzeOnly ? QString() : pattern_problem_;
 }
 
 QString BatchSetupModel::start_hint() const {
@@ -348,6 +416,13 @@ QString BatchSetupModel::start_hint() const {
     }
     if (!plan_.ok) {
         return plan_.folder_not_listed ? QString() : plan_.error;
+    }
+    if (automatic_ == AutomaticAnalyzeOnly) {
+        // Nothing is exported: the photos to analyse count (unknown for a folder: the service checks).
+        if (photos_to_analyse() == 0) {
+            return tr_text("None of these photos can be analysed (see the reasons below).");
+        }
+        return {};
     }
     if (plan_.outputs + plan_.already_exported == 0) {
         return tr_text("None of these photos can be exported (see the reasons below).");
@@ -422,14 +497,34 @@ QVariantList BatchSetupModel::exclusions() const {
 
 QString BatchSetupModel::counts_text() const {
     if (plan_.folder_not_listed) {
+        switch (automatic_) {
+        case AutomaticAuto:
+            return tr_text("The folder's photos are added to the library when the batch starts, then analysed and "
+                           "exported.");
+        case AutomaticAnalyzeOnly:
+            return tr_text("The folder's photos are added to the library when the batch starts, then analysed; "
+                           "nothing is exported.");
+        case AutomaticOff:
+            break;
+        }
         return tr_text("The folder's photos are added to the library when the batch starts, then exported.");
     }
     if (!plan_.ok) {
         return {};
     }
     QStringList parts;
-    parts << (plan_.outputs == 1 ? tr_text("1 photo will be exported")
-                                 : tr_text("%1 photos will be exported").arg(plan_.outputs));
+    if (automatic_ == AutomaticAnalyzeOnly) {
+        const qint64 analysed = photos_to_analyse();
+        parts << (analysed < 0    ? tr_text("The folder's photos will be analysed; nothing is exported")
+                  : analysed == 1 ? tr_text("1 photo will be analysed; nothing is exported")
+                                  : tr_text("%1 photos will be analysed; nothing is exported").arg(analysed));
+    } else if (automatic_ == AutomaticAuto) {
+        parts << (plan_.outputs == 1 ? tr_text("1 photo will be analysed and exported")
+                                     : tr_text("%1 photos will be analysed and exported").arg(plan_.outputs));
+    } else {
+        parts << (plan_.outputs == 1 ? tr_text("1 photo will be exported")
+                                     : tr_text("%1 photos will be exported").arg(plan_.outputs));
+    }
     if (plan_.renamed > 0) {
         parts << (plan_.renamed == 1 ? tr_text("1 gets a number added to its name")
                                      : tr_text("%1 get a number added to their names").arg(plan_.renamed));

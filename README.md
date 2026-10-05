@@ -2,9 +2,10 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its seventh development
-> increment (W7, durable batch), pending its commit and merge: a Qt Quick `Lucent.exe` that adds
-> RAW files in place or as verified copies into a library folder, keeps them in a saved
+> **Status: pre-alpha, under active development.** Lucent has completed its eighth development
+> increment (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches),
+> pending the commit and merge of its integration, and the DNG opcode part of W9: a Qt Quick
+> `Lucent.exe` that adds RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
 > removable-media badges and relinking, and browses them with labelled camera previews and support
 > states. Opening a photo edits it: white balance (temperature and tint where the camera's
@@ -15,11 +16,16 @@ Offline, camera-independent RAW photo development for Windows.
 > is exported to JPEG or 16-bit TIFF in isolated `lucent-worker.exe` processes under a memory
 > budget, each output verified before it is published without overwriting anything, with pause,
 > resume, cancel, actionable pauses for a full or disconnected destination, recovery after Lucent
-> is closed or stops, and a completion report. It runs from a source build or from an unsigned
-> per-user installer built from source (see [Installing](#installing)). There is **no automatic
-> optimisation yet** (W8), and no camera model is verified as supported. The next section
-> describes the product Lucent is being built to become, from its blueprint, not what it can do
-> today.
+> is closed or stops, and a completion report. **Auto** in the editor, and batches set to Auto or
+> Analyse only, choose each photo's settings with the deterministic Natural v1 optimiser (locks are
+> respected and reported), check the result at full size with a bounded conservative fallback,
+> and save it as an ordinary, undoable revision with its analysis record; related shots can be
+> kept consistent, and uncertain results are marked for review. Natural v1 is deliberately
+> conservative and **not yet calibrated** against photographers' preferences. DNG opcode lists are
+> applied at the stages the specification defines. It runs from a source build or from an unsigned
+> per-user installer built from source (see [Installing](#installing)). No camera model is verified
+> as supported. The next section describes the product Lucent is being built to become, from its
+> blueprint, not what it can do today.
 
 ## What Lucent is meant to be
 
@@ -64,16 +70,19 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W5 | Per-user Inno Setup installer with Qt deployment, dependency audit, licences and SBOM (ADR 0009) | Done except the clean-machine test |
 | W6 | Develop settings v1 and editing operations (white balance, exposure, guided-filter highlights and shadows, contrast, tone curve, saturation and vibrance, base look "neutral" v1), two-stage interactive rendering, versioned recipes with immutable revisions (catalog schema v2), undo/redo, copy/paste, the Edit view (ADR 0010) | Done, pending commit and merge |
 | W7 | Durable batch export: `lucent-worker.exe` and its versioned pipe protocol, memory-budgeted scheduling, catalog job journal (schema v3 and v4) with leases, a publication journal and receipts, verified no-clobber publication, restart recovery, pause / cancel / resume and destination attentions, EXIF capture metadata with an explicit GPS policy, completion reports, the Export batch dialog and the Exports view (ADR 0012) | Done, pending commit and merge |
-| W8–W12 | Optimiser, masks and optics, qualification, learned appearance, release hardening | Planned |
+| W8 | Natural v1 automatic settings (`lucent_analysis`: metric contract, proposals, bounded deterministic search with rechecks, confidence and review flags, related-shot consistency; ADR 0011) and their integration: the editor's Auto with a full-resolution final check and conservative fallbacks, automatic revisions with analysis records (catalog schema v5), automatic batches (Auto, Analyse only, related shots kept consistent) analysed in the worker (protocol v2), the Automatic settings panel and Review badges (ADR 0013) | Done, integration pending commit and merge; the blind preference test and the calibration of Natural v1 are pending |
+| W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); masks, crop and straighten, lens corrections and chroma denoise | Opcode part done; the rest planned |
+| W10–W12 | Qualification, learned appearance, release hardening | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
 ([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library is saved in
 `%LOCALAPPDATA%\Lucent\data\lucent.catalog` (`--data-root` points a developer session elsewhere);
 edits are stored there as recipe revisions, so a library opened by Lucent W6 can no longer be
-opened by an earlier build, and W7 adds the batch journal (catalog schema v4; earlier builds open
-such a library read-only). Photos are rendered with their recipe and the base look "neutral" v1.
-The developer command-line tools `lucent-probe` and `lucent-render` remain; they are not
-installed.
+opened by an earlier build, W7 adds the batch journal (catalog schema v4) and W8 the automatic
+settings' job states and analysis records (catalog schema v5); earlier builds open such a library
+read-only. Photos are rendered with their recipe and the base look "neutral" v1.
+The developer command-line tools `lucent-probe`, `lucent-render` and `lucent-auto` remain; they
+are not installed.
 
 ## Installing
 
@@ -107,6 +116,8 @@ There is no published release yet. `tools\package.ps1` builds the installer from
 apps/lucent/         Lucent.exe: the Qt Quick shell and Edit view, its view models and the adapters to the application services (W3, W4, W6)
 apps/lucent-probe/   Developer CLI that prints RAW decoder probe results as JSON (W1)
 apps/lucent-render/  Developer CLI that renders a RAW file and exports JPEG / 16-bit TIFF (W2)
+apps/lucent-worker/  lucent-worker.exe: the isolated process that renders, verifies and exports one batch job, or analyses one photo (W7, W8)
+apps/lucent-auto/    Developer CLI that runs and evaluates the automatic settings over files (W8)
 cmake/               CMake helpers and the x64-windows-lucent vcpkg overlay triplet
 docs/adr/            Architecture decision records
 docs/architecture/   Module layering and dependency rules
@@ -122,14 +133,16 @@ src/raw/             lucent_raw: RawDecoder interface, decoded-RAW data contract
 src/engine/          lucent_engine: the render and develop pipeline from decoded RAW to display-referred Rec.2020, editing operations
 src/export/          lucent_export: output profiles, JPEG/TIFF encoding, verified no-clobber export, cache thumbnails
 src/catalog/         lucent_catalog: SQLite catalog of sources, items, imports and recipe revisions; migrations, backups, restore
-src/application/     lucent_application: import, session and catalog libraries, source maintenance, task executor, recipes, preview, develop-preview and export services (no Qt)
+src/analysis/        lucent_analysis: Natural v1 automatic settings: metrics, proposals, bounded search, confidence, related shots (W8)
+src/workers/         lucent_workers: the worker process protocol, host and server (W7, W8)
+src/application/     lucent_application: import, session and catalog libraries, source maintenance, task executor, recipes, preview, develop-preview, export, batch and automatic-settings services (no Qt)
 tests/               Cross-module integration tests (unit tests live in src/<module>/tests/)
 tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.ps1, package.ps1
 ```
 
 Modules are layered: a module may depend only on lower layers. `core` is the lowest, then `image`,
-then `raw`, `engine`, `export` and `catalog`; `application` sits above them (the planned
-`analysis`, `assets` and `workers` modules will sit in between), with the user interface on top. See
+then `raw`, `engine`, `export` and `catalog`; `analysis` and `workers` sit above those and below
+`application` (a planned `assets` module will join them), with the user interface on top. See
 [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Developer quick start

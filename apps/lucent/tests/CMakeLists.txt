@@ -28,9 +28,11 @@ set_target_properties(lucent_ui_fakes PROPERTIES FOLDER "tests")
 add_executable(lucent_ui_tests
     adapter_conversions_tests.cpp
     adapter_test_support.hpp
+    app_auto_tests.cpp
     app_controller_tests.cpp
     app_edit_service_tests.cpp
     application_adapters_tests.cpp
+    automatic_conversions_tests.cpp
     batch_adapter_tests.cpp
     batch_models_tests.cpp
     application_shell_tests.cpp

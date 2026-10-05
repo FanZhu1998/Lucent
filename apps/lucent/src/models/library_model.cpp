@@ -218,6 +218,8 @@ QVariant LibraryModel::data(const QModelIndex& index, int role) const {
         return item->edited;
     case InSelectionRole:
         return selected_.contains(item->id);
+    case ReviewRole:
+        return has_flag(item->flags, ItemFlag::ReviewRecommended);
     case FlagBadgesRole: {
         QVariantList badges;
         for (const QString& key : p::flag_keys(item->flags)) {
@@ -273,6 +275,7 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {FlagBadgesRole, "flagBadges"},
         {EditedRole, "edited"},
         {InSelectionRole, "inSelection"},
+        {ReviewRole, "review"},
     };
 }
 

@@ -14,6 +14,8 @@
 
 #include <windows.h>
 
+#include <lucent/analysis/related_shots.hpp>
+#include <lucent/application/auto_develop.hpp>
 #include <lucent/application/import.hpp>
 #include <lucent/application/recipe.hpp>
 #include <lucent/application/recipe_service.hpp>
@@ -157,6 +159,20 @@ std::string_view to_string(ReportOutcome outcome) noexcept {
             return "cancelled";
         case ReportOutcome::Pending:
             return "pending";
+        case ReportOutcome::Analysed:
+            return "analysed";
+    }
+    return "invalid";
+}
+
+std::string_view to_string(AutomaticSettings value) noexcept {
+    switch (value) {
+        case AutomaticSettings::Off:
+            return "off";
+        case AutomaticSettings::Auto:
+            return "auto";
+        case AutomaticSettings::AnalyzeOnly:
+            return "analyze_only";
     }
     return "invalid";
 }
@@ -191,8 +207,10 @@ Status BatchServiceOptions::validate() const {
     if (memory.total_bytes != 0 && memory.interactive_reserve_bytes >= memory.total_bytes) {
         return invalid("the interactive reserve must be below the total memory budget");
     }
-    if (!(memory.default_bytes_per_pixel > 0.0) || !(memory.measured_margin >= 1.0)) {
-        return invalid("default_bytes_per_pixel must be positive and measured_margin at least 1");
+    if (!(memory.default_bytes_per_pixel > 0.0) || !(memory.measured_margin >= 1.0) ||
+        !(memory.default_auto_bytes_per_pixel > 0.0)) {
+        return invalid("default_bytes_per_pixel and default_auto_bytes_per_pixel must be positive and measured_margin "
+                       "at least 1");
     }
     if (retry.initial_backoff.count() <= 0 || retry.max_backoff < retry.initial_backoff) {
         return invalid("the retry back-off must be positive and max_backoff at least initial_backoff");
@@ -250,6 +268,7 @@ Expected<std::shared_ptr<detail::BatchContext>> BatchService::Impl::load_context
     context->renderer_version = record.renderer_version;
     context->export_settings_sha256 = record.export_settings_sha256;
     context->folder_identity = context->destination.folder_identity;
+    context->automatic = record.automatic;
     if (!cache) {
         return context;
     }
@@ -452,6 +471,124 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
     frozen.sha256 = document->sha256;
     frozen.json = std::move(document->json);
     return frozen;
+}
+
+// ---- Related shots ------------------------------------------------------------------------------
+
+Expected<std::shared_ptr<const detail::ConsistencyPlan>> BatchService::Impl::consistency_plan(
+    detail::BatchContext& context) {
+    auto counts = catalog->query([&](catalog::ReadTransaction& tx) { return tx.auto_job_counts(context.id); });
+    if (!counts) {
+        return Unexpected(std::move(counts.error()));
+    }
+    {
+        std::lock_guard lock(mutex);
+        if (context.consistency && context.consistency->analysed == counts->documents) {
+            return context.consistency;
+        }
+    }
+    // Every job's recorded analysis, in ordinal order (jobs whose analysis failed have none). A
+    // document this build cannot read (another document version, after an update between the
+    // pre-pass and now) leaves its job out of the plan: it is then developed on its own, without a
+    // related-shot target, rather than failing the batch.
+    struct Member {
+        catalog::JobId job;
+        std::uint32_t ordinal = 0;
+        AutoRun run;
+    };
+    std::vector<Member> members;
+    std::uint64_t documents = 0;
+    catalog::JobQuery query;
+    query.batch = context.id;
+    query.limit = 500;
+    for (;;) {
+        auto jobs = catalog->query([&](catalog::ReadTransaction& tx) { return tx.list_jobs(query); });
+        if (!jobs) {
+            return Unexpected(std::move(jobs.error()));
+        }
+        for (const catalog::JobRecord& job : *jobs) {
+            query.after = job.id;
+            if (!job.analysis_json) {
+                continue;
+            }
+            ++documents;
+            auto run = read_auto_run(*job.analysis_json);
+            if (!run) {
+                core::log_warn(kWhere, "batch {}: the analysis of job {} cannot be read, so it is left out of the "
+                               "related-shot plan: {}", context.id.value, job.id.value, run.error().describe());
+                continue;
+            }
+            members.push_back(Member{job.id, job.ordinal, std::move(*run)});
+        }
+        if (jobs->size() < query.limit) {
+            break;
+        }
+    }
+    std::vector<analysis::GroupInput> inputs(members.size());
+    std::vector<analysis::ConsistencyMember> consistency(members.size());
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        const Member& m = members[i];
+        inputs[i].shot = &m.run.shot;
+        if (const auto group = context.policy.automatic.groups.find(m.ordinal);
+            group != context.policy.automatic.groups.end()) {
+            inputs[i].user_group = group->second;
+        }
+        const bool anchor = context.policy.automatic.anchors.contains(m.ordinal);
+        consistency[i].available = true;
+        consistency[i].anchor = anchor && m.run.anchor_appearance.has_value();
+        consistency[i].appearance = consistency[i].anchor ? *m.run.anchor_appearance : m.run.appearance;
+        consistency[i].calibration_domain = m.run.shot.calibration_domain;
+        consistency[i].manual = m.run.manual;
+    }
+    const analysis::Grouping grouping = analysis::group_related_shots(inputs, analysis::GroupingMode::CaptureTime);
+    const std::vector<std::optional<analysis::ConsistencyTarget>> targets =
+        analysis::consistency_targets(grouping, consistency);
+    auto plan = std::make_shared<detail::ConsistencyPlan>();
+    plan->analysed = documents;
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        if (i < targets.size() && targets[i]) {
+            plan->targets.emplace(members[i].job.value, *targets[i]);
+        }
+        if (i < grouping.group_of.size() && grouping.group_of[i]) {
+            const analysis::RelatedGroup& group = grouping.groups[*grouping.group_of[i]];
+            if (group.members.size() >= 2) {
+                plan->groups.emplace(members[i].job.value, group.id);
+            }
+        }
+    }
+    // The anchors keep their settings: what they record is the target of the group their look sets
+    // (a member's of the same calibration domain when there is one), or the group alone.
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        if (!consistency[i].anchor) {
+            continue;
+        }
+        const auto group = plan->groups.find(members[i].job.value);
+        if (group == plan->groups.end()) {
+            continue;  // alone: no group to record
+        }
+        std::optional<analysis::ConsistencyTarget> chosen;
+        for (const auto& [job, target] : plan->targets) {
+            const auto member_group = plan->groups.find(job);
+            if (member_group == plan->groups.end() || member_group->second != group->second) {
+                continue;
+            }
+            if (!chosen || (target.domain == members[i].run.shot.calibration_domain &&
+                            chosen->domain != members[i].run.shot.calibration_domain)) {
+                chosen = target;
+            }
+        }
+        if (!chosen) {
+            chosen.emplace();
+            chosen->group_id = group->second;
+            chosen->anchored = true;
+        }
+        plan->anchors.emplace(members[i].job.value, std::move(*chosen));
+    }
+    core::log_info(kWhere, "batch {}: {} analysed photos in {} related groups, {} regularised", context.id.value,
+                   members.size(), grouping.groups.size(), plan->targets.size());
+    std::lock_guard lock(mutex);
+    context.consistency = plan;
+    return std::shared_ptr<const detail::ConsistencyPlan>(plan);
 }
 
 // ---- Recovery ----------------------------------------------------------------------------------
@@ -718,8 +855,10 @@ bool BatchService::Impl::reconcile_job(const catalog::JobRecord& job, std::vecto
         return false;
     };
     // An output folder out of reach (a drive not plugged in yet, a share not reconnected, another
-    // folder at its path) says nothing about the outputs in it: decide once it is back.
-    if (context && reach_destination(**context) != detail::Reach::Reachable) {
+    // folder at its path) says nothing about the outputs in it: decide once it is back. An
+    // AnalyzeOnly batch publishes nothing there (only its report), so its jobs never wait for it.
+    if (context && (*context)->automatic != catalog::AutoMode::AnalyzeOnly &&
+        reach_destination(**context) != detail::Reach::Reachable) {
         return defer("its output folder cannot be reached");
     }
 
@@ -1055,6 +1194,36 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
     if (Status valid = request.output.validate(); !valid) {
         return Unexpected(std::move(valid.error()));
     }
+    const bool automatic = request.automatic != AutomaticSettings::Off;
+    const bool analyze_only = request.automatic == AutomaticSettings::AnalyzeOnly;
+    if (request.automatic != AutomaticSettings::Off && request.automatic != AutomaticSettings::Auto &&
+        request.automatic != AutomaticSettings::AnalyzeOnly) {
+        return fail(ErrorCode::InvalidArgument, "unknown automatic-settings mode", std::string(kWhere));
+    }
+    if (request.keep_consistent && !automatic) {
+        return fail(ErrorCode::InvalidArgument, "keeping related photos consistent needs automatic settings",
+                    std::string(kWhere));
+    }
+    for (const BatchItem& item : request.items) {
+        if (item.group && (item.group->empty() || item.group->size() > 64 || !core::is_valid_utf8(*item.group))) {
+            return fail(ErrorCode::InvalidArgument, "a related-shot group name must be 1 to 64 bytes of UTF-8",
+                        std::string(kWhere));
+        }
+    }
+    if (automatic) {
+        prepared.plan.notices.push_back(PlanNotice::AutomaticSettings);
+        prepared.plan.warnings.push_back(
+            "every photo is analysed before it is exported; outputs are named after their automatic revisions");
+        if (analyze_only) {
+            prepared.plan.notices.push_back(PlanNotice::AnalyzeOnly);
+            prepared.plan.warnings.push_back("nothing is exported: each photo gets automatic revisions to review");
+        }
+        if (request.keep_consistent) {
+            prepared.plan.notices.push_back(PlanNotice::KeepConsistent);
+            prepared.plan.warnings.push_back(
+                "related photos are analysed together first, then each is analysed again towards its group's look");
+        }
+    }
     auto pattern = parse_name_pattern(request.destination.name_pattern);
     if (!pattern) {
         return Unexpected(std::move(pattern.error()));
@@ -1152,6 +1321,7 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
     prepared.policy.existing_outputs = request.existing_outputs;
     prepared.policy.retry = s.options.retry;
     prepared.policy.single_export = request.single_export;
+    prepared.policy.automatic.keep_consistent = request.keep_consistent;
 
     // ---- Selection ---------------------------------------------------------------------------
     std::vector<Selected> selected;
@@ -1403,8 +1573,9 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
             continue;
         }
         job.renamed = index > 1;
-        // An identical output already in this folder (ExistingOutputs::Skip).
-        if (item.sha256 && request.existing_outputs == ExistingOutputs::Skip) {
+        // An identical output already in this folder (ExistingOutputs::Skip). Not for automatic
+        // jobs: their identity is known only once they are frozen.
+        if (item.sha256 && request.existing_outputs == ExistingOutputs::Skip && !automatic) {
             auto settings_doc = write_recipe(frozen.settings);
             if (settings_doc) {
                 catalog::JobIdentityInput input;
@@ -1448,6 +1619,8 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
             job.destination = *job.existing_output;
             job.renamed = false;
             job.replaces = false;
+        } else if (analyze_only) {
+            batch_names.erase(detail::fold_case(name.native()));  // nothing is written
         } else {
             ++prepared.plan.outputs;
             prepared.plan.renamed += job.renamed ? 1 : 0;
@@ -1458,7 +1631,7 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
             prepared.plan.estimated_output_bytes += bytes;
             prepared.plan.largest_output_bytes = std::max(prepared.plan.largest_output_bytes, bytes);
         }
-        if (!job.existing_output && written_examples.size() < kPlanExamples) {
+        if (!job.existing_output && !analyze_only && written_examples.size() < kPlanExamples) {
             written_examples.push_back(PlannedOutput{item.id, item.path, job.destination, job.renamed, job.replaces, false});
         } else if (job.existing_output && skipped_examples.size() < kPlanExamples) {
             skipped_examples.push_back(PlannedOutput{item.id, item.path, job.destination, false, false, true});
@@ -1495,6 +1668,26 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
     }
     prepared.policy.excluded = prepared.plan.excluded;
     prepared.policy.excluded_count = prepared.plan.excluded_count;
+    if (request.keep_consistent) {
+        // The user's groups and anchors, by job ordinal.
+        std::unordered_map<std::uint64_t, const BatchItem*> requested;
+        for (const BatchItem& item : request.items) {
+            requested.emplace(item.item.value, &item);
+        }
+        for (std::size_t ordinal = 0; ordinal < prepared.jobs.size(); ++ordinal) {
+            const auto found = requested.find(prepared.jobs[ordinal].item.id.value);
+            if (found == requested.end()) {
+                continue;
+            }
+            if (found->second->group) {
+                prepared.policy.automatic.groups.emplace(static_cast<std::uint32_t>(ordinal), *found->second->group);
+            }
+            if (found->second->anchor) {
+                prepared.policy.automatic.anchors.insert(static_cast<std::uint32_t>(ordinal));
+            }
+        }
+    }
+    std::stable_sort(prepared.plan.notices.begin(), prepared.plan.notices.end());  // in PlanNotice order
     prepared.name = request.name;
     if (prepared.name.empty()) {
         prepared.name = prepared.jobs.size() == 1
@@ -1566,6 +1759,9 @@ Expected<SubmittedBatch> BatchService::submit(const BatchRequest& request, const
     batch.renderer_version = s.renderer_version;
     batch.created_at = s.now();
     batch.start = request.start;
+    batch.automatic = request.automatic == AutomaticSettings::Auto          ? catalog::AutoMode::Auto
+                      : request.automatic == AutomaticSettings::AnalyzeOnly ? catalog::AutoMode::AnalyzeOnly
+                                                                            : catalog::AutoMode::None;
     std::vector<catalog::NewJob> jobs;
     jobs.reserve(prepared->jobs.size());
     for (const PreparedJob& job : prepared->jobs) {
@@ -1757,6 +1953,14 @@ BatchStatus make_status(BatchService::Impl& s, catalog::BatchRecord record) {
         status.folder = (*context)->destination.folder;
         status.single_export = (*context)->policy.single_export;
         status.excluded = (*context)->policy.excluded_count;
+        status.keep_consistent = (*context)->policy.automatic.keep_consistent;
+    }
+    status.automatic = record.automatic;
+    if (record.automatic != catalog::AutoMode::None && record.counts.pending() > 0) {
+        auto counts = s.catalog->query([&](catalog::ReadTransaction& tx) { return tx.auto_job_counts(record.id); });
+        if (counts) {
+            status.automatic_counts = *counts;
+        }
     }
     std::uint32_t active = 0;
     {
@@ -1798,7 +2002,7 @@ BatchStatus make_status(BatchService::Impl& s, catalog::BatchRecord record) {
         }
     }
     if (facts) {
-        status.review_recommended = facts->flagged_receipts;
+        status.review_recommended = facts->flagged_receipts + facts->flagged_analyses;
         status.retryable = facts->failed_retryable;
     }
     // A batch of one photograph: its output or why there is none.

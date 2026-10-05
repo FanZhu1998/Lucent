@@ -5,7 +5,8 @@ import Lucent
 // One contact-sheet cell: thumbnail, processing status (once Lucent has started on the photo),
 // support status, a "Camera preview" label while the thumbnail is the camera's embedded JPEG
 // (blueprint section 2), an "Edited" badge for photos with develop settings (W6: their thumbnail
-// is Lucent's render of the recipe), badges for the file (Missing, Changed, Duplicate, Removable) and the pick,
+// is Lucent's render of the recipe), a "Review" badge for automatic results Lucent recommends checking
+// (W8), badges for the file (Missing, Changed, Duplicate, Removable) and the pick,
 // file name, camera, capture time and flags. W7: photos selected for a batch (Ctrl+click toggles,
 // Shift+click selects a range) are outlined, with a check mark while several are selected. The
 // properties marked required are LibraryModel roles.
@@ -33,6 +34,7 @@ Item {
     required property bool missing
     required property bool edited
     required property bool inSelection
+    required property bool review
 
     property bool selected: false  // the current photo
     property bool showFocus: false
@@ -136,6 +138,15 @@ Item {
                     text: qsTr("Edited")
                     dotColor: Theme.accent
                     detail: qsTr("This photo has develop settings; the thumbnail shows them.")
+                }
+
+                // W8: an automatic result Lucent recommends checking (low confidence, a fallback, locks).
+                Badge {
+                    objectName: "reviewBadge"
+                    visible: card.review
+                    text: qsTr("Review")
+                    dotColor: Theme.attention
+                    detail: qsTr("Lucent recommends checking this photo's automatic settings. Open it in Edit to see why.")
                 }
 
                 Badge {
@@ -266,9 +277,12 @@ Item {
                 elide: Text.ElideRight
             }
 
+            // The flags in words, except "Review recommended", which the Review badge already shows
+            // (it is the first label when set: flag_labels lists them in bit order).
             Text {
+                objectName: "flagLine"
                 width: parent.width
-                text: card.flagLabels.join(" · ")
+                text: (card.review ? card.flagLabels.slice(1) : card.flagLabels).join(" · ")
                 color: Theme.attention
                 font.pixelSize: Theme.fontSmall
                 elide: Text.ElideRight

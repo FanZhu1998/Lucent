@@ -31,6 +31,17 @@
 // the photo's own recipe is unreadable, moving to another revision (undo, redo, select, reset)
 // stays possible (EditState::history_available).
 //
+// Automatic settings (W8; blueprint section 2: "Auto creates a new editable revision. The
+// photographer can lock controls before rerunning it. The optimizer may change only unlocked
+// controls and must report when the locks prevent its usual technical targets"; ADR 0013).
+// run_auto() analyses the photo's committed settings (locks and locked values included) in the
+// background: auto_progress follows (about every percent), then auto_finished exactly once. The
+// automatic revision (origin "auto") arrives as state_changed and history_changed like any other
+// change; undo returns to the recipe before Auto. auto_summary_changed describes the CURRENT
+// revision whenever the history is published: what automatic settings did when it is an automatic
+// revision (from its analysis record, also for revisions an automatic batch made), an empty summary
+// otherwise. One run per photo at a time; a run continues when its session closes.
+//
 // Ownership: the shell owns the service (Services::edits) and destroys it after the QML engine. A
 // service must not emit signals from its destructor.
 
@@ -194,6 +205,63 @@ struct EditHistoryEntry {
     quint32 reverted_from = 0;   // a copy of this revision number (0: none)
     bool current = false;
     bool on_current_path = false;  // the current revision or one of its ancestors
+    // Automatic revisions (origin "auto"): which attempt of Auto's full-resolution check it is
+    // ("chosen", "fallback", "baseline"; empty for other origins), and whether it failed that check
+    // (it was not used: a more conservative attempt follows it in the history).
+    QString auto_kind;
+    bool auto_failed = false;
+};
+
+// ---- Automatic settings ------------------------------------------------------------------------
+
+enum class AutoStage : std::uint8_t {
+    Queued = 1,     // waiting for a thread
+    Analysing = 2,  // decode and analysis
+    Checking = 3,   // the full-resolution final check
+    Saving = 4,     // writing the automatic revisions
+    WaitingForMemory = 5,  // admitted once other work releases memory
+};
+
+struct AutoProgress {
+    ItemId item = 0;
+    AutoStage stage = AutoStage::Queued;
+    double fraction = 0.0;  // of the whole run, 0..1
+};
+
+// The end of one Auto run (EditService::auto_finished).
+struct AutoOutcome {
+    ItemId item = 0;
+    bool saved = false;           // automatic revisions were written
+    bool cancelled = false;
+    bool made_current = false;    // the result became the current revision (false: kept as a branch)
+    quint32 revision_number = 0;  // the effective automatic revision (0: none)
+    int revisions = 0;            // automatic revisions written (an attempt that failed the check included)
+    bool review = false;          // the result recommends a review
+    QString message;              // user-facing: what happened, or why nothing was saved
+};
+
+// What automatic settings did to the photo's current revision, from its analysis record (ADR 0013:
+// versions, confidence, flags with reasons, the locks report and the final-check attempt).
+// `revision` 0: the current revision is not an automatic one.
+struct AutoSummary {
+    quint64 revision = 0;
+    quint32 revision_number = 0;
+    bool from_batch = false;        // made by an automatic batch (otherwise by the editor's Auto)
+    double confidence = 0.0;        // 0..1
+    bool review = false;            // a review is recommended
+    QStringList review_reasons;     // user-facing: why
+    QStringList notes;              // user-facing: the other findings
+    QList<EditControl> changed;     // the controls the revision changed
+    QList<EditControl> locked;      // locked controls Auto would otherwise have set
+    bool locks_prevented_targets = false;
+    QStringList lock_notes;         // user-facing: what the locks did
+    quint32 attempt = 0;            // 0: the optimiser's choice; n: the n-th conservative fallback
+    bool baseline = false;          // the last resort: as shot for the controls Auto sets
+    QString fallback_detail;        // why the earlier attempt was replaced (the failed checks; diagnostics)
+    QString group;                  // the related-shot group it was matched to; empty: none
+    bool anchor = false;            // an automatic batch kept it as its related shots' anchor
+
+    friend bool operator==(const AutoSummary&, const AutoSummary&) = default;
 };
 
 enum class FramePhase : std::uint8_t {
@@ -278,6 +346,14 @@ public:
     [[nodiscard]] virtual bool has_clipboard() const = 0;
     virtual void paste_settings(const QList<ItemId>& targets) = 0;
 
+    // ---- Automatic settings (see the file comment) ---------------------------------------------
+
+    virtual void run_auto(ItemId item) = 0;
+    // Stops the photo's run at its next safe point; nothing is written (auto_finished reports it).
+    virtual void cancel_auto(ItemId item) = 0;
+    // A run of `item` is in progress (item 0: of any photo).
+    [[nodiscard]] virtual bool is_auto_running(ItemId item = 0) const = 0;
+
     // ---- Helpers ---------------------------------------------------------------------------------
 
     // The tone curve through `points` (EditSettings::tone_curve) at `count` evenly spaced x in
@@ -299,6 +375,9 @@ signals:
     void copied(lucent::ui::ItemId item, quint32 categories);
     void pasted(const lucent::ui::PasteReport& report);
     void busy_changed(bool busy);
+    void auto_progress(const lucent::ui::AutoProgress& progress);
+    void auto_finished(const lucent::ui::AutoOutcome& outcome);
+    void auto_summary_changed(lucent::ui::ItemId item, const lucent::ui::AutoSummary& summary);
 };
 
 }  // namespace lucent::ui

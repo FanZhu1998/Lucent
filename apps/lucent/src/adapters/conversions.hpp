@@ -60,7 +60,7 @@ namespace lucent::ui::adapters {
 
 // Copies the facts the application library owns (file, camera, capture, support, source facts,
 // pick) from `fresh` into `current`, keeping the shell's own state (generations, processing,
-// render).
+// render, and the ReviewRecommended flag, which follows the item's recipe).
 void merge_library_facts(LibraryItem& current, const LibraryItem& fresh);
 
 // --- Errors ----------------------------------------------------------------------------------

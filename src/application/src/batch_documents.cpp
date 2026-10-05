@@ -370,6 +370,20 @@ Expected<std::string> write_policy(const PolicyDocument& document) {
         }
         out["excluded"] = std::move(excluded);
         out["excluded_count"] = document.excluded_count;
+        const AutomaticPolicy& automatic = document.automatic;
+        if (automatic.keep_consistent || !automatic.groups.empty() || !automatic.anchors.empty()) {
+            Json groups = Json::array();
+            for (const auto& [ordinal, group] : automatic.groups) {
+                groups.push_back(Json::array({ordinal, core::sanitize_utf8(group)}));
+            }
+            Json anchors = Json::array();
+            for (const std::uint32_t ordinal : automatic.anchors) {
+                anchors.push_back(ordinal);
+            }
+            out["automatic"] = Json{{"keep_consistent", automatic.keep_consistent},
+                                    {"groups", std::move(groups)},
+                                    {"anchors", std::move(anchors)}};
+        }
         return out.dump();
     });
 }
@@ -408,6 +422,30 @@ Expected<PolicyDocument> read_policy(std::string_view json) {
             document.excluded.push_back(std::move(exclusion));
         }
         document.excluded_count = unsigned_number(in, "excluded_count");
+        if (in.contains("automatic")) {
+            const Json& automatic = member(in, "automatic");
+            if (!automatic.is_object()) {
+                corrupt("member 'automatic' is not an object");
+            }
+            document.automatic.keep_consistent = boolean(automatic, "keep_consistent");
+            const Json& groups = member(automatic, "groups");
+            const Json& anchors = member(automatic, "anchors");
+            if (!groups.is_array() || !anchors.is_array()) {
+                corrupt("member 'automatic' holds groups or anchors that are not arrays");
+            }
+            for (const Json& entry : groups) {
+                if (!entry.is_array() || entry.size() != 2 || !entry[0].is_number_unsigned() || !entry[1].is_string()) {
+                    corrupt("an automatic group is not [ordinal, name]");
+                }
+                document.automatic.groups.emplace(entry[0].get<std::uint32_t>(), entry[1].get<std::string>());
+            }
+            for (const Json& entry : anchors) {
+                if (!entry.is_number_unsigned()) {
+                    corrupt("an automatic anchor is not an ordinal");
+                }
+                document.automatic.anchors.insert(entry.get<std::uint32_t>());
+            }
+        }
         return document;
     });
 }

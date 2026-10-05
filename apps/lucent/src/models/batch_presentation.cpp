@@ -156,8 +156,16 @@ QString photo_count_label(qint64 count) {
 
 QString batch_accessible_label(const BatchSnapshot& batch, const QLocale& locale) {
     QStringList parts{batch.name, batch_state_label(batch)};
+    if (const QString automatic = automatic_label(batch); !automatic.isEmpty()) {
+        parts << automatic;
+    }
     if (!batch.single()) {
-        parts << tr_text("%1 of %2 exported").arg(batch.completed).arg(batch.total);
+        parts << (batch.automatic == BatchAutomatic::AnalyzeOnly
+                      ? tr_text("%1 of %2 analysed").arg(batch.completed).arg(batch.total)
+                      : tr_text("%1 of %2 exported").arg(batch.completed).arg(batch.total));
+        if (const QString analysis = analysis_label(batch, locale); !analysis.isEmpty()) {
+            parts << analysis;
+        }
         if (batch.remaining() > 0) {
             parts << tr_text("%1 remaining").arg(batch.remaining());
         }
@@ -202,6 +210,8 @@ QString outcome_key(BatchOutcome outcome) {
         return QStringLiteral("failed");
     case BatchOutcome::Cancelled:
         return QStringLiteral("cancelled");
+    case BatchOutcome::Analysed:
+        return QStringLiteral("analysed");
     case BatchOutcome::Pending:
         break;
     }
@@ -218,10 +228,58 @@ QString outcome_label(BatchOutcome outcome) {
         return tr_text("Failed");
     case BatchOutcome::Cancelled:
         return tr_text("Cancelled");
+    case BatchOutcome::Analysed:
+        return tr_text("Analysed");
     case BatchOutcome::Pending:
         break;
     }
     return tr_text("Waiting");
+}
+
+QString automatic_key(BatchAutomatic automatic) {
+    switch (automatic) {
+    case BatchAutomatic::Auto:
+        return QStringLiteral("auto");
+    case BatchAutomatic::AnalyzeOnly:
+        return QStringLiteral("analyzeOnly");
+    case BatchAutomatic::Off:
+        break;
+    }
+    return QStringLiteral("off");
+}
+
+QString automatic_label(const BatchSnapshot& batch) {
+    QString label;
+    switch (batch.automatic) {
+    case BatchAutomatic::Auto:
+        label = tr_text("Auto");
+        break;
+    case BatchAutomatic::AnalyzeOnly:
+        label = tr_text("Analyse only");
+        break;
+    case BatchAutomatic::Off:
+        return {};
+    }
+    if (batch.keep_consistent) {
+        label += tr_text(", related shots kept consistent");
+    }
+    return label;
+}
+
+QString completed_label(const BatchSnapshot& batch, const QLocale& locale) {
+    const QString count = locale.toString(batch.completed);
+    return batch.automatic == BatchAutomatic::AnalyzeOnly ? tr_text("%1 analysed").arg(count)
+                                                          : tr_text("%1 exported").arg(count);
+}
+
+QString analysis_label(const BatchSnapshot& batch, const QLocale& locale) {
+    if (batch.automatic == BatchAutomatic::Off || !batch.keep_consistent || batch.finished_state() ||
+        batch.analysis_pending <= 0 || batch.analysis_recorded < 0) {
+        return {};
+    }
+    return tr_text("Analysing related shots together first: %1 of %2 analysed")
+        .arg(locale.toString(batch.analysis_recorded),
+             locale.toString(std::max(batch.total, batch.analysis_recorded + batch.analysis_pending)));
 }
 
 QString batch_times_label(const QDateTime& created, const QDateTime& finished, const QLocale& locale) {

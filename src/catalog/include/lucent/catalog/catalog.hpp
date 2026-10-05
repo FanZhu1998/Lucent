@@ -98,7 +98,11 @@ namespace lucent::catalog {
 //           its minimum reader version stays 2: a schema-v2 build opens a v3 catalog read-only.
 //   4 (W7): jobs.interruptions and batches.reported_at (the coordinator's recovery bound and
 //           report emission). Adds only; minimum reader version 2.
-inline constexpr std::int32_t kSchemaVersion = 4;
+//   5 (W8): automatic settings: batches.auto_mode, jobs.auto_state and jobs.analysis_json (the
+//           durable analysis pre-pass), the one-time rebinding of an automatic job's identity to
+//           its effective revision, and auto_analyses (one analysis record per automatic
+//           revision). Adds only and does not change what renders mean; minimum reader version 2.
+inline constexpr std::int32_t kSchemaVersion = 5;
 
 enum class OpenMode : std::uint8_t {
     ReadWrite = 1,  // the application's catalog: migrates, writes, holds the writer lock
@@ -282,6 +286,14 @@ public:
     // journal's index (one row per entry): meant for start-up and occasional checks.
     [[nodiscard]] Expected<std::vector<PublicationInProgress>> list_publications_in_progress(
         std::optional<BatchId> batch, std::uint32_t limit, std::int64_t after = 0) const;
+
+    // Automatic settings (schema v5, jobs.hpp). The batch's non-terminal jobs by AutoJobState
+    // (NotFound for an unknown batch).
+    [[nodiscard]] Expected<AutoJobCounts> auto_job_counts(BatchId id) const;
+    // The analysis record of an automatic revision; std::nullopt when it has none.
+    [[nodiscard]] Expected<std::optional<AutoAnalysisRecord>> find_auto_analysis(RevisionId revision) const;
+    // Every analysis record of the item, oldest first (NotFound when the item does not exist).
+    [[nodiscard]] Expected<std::vector<AutoAnalysisRecord>> list_auto_analyses(ItemId item) const;
 
 protected:
     ReadTransaction(detail::Connection& connection, bool newer_schema) noexcept
@@ -515,6 +527,34 @@ public:
     // lease (recover the job first); "catalog.job.journal_order" when the attempt has no open
     // publication.
     [[nodiscard]] Status abandon_publication(JobId job, std::uint32_t attempt, Timestamp now);
+
+    // ---- Automatic settings (schema v5, jobs.hpp) ---------------------------------------------
+    //
+    // Stable error location: "catalog.job.auto_state" (InvalidArgument) when the job is not in the
+    // automatic state the call requires (or not an automatic job at all).
+
+    // Records the analysis document of a leased Pending job and makes it Analysed. InvalidArgument
+    // for text that is not valid JSON; LimitExceeded above kMaxAnalysisJsonBytes.
+    [[nodiscard]] Status record_job_analysis(const JobLease& lease, std::string_view analysis_json, Timestamp now);
+
+    // Binds a leased Analysed job to its effective automatic revision, once: the revision must
+    // belong to the job's item, have origin Auto and the given settings SHA-256
+    // (InvalidArgument otherwise); the job's revision, settings SHA-256 and identity (recomputed
+    // with compute_job_identity from its source, subimage, assets, the batch's renderer version and
+    // export settings) are replaced and the job becomes Frozen. Returns the new identity.
+    [[nodiscard]] Expected<core::Digest256> freeze_auto_job(const JobLease& lease, const AutoFreeze& freeze,
+                                                            Timestamp now);
+
+    // Completes a leased Frozen job of an AnalyzeOnly batch without a receipt (its automatic
+    // revisions are its result): Rendering -> Complete. "catalog.job.auto_state" for any other
+    // job; "catalog.job.stage_conflict" unless it is Rendering.
+    [[nodiscard]] Status complete_without_output(const JobLease& lease, Timestamp now);
+
+    // Stores the analysis record of an automatic revision (NewAutoAnalysis::validate's errors;
+    // NotFound for an unknown revision or job; InvalidArgument for a revision whose origin is not
+    // Auto, a job of another item, or invalid JSON; AlreadyExists when the revision has a record).
+    // Records are immutable and deleted only with their item.
+    [[nodiscard]] Expected<AutoAnalysisId> record_auto_analysis(const NewAutoAnalysis& analysis);
 
 private:
     friend class Catalog;

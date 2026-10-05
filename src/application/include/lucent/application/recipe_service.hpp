@@ -18,8 +18,12 @@
 // Undo, redo, select, revert, reset, set_lock and paste drop a pending transient edit of the item
 // first (callers commit a gesture before them).
 //
-// History. undo() moves to the parent revision ("as shot" at the root), redo() to the most
-// recently created child, select_revision() to any revision of the item (or "as shot"): they only
+// History. undo() moves to the parent revision ("as shot" at the root); redo() to the child undo()
+// last left in this session when it is a child of the current revision (redo returns along the path
+// the photographer came from), otherwise to the most recently created child that is not an automatic
+// revision written as a branch (recipe_store.hpp, kAutomaticBranchNote: an Auto result that was not
+// applied because the photo was edited meanwhile), otherwise to the most recently created child;
+// select_revision() to any revision of the item (or "as shot"): they only
 // move the current pointer, so an edit after an undo starts a new branch and the undone branch
 // stays (recipe_store.hpp). reset_to_as_shot() appends a Reset revision whose settings are the
 // defaults (locks are kept: they are the photographer's instructions to the optimiser, not
@@ -33,7 +37,18 @@
 // ignore keys they do not know.
 //
 // Locks. set_lock() records a lock change as a revision (locks are part of the settings, which are
-// immutable per revision). Locks are stored for the optimiser (W8); nothing here enforces them.
+// immutable per revision). Locks are the optimiser's instructions (auto_develop.hpp): it changes only
+// unlocked controls; nothing here enforces them.
+//
+// Automatic revisions (ADR 0013). apply_automatic() appends the revisions of an automatic run
+// (recipe_store.hpp, "Automatic revisions": origin Auto, derived from the revision the run started
+// from, each with its analysis record) and makes the effective one current when the item still
+// shows that revision and no gesture is pending; undo then returns to the recipe before the run.
+// write_automatic() is the same decision for a writer that appends the revisions itself (the batch
+// service binds a job to its effective revision in the same catalog transaction): the write runs
+// under the service's lock, so no commit, gesture or move of the item can interleave, and a gesture
+// in progress keeps its own base (the automatic revisions are then a branch). refresh() re-reads an
+// item whose revisions another writer changed in the store.
 //
 // Copy and paste by category (recipe.hpp, RecipeCategory). copy() takes the item's current
 // settings and its camera; paste() applies the chosen categories to each target as ONE Paste
@@ -154,6 +169,13 @@ struct RecipeChange {
 
 using RecipeObserver = std::function<void(const RecipeChange&)>;
 
+// The result of apply_automatic().
+struct AutomaticOutcome {
+    std::vector<catalog::RevisionInfo> revisions;  // in the order given
+    bool made_current = false;  // false: the item changed meanwhile; the revisions are another branch
+    RecipeState state;          // the item's state afterwards
+};
+
 struct HistoryEntry {
     catalog::RevisionInfo info;
     bool current = false;                         // the item's current revision
@@ -252,6 +274,32 @@ public:
     [[nodiscard]] Expected<RecipeState> set_lock(ItemId item, engine::DevelopControl control, bool locked);
 
     [[nodiscard]] Expected<RecipeHistory> history(ItemId item) const;
+
+    // ---- Automatic revisions (see the file comment) ----------------------------------------------
+
+    // Errors: those of state(); the read-only reason; the store's (InvalidArgument for a revision
+    // whose origin is not Auto or a base of another item; Unsupported for a store without automatic
+    // revisions). Observers receive Committed with origin Auto.
+    [[nodiscard]] Expected<AutomaticOutcome> apply_automatic(ItemId item, std::optional<catalog::RevisionId> base,
+                                                             std::span<const AutomaticRevision> revisions);
+    // Runs `write` under the service's lock with whether the effective revision may become current
+    // (the item shows `base` and no gesture is pending); `write` appends the revisions (for example
+    // with append_automatic_revisions() inside the caller's catalog transaction, honouring the flag)
+    // and returns what it appended. The item is then re-read and observers receive Committed (origin
+    // Auto). Errors: those of state(); the read-only reason; those of `write` (the item is re-read).
+    using AutomaticWrite = std::function<Expected<AutomaticAppend>(bool make_current)>;
+    [[nodiscard]] Expected<AutomaticOutcome> write_automatic(ItemId item, std::optional<catalog::RevisionId> base,
+                                                             const AutomaticWrite& write);
+    // Re-reads the item's revisions from the store (a pending gesture is kept) and notifies
+    // observers (Committed, origin Auto). Errors: those of state().
+    [[nodiscard]] Expected<RecipeState> refresh(ItemId item);
+    // The analysis records of the item's automatic revisions, oldest first (the store's).
+    [[nodiscard]] Expected<std::vector<catalog::AutoAnalysisRecord>> automatic_analyses(ItemId item) const;
+    // The engine version recorded in new revisions (RecipeServiceOptions::engine_version, or this
+    // build's version).
+    [[nodiscard]] std::string engine_version() const;
+    // Time stamps of new revisions (RecipeServiceOptions::clock, or the current time).
+    [[nodiscard]] catalog::Timestamp now() const;
 
     // ---- Copy and paste ------------------------------------------------------------------------
 
