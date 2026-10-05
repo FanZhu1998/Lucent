@@ -277,9 +277,12 @@ Item {
                 elide: Text.ElideRight
             }
 
+            // The flags in words, except "Review recommended", which the Review badge already shows
+            // (it is the first label when set: flag_labels lists them in bit order).
             Text {
+                objectName: "flagLine"
                 width: parent.width
-                text: card.flagLabels.join(" · ")
+                text: (card.review ? card.flagLabels.slice(1) : card.flagLabels).join(" · ")
                 color: Theme.attention
                 font.pixelSize: Theme.fontSmall
                 elide: Text.ElideRight

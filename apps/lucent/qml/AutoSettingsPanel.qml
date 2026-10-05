@@ -9,9 +9,9 @@ import Lucent
 // editable revision ... The optimizer may change only unlocked controls and must report when the
 // locks prevent its usual technical targets"; W8). While Auto runs: its stage, progress and Cancel.
 // Afterwards, for a current revision Auto (or an automatic batch) made: the confidence, whether a
-// review is recommended and why, what changed, what the locks kept and prevented, the conservative
-// fallback taken after a failed full-size check (its failed checks in the tooltip), the related-shot
-// group, and the other findings. Hidden when there is nothing to say.
+// review is recommended and why, what changed, what the locks kept and prevented, why a conservative
+// fallback replaced the first choice after a failed full-size check, the related-shot group, and the
+// other findings. Hidden when there is nothing to say.
 PanelSection {
     id: panel
 
@@ -49,9 +49,6 @@ PanelSection {
         spacing: 4
         Layout.fillWidth: true
 
-        Accessible.role: Accessible.ProgressBar
-        Accessible.name: panel.automatic.stageText
-
         RowLayout {
             spacing: 8
             Layout.fillWidth: true
@@ -78,6 +75,8 @@ PanelSection {
             to: 1
             value: panel.automatic.progress
             Layout.fillWidth: true
+
+            Accessible.name: panel.automatic.stageText
         }
     }
 
@@ -130,6 +129,7 @@ PanelSection {
 
             Text {
                 objectName: "autoConfidence"
+                visible: text.length > 0
                 text: panel.automatic.confidenceText
                 color: panel.automatic.confidenceLevel === "high" ? Theme.verified
                      : panel.automatic.confidenceLevel === "medium" ? Theme.textPrimary : Theme.attention
@@ -204,21 +204,15 @@ PanelSection {
             }
         }
 
+        // Why the first choice was replaced (the review box says that it was): plain text, so it can
+        // be read and reached without a pointer.
         Line {
             objectName: "autoFallback"
             visible: text.length > 0
             text: panel.automatic.fallbackText
-            color: Theme.attention
-
-            HoverHandler {
-                id: fallbackHover
-
-                enabled: panel.automatic.fallbackDetail.length > 0
-            }
-
-            ToolTip.visible: fallbackHover.hovered
-            ToolTip.text: panel.automatic.fallbackDetail
-            ToolTip.delay: 500
+            color: Theme.textTertiary
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
         }
 
         Line {

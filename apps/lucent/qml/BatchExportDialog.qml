@@ -22,7 +22,8 @@ Dialog {
     readonly property BatchSetupModel setup: controller.batchSetup
 
     objectName: "batchExportDialog"
-    title: qsTr("Export batch")
+    // Analyse only exports nothing: the dialog asks only what an analysis needs.
+    title: setup.analyzeOnly ? qsTr("Analyse batch") : qsTr("Export batch")
     modal: true
     focus: true
     anchors.centerIn: Overlay.overlay
@@ -276,7 +277,7 @@ Dialog {
 
                 // --- Destination --------------------------------------------------------------------
                 SectionLabel {
-                    text: qsTr("Output folder")
+                    text: dialog.setup.analyzeOnly ? qsTr("Report folder") : qsTr("Output folder")
                 }
 
                 RowLayout {
@@ -301,10 +302,12 @@ Dialog {
                 }
 
                 SectionLabel {
+                    visible: !dialog.setup.analyzeOnly
                     text: qsTr("File names")
                 }
 
                 ColumnLayout {
+                    visible: !dialog.setup.analyzeOnly
                     spacing: 6
                     Layout.fillWidth: true
 
@@ -378,10 +381,12 @@ Dialog {
 
                 // --- Format -------------------------------------------------------------------------
                 SectionLabel {
+                    visible: !dialog.setup.analyzeOnly
                     text: qsTr("Format")
                 }
 
                 ColumnLayout {
+                    visible: !dialog.setup.analyzeOnly
                     spacing: 6
                     Layout.fillWidth: true
 
@@ -457,10 +462,12 @@ Dialog {
 
                 // --- Existing files -----------------------------------------------------------------
                 SectionLabel {
+                    visible: !dialog.setup.analyzeOnly
                     text: qsTr("If a name is taken")
                 }
 
                 ColumnLayout {
+                    visible: !dialog.setup.analyzeOnly
                     spacing: 2
                     Layout.fillWidth: true
 
@@ -498,10 +505,12 @@ Dialog {
                 }
 
                 SectionLabel {
+                    visible: !dialog.setup.analyzeOnly
                     text: qsTr("Already exported")
                 }
 
                 ColumnLayout {
+                    visible: !dialog.setup.analyzeOnly
                     spacing: 2
                     Layout.fillWidth: true
 
@@ -539,10 +548,12 @@ Dialog {
 
                 // --- Metadata -----------------------------------------------------------------------
                 SectionLabel {
+                    visible: !dialog.setup.analyzeOnly
                     text: qsTr("Metadata")
                 }
 
                 ColumnLayout {
+                    visible: !dialog.setup.analyzeOnly
                     spacing: 4
                     Layout.fillWidth: true
 
@@ -786,7 +797,9 @@ Dialog {
             spacing: 8
 
             Text {
-                text: qsTr("Originals are only read. Every file is verified before it appears in the folder.")
+                text: dialog.setup.analyzeOnly
+                      ? qsTr("Originals are only read. Only the batch report is written to the report folder.")
+                      : qsTr("Originals are only read. Every file is verified before it appears in the folder.")
                 color: Theme.textTertiary
                 font.pixelSize: Theme.fontSmall
                 elide: Text.ElideRight

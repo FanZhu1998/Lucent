@@ -525,6 +525,10 @@ TEST_F(EditSessionTest, AutoCommitsAPendingGestureFirstAndShowsItsRunUntilItEnds
     EXPECT_EQ(service.count("run_auto"), 1);
     EXPECT_EQ(automatic.stage_text(), QStringLiteral("Waiting to start…"));
 
+    // Waiting for memory says so (other photos are being rendered).
+    service.emit_auto_progress(AutoProgress{7, AutoStage::WaitingForMemory, 0.0});
+    EXPECT_TRUE(automatic.stage_text().startsWith(QStringLiteral("Waiting for memory"))) << automatic.stage_text().toStdString();
+
     // Progress of this photo is shown; another photo's is not.
     service.emit_auto_progress(AutoProgress{7, AutoStage::Checking, 0.6});
     service.emit_auto_progress(AutoProgress{8, AutoStage::Analysing, 0.9});
@@ -627,9 +631,26 @@ TEST_F(EditSessionTest, TheAutoSummaryDescribesTheCurrentAutomaticRevisionWithIt
               QStringLiteral("White balance 5450 K, tint +3 · Exposure +0.75 EV · Contrast +12"));
     EXPECT_EQ(automatic.locked_text(), QStringLiteral("Locked, kept as they were: Highlights"));
     EXPECT_TRUE(automatic.locks_prevented_targets());
-    EXPECT_FALSE(automatic.fallback_text().isEmpty());
+    // The review reasons say a more conservative edit is used; the fallback line says why.
+    EXPECT_EQ(automatic.fallback_text(), QStringLiteral("Why: ") + summary.fallback_detail);
     EXPECT_EQ(automatic.fallback_detail(), summary.fallback_detail);
     EXPECT_EQ(automatic.group_text(), QStringLiteral("Matched to its related shots (group time-1)."));
+
+    // A revision that changed nothing shows no confidence (there was no change to be sure of).
+    AutoSummary unchanged = summary;
+    unchanged.changed.clear();
+    service.emit_auto_summary(7, unchanged);
+    EXPECT_TRUE(automatic.confidence_text().isEmpty());
+    // A batch's anchor: its own settings were kept and set its group's look.
+    AutoSummary anchor = summary;
+    anchor.anchor = true;
+    anchor.from_batch = true;
+    anchor.attempt = 0;
+    service.emit_auto_summary(7, anchor);
+    EXPECT_TRUE(automatic.confidence_text().isEmpty());
+    EXPECT_EQ(automatic.group_text(),
+              QStringLiteral("Kept as the anchor of its related shots (group time-1): your settings set their look."));
+    service.emit_auto_summary(7, summary);
 
     // A batch's revision says so; a low confidence is called low.
     summary.from_batch = true;

@@ -67,7 +67,7 @@ namespace lucent::ui::presentation {
 [[nodiscard]] QStringList flag_labels(ItemFlags flags);
 
 // Stable keys of the source badges for styling in QML, most urgent first: "missing", "changed",
-// "duplicate", "removable" (ReviewRecommended has no badge).
+// "duplicate", "removable" (ReviewRecommended has its own "Review" badge on the card, W8).
 [[nodiscard]] QStringList flag_keys(ItemFlags flags);
 // Compact badge text for a flag key: "Missing", "Changed", "Duplicate", "Removable".
 [[nodiscard]] QString flag_badge_label(const QString& key);

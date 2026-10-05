@@ -1094,8 +1094,9 @@ void DeveloperAutomation::report_auto_summary() {
         report(QStringLiteral("auto: the current revision is not automatic"));
         return;
     }
-    report(QStringLiteral("auto: %1; %2; review recommended: %3")
-               .arg(automatic.origin(), automatic.confidence_text(),
+    const QString confidence = automatic.confidence_text();
+    report(QStringLiteral("auto: %1; %2review recommended: %3")
+               .arg(automatic.origin(), confidence.isEmpty() ? QString() : confidence + QStringLiteral("; "),
                     automatic.review() ? QStringLiteral("yes") : QStringLiteral("no")));
     report(QStringLiteral("auto: changed: %1").arg(automatic.changed_text()));
     for (const QString& reason : automatic.review_reasons()) {

@@ -287,6 +287,18 @@ TEST_F(BatchSetupTest, AutomaticSettingsAreChosenHereAndThePlanSaysWhatTheAnalys
     EXPECT_TRUE(setup.can_start());  // no output, yet something to do
     EXPECT_EQ(setup.batch_label(), QStringLiteral("Analysis of 2 photos"));
     EXPECT_EQ(setup.setup().name, QStringLiteral("Analysis of 2 photos"));
+    // Only the report is written: the folder asked for is the report's, and the name pattern (not
+    // used) never blocks the start.
+    EXPECT_TRUE(setup.automatic_note().contains(QStringLiteral("only the batch report")));
+    const QUrl folder = setup.output_folder();
+    const QString pattern = setup.name_pattern();
+    setup.setNamePattern(QStringLiteral("{unknown-token}"));
+    EXPECT_FALSE(setup.pattern_problem().isEmpty());
+    EXPECT_NE(setup.start_hint(), setup.pattern_problem());
+    setup.setOutputFolder({});
+    EXPECT_EQ(setup.start_hint(), QStringLiteral("Choose a folder for the batch report."));
+    setup.setOutputFolder(folder);
+    setup.setNamePattern(pattern);
 
     // Every photo left out: nothing to analyse.
     const std::size_t asked_again = service.plans.size();

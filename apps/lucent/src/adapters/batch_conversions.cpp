@@ -367,12 +367,13 @@ BatchPlanInfo to_plan_info(const app::BatchPlan& plan) {
                 break;
             case app::PlanNotice::AutomaticSettings:
                 info.automatic_notes << tr_text("Each photo is analysed and its result checked at full size before "
-                                                "anything is written: a few seconds per photo, about as long again as "
-                                                "its export, more for large photos.");
+                                                "anything is written: a few seconds per photo, for large photos about "
+                                                "twice as long as their export.");
                 break;
             case app::PlanNotice::AnalyzeOnly:
                 info.automatic_notes << tr_text("Nothing is exported: each photo gets an automatic revision to review "
-                                                "and adjust in Edit. The batch report is saved in the output folder.");
+                                                "and adjust in Edit. Only the batch report is saved, in the report "
+                                                "folder.");
                 break;
             case app::PlanNotice::KeepConsistent:
                 info.automatic_notes << tr_text("Related photos are analysed together first, then each again towards "

@@ -578,6 +578,10 @@ TEST_F(QmlShellTest, AutoShowsItsRunAndWhatItDidAndBatchesOfferAutomaticSettings
     if (flagged >= 0) {
         controller->set_current_index(flagged);
         EXPECT_TRUE(QTest::qWaitFor([this] { return !visual_items("reviewBadge", true).isEmpty(); }, kWaitMs));
+        // The badge says it; the card's flag line does not repeat it.
+        for (QQuickItem* line : visual_items("flagLine", true)) {
+            EXPECT_FALSE(line->property("text").toString().contains(QStringLiteral("Review recommended")));
+        }
     }
 
     window->requestActivate();
@@ -651,6 +655,10 @@ TEST_F(QmlShellTest, AutoShowsItsRunAndWhatItDidAndBatchesOfferAutomaticSettings
     EXPECT_EQ(setup.automatic(), BatchSetupModel::AutomaticAnalyzeOnly);
     EXPECT_TRUE(child("batchKeepConsistent")->property("enabled").toBool());
     EXPECT_EQ(child("batchStart")->property("text").toString(), QStringLiteral("Start analysis"));
+    // Nothing is exported: no export settings are asked for.
+    EXPECT_EQ(dialog->property("title").toString(), QStringLiteral("Analyse batch"));
+    EXPECT_FALSE(child<QQuickItem>("batchPresetJpeg")->isVisible());
+    EXPECT_FALSE(child<QQuickItem>("batchNamePattern")->isVisible());
     ASSERT_TRUE(QTest::qWaitFor([&] { return setup.plan_valid() && !setup.planning(); }, kWaitMs));
     EXPECT_FALSE(setup.analysis_notes().isEmpty());
     EXPECT_EQ(child("batchAnalysisNotes")->property("count").toInt(), setup.analysis_notes().size());

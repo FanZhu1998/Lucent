@@ -127,6 +127,8 @@ QString AutoSettingsModel::stage_text() const {
     switch (progress_.stage) {
     case AutoStage::Queued:
         return tr_text("Waiting to start…");
+    case AutoStage::WaitingForMemory:
+        return tr_text("Waiting for memory: other photos are being rendered…");
     case AutoStage::Analysing:
         return tr_text("Analysing the photo…");
     case AutoStage::Checking:
@@ -160,7 +162,9 @@ QString AutoSettingsModel::confidence_level() const {
 }
 
 QString AutoSettingsModel::confidence_text() const {
-    if (!has_summary()) {
+    // Confidence is about a change: a run that changed nothing (everything locked, or the photo kept
+    // as it was) or an anchor kept by a batch shows none.
+    if (!has_summary() || summary_.changed.isEmpty() || summary_.anchor) {
         return {};
     }
     const QString level = confidence_level();
@@ -194,19 +198,24 @@ QString AutoSettingsModel::locked_text() const {
 }
 
 QString AutoSettingsModel::fallback_text() const {
-    if (!has_summary() || summary_.attempt == 0) {
+    // The review box already says that a more conservative edit is used; this line says why.
+    if (!has_summary() || summary_.attempt == 0 || summary_.fallback_detail.isEmpty()) {
         return {};
     }
-    if (summary_.baseline) {
-        return tr_text("Every automatic choice failed Lucent's full-size quality check, so Auto kept the camera's "
-                       "rendering for the controls it sets.");
-    }
-    return tr_text("Auto's first choice failed Lucent's full-size quality check, so a more conservative version is "
-                   "used.");
+    return tr_text("Why: %1").arg(summary_.fallback_detail);
 }
 
 QString AutoSettingsModel::group_text() const {
-    if (!has_summary() || summary_.group.isEmpty()) {
+    if (!has_summary()) {
+        return {};
+    }
+    if (summary_.anchor) {
+        return summary_.group.isEmpty()
+                   ? tr_text("Kept as an anchor: the automatic batch kept your settings.")
+                   : tr_text("Kept as the anchor of its related shots (group %1): your settings set their look.")
+                         .arg(summary_.group);
+    }
+    if (summary_.group.isEmpty()) {
         return {};
     }
     return tr_text("Matched to its related shots (group %1).").arg(summary_.group);

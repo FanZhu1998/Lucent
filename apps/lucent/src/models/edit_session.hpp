@@ -45,9 +45,11 @@
 // Auto (W8; blueprint section 2: "Auto creates a new editable revision"). runAuto() commits a
 // pending gesture, then asks the service to run Auto on the photo's committed settings (its locks
 // included); `automatic` (AutoSettingsModel) shows the run, its outcome and what Auto did to the
-// current revision. Editing stays possible while it runs: a photo changed meanwhile keeps its edit and
-// Auto's revision is kept as another branch of the history. Undo after Auto returns to the recipe
-// before it.
+// current revision. Editing stays possible while it runs: the run holds its memory but not the render
+// place (auto_service.hpp), so other photos, refines and the 100 % view keep rendering as memory
+// permits; a photo changed meanwhile keeps its edit and Auto's revision is kept as another branch of
+// the history (redo after an undo returns to the photographer's edit, not to that branch). Undo after
+// Auto returns to the recipe before it.
 //
 // Thread-safety: UI thread only.
 

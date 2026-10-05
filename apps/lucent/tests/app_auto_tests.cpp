@@ -256,8 +256,12 @@ TEST_F(AppAutoTest, AFailedFullSizeCheckKeepsTheAttemptAndUsesAConservativeOne) 
     EXPECT_TRUE(summary.review);
     EXPECT_TRUE(summary.fallback_detail.contains(QStringLiteral("failed the full-resolution check")))
         << summary.fallback_detail.toStdString();
-    EXPECT_TRUE(summary.review_reasons.contains(
-        QStringLiteral("The first automatic edit failed a quality check, so a more conservative one was used.")));
+    EXPECT_TRUE(summary.review_reasons.contains(summary.baseline
+                                                    ? QStringLiteral("Every automatic edit failed Lucent's full-size "
+                                                                     "quality check, so Auto kept the camera's "
+                                                                     "rendering for the controls it sets.")
+                                                    : QStringLiteral("The first automatic edit failed a quality check, "
+                                                                     "so a more conservative one was used.")));
     EXPECT_TRUE(wait_review_flag(id, true));
 }
 

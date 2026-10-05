@@ -59,6 +59,10 @@ QString EditHistoryModel::title_of(const EditHistoryEntry& entry) {
             // An attempt the full-size check rejected: kept with its reason, never used.
             return tr_text("Auto, failed the quality check");
         }
+        if (entry.auto_kind == u"anchor") {
+            // An automatic batch kept the photo's own settings: it set its related shots' look.
+            return tr_text("Auto batch: kept as anchor");
+        }
         if (entry.auto_kind == u"fallback" || entry.auto_kind == u"baseline") {
             return changed.isEmpty() ? tr_text("Auto (conservative)") : tr_text("Auto (conservative): %1").arg(changed);
         }

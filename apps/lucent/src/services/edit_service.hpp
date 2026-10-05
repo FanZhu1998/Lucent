@@ -215,10 +215,11 @@ struct EditHistoryEntry {
 // ---- Automatic settings ------------------------------------------------------------------------
 
 enum class AutoStage : std::uint8_t {
-    Queued = 1,     // waiting for a thread or for memory
+    Queued = 1,     // waiting for a thread
     Analysing = 2,  // decode and analysis
     Checking = 3,   // the full-resolution final check
     Saving = 4,     // writing the automatic revisions
+    WaitingForMemory = 5,  // admitted once other work releases memory
 };
 
 struct AutoProgress {
@@ -258,6 +259,7 @@ struct AutoSummary {
     bool baseline = false;          // the last resort: as shot for the controls Auto sets
     QString fallback_detail;        // why the earlier attempt was replaced (the failed checks; diagnostics)
     QString group;                  // the related-shot group it was matched to; empty: none
+    bool anchor = false;            // an automatic batch kept it as its related shots' anchor
 
     friend bool operator==(const AutoSummary&, const AutoSummary&) = default;
 };

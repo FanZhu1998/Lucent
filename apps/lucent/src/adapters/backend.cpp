@@ -200,6 +200,14 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         automatic.run.analysis.develop.decode_limits = options.renderer.decode_limits;
         automatic.run.analysis.develop.memory_budget_bytes = options.renderer.memory_budget_bytes;
         automatic.run.analysis.develop.parallel = options.renderer.parallel;
+        // A run waiting for memory: the edit sessions' cached full-resolution stage ones (a 100 %
+        // view) are rebuilt on demand, so they make room for it (a 61 MP photo's run does not fit
+        // beside its own 100 % view). The develop service outlives the runs (see ~Backend).
+        automatic.make_room = [develop = backend->develop_.get()](app::ItemId) {
+            for (const app::ItemId open : develop->open_items()) {
+                develop->release_full_resolution(open);
+            }
+        };
         auto created = app::AutoService::create(*backend->library_, *backend->recipes_, *backend->executor_,
                                                 std::move(automatic));
         if (created) {

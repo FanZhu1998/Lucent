@@ -56,6 +56,43 @@ catalog::AutoAnalysisRecord record_of(catalog::RevisionId revision) {
     return record;
 }
 
+// A fallback to the baseline is worded as such; an anchor kept by a batch is marked; "every control
+// is locked" is information, not something the locks prevented.
+TEST(AutomaticConversions, BaselineFallbacksAnchorsAndEverythingLockedAreWordedForWhatTheyAre) {
+    app::HistoryEntry entry;
+    entry.info.id = catalog::RevisionId{12};
+    entry.info.revision_number = 4;
+    entry.info.origin = catalog::RevisionOrigin::Auto;
+    entry.current = true;
+    catalog::AutoAnalysisRecord baseline = record_of(entry.info.id);
+    baseline.attempt = 2;
+    baseline.record_json =
+        std::string(R"({"attempt":{"index":2,"kind":"baseline","reason":"the as-shot baseline after attempt 1 failed"},)") +
+        R"("locks":{"locked":["exposure"],"prevented_targets":false,"reasons":[")" +
+        std::string(app::kEveryControlLockedNote) + R"("]}})";
+    const AutoSummary summary = to_auto_summary(baseline, entry);
+    EXPECT_TRUE(summary.baseline);
+    EXPECT_FALSE(summary.anchor);
+    EXPECT_TRUE(summary.review_reasons.contains(
+        QStringLiteral("Every automatic edit failed Lucent's full-size quality check, so Auto kept the camera's "
+                       "rendering for the controls it sets.")))
+        << summary.review_reasons.join(QStringLiteral(" | ")).toStdString();
+    EXPECT_TRUE(summary.notes.contains(QString::fromUtf8(app::kEveryControlLockedNote.data(),
+                                                         static_cast<qsizetype>(app::kEveryControlLockedNote.size()))));
+    EXPECT_TRUE(summary.lock_notes.isEmpty()) << "nothing the locks prevented";
+
+    catalog::AutoAnalysisRecord anchor = record_of(entry.info.id);
+    anchor.job = catalog::JobId{9};
+    anchor.attempt = 0;
+    anchor.review = false;
+    anchor.flags_json = "[]";
+    anchor.record_json = R"({"attempt":{"index":0,"kind":"anchor","reason":"kept"},"consistency":{"target":{"group_id":"user:series"}}})";
+    const AutoSummary kept = to_auto_summary(anchor, entry);
+    EXPECT_TRUE(kept.anchor);
+    EXPECT_EQ(kept.group, QStringLiteral("user:series"));
+    EXPECT_FALSE(kept.review);
+}
+
 TEST(AutomaticConversions, ARecordBecomesTheEditorsSummaryInTheUsersWords) {
     app::HistoryEntry entry;
     entry.info.id = catalog::RevisionId{12};

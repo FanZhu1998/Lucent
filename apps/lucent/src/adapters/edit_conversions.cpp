@@ -299,6 +299,12 @@ AutoSummary to_auto_summary(const catalog::AutoAnalysisRecord& record, const app
         out.changed << to_edit_control(control);
     }
 
+    // The record document: the attempt, the locks report, the related-shot group.
+    const QJsonObject document = parse_object(record.record_json);
+    const QJsonObject attempt = document.value(QStringLiteral("attempt")).toObject();
+    out.baseline = attempt.value(QStringLiteral("kind")).toString() == u"baseline";
+    out.anchor = attempt.value(QStringLiteral("kind")).toString() == u"anchor";
+
     // The flags with their reasons (a JSON array of {code, name, metric, reason, review}).
     bool locks_flagged = false;
     const QJsonDocument flags = QJsonDocument::fromJson(QByteArray::fromStdString(record.flags_json));
@@ -316,17 +322,17 @@ AutoSummary to_auto_summary(const catalog::AutoAnalysisRecord& record, const app
         app::AutoFlag described;
         described.code = static_cast<std::uint16_t>(code);
         described.reason = flag.value(QStringLiteral("reason")).toString().toStdString();
-        const QString text = QString::fromStdString(app::describe_auto_flag(described));
+        QString text = QString::fromStdString(app::describe_auto_flag(described));
+        if (code == app::kFlagFinalCheckFallback && out.baseline) {
+            text = tr_text("Every automatic edit failed Lucent's full-size quality check, so Auto kept the camera's "
+                           "rendering for the controls it sets.");
+        }
         add_unique(flag.value(QStringLiteral("review")).toBool() ? out.review_reasons : out.notes, text);
     }
     for (const QString& reason : out.review_reasons) {
         out.notes.removeAll(reason);  // two codes can share their wording
     }
 
-    // The record document: the attempt, the locks report, the related-shot group.
-    const QJsonObject document = parse_object(record.record_json);
-    const QJsonObject attempt = document.value(QStringLiteral("attempt")).toObject();
-    out.baseline = attempt.value(QStringLiteral("kind")).toString() == u"baseline";
     if (record.attempt > 0) {
         out.fallback_detail = attempt.value(QStringLiteral("reason")).toString();
     }
@@ -338,7 +344,9 @@ AutoSummary to_auto_summary(const catalog::AutoAnalysisRecord& record, const app
     }
     out.locks_prevented_targets = locks.value(QStringLiteral("prevented_targets")).toBool() || locks_flagged;
     for (const QJsonValue reason : locks.value(QStringLiteral("reasons")).toArray()) {
-        add_unique(out.lock_notes, reason.toString());
+        // "Every control is locked" is information, not something the locks prevented.
+        const QString text = reason.toString();
+        add_unique(text == from_utf8(app::kEveryControlLockedNote) ? out.notes : out.lock_notes, text);
     }
     if (out.locks_prevented_targets) {
         add_unique(out.review_reasons, tr_text("Locked controls kept Auto from its usual targets."));
@@ -359,6 +367,8 @@ AutoStage to_auto_stage(app::AutoTaskStage stage) noexcept {
             return AutoStage::Analysing;
         case app::AutoTaskStage::Checking:
             return AutoStage::Checking;
+        case app::AutoTaskStage::WaitingForMemory:
+            return AutoStage::WaitingForMemory;
         case app::AutoTaskStage::Saving:
         case app::AutoTaskStage::Finished:
             break;

@@ -78,7 +78,7 @@ QString BatchSetupModel::automatic_note() const {
                        "it is unsure about are marked for review.");
     case AutomaticAnalyzeOnly:
         return tr_text("Lucent analyses each photo and saves its settings as a new revision you can review and "
-                       "adjust in Edit. Nothing is exported.");
+                       "adjust in Edit. Nothing is exported: only the batch report is written to the report folder.");
     case AutomaticOff:
         break;
     }
@@ -398,9 +398,11 @@ QString BatchSetupModel::basic_problem() const {
         break;
     }
     if (!output_folder_.isLocalFile()) {
-        return tr_text("Choose an output folder.");
+        return automatic_ == AutomaticAnalyzeOnly ? tr_text("Choose a folder for the batch report.")
+                                                  : tr_text("Choose an output folder.");
     }
-    return pattern_problem_;
+    // Analyse only names no output: its file-name pattern is not used.
+    return automatic_ == AutomaticAnalyzeOnly ? QString() : pattern_problem_;
 }
 
 QString BatchSetupModel::start_hint() const {

@@ -39,7 +39,8 @@ class AutoSettingsModel : public QObject {
     QML_UNCREATABLE("AutoSettingsModel is provided by EditSession.automatic.")
     Q_PROPERTY(bool running READ running NOTIFY runningChanged FINAL)
     Q_PROPERTY(bool cancelling READ cancelling NOTIFY runningChanged FINAL)
-    // "Waiting to start…", "Analysing the photo…", "Checking at full size…", "Saving…".
+    // "Waiting to start…", "Waiting for memory: …", "Analysing the photo…", "Checking the result at full
+    // size…", "Saving the automatic revision…".
     Q_PROPERTY(QString stageText READ stage_text NOTIFY progressChanged FINAL)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged FINAL)
     // The outcome of the photo's last run in this session; empty when none (or after the next starts).
@@ -55,22 +56,25 @@ class AutoSettingsModel : public QObject {
     Q_PROPERTY(int confidencePercent READ confidence_percent NOTIFY summaryChanged FINAL)
     // "high", "medium" or "low" (the panel's colour).
     Q_PROPERTY(QString confidenceLevel READ confidence_level NOTIFY summaryChanged FINAL)
-    // "Confidence: high (90 %)".
+    // "Confidence: high (90 %)"; empty when the revision changed no control (or kept an anchor).
     Q_PROPERTY(QString confidenceText READ confidence_text NOTIFY summaryChanged FINAL)
     Q_PROPERTY(bool review READ review NOTIFY summaryChanged FINAL)
     Q_PROPERTY(QStringList reviewReasons READ review_reasons NOTIFY summaryChanged FINAL)
     Q_PROPERTY(QStringList notes READ notes NOTIFY summaryChanged FINAL)
-    // "Exposure +0.75 EV · Shadows +12" or "Nothing: the photo already met Lucent's targets".
+    // "Exposure +0.75 EV · Shadows +12" or "No control was changed."
     Q_PROPERTY(QString changedText READ changed_text NOTIFY summaryChanged FINAL)
     // "Locked, kept as they were: Exposure, White balance"; empty without locks.
     Q_PROPERTY(QString lockedText READ locked_text NOTIFY summaryChanged FINAL)
     Q_PROPERTY(bool locksPreventedTargets READ locks_prevented_targets NOTIFY summaryChanged FINAL)
     Q_PROPERTY(QStringList lockNotes READ lock_notes NOTIFY summaryChanged FINAL)
-    // The fallback taken after a failed full-size check; empty when Auto's first choice passed.
+    // Why the earlier attempt was replaced after a failed full-size check ("Why: <failed checks>",
+    // developer wording; the review reasons say that a more conservative edit is used); empty when
+    // Auto's first choice passed.
     Q_PROPERTY(QString fallbackText READ fallback_text NOTIFY summaryChanged FINAL)
     // The checks the earlier attempt failed (diagnostics, developer wording); empty when none.
     Q_PROPERTY(QString fallbackDetail READ fallback_detail NOTIFY summaryChanged FINAL)
-    // "Matched to its related shots (group time-1)"; empty when not regularised.
+    // "Matched to its related shots (group time-1)", or for a batch's anchor "Kept as the anchor of its
+    // related shots (group …)"; empty when not regularised.
     Q_PROPERTY(QString groupText READ group_text NOTIFY summaryChanged FINAL)
 
 public:
