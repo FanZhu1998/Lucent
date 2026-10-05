@@ -33,7 +33,12 @@
 //     * Nothing at the path (NotFound), or its volume is absent (a card reader without the card,
 //       a disconnected drive: core::is_volume_absent_win32_error) -> Missing (kept, with flags;
 //       relink or reconnect the card).
-//     * The library's identity -> Present (restores a Missing or Changed file that is back).
+//     * The library's identity -> Present (restores a Missing or Changed file that is back). When
+//       an item of the file has an outdated probe (probe_outdated(): catalogued by a build with
+//       an older decoded-RAW contract, e.g. before W9 made DNG opcodes supported) and
+//       reprobe_outdated is set, the file is probed again like a changed one (below), which
+//       renews its items' support status in place (ids, flags, hash and identity kept). Each
+//       such file is re-read once: the new probe carries the current contract.
 //     * Another identity -> Changed, then (reprobe_changed) the file is probed again through the
 //       import pipeline (import_sources with that file, unrecorded), which refreshes its items in
 //       place (Library::refresh: new identity, probe and support; hash cleared; caches of those
@@ -173,6 +178,7 @@ struct HashReport {
 
 struct RefreshOptions {
     bool reprobe_changed = true;
+    bool reprobe_outdated = true;  // probe Present files whose items' probe is outdated again
     raw::DecodeLimits probe_limits;
 };
 
@@ -182,9 +188,11 @@ struct RefreshReport {
     std::uint64_t restored = 0;  // of present: were Missing or Changed
     std::uint64_t missing = 0;   // not found
     std::uint64_t changed = 0;   // found with another identity
+    std::uint64_t outdated = 0;  // of present: files probed again for an outdated probe
     std::uint64_t failed = 0;    // could not be checked
     std::vector<ItemId> missing_items;
-    std::vector<ItemId> reprobed_items;  // items refreshed after their file changed
+    // Items refreshed after their file changed or because their probe was outdated.
+    std::vector<ItemId> reprobed_items;
     std::vector<ItemId> unhashed_items;  // items of Present files without a hash
     bool cancelled = false;
 };

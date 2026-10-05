@@ -119,6 +119,10 @@ struct ProbeSummary {
     std::string extension_hint;   // lower case, without the dot
     std::string decoder;          // adapter id, e.g. "libraw"
     std::string decoder_version;  // version of the decoder library, e.g. "0.22.2-Release"
+    // The decoded-RAW contract (raw::kDecodedRawContractVersion) of the build that made the probe,
+    // whose interpretation rules gave the support status; std::nullopt when unknown (items a
+    // build before W9 catalogued). See probe_outdated().
+    std::optional<core::ContractVersion> contract;
     // The decoder's normalised maker and model when it has them, otherwise as recorded.
     std::string camera_make;
     std::string camera_model;
@@ -136,6 +140,7 @@ struct ProbeSummary {
     std::string compression;  // raw::DataCompression::name
 };
 
+// The summary of a probe made by this build (contract = raw::kDecodedRawContractVersion).
 [[nodiscard]] ProbeSummary summarize_probe(const raw::RawMetadata& metadata);
 
 // User flags (append only).
@@ -209,5 +214,12 @@ struct SourceItem {
     // only flagged; they are never merged or removed automatically (blueprint section 2).
     std::vector<ItemId> content_duplicates;
 };
+
+// True when the item's support status came from an older interpretation than this build's: it
+// has a probe whose decoded-RAW contract is unknown or older than raw::kDecodedRawContractVersion
+// (a contract change can change what a file requires and what Lucent supports; W9 made DNG
+// opcodes supported). Source maintenance probes such items again (refresh_sources). An item whose
+// probe failed carries no interpretation and is not outdated.
+[[nodiscard]] bool probe_outdated(const SourceItem& item) noexcept;
 
 }  // namespace lucent::app
