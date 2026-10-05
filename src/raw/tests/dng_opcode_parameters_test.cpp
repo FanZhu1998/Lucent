@@ -200,9 +200,13 @@ TEST(DngOpcodeParameters, AreaChecks) {
     expect_corrupt(7, ts::map_table_parameters({0, 0, 4, 10, 0, 0}, {1}), "Planes 0");
     expect_corrupt(7, ts::map_table_parameters({0, 0, 4, 10, 0, 1, 0, 1}, {1}), "RowPitch 0");
     expect_corrupt(7, ts::map_table_parameters({0, 0, 4, 10, 0, 1, 1, 0}, {1}), "ColPitch 0");
-    // An empty area is valid and affects nothing.
+    // An empty area is valid with pitch 1 (it stands for the whole image, as in the DNG SDK, whose
+    // dng_area_spec rejects an empty area with another pitch).
     const auto empty = parse_as<DngMapTable>(7, ts::map_table_parameters({4, 4, 4, 9}, {1}));
+    EXPECT_TRUE(empty.area.rect.empty());
     EXPECT_EQ(empty.area.affected_rows(), 0u);
+    expect_corrupt(7, ts::map_table_parameters({4, 4, 4, 9, 0, 1, 2, 1}, {1}), "an empty area");
+    expect_corrupt(9, ts::gain_map_parameters({0, 0, 0, 0, 0, 3, 1, 2}, 1, 1, 1, 1, 0, 0, 1, {2.0f}), "ColPitch 2");
     // Extents near the top of the 32-bit range do not overflow.
     const auto wide =
         parse_as<DngMapTable>(7, ts::map_table_parameters({0, 0, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFF0, 0xFFFFFFFF}, {1}));
@@ -239,6 +243,22 @@ TEST(DngOpcodeParameters, GainMap) {
                    "not finite");
     // Grid dimensions whose product exceeds the payload are rejected before allocation.
     expect_corrupt(9, ts::gain_map_parameters(a, 0xFFFF, 0xFFFF, 1, 1, 0, 0, 0xFFFF, {}), "gains");
+    // 2^22 x 2^21 x 2^21 = 2^64 wraps a 64-bit product to 0: without the overflow check the map
+    // would parse with no gains at all (and a renderer would read past them).
+    EXPECT_FALSE(dng_gain_map_count(1u << 22, 1u << 21, 1u << 21));
+    EXPECT_FALSE(dng_gain_map_count(0xFFFFFFFF, 0xFFFFFFFF, 2));
+    EXPECT_EQ(dng_gain_map_count(0xFFFFFFFF, 0xFFFFFFFF, 1), 0xFFFFFFFE00000001ull);
+    EXPECT_EQ(dng_gain_map_count(32, 32, 3), 3072u);
+    expect_corrupt(9, ts::gain_map_parameters(a, 1u << 22, 1u << 21, 1, 1, 0, 0, 1u << 21, {}), "more than the 0 bytes");
+    expect_corrupt(9, ts::gain_map_parameters(a, 1u << 22, 1u << 21, 1, 1, 0, 0, 1u << 21, {1.0f, 1.0f}),
+                   "more than the 8 bytes");
+    // A product that fits 64 bits but not the payload, and one whose byte count would wrap.
+    expect_corrupt(9, ts::gain_map_parameters(a, 1u << 31, 1u << 31, 1, 1, 0, 0, 2, {}), "more than");
+    expect_corrupt(9, ts::gain_map_parameters(a, 1u << 31, 1u << 31, 1, 1, 0, 0, 1, {1.0f}), "more than the 4 bytes");
+    EXPECT_TRUE(g.complete());
+    DngGainMap short_map = g;
+    short_map.gains.pop_back();
+    EXPECT_FALSE(short_map.complete());
 }
 
 TEST(DngOpcodeParameters, PerRowAndColumnValues) {
@@ -431,6 +451,74 @@ TEST(DngOpcodeSupport, ConditionsBeyondTheTable) {
             .supported);
     EXPECT_FALSE(assess_dng_opcode(decoded(2, L::List3, ts::filler(8)), image_for(L::List3)).supported);
     EXPECT_FALSE(assess_dng_opcode(decoded(42, L::List3, {}), image_for(L::List3)).supported);
+}
+
+TEST(DngOpcodeSupport, EmptyAreasStandForTheWholeImage) {
+    using L = DngOpcodeListId;
+    const AreaSpec empty{0, 0, 0, 0, 0, 3};
+    // Value maps and gain maps over an empty area apply to the whole image (the DNG SDK).
+    EXPECT_TRUE(assess_dng_opcode(decoded(7, L::List3, ts::map_table_parameters(empty, {1, 2})), image_for(L::List3))
+                    .supported);
+    EXPECT_TRUE(
+        assess_dng_opcode(decoded(8, L::List3, ts::map_polynomial_parameters(empty, {0, 1})), image_for(L::List3))
+            .supported);
+    EXPECT_TRUE(assess_dng_opcode(decoded(9, L::List3, ts::gain_map_parameters(empty, 1, 1, 1, 1, 0, 0, 1, {2.0f})),
+                                  image_for(L::List3))
+                    .supported);
+    // Per-row and per-column opcodes then hold no value for any row or column: not supported.
+    for (const std::uint32_t id : {10u, 11u, 12u, 13u}) {
+        const DngOpcodeSupport support =
+            assess_dng_opcode(decoded(id, L::List3, ts::row_column_parameters(empty, {})), image_for(L::List3));
+        EXPECT_FALSE(support.supported) << id;
+        EXPECT_NE(support.reason.find("empty"), std::string::npos) << support.reason;
+    }
+}
+
+TEST(DngOpcodeSupport, ParametersThatBreakTheParserInvariantsAreNotSupported) {
+    using L = DngOpcodeListId;
+    const AreaSpec a{0, 0, 80, 100, 0, 3};
+    // A gain map whose gains do not fill its grid (as a payload that overflowed the product would
+    // have left it): never applied.
+    DngOpcode gain = decoded(9, L::List3, ts::gain_map_parameters(a, 2, 2, 1, 1, 0, 0, 1, {1, 1, 1, 1}));
+    ASSERT_TRUE(assess_dng_opcode(gain, image_for(L::List3)).supported);
+    auto& map = std::get<DngGainMap>(gain.parameters);
+    map.points_v = 1u << 22;
+    map.points_h = 1u << 21;
+    map.map_planes = 1u << 21;
+    map.gains.clear();
+    const DngOpcodeSupport overflowing = assess_dng_opcode(gain, image_for(L::List3));
+    EXPECT_FALSE(overflowing.supported);
+    EXPECT_NE(overflowing.reason.find("do not fill"), std::string::npos) << overflowing.reason;
+    // Per-row values that do not match the area, an empty table, no coefficients.
+    DngOpcode rows = decoded(10, L::List3, ts::row_column_parameters(a, std::vector<float>(80, 0.0f)));
+    std::get<DngRowColumnValues>(rows.parameters).values.pop_back();
+    EXPECT_FALSE(assess_dng_opcode(rows, image_for(L::List3)).supported);
+    DngOpcode table = decoded(7, L::List3, ts::map_table_parameters(a, {1}));
+    std::get<DngMapTable>(table.parameters).table.clear();
+    EXPECT_FALSE(assess_dng_opcode(table, image_for(L::List3)).supported);
+    DngOpcode poly = decoded(8, L::List3, ts::map_polynomial_parameters(a, {0, 1}));
+    std::get<DngMapPolynomial>(poly.parameters).coefficients.clear();
+    EXPECT_FALSE(assess_dng_opcode(poly, image_for(L::List3)).supported);
+}
+
+TEST(DngOpcodeSupport, RadialOpcodesNeedSquarePixels) {
+    using L = DngOpcodeListId;
+    DngOpcodeImage image = image_for(L::List3);
+    image.pixel_aspect = 2.0;
+    for (const auto& [id, parameters] : std::vector<std::pair<std::uint32_t, std::vector<std::byte>>>{
+             {1, ts::warp_rectilinear_parameters({{0.99, 0, 0, 0, 0, 0}})},
+             {3, ts::vignette_parameters({0.1, 0, 0, 0, 0})},
+             {14, ts::warp_rectilinear2_parameters({ts::Warp2Set{}})}}) {
+        const DngOpcodeSupport support =
+            assess_dng_opcode(decoded(id, L::List3, parameters, id == 14 ? 0x01060000 : 0x01030000), image);
+        EXPECT_FALSE(support.supported) << id;
+        EXPECT_NE(support.reason.find("non-square pixels"), std::string::npos) << support.reason;
+    }
+    // Opcodes without a radius do not depend on the pixel shape.
+    EXPECT_TRUE(assess_dng_opcode(decoded(9, L::List3, ts::gain_map_parameters({0, 0, 80, 100, 0, 3}, 1, 1, 1, 1, 0, 0,
+                                                                              1, {2.0f})),
+                                  image)
+                    .supported);
 }
 
 }  // namespace

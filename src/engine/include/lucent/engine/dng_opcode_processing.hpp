@@ -25,14 +25,20 @@
 // 2 TrimBounds makes the trimmed rectangle the stage image of the rest of List 2 and of List 3.
 //
 // Values. List 1 works on the stored 16-bit integers with the specification's logical range: each
-// result is rounded to nearest (halves away from zero) and limited to [0, 65535]; real-valued
-// operations see value / 65535 where the DNG SDK converts to its [0, 1] float range (MapPolynomial,
-// Delta*), so a delta of d adds d x 65535. Lists 2 and 3 work on Lucent's normalised floats (1.0 =
+// result is rounded to nearest (halves away from zero) and limited to [0, 65535]. Its MapTable
+// maps the stored value, its MapPolynomial is evaluated on the stored value (y = sum c_k v^k)
+// and its deltas add stored units, which is what the DNG SDK computes: it converts the stage-1
+// image to [0, 1] floats (v / 65535) but rescales the polynomial coefficients (c_k x 65535^(k-1))
+// and the deltas (d / 65535) to match. Lists 2 and 3 work on Lucent's normalised floats (1.0 =
 // white). DNG clips the image to [0, 1] after every opcode; Lucent does not clip linear
 // operations (gains, scales, deltas, warps), keeping its unclipped convention (conventions.md;
-// results inside [0, 1] are identical), but value maps (MapTable, MapPolynomial) are defined on
-// the logical range only: their input and output are limited to [0, 1]. Limited samples are
-// counted (DngOpcodeRecord::limited_samples).
+// results inside [0, 1] are identical), but bounds their results to +-kDngOpcodeValueBound; value
+// maps (MapTable, MapPolynomial) are defined on the logical range only: their input and output
+// are limited to [0, 1]. Limited samples are counted (DngOpcodeRecord::limited_samples).
+//
+// Areas. An empty area rectangle stands for the whole stage image (the DNG SDK's
+// dng_area_spec::Overlap) for MapTable, MapPolynomial and GainMap; the per-row and per-column
+// opcodes then hold no values for it and are not supported (raw::assess_dng_opcode).
 //
 //   * White balance. Lucent balances the mosaic before demosaicing, so List 3 sees camera RGB
 //     multiplied by the stage-one multipliers m_p. Multiplicative opcodes and warps commute with
@@ -42,14 +48,17 @@
 //     data has no measured value beyond "at least white", so after List 2 it is kept at or above
 //     its channel's saturation level (max(value, level)). Highlights clipped in the sensor
 //     therefore stay clipped (neutral after the highlight clip) whatever gain an opcode applies.
-//     In List 1, saturation is judged afterwards on the corrected stored values, as DNG applies
-//     WhiteLevel after List 1.
+//     A bad-pixel repair is not a correction of the measured value but its replacement: the
+//     repaired pixel's flag is derived again from its new value (saturated when it reaches the
+//     channel's saturation level), so the repair is kept. In List 1, saturation is judged
+//     afterwards on the corrected stored values, as DNG applies WhiteLevel after List 1.
 //
 // Per opcode:
 //   GainMap            bilinear in the map grid at the pixel centre, map coordinates
 //                      v = ((row + 0.5) / H - MapOriginV) / MapSpacingV (likewise h with the
 //                      width), indices clamped to the grid (edge values replicated); image plane
-//                      Plane + i uses map plane min(i, MapPlanes - 1).
+//                      p (the absolute plane index, Plane <= p < Plane + Planes) uses map plane
+//                      min(p, MapPlanes - 1), as the DNG SDK indexes it.
 //   FixVignetteRadial  g = 1 + k0 r^2 + ... + k4 r^10 on every plane; r and the optical centre as
 //                      the specification defines them (below).
 //   WarpRectilinear,   output pixel (x, y) of plane i takes input position (x', y') from the
@@ -65,8 +74,9 @@
 //   MapTable           16-bit table; List 1 maps the stored value, Lists 2 and 3 map
 //                      round(clamp(v, 0, 1) x 65535) and divide by 65535 (the SDK's 16-bit path);
 //                      values past the table take its last entry.
-//   MapPolynomial      y = sum c_k x^k with x = v / 65535 (List 1) or clamp(v, 0, 1).
-//   DeltaPerRow/Column, ScalePerRow/Column: v + delta, v x scale on the affected rows/columns.
+//   MapPolynomial      y = sum c_k x^k with x = the stored value (List 1) or clamp(v, 0, 1).
+//   DeltaPerRow/Column, ScalePerRow/Column: v + delta (List 1: stored units), v x scale on the
+//                      affected rows/columns.
 //   FixBadPixelsConstant/List (Bayer CFA): a bad pixel (value == Constant, or listed) becomes the
 //                      mean of its nearest same-colour good neighbours: green sites search rings
 //                      of increasing distance on the green quincunx (sqrt 2, 2, sqrt 8, ...), red
@@ -101,6 +111,13 @@ namespace lucent::engine {
 
 // Semantic version of opcode processing (bump whenever the same input would give other values).
 inline constexpr std::uint32_t kDngOpcodeProcessingVersion = 1;
+
+// Lists 2 and 3 do not clip linear opcodes to [0, 1] (see "Values" above) but limit their float
+// results to [-kDngOpcodeValueBound, kDngOpcodeValueBound] (2^16 x white): no physical correction
+// comes near it, and a huge but finite coefficient (a vignette k0 of 1e300) can never make a later
+// stage overflow, so the render and develop paths treat such a file alike. Limited results are
+// counted in DngOpcodeRecord::limited_samples.
+inline constexpr double kDngOpcodeValueBound = 65536.0;
 
 // What happened to one opcode (persisted; append only).
 enum class OpcodeOutcome : std::uint8_t {
@@ -209,7 +226,8 @@ struct DngOpcodeOptions {
 // list). `metadata` must outlive the processor and stay unchanged.
 //
 // Errors (Error::where "engine.dng_opcode"): Internal when an opcode marked supported cannot be
-// applied to the data it is given (a contract violation: wrong buffer size or sample type);
+// applied to the data it is given (a contract violation: wrong buffer size or sample type, or
+// parameters that break the parser's invariants, e.g. gains that do not fill a GainMap's grid);
 // Corrupt when a warp's radial term divides by zero or yields a non-finite position;
 // LimitExceeded / OutOfMemory for buffers; Cancelled. After an error the image must be
 // discarded.

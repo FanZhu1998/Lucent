@@ -90,13 +90,14 @@ inline constexpr std::uint32_t kBoxDownscaleVersion = 1;
 
 // Every semantic version of the pipeline's own algorithms that a recipe does not carry (a recipe
 // carries its operation and base-look versions): the stage graph, sensor normalisation, white
-// balance, the demosaic routes, camera colour, the working space, the guided filter and the proxy
-// downscale. Pixels persisted under a recipe identity (rendered thumbnails) are keyed by these as
-// well, so a newer engine never shows an older engine's rendering. Append new versions here.
-inline constexpr std::array<std::uint32_t, 10> kDevelopEngineVersions{
+// balance, the demosaic routes, camera colour, the working space, the guided filter, the proxy
+// downscale and DNG opcode processing. Pixels persisted under a recipe identity (rendered
+// thumbnails) are keyed by these as well, so a newer engine never shows an older engine's
+// rendering. Append new versions here.
+inline constexpr std::array<std::uint32_t, 11> kDevelopEngineVersions{
     kDevelopPipelineVersion, kSensorNormalizationVersion, kWhiteBalanceVersion, kMalvarHeCutlerVersion,
     kXTransBaselineVersion,  kBypassVersion,              kCameraColorVersion,  kWorkingSpaceVersion,
-    kGuidedFilterVersion,    kBoxDownscaleVersion};
+    kGuidedFilterVersion,    kBoxDownscaleVersion,        kDngOpcodeProcessingVersion};
 
 // How stage one balanced its samples (persisted; append only).
 enum class StageOneKind : std::uint8_t {

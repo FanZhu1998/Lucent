@@ -53,9 +53,10 @@ TEST(DngOpcodeSynthetic, EveryListRunsAtItsStageThroughTheWholePath) {
         ts::SyntheticDngSpec plain_spec;  // 64 x 48 RGGB, black 256, white 16383
         plain_spec.endian = endian;
         ts::SyntheticDngSpec spec = plain_spec;
-        // List 1: + 0.001 of the 16-bit range on every stored value: + 65.535, rounded: + 66.
+        // List 1: + 66 stored units on every stored value (OpcodeList1 deltas are in stored units,
+        // as the DNG SDK computes them).
         spec.opcode_list1 = ts::opcode_list(
-            {{10, 0x01030000, 0, ts::row_column_parameters({0, 0, 48, 64}, std::vector<float>(48, 0.001f))}});
+            {{10, 0x01030000, 0, ts::row_column_parameters({0, 0, 48, 64}, std::vector<float>(48, 66.0f))}});
         // List 2: a uniform gain of 1.25 on the normalised values.
         spec.opcode_list2 = ts::opcode_list(
             {{9, 0x01030000, 0, ts::gain_map_parameters({0, 0, 48, 64}, 1, 1, 1.0, 1.0, 0.0, 0.0, 1, {1.25f})}});

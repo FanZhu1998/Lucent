@@ -249,6 +249,11 @@ TEST(LucentRender, ReportsUsageErrorsAsJson) {
     EXPECT_EQ(run_tool({L"x.cr3", L"--out", L"o", L"--quality", L"0"}).exit_code, 1u);
     EXPECT_EQ(run_tool({L"x.cr3"}).exit_code, 1u);
     EXPECT_EQ(run_tool({L"--help"}).exit_code, 0u);
+    // --no-dng-opcodes belongs to the W2 path (the develop pipeline always applies the opcodes).
+    const RunResult opcodes = run_tool({L"x.cr3", L"--out", L"o", L"--no-dng-opcodes"});
+    EXPECT_EQ(opcodes.exit_code, 1u);
+    EXPECT_NE(last_line(opcodes.out)["error"]["message"].get<std::string>().find("--legacy-neutral-v0"),
+              std::string::npos);
 }
 
 TEST(LucentRender, MissingInputFailsWithNotFound) {
@@ -579,6 +584,49 @@ TEST(LucentRender, RendersExportsReportsAndNeverOverwrites) {
         ++files;
     }
     EXPECT_EQ(files, 1u);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// --no-dng-opcodes: the W2 path without the file's opcodes, for comparisons with decoders that
+// apply none (render_reference.py). Every opcode is recorded as disabled, the render is not
+// complete, and the pixels differ from the default render.
+TEST(LucentRender, NoDngOpcodesRecordsTheOpcodesAsDisabled) {
+    const std::optional<std::filesystem::path> fixture = small_fixture();
+    if (!fixture) {
+        GTEST_SKIP() << "fixture 'dji-fc4382-dng' is not downloaded; run tools\\fetch-fixtures.ps1";
+    }
+    const std::filesystem::path dir = scratch_dir("no-opcodes");
+    const auto render = [&](const wchar_t* name, bool opcodes) {
+        std::vector<std::wstring> args = {fixture->wstring(), L"--out", (dir / name).wstring(), L"--legacy-neutral-v0",
+                                          L"--report", (dir / (std::wstring(name) + L".json")).wstring()};
+        if (!opcodes) {
+            args.push_back(L"--no-dng-opcodes");
+        }
+        return run_tool(args);
+    };
+    const RunResult with = render(L"with", true);
+    ASSERT_EQ(with.exit_code, 0u) << with.out;
+    const RunResult without = render(L"without", false);
+    ASSERT_EQ(without.exit_code, 0u) << without.out;
+    EXPECT_NE(last_line(with.out)["sha256"], last_line(without.out)["sha256"]);
+
+    const Json on = read_json(dir / L"with.json");
+    EXPECT_TRUE(on["render"]["settings"]["apply_dng_opcodes"].get<bool>());
+    EXPECT_EQ(on["render"]["interpretation"]["status"], "complete");
+    const Json off = read_json(dir / L"without.json");
+    EXPECT_FALSE(off["render"]["settings"]["apply_dng_opcodes"].get<bool>());
+    EXPECT_NE(off["render"]["interpretation"]["status"], "complete");
+    bool found = false;
+    for (const Json& stage : off["render"]["stages"]) {
+        if (stage["stage"] == "dng_opcode_list3") {
+            found = true;
+            EXPECT_EQ(stage["parameters"]["applied_count"], 0);
+            EXPECT_EQ(stage["parameters"]["opcode_0"].get<std::string>().rfind("disabled: WarpRectilinear", 0), 0u)
+                << stage["parameters"]["opcode_0"];
+        }
+    }
+    EXPECT_TRUE(found);
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }

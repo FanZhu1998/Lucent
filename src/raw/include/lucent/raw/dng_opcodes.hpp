@@ -119,8 +119,8 @@ struct DngOpcodeRect {
 // The area, plane range and pitch shared by MapTable, MapPolynomial, GainMap and the
 // per-row/per-column opcodes: rows top, top + row_pitch, ... below bottom and columns left,
 // left + col_pitch, ... below right, in planes plane .. plane + planes - 1. Rows, columns and
-// planes outside the image are not affected (as in the DNG SDK); an empty rectangle affects
-// nothing.
+// planes outside the image are not affected (as in the DNG SDK). An empty rectangle stands for
+// the whole image, as in the DNG SDK (dng_area_spec::Overlap), and must then have pitch 1.
 struct DngOpcodeArea {
     DngOpcodeRect rect;
     std::uint32_t plane = 0;
@@ -220,6 +220,18 @@ struct DngMapPolynomial {
     friend bool operator==(const DngMapPolynomial&, const DngMapPolynomial&) = default;
 };
 
+// The number of gains of a points_v x points_h x map_planes gain map, or std::nullopt when the
+// product does not fit in 64 bits (three file-controlled factors can wrap: 2^22 x 2^21 x 2^21).
+[[nodiscard]] constexpr std::optional<std::uint64_t> dng_gain_map_count(std::uint32_t points_v,
+                                                                       std::uint32_t points_h,
+                                                                       std::uint32_t map_planes) noexcept {
+    const std::uint64_t grid = std::uint64_t{points_v} * points_h;  // two 32-bit factors cannot wrap
+    if (map_planes != 0 && grid > std::numeric_limits<std::uint64_t>::max() / map_planes) {
+        return std::nullopt;
+    }
+    return grid * map_planes;
+}
+
 // GainMap (ID 9): a points_v x points_h grid of map_planes gains, stored row by row with the
 // planes of one point together. Spacing and origin are relative to the height / width of the
 // image being modified (1.0 = the whole image).
@@ -234,9 +246,18 @@ struct DngGainMap {
     std::uint32_t map_planes = 1;  // >= 1
     std::vector<float> gains;      // points_v * points_h * map_planes, finite
 
-    // Gain of grid point (v, h) in map plane p. Precondition: indices within the grid.
+    // Gain of grid point (v, h) in map plane p. Precondition: complete() and indices within the
+    // grid.
     [[nodiscard]] float gain(std::uint32_t v, std::uint32_t h, std::uint32_t p) const noexcept {
         return gains[(static_cast<std::size_t>(v) * points_h + h) * map_planes + p];
+    }
+
+    // The grid is non-empty and `gains` holds exactly points_v x points_h x map_planes values
+    // (parse_dng_opcode_parameters guarantees it; assess_dng_opcode checks it, so a hand-built or
+    // inconsistent map is never applied).
+    [[nodiscard]] bool complete() const noexcept {
+        const std::optional<std::uint64_t> count = dng_gain_map_count(points_v, points_h, map_planes);
+        return points_v >= 1 && points_h >= 1 && map_planes >= 1 && count && gains.size() == *count;
     }
 
     friend bool operator==(const DngGainMap&, const DngGainMap&) = default;
@@ -411,6 +432,9 @@ struct DngOpcodeImage {
     // List 1 only: the stored samples are 16-bit integers (floating-point raw data is not
     // processed in List 1).
     bool integer_samples = true;
+    // Pixel width / height (RawMetadata::geometry.pixel_aspect). The radial opcodes are applied to
+    // square pixels only.
+    double pixel_aspect = 1.0;
     // Empty when Lucent can run this list on the file at all; otherwise why not (for example the
     // decoder already linearised the stored values, so List 1 can no longer see them).
     std::string list_unavailable;
@@ -431,8 +455,13 @@ struct DngOpcodeSupport {
 //           TrimBounds (inside the image), MapTable, MapPolynomial, GainMap,
 //           Delta/ScalePerRow/Column.
 // Never supported: unknown IDs, versions newer than kDngSpecificationVersion, parameters that
-// were not decoded, WarpFisheye, anything when image.list_unavailable is set. A TrimBounds
-// rectangle must lie inside the stage image.
+// were not decoded, WarpFisheye, anything when image.list_unavailable is set, the radial opcodes
+// (warps, FixVignetteRadial) when image.pixel_aspect is not 1, and per-row/per-column opcodes
+// with an empty area (the whole image, for which they hold no values). A TrimBounds rectangle
+// must lie inside the stage image (assess_dng_opcode_operations evaluates a list in order, so an
+// earlier TrimBounds has already made the stage image smaller). Decoded parameters must keep the
+// parser's invariants (a GainMap's gains fill its grid, one value per affected row or column,
+// table and coefficient counts in range); otherwise the opcode is not supported.
 [[nodiscard]] DngOpcodeSupport assess_dng_opcode(const DngOpcode& opcode, const DngOpcodeImage& image);
 
 }  // namespace lucent::raw

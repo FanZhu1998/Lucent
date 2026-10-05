@@ -372,6 +372,7 @@ DngOpcodeFrame dng_opcode_frame(const RawMetadata& metadata, DngOpcodeListId lis
     const bool mosaic = rep.kind == RawRepresentation::Mosaic;
     image.mosaic = mosaic && list != DngOpcodeListId::List3;
     image.integer_samples = rep.sample_encoding == SampleEncoding::UInt16;
+    image.pixel_aspect = geo.pixel_aspect;
 
     if (list == DngOpcodeListId::List1) {
         image.width = ifd_width;
@@ -494,29 +495,111 @@ RequiredOperation required_operation_for(const DngOpcode& opcode) {
     return op;
 }
 
-void assess_dng_opcode_operations(RawMetadata& m) {
-    std::array<std::optional<DngOpcodeFrame>, 3> frames;
-    const auto frame_of = [&](DngOpcodeListId list) -> const DngOpcodeImage& {
-        std::optional<DngOpcodeFrame>& frame = frames[static_cast<std::size_t>(list) - 1];
-        if (!frame) {
-            frame = dng_opcode_frame(m, list);
-        }
-        return frame->image;
+namespace {
+
+DngOpcodeListId list_of(OperationStage stage) noexcept {
+    return stage == OperationStage::StoredRaw   ? DngOpcodeListId::List1
+           : stage == OperationStage::LinearRaw ? DngOpcodeListId::List2
+                                                : DngOpcodeListId::List3;
+}
+
+bool matches(const RequiredOperation& op, const DngOpcode& opcode) noexcept {
+    return op.kind == RequiredOperationKind::DngOpcode && list_of(op.stage) == opcode.list &&
+           op.index == opcode.index && op.opcode_id == opcode.id;
+}
+
+// The support of every opcode of metadata.dng->raw_ifd.opcodes (same order), assessed in
+// processing order (List 1, 2, 3, each by index) against the stage image the engine's
+// DngOpcodeProcessor will have at that point: dng_opcode_frame() for List 1 and at the start of
+// List 2; a TrimBounds Lucent applies in List 2 makes its rectangle the stage image of the rest of
+// List 2 and of List 3, one in List 3 of the rest of List 3. Lucent's buffer (the visible area)
+// is followed too: a TrimBounds that keeps none of it cannot be applied. An opcode the decoder
+// applied (an operation matching it is applied_by_decoder) is never Lucent's, so it changes
+// nothing.
+std::vector<DngOpcodeSupport> assess_in_order(const RawMetadata& m) {
+    std::vector<DngOpcodeSupport> supports;
+    if (!m.dng) {
+        return supports;
+    }
+    const std::vector<DngOpcode>& opcodes = m.dng->raw_ifd.opcodes;
+    supports.resize(opcodes.size());
+    const auto decoder_applied = [&](const DngOpcode& opcode) {
+        return std::any_of(m.required_operations.begin(), m.required_operations.end(),
+                           [&](const RequiredOperation& op) { return op.applied_by_decoder && matches(op, opcode); });
     };
+    // The running stage image (Lists 2 and 3) and Lucent's buffer in it.
+    struct Running {
+        std::int64_t width = 0;
+        std::int64_t height = 0;
+        std::int64_t buffer_x = 0;
+        std::int64_t buffer_y = 0;
+        std::int64_t buffer_width = 0;
+        std::int64_t buffer_height = 0;
+    };
+    std::optional<Running> running;
+    for (const DngOpcodeListId list : {DngOpcodeListId::List1, DngOpcodeListId::List2, DngOpcodeListId::List3}) {
+        const DngOpcodeFrame frame = dng_opcode_frame(m, list);
+        if (list == DngOpcodeListId::List2) {
+            running = Running{frame.image.width,  frame.image.height,       frame.offset_x,
+                              frame.offset_y,     m.geometry.visible_area.width, m.geometry.visible_area.height};
+        }
+        std::vector<std::size_t> order;
+        for (std::size_t k = 0; k < opcodes.size(); ++k) {
+            if (opcodes[k].list == list) {
+                order.push_back(k);
+            }
+        }
+        std::stable_sort(order.begin(), order.end(),
+                         [&](std::size_t a, std::size_t b) { return opcodes[a].index < opcodes[b].index; });
+        for (const std::size_t k : order) {
+            const DngOpcode& opcode = opcodes[k];
+            DngOpcodeImage image = frame.image;
+            if (running) {
+                image.width = static_cast<std::uint32_t>(running->width);
+                image.height = static_cast<std::uint32_t>(running->height);
+            }
+            DngOpcodeSupport support = assess_dng_opcode(opcode, image);
+            const auto* trim = std::get_if<DngTrimBounds>(&opcode.parameters);
+            if (support.supported && trim != nullptr && running && !decoder_applied(opcode)) {
+                const DngOpcodeRect& b = trim->bounds;
+                const std::int64_t x0 = std::max<std::int64_t>(b.left, running->buffer_x);
+                const std::int64_t y0 = std::max<std::int64_t>(b.top, running->buffer_y);
+                const std::int64_t x1 = std::min<std::int64_t>(b.right, running->buffer_x + running->buffer_width);
+                const std::int64_t y1 = std::min<std::int64_t>(b.bottom, running->buffer_y + running->buffer_height);
+                if (x1 <= x0 || y1 <= y0) {
+                    support = DngOpcodeSupport{
+                        false, std::format("the TrimBounds rectangle (top {}, left {}, bottom {}, right {}) keeps no "
+                                           "pixel of the {} x {} part of the image that Lucent holds",
+                                           b.top, b.left, b.bottom, b.right, running->buffer_width,
+                                           running->buffer_height)};
+                } else {
+                    running = Running{std::int64_t{b.right} - b.left, std::int64_t{b.bottom} - b.top, x0 - b.left,
+                                      y0 - b.top, x1 - x0, y1 - y0};
+                }
+            }
+            supports[k] = std::move(support);
+        }
+    }
+    return supports;
+}
+
+}  // namespace
+
+void assess_dng_opcode_operations(RawMetadata& m) {
+    const std::vector<DngOpcodeSupport> supports = assess_in_order(m);
     for (RequiredOperation& op : m.required_operations) {
         if (op.kind != RequiredOperationKind::DngOpcode) {
             continue;
         }
         op.supported_by_lucent = false;
         op.superseded_by_warp_rectilinear2 = false;
-        const DngOpcodeListId list = op.stage == OperationStage::StoredRaw   ? DngOpcodeListId::List1
-                                     : op.stage == OperationStage::LinearRaw ? DngOpcodeListId::List2
-                                                                             : DngOpcodeListId::List3;
-        const DngOpcode* opcode = nullptr;
+        const DngOpcodeListId list = list_of(op.stage);
+        std::optional<std::size_t> found;
         if (m.dng) {
-            for (const DngOpcode& candidate : m.dng->raw_ifd.opcodes) {
-                if (candidate.list == list && candidate.index == op.index && candidate.id == op.opcode_id) {
-                    opcode = &candidate;
+            const std::vector<DngOpcode>& opcodes = m.dng->raw_ifd.opcodes;
+            for (std::size_t k = 0; k < opcodes.size(); ++k) {
+                if (matches(op, opcodes[k])) {
+                    found = k;
                     break;
                 }
             }
@@ -526,9 +609,9 @@ void assess_dng_opcode_operations(RawMetadata& m) {
                                               is_known_dng_opcode(op.opcode_id) ? "" : ", unknown to this build");
         if (op.applied_by_decoder) {
             op.lucent_note = "the decoder applied it while unpacking; Lucent does not apply it again";
-        } else if (opcode == nullptr) {
+        } else if (!found) {
             op.lucent_note = "the opcode is not in the identified DNG raw IFD";
-        } else if (const DngOpcodeSupport support = assess_dng_opcode(*opcode, frame_of(list)); support.supported) {
+        } else if (const DngOpcodeSupport& support = supports[*found]; support.supported) {
             op.supported_by_lucent = true;
             op.lucent_note.clear();
         } else {
@@ -724,7 +807,8 @@ Status check_consistency(const DecodedRaw& decoded) {
         return contract_violation("interpretation status does not match its issues");
     }
     // Every operation marked supported is one the engine can apply: a decoded DNG opcode that
-    // assess_dng_opcode accepts at its stage.
+    // assess_dng_opcode accepts at its stage, evaluated in processing order (assess_in_order).
+    std::vector<DngOpcodeSupport> supports;
     for (const RequiredOperation& op : m.required_operations) {
         if (!op.supported_by_lucent) {
             continue;
@@ -733,16 +817,15 @@ Status check_consistency(const DecodedRaw& decoded) {
             op.kind != RequiredOperationKind::DngOpcode || !m.dng) {
             return contract_violation(std::format("operation {} is marked supported but cannot be applied", op.name));
         }
-        const DngOpcodeListId list = op.stage == OperationStage::StoredRaw   ? DngOpcodeListId::List1
-                                     : op.stage == OperationStage::LinearRaw ? DngOpcodeListId::List2
-                                                                             : DngOpcodeListId::List3;
+        if (supports.empty()) {
+            supports = assess_in_order(m);
+        }
         const auto& opcodes = m.dng->raw_ifd.opcodes;
-        const auto found = std::find_if(opcodes.begin(), opcodes.end(), [&](const DngOpcode& opcode) {
-            return opcode.list == list && opcode.index == op.index && opcode.id == op.opcode_id;
-        });
-        if (found == opcodes.end() || !assess_dng_opcode(*found, dng_opcode_frame(m, list).image).supported) {
+        const auto found = std::find_if(opcodes.begin(), opcodes.end(),
+                                        [&](const DngOpcode& opcode) { return matches(op, opcode); });
+        if (found == opcodes.end() || !supports[static_cast<std::size_t>(found - opcodes.begin())].supported) {
             return contract_violation(std::format("OpcodeList{}[{}] {} is marked supported but Lucent cannot apply it",
-                                                  static_cast<int>(list), op.index, op.name));
+                                                  static_cast<int>(list_of(op.stage)), op.index, op.name));
         }
     }
     return ok();

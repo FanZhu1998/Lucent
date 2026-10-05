@@ -124,6 +124,9 @@ def gain_map(img: np.ndarray, p: bytes) -> np.ndarray:
     gains = np.frombuffer(p[76:], dtype=">f4").astype(np.float64).reshape(pv, ph, mp)
     h, w, nplanes = img.shape
     out = img.copy()
+    if top >= bottom or left >= right:
+        # An empty area rectangle stands for the whole image (DNG SDK dng_area_spec::Overlap).
+        top, left, bottom, right = 0, 0, h, w
     rows = np.arange(top, min(bottom, h), rowpitch)
     cols = np.arange(left, min(right, w), colpitch)
     # Map coordinates of pixel centres, relative to the image, clamped to the grid.
@@ -133,7 +136,9 @@ def gain_map(img: np.ndarray, p: bytes) -> np.ndarray:
         p_img = plane + i
         if p_img >= nplanes:
             break
-        g = gains[:, :, min(i, mp - 1)]
+        # Image plane p uses map plane min(p, MapPlanes - 1), the absolute plane index as the DNG
+        # SDK's dng_opcode_GainMap::ProcessArea takes it (ADR 0014 decision 6).
+        g = gains[:, :, min(p_img, mp - 1)]
         vv, uu = np.meshgrid(v, u, indexing="ij")
         gm = ndimage.map_coordinates(g, [vv, uu], order=1, mode="nearest")
         out[np.ix_(rows, cols, [p_img])] *= gm[..., None]

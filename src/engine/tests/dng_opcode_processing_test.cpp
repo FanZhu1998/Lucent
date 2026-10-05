@@ -82,6 +82,10 @@ TEST(DngOpcodeList1, GainMapInterpolatesAtPixelCentresAndLimitsToTheStoredRange)
 }
 
 TEST(DngOpcodeList1, ValueMapsDeltasAndScalesUseTheSixteenBitLogicalRange) {
+    // The DNG SDK runs these on its stage-1 image converted to [0, 1] floats (v / 65535) but
+    // rescales a polynomial's coefficients (c_k x 65535^(k - 1)) and a delta (d / 65535) for it,
+    // so in stored units a polynomial is evaluated on the stored value and a delta adds stored
+    // units (dng_misc_opcodes.cpp, BufferPixelType of MapPolynomial and DeltaPerRow).
     raw::DecodedRaw d = mosaic16(5, 4, [](auto x, auto, auto) {
         const double v[5] = {0.0, 1.0, 1000.0, 40000.0, 100.0};
         return v[x];
@@ -89,10 +93,10 @@ TEST(DngOpcodeList1, ValueMapsDeltasAndScalesUseTheSixteenBitLogicalRange) {
     attach_dng(d, {
                       // Row 0: table of 4 entries; 100 is beyond it and takes the last entry.
                       {L::List1, kMapTable, raw::DngMapTable{area(0, 0, 1, 5), {10, 20, 30, 40}}},
-                      // Row 1: y = 0.01 + 2 x on x = value / 65535.
-                      {L::List1, kMapPolynomial, raw::DngMapPolynomial{area(1, 0, 2, 5), {0.01, 2.0}}},
-                      // Row 2: + 0.001 of the range (65.535).
-                      {L::List1, kDeltaRow, values(area(2, 0, 3, 5), {0.001f})},
+                      // Row 1: y = 100 + 2 v - v^2 / 65535 on the stored value v.
+                      {L::List1, kMapPolynomial, raw::DngMapPolynomial{area(1, 0, 2, 5), {100.0, 2.0, -1.0 / 65535.0}}},
+                      // Row 2: - 50 stored units.
+                      {L::List1, kDeltaRow, values(area(2, 0, 3, 5), {-50.0f})},
                       // Row 3: x 1.5.
                       {L::List1, kScaleRow, values(area(3, 0, 4, 5), {1.5f})},
                   });
@@ -102,17 +106,27 @@ TEST(DngOpcodeList1, ValueMapsDeltasAndScalesUseTheSixteenBitLogicalRange) {
     for (std::int32_t x = 0; x < 5; ++x) {
         EXPECT_EQ(u16_at(d, x, 0), table[static_cast<std::size_t>(x)]) << x;
     }
-    // 0.01 x 65535 = 655.35; 1 -> 655.35 + 2 = 657.35; 1000 -> 2655.35; 40000 -> 80655 limited.
-    EXPECT_EQ(u16_at(d, 0, 1), 655);
-    EXPECT_EQ(u16_at(d, 1, 1), 657);
-    EXPECT_EQ(u16_at(d, 2, 1), 2655);
-    EXPECT_EQ(u16_at(d, 3, 1), 65535);
-    const double delta = static_cast<double>(0.001f) * 65535.0;
-    EXPECT_EQ(u16_at(d, 2, 2), static_cast<std::uint16_t>(std::round(1000.0 + delta)));
-    EXPECT_EQ(u16_at(d, 0, 2), static_cast<std::uint16_t>(std::round(delta)));
+    // 0 -> 100; 1 -> 101.99998; 1000 -> 2084.741; 40000 -> 55685.596; 100 -> 299.847.
+    const std::array<std::uint16_t, 5> polynomial{100, 102, 2085, 55686, 300};
+    const std::array<std::uint16_t, 5> delta{0, 0, 950, 39950, 50};  // 0 and 1 limited at 0
+    for (std::int32_t x = 0; x < 5; ++x) {
+        EXPECT_EQ(u16_at(d, x, 1), polynomial[static_cast<std::size_t>(x)]) << x;
+        EXPECT_EQ(u16_at(d, x, 2), delta[static_cast<std::size_t>(x)]) << x;
+    }
     EXPECT_EQ(u16_at(d, 2, 3), 1500);
     EXPECT_EQ(u16_at(d, 3, 3), 60000);
-    EXPECT_EQ(record(p, 1).limited_samples, 1u);
+    EXPECT_EQ(record(p, 1).limited_samples, 0u);
+    EXPECT_EQ(record(p, 2).limited_samples, 2u);
+}
+
+TEST(DngOpcodeList1, ADeltaOfFiveStoredUnitsAddsFive) {
+    // The review's probe: DeltaPerRow 5.0 on stored ~1000 must give ~1005, not saturate.
+    raw::DecodedRaw d = mosaic16(4, 4, [](auto, auto, auto) { return 1000.0; });
+    attach_dng(d, {{L::List1, kDeltaRow, values(area(0, 0, 4, 4), {5.0f, 5.0f, 5.0f, 5.0f})}});
+    DngOpcodeProcessor p(d.metadata);
+    ASSERT_TRUE(p.run_list1(d.image));
+    EXPECT_EQ(u16_at(d, 2, 3), 1005);
+    EXPECT_EQ(record(p, 0).limited_samples, 0u);
 }
 
 TEST(DngOpcodeList1, BadPixelListUsesTheNearestSameColourNeighbours) {
@@ -676,8 +690,8 @@ raw::DecodedRaw ordered_case() {
     d.metadata.color.as_shot_multipliers = {2.0f, 1.0f, 1.5f, 1.0f};
     d.metadata.color.daylight_multipliers = {2.0f, 1.0f, 1.5f, 1.0f};
     attach_dng(d, {
-                      // List 1: + 0.01 of the 16-bit range on the stored values = + 655.35 -> 1655.
-                      {L::List1, kDeltaRow, values(area(0, 0, 16, 16), std::vector<float>(16, 0.01f))},
+                      // List 1: + 655 stored units -> 1655.
+                      {L::List1, kDeltaRow, values(area(0, 0, 16, 16), std::vector<float>(16, 655.0f))},
                       // List 2: + 0.05 on the normalised values (white = 1).
                       {L::List2, kDeltaRow, values(area(0, 0, 16, 16), std::vector<float>(16, 0.05f))},
                       // List 3: green x 2.
@@ -702,8 +716,8 @@ TEST(DngOpcodeStages, StageOneAppliesTheListsAtTheirStagesAndInOrder) {
                                                RenderStage::Demosaic, RenderStage::DngOpcodeList3,
                                                RenderStage::Orientation}));
     // 1655 / 10000 = 0.1655 + 0.05 = 0.2155, balanced (2, 1, 1.5), then green x 2. A different
-    // order or unit (the List 1 delta after normalisation would add 0.01; the List 2 delta before
-    // it 0.05 x 10000 / 65535) would give other values.
+    // order or unit (the List 1 delta after normalisation would add 655; the List 2 delta before
+    // it 0.05 stored units) would give other values.
     const double v = 0.1655 + static_cast<double>(0.05f);
     EXPECT_NEAR(one->pixels.at(8, 8, 0), v * 2.0, 1e-5);
     EXPECT_NEAR(one->pixels.at(8, 8, 1), v * 2.0, 1e-5);
@@ -799,6 +813,214 @@ TEST(DngOpcodeStages, GainMapPlanesBeyondTheMapUseItsLastPlane) {
     EXPECT_FLOAT_EQ(c.pixels.at(1, 1, 1), 3.0f);
     EXPECT_FLOAT_EQ(c.pixels.at(1, 1, 2), 3.0f);
     EXPECT_TRUE(carried_lens_corrections(c.decoded.metadata).vignetting);
+}
+
+// ---- Review findings (W9 phase-1 closure) ----------------------------------------------------------
+
+TEST(DngOpcodeList2, BadPixelRepairOfASaturatedPixelIsKept) {
+    // 8 x 8 RGGB, white 1000. A hot red pixel (2, 2) reads white among red neighbours of 400; a
+    // second listed red pixel (6, 6) has only saturated red neighbours (4, 6) and (6, 4) inside
+    // the image. A gain of 0.5 follows the repair.
+    raw::DecodedRaw d = make_mosaic<std::uint16_t>(8, 8, PixelRect{0, 0, 8, 8}, kRggb, simple_levels(0.0, 1000.0),
+                                                   [](auto x, auto y, auto) {
+                                                       if ((x == 2 && y == 2) || (x == 6 && y == 6) ||
+                                                           (x == 4 && y == 6) || (x == 6 && y == 4)) {
+                                                           return 1000.0;
+                                                       }
+                                                       return 400.0;
+                                                   });
+    raw::DngFixBadPixelsList list;
+    list.bayer_phase = 0;
+    list.points = {{2, 2}, {6, 6}};
+    attach_dng(d, {
+                      {L::List2, kBadList, list},
+                      {L::List2, kGainMap, gain_map(area(0, 0, 8, 8), 1, 1, 1.0, 1.0, 0.0, 0.0, 1, {0.5f})},
+                  });
+    ASSERT_EQ(d.metadata.interpretation.status, raw::InterpretationStatus::Complete);
+    auto sensor = normalized(d);
+    ASSERT_TRUE(sensor);
+    EXPECT_EQ(sensor->normalization.saturated_samples, 4u);
+    DngOpcodeProcessor p(d.metadata);
+    ASSERT_TRUE(p.run_list2(*sensor));
+    // The repaired hot pixel keeps its interpolated value (0.4, then the gain): its stored value
+    // was discarded, and with it the saturation flag.
+    EXPECT_FLOAT_EQ(sensor->pixels.at(2, 2, 0), 0.2f);
+    EXPECT_EQ(sensor->saturation.at(2, 2), 0u);
+    // A pixel repaired from saturated neighbours reaches the saturation level and stays flagged.
+    EXPECT_FLOAT_EQ(sensor->pixels.at(6, 6, 0), 1.0f);
+    EXPECT_NE(sensor->saturation.at(6, 6), 0u);
+    EXPECT_FLOAT_EQ(sensor->pixels.at(4, 6, 0), 1.0f);
+    EXPECT_EQ(p.report().list2_resaturated_samples, 3u);  // (6, 6), (4, 6), (6, 4)
+    EXPECT_EQ(record(p, 0).affected_samples, 2u);
+}
+
+TEST(DngOpcodeList3, EmptyAreasCoverTheWholeImage) {
+    // The DNG SDK reads an empty area rectangle as the whole image (dng_area_spec::Overlap).
+    const raw::DngOpcodeArea empty = area(0, 0, 0, 0, 0, 3);
+    List3Case c = list3_case(4, 3,
+                             {
+                                 {L::List3, kGainMap, gain_map(empty, 1, 1, 1.0, 1.0, 0.0, 0.0, 1, {2.0f})},
+                                 {L::List3, kMapPolynomial, raw::DngMapPolynomial{empty, {0.05, 1.0}}},
+                             },
+                             [](double, double, std::int32_t) { return 0.25; });
+    ASSERT_EQ(c.decoded.metadata.interpretation.status, raw::InterpretationStatus::Complete);
+    DngOpcodeProcessor p(c.decoded.metadata);
+    ASSERT_TRUE(p.run_list3(c.pixels, {1, 1, 1}));
+    for (std::int32_t y = 0; y < 3; ++y) {
+        for (std::int32_t x = 0; x < 4; ++x) {
+            for (std::int32_t pl = 0; pl < 3; ++pl) {
+                EXPECT_FLOAT_EQ(c.pixels.at(x, y, pl), 0.55f) << x << "," << y << "," << pl;
+            }
+        }
+    }
+    EXPECT_EQ(record(p, 0).affected_samples, 36u);
+    EXPECT_NE(record(p, 0).detail.find("the whole image"), std::string::npos) << record(p, 0).detail;
+    EXPECT_TRUE(carried_lens_corrections(c.decoded.metadata).vignetting);
+
+    // A per-row opcode with an empty area holds no values for the image: not supported.
+    List3Case rows = list3_case(4, 3, {{L::List3, kDeltaRow, values(empty, {})}},
+                                [](double, double, std::int32_t) { return 0.25; });
+    EXPECT_EQ(rows.decoded.metadata.interpretation.status, raw::InterpretationStatus::RequiresUnsupportedOperation);
+}
+
+TEST(DngOpcodeList3, GainMapPlanesAreIndexedByTheImagePlane) {
+    // Planes 1..2 modified with a 2-plane map: the DNG SDK takes map plane min(p, MapPlanes - 1)
+    // for image plane p, so both use map plane 1 (gain 3); plane 0 is not modified.
+    List3Case c = list3_case(2, 2,
+                             {{L::List3, kGainMap, gain_map(area(0, 0, 2, 2, 1, 2), 1, 1, 1, 1, 0, 0, 2, {2.0f, 3.0f})}},
+                             [](double, double, std::int32_t) { return 1.0; });
+    DngOpcodeProcessor p(c.decoded.metadata);
+    ASSERT_TRUE(p.run_list3(c.pixels, {1, 1, 1}));
+    EXPECT_FLOAT_EQ(c.pixels.at(1, 1, 0), 1.0f);
+    EXPECT_FLOAT_EQ(c.pixels.at(1, 1, 1), 3.0f);
+    EXPECT_FLOAT_EQ(c.pixels.at(1, 1, 2), 3.0f);
+}
+
+TEST(DngOpcodeList3, HugeFiniteCoefficientsAreBounded) {
+    // A malformed but finite vignette (k0 = 1e300) cannot push values beyond the bound (or to
+    // infinity), so every later stage sees finite values.
+    List3Case c = list3_case(5, 3, {{L::List3, kVignette, raw::DngFixVignetteRadial{{1e300, 0, 0, 0, 0}, 0.5, 0.5}}},
+                             [](double, double, std::int32_t) { return 0.4; });
+    DngOpcodeProcessor p(c.decoded.metadata);
+    ASSERT_TRUE(p.run_list3(c.pixels, {1, 1, 1}));
+    EXPECT_FLOAT_EQ(c.pixels.at(2, 1, 0), 0.4f);  // the centre: r = 0, g = 1
+    EXPECT_FLOAT_EQ(c.pixels.at(0, 0, 0), static_cast<float>(kDngOpcodeValueBound));
+    for (std::int32_t y = 0; y < 3; ++y) {
+        for (std::int32_t x = 0; x < 5; ++x) {
+            EXPECT_TRUE(std::isfinite(c.pixels.at(x, y, 1)));
+            EXPECT_LE(c.pixels.at(x, y, 1), kDngOpcodeValueBound);
+        }
+    }
+    EXPECT_EQ(record(p, 0).limited_samples, 3u * (15u - 1u));  // all but the centre pixel
+    // Results inside the bound are not changed: Lucent still does not clip at white.
+    List3Case bright = list3_case(2, 1, {{L::List3, kScaleRow, values(area(0, 0, 1, 2, 0, 3), {3.0f})}},
+                                  [](double, double, std::int32_t) { return 0.9; });
+    DngOpcodeProcessor q(bright.decoded.metadata);
+    ASSERT_TRUE(q.run_list3(bright.pixels, {1, 1, 1}));
+    EXPECT_FLOAT_EQ(bright.pixels.at(0, 0, 0), 2.7f);
+    EXPECT_EQ(record(q, 0).limited_samples, 0u);
+}
+
+TEST(DngOpcodeList3, AnInconsistentGainMapMarkedSupportedIsAnErrorNotARead) {
+    // Metadata altered after the assessment (the parser and the assessment never produce it): the
+    // processor refuses instead of reading past the gains.
+    List3Case c = list3_case(4, 4, {{L::List3, kGainMap, gain_map(area(0, 0, 4, 4, 0, 3), 1, 1, 1, 1, 0, 0, 1, {2.0f})}},
+                             [](double, double, std::int32_t) { return 1.0; });
+    ASSERT_TRUE(operation(c.decoded.metadata, L::List3, 0)->supported_by_lucent);
+    ASSERT_TRUE(raw::check_consistency(c.decoded));
+    auto& map = std::get<raw::DngGainMap>(c.decoded.metadata.dng->raw_ifd.opcodes[0].parameters);
+    map.points_v = 1u << 22;
+    map.points_h = 1u << 21;
+    map.map_planes = 1u << 21;
+    map.gains.clear();
+    DngOpcodeProcessor p(c.decoded.metadata);
+    const Status status = p.run_list3(c.pixels, {1, 1, 1});
+    ASSERT_FALSE(status);
+    EXPECT_EQ(status.error().code, ErrorCode::Internal);
+    EXPECT_EQ(status.error().where, "engine.dng_opcode");
+    // check_consistency (the decoded-RAW contract) rejects such metadata as well.
+    const Status consistent = raw::check_consistency(c.decoded);
+    ASSERT_FALSE(consistent);
+    EXPECT_NE(consistent.error().message.find("GainMap is marked supported"), std::string::npos)
+        << consistent.error().message;
+}
+
+TEST(DngOpcodeOutcomes, TrimBoundsAreAssessedAgainstTheTrimmedImage) {
+    // 6 x 4: the first TrimBounds makes the image 5 x 3. A second one that fits the original image
+    // but not the trimmed one cannot be applied: the file is not Complete (it used to be, and the
+    // render then failed with Corrupt).
+    List3Case two = list3_case(6, 4,
+                               {
+                                   {L::List3, kTrim, raw::DngTrimBounds{{0, 0, 3, 5}}},
+                                   {L::List3, kTrim, raw::DngTrimBounds{{0, 0, 4, 6}}},
+                               },
+                               [](double x, double y, std::int32_t) { return 10 * x + y; });
+    const raw::RawMetadata& m = two.decoded.metadata;
+    EXPECT_TRUE(operation(m, L::List3, 0)->supported_by_lucent);
+    const raw::RequiredOperation* second = operation(m, L::List3, 1);
+    ASSERT_NE(second, nullptr);
+    EXPECT_FALSE(second->supported_by_lucent);
+    EXPECT_NE(second->lucent_note.find("5 x 3"), std::string::npos) << second->lucent_note;
+    EXPECT_EQ(m.interpretation.status, raw::InterpretationStatus::RequiresUnsupportedOperation);
+    EXPECT_TRUE(raw::check_consistency(two.decoded));
+    DngOpcodeProcessor p(m);
+    ASSERT_TRUE(p.run_list3(two.pixels, {1, 1, 1}));  // the first trim applies, the second is not applied
+    EXPECT_EQ(two.pixels.size(), (image::Size{5, 3}));
+    EXPECT_EQ(record(p, 1).outcome, OpcodeOutcome::NotApplied);
+
+    // One that fits the trimmed image applies after it.
+    List3Case nested = list3_case(6, 4,
+                                  {
+                                      {L::List3, kTrim, raw::DngTrimBounds{{0, 0, 3, 5}}},
+                                      {L::List3, kTrim, raw::DngTrimBounds{{1, 1, 3, 5}}},
+                                  },
+                                  [](double x, double y, std::int32_t) { return 10 * x + y; });
+    ASSERT_EQ(nested.decoded.metadata.interpretation.status, raw::InterpretationStatus::Complete);
+    DngOpcodeProcessor q(nested.decoded.metadata);
+    ASSERT_TRUE(q.run_list3(nested.pixels, {1, 1, 1}));
+    ASSERT_EQ(nested.pixels.size(), (image::Size{4, 2}));
+    EXPECT_FLOAT_EQ(nested.pixels.at(0, 0, 0), 11.0f);
+
+    // A List 2 TrimBounds makes the image smaller for List 3 as well.
+    raw::DecodedRaw d = make_mosaic<std::uint16_t>(6, 6, PixelRect{0, 0, 6, 6}, kRggb, simple_levels(0.0, 1000.0),
+                                                   [](auto, auto, auto) { return 100.0; });
+    attach_dng(d, {
+                      {L::List2, kTrim, raw::DngTrimBounds{{1, 1, 5, 5}}},
+                      {L::List3, kTrim, raw::DngTrimBounds{{0, 0, 5, 5}}},
+                  });
+    EXPECT_TRUE(operation(d.metadata, L::List2, 0)->supported_by_lucent);
+    EXPECT_FALSE(operation(d.metadata, L::List3, 0)->supported_by_lucent);
+    EXPECT_NE(operation(d.metadata, L::List3, 0)->lucent_note.find("4 x 4"), std::string::npos)
+        << operation(d.metadata, L::List3, 0)->lucent_note;
+}
+
+TEST(DngOpcodeOutcomes, TrimBoundsThatKeepNoHeldPixelIsNotSupported) {
+    // ActiveArea (1, 1)..(8, 8); the decoder's visible area starts at (2, 2): stage pixel (0, 0)
+    // is not in Lucent's buffer, so a TrimBounds keeping only it cannot be applied.
+    raw::DecodedRaw d = make_mosaic<std::uint16_t>(8, 8, PixelRect{2, 2, 6, 6}, kRggb, simple_levels(0.0, 1000.0),
+                                                   [](auto, auto, auto) { return 100.0; });
+    attach_dng(d, {{L::List2, kTrim, raw::DngTrimBounds{{0, 0, 1, 1}}}}, raw::DngRect{1, 1, 8, 8});
+    const raw::RequiredOperation* op = operation(d.metadata, L::List2, 0);
+    ASSERT_NE(op, nullptr);
+    EXPECT_FALSE(op->supported_by_lucent);
+    EXPECT_NE(op->lucent_note.find("keeps no pixel"), std::string::npos) << op->lucent_note;
+}
+
+TEST(DngOpcodeOutcomes, RadialOpcodesOnNonSquarePixelsAreNotSupported) {
+    List3Case c = list3_case(6, 4, {}, [](double, double, std::int32_t) { return 1.0; });
+    c.decoded.metadata.geometry.pixel_aspect = 0.5;
+    c.decoded.metadata.required_operations.clear();
+    c.decoded.metadata.interpretation = {};
+    attach_dng(c.decoded, {{L::List3, kVignette, raw::DngFixVignetteRadial{{0.5, 0, 0, 0, 0}, 0.5, 0.5}},
+                           {L::List3, kWarp, warp({{0.99, 0, 0, 0, 0, 0}})}});
+    EXPECT_FALSE(operation(c.decoded.metadata, L::List3, 0)->supported_by_lucent);
+    EXPECT_FALSE(operation(c.decoded.metadata, L::List3, 1)->supported_by_lucent);
+    EXPECT_NE(operation(c.decoded.metadata, L::List3, 0)->lucent_note.find("non-square"), std::string::npos);
+    EXPECT_EQ(c.decoded.metadata.interpretation.status, raw::InterpretationStatus::RequiresUnsupportedOperation);
+    DngOpcodeProcessor p(c.decoded.metadata);
+    const image::ImageBuffer<float> before = *c.pixels.clone();
+    ASSERT_TRUE(p.run_list3(c.pixels, {1, 1, 1}));
+    EXPECT_TRUE(bit_identical(before, c.pixels));
 }
 
 }  // namespace

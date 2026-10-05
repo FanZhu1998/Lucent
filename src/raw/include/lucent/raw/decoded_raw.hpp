@@ -605,7 +605,10 @@ struct DngOpcodeFrame {
 
 // Decides, for every DNG-opcode entry of metadata.required_operations (matched by list, index and
 // ID to metadata.dng->raw_ifd.opcodes), whether Lucent's engine applies it (assess_dng_opcode on
-// the image dng_opcode_frame() describes; never an operation applied_by_decoder), applies the
+// the image dng_opcode_frame() describes, evaluated in processing order: a TrimBounds Lucent
+// applies makes its rectangle the stage image of the following opcodes of its list, and in List 2
+// of List 3, as the engine does, and one that keeps no pixel of the visible area is not
+// supported; never an operation applied_by_decoder), applies the
 // WarpRectilinear2 skip rule (DNG 1.7.1.0 chapter 7: an opcode that follows an optional
 // WarpRectilinear2 Lucent applies is superseded_by_warp_rectilinear2), fills lucent_note, appends
 // an interpretation issue (MandatoryOperationUnsupported or OptionalOperationUnsupported) for each

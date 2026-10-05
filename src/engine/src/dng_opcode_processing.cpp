@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <functional>
 #include <limits>
 #include <new>
 #include <optional>
@@ -34,6 +35,8 @@ using raw::DngOpcodeListId;
 constexpr const char* kWhere = "engine.dng_opcode";
 constexpr double kStoredRange = 65535.0;  // logical range of 16-bit stored samples (List 1)
 constexpr std::int32_t kMaxBadPixelRadius = 16;
+// Bound of the unclipped float results of Lists 2 and 3 (see kDngOpcodeValueBound).
+constexpr double kValueBound = kDngOpcodeValueBound;
 
 double seconds_since(Clock::time_point start) { return std::chrono::duration<double>(Clock::now() - start).count(); }
 
@@ -107,7 +110,19 @@ inline void store(std::uint16_t& sample, double value, std::uint64_t& limited) n
     sample = static_cast<std::uint16_t>(rounded);
 }
 
-inline void store(float& sample, double value, std::uint64_t&) noexcept { sample = static_cast<float>(value); }
+// Floats are stored as computed within [-kValueBound, kValueBound]; a result beyond it (or NaN,
+// which finite inputs and finite parameters cannot give) is limited and counted, so that a huge
+// but finite coefficient can never make later stages overflow.
+inline void store(float& sample, double value, std::uint64_t& limited) noexcept {
+    if (!(value >= -kValueBound)) {  // also NaN
+        value = std::isnan(value) ? 0.0 : -kValueBound;
+        ++limited;
+    } else if (value > kValueBound) {
+        value = kValueBound;
+        ++limited;
+    }
+    sample = static_cast<float>(value);
+}
 
 // Limits a value-map operand or result to [0, 1], counting changes.
 inline double unit(double value, std::uint64_t& limited) noexcept {
@@ -122,8 +137,21 @@ inline double unit(double value, std::uint64_t& limited) noexcept {
     return value;
 }
 
+// The area as it applies to the stage image: an empty rectangle stands for the whole image (the
+// DNG SDK's dng_area_spec::Overlap; the parser requires pitch 1 for it).
+raw::DngOpcodeArea effective_area(const raw::DngOpcodeArea& area, const Frame& f) {
+    if (!area.rect.empty()) {
+        return area;
+    }
+    raw::DngOpcodeArea whole = area;
+    whole.rect = raw::DngOpcodeRect{0, 0, static_cast<std::uint32_t>(std::min<std::int64_t>(f.stage_height, 0xFFFFFFFF)),
+                                    static_cast<std::uint32_t>(std::min<std::int64_t>(f.stage_width, 0xFFFFFFFF))};
+    return whole;
+}
+
 // Calls fn(value, row line, column line, plane, limited&) -> new value for every affected sample
-// of `area` (rows in parallel); counts written and limited samples into `record`.
+// of `area` (rows in parallel); counts written and limited samples into `record`. `area` must be
+// effective_area()'s (a non-empty rectangle).
 template <class T, class Fn>
 Status for_area(image::ImageView<T> view, const Frame& f, const raw::DngOpcodeArea& area, bool parallel,
                 const core::CancellationToken& cancel, DngOpcodeRecord& record, const Fn& fn) {
@@ -174,6 +202,10 @@ raw::DngOpcodeArea whole_image(const Frame& f) {
 }
 
 std::string describe_area(const raw::DngOpcodeArea& a) {
+    if (a.rect.empty()) {
+        return std::format("empty area rectangle = the whole image, planes {}..{}", a.plane,
+                           std::uint64_t{a.plane} + a.planes - 1);
+    }
     return std::format("area rows {}..{} / columns {}..{} (pitch {} x {}), planes {}..{}", a.rect.top, a.rect.bottom,
                        a.rect.left, a.rect.right, a.row_pitch, a.col_pitch, a.plane,
                        std::uint64_t{a.plane} + a.planes - 1);
@@ -347,11 +379,15 @@ private:
     std::vector<std::uint64_t> bits_;
 };
 
+// Called with the buffer position and new value of every repaired pixel, on the thread that
+// repairs its row (it may write per-row state of that row only).
+using RepairedFn = std::function<void(std::int32_t x, std::int32_t y, double value)>;
+
 // Repairs the marked pixels of a one-channel Bayer buffer (see the header). `green_even`: green
 // sites are those whose stage coordinates have an even sum.
 template <class T>
 Status repair_bad_pixels(image::ImageView<T> view, const Frame& f, const BitMask& bad, bool green_even, bool parallel,
-                         const core::CancellationToken& cancel, DngOpcodeRecord& record) {
+                         const core::CancellationToken& cancel, DngOpcodeRecord& record, const RepairedFn& on_repaired) {
     static const Rings green_rings = make_rings(true);
     static const Rings other_rings = make_rings(false);
     std::vector<std::uint64_t> repaired(static_cast<std::size_t>(f.height), 0);
@@ -400,6 +436,9 @@ Status repair_bad_pixels(image::ImageView<T> view, const Frame& f, const BitMask
                 line[x] = static_cast<T>((integer_sum + count / 2) / count);
             } else {
                 line[x] = static_cast<T>(sum / count);
+            }
+            if (on_repaired) {
+                on_repaired(x, y, static_cast<double>(line[x]));
             }
             ++repaired[static_cast<std::size_t>(y)];
         }
@@ -518,7 +557,17 @@ struct Target {
     DngOpcodeListId list = DngOpcodeListId::List1;
     std::array<double, 4> multipliers{1.0, 1.0, 1.0, 1.0};  // List 3 white balance per plane
     bool parallel = true;
+    RepairedFn on_repaired;  // bad-pixel opcodes: told about every repaired pixel
 };
+
+// The opcode is marked supported but its parameters break an invariant the parser guarantees (a
+// hand-built or inconsistent DngOpcode): a contract violation, never an out-of-bounds read.
+Status malformed_supported(const DngOpcode& opcode, std::string_view what) {
+    return fail(ErrorCode::Internal,
+                std::format("OpcodeList{}[{}] {} is marked supported but {}", list_number(opcode.list), opcode.index,
+                            opcode.name(), what),
+                kWhere);
+}
 
 template <class T>
 Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::CancellationToken& cancel,
@@ -528,9 +577,13 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
     switch (static_cast<DngOpcodeId>(opcode.id)) {
         case DngOpcodeId::GainMap: {
             const auto& map = std::get<raw::DngGainMap>(opcode.parameters);
-            const std::vector<Line> rows = affected_lines(map.area.rect.top, map.area.rect.bottom, map.area.row_pitch,
+            if (!map.complete()) {
+                return malformed_supported(opcode, "its gains do not fill its points_v x points_h x map_planes grid");
+            }
+            const raw::DngOpcodeArea area = effective_area(map.area, t.frame);
+            const std::vector<Line> rows = affected_lines(area.rect.top, area.rect.bottom, area.row_pitch,
                                                           t.frame.stage_height, t.frame.offset_y, t.frame.height);
-            const std::vector<Line> cols = affected_lines(map.area.rect.left, map.area.rect.right, map.area.col_pitch,
+            const std::vector<Line> cols = affected_lines(area.rect.left, area.rect.right, area.col_pitch,
                                                           t.frame.stage_width, t.frame.offset_x, t.frame.width);
             std::vector<GridPosition> v(rows.size());
             std::vector<GridPosition> h(cols.size());
@@ -548,12 +601,14 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
                                         "{:.6g}), gains {:.4f}..{:.4f}; {}",
                                         map.points_v, map.points_h, map.map_planes, map.spacing_v, map.spacing_h,
                                         map.origin_v, map.origin_h, *g_min, *g_max, describe_area(map.area));
-            return for_area(t.view, t.frame, map.area, t.parallel, cancel, record,
+            return for_area(t.view, t.frame, area, t.parallel, cancel, record,
                             [&](double value, const Line& row, const Line& col, std::int32_t p, std::uint64_t&) {
                                 const GridPosition& gv = v[row.step - row_step0];
                                 const GridPosition& gh = h[col.step - col_step0];
-                                const std::uint32_t mp = std::min<std::uint32_t>(
-                                    static_cast<std::uint32_t>(p) - map.area.plane, map.map_planes - 1);
+                                // Image plane p uses map plane min(p, MapPlanes - 1): the absolute
+                                // plane, as the DNG SDK (dng_opcode_GainMap::ProcessArea) indexes it.
+                                const std::uint32_t mp =
+                                    std::min<std::uint32_t>(static_cast<std::uint32_t>(p), map.map_planes - 1);
                                 const double top = map.gain(gv.i0, gh.i0, mp) +
                                                    gh.fraction * (map.gain(gv.i0, gh.i1, mp) - map.gain(gv.i0, gh.i0, mp));
                                 const double bottom =
@@ -570,7 +625,7 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
                 return 1.0 + r2 * (v.k[0] + r2 * (v.k[1] + r2 * (v.k[2] + r2 * (v.k[3] + r2 * v.k[4]))));
             };
             record.detail = std::format("k [{:.6g}, {:.6g}, {:.6g}, {:.6g}, {:.6g}], optical centre ({}, {}) = stage "
-                                        "pixel ({:.3f}, {:.3f}), m = {:.3f} px; gain at r = 1: {:.4f}",
+                                        "pixel ({:.3f}, {:.3f}), m = {:.3f} px; gain at r = 1: {:.6g}",
                                         v.k[0], v.k[1], v.k[2], v.k[3], v.k[4], v.center_x, v.center_y, c.cx, c.cy,
                                         c.m, gain(1.0));
             return for_area(t.view, t.frame, whole_image(t.frame), t.parallel, cancel, record,
@@ -582,10 +637,13 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
         }
         case DngOpcodeId::MapTable: {
             const auto& map = std::get<raw::DngMapTable>(opcode.parameters);
+            if (map.table.empty()) {
+                return malformed_supported(opcode, "its table is empty");
+            }
             const std::size_t last = map.table.size() - 1;
             record.detail = std::format("{} entries ({}..{}); {}", map.table.size(), map.table.front(),
                                         map.table.back(), describe_area(map.area));
-            return for_area(t.view, t.frame, map.area, t.parallel, cancel, record,
+            return for_area(t.view, t.frame, effective_area(map.area, t.frame), t.parallel, cancel, record,
                             [&](double value, const Line&, const Line&, std::int32_t p, std::uint64_t& limited) {
                                 if (list1) {
                                     const auto index = static_cast<std::size_t>(std::clamp(value, 0.0, kStoredRange));
@@ -598,6 +656,9 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
         }
         case DngOpcodeId::MapPolynomial: {
             const auto& map = std::get<raw::DngMapPolynomial>(opcode.parameters);
+            if (map.coefficients.empty()) {
+                return malformed_supported(opcode, "it has no coefficients");
+            }
             const auto poly = [&](double x) {
                 double y = 0.0;
                 for (std::size_t k = map.coefficients.size(); k-- > 0;) {
@@ -610,10 +671,13 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
                 record.detail += std::format("{}{:.6g}", k == 0 ? "" : ", ", map.coefficients[k]);
             }
             record.detail += "]; " + describe_area(map.area);
-            return for_area(t.view, t.frame, map.area, t.parallel, cancel, record,
+            return for_area(t.view, t.frame, effective_area(map.area, t.frame), t.parallel, cancel, record,
                             [&](double value, const Line&, const Line&, std::int32_t p, std::uint64_t& limited) {
                                 if (list1) {
-                                    return poly(value / kStoredRange) * kStoredRange;
+                                    // On the stored values themselves: the DNG SDK rescales the
+                                    // coefficients (c_k x 65535^(k - 1)) so that its [0, 1] float
+                                    // stage-1 buffer gets y = sum c_k v^k in stored units.
+                                    return poly(value);
                                 }
                                 return unit(poly(unit(value / m(p), limited)), limited) * m(p);
                             });
@@ -625,17 +689,23 @@ Status apply_value_opcode(const DngOpcode& opcode, Target<T>& t, const core::Can
             const auto& values = std::get<raw::DngRowColumnValues>(opcode.parameters);
             const bool per_row = is(opcode, DngOpcodeId::DeltaPerRow) || is(opcode, DngOpcodeId::ScalePerRow);
             const bool delta = is(opcode, DngOpcodeId::DeltaPerRow) || is(opcode, DngOpcodeId::DeltaPerColumn);
+            if (values.area.rect.empty() ||
+                values.values.size() != (per_row ? values.area.affected_rows() : values.area.affected_columns())) {
+                return malformed_supported(opcode, "it does not hold one value per affected row or column");
+            }
             const auto [lo, hi] = std::minmax_element(values.values.begin(), values.values.end());
             record.detail = std::format("{} {} values {:.6g}..{:.6g}; {}", values.values.size(),
-                                        delta ? "delta" : "scale", values.values.empty() ? 0.0f : *lo,
-                                        values.values.empty() ? 0.0f : *hi, describe_area(values.area));
+                                        delta ? "delta" : "scale", *lo, *hi, describe_area(values.area));
             return for_area(t.view, t.frame, values.area, t.parallel, cancel, record,
                             [&](double value, const Line& row, const Line& col, std::int32_t p, std::uint64_t&) {
                                 const double v = values.values[per_row ? row.step : col.step];
                                 if (!delta) {
                                     return value * v;
                                 }
-                                return value + v * (list1 ? kStoredRange : m(p));
+                                // List 1: in stored units (the DNG SDK scales the delta by 1 / 65535
+                                // into its [0, 1] float stage-1 buffer). Lists 2 and 3: in the logical
+                                // [0, 1] range, times the plane's white-balance multiplier in List 3.
+                                return value + (list1 ? v : v * m(p));
                             });
         }
         default:
@@ -681,7 +751,8 @@ Status apply_bad_pixels(const DngOpcode& opcode, Target<T>& t, const core::Cance
             record.detail = std::format("BayerPhase {}: {} point(s), {} rectangle(s); {} point(s) outside the image",
                                         list.bayer_phase, list.points.size(), list.rects.size(), outside);
         }
-        return repair_bad_pixels(t.view, t.frame, bad, green_even_for(phase), t.parallel, cancel, record);
+        return repair_bad_pixels(t.view, t.frame, bad, green_even_for(phase), t.parallel, cancel, record,
+                                 t.on_repaired);
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "cannot allocate the bad-pixel mask", kWhere);
     }
@@ -916,7 +987,8 @@ CarriedLensCorrections carried_lens_corrections(const raw::RawMetadata& metadata
         } else if (const auto* g = std::get_if<raw::DngGainMap>(&opcode.parameters);
                    g != nullptr && opcode.list != DngOpcodeListId::List1) {
             const raw::DngOpcodeRect& r = g->area.rect;
-            if (r.top == 0 && r.left == 0 && r.bottom >= frame3.image.height && r.right >= frame3.image.width) {
+            if (r.empty() ||  // the whole image
+                (r.top == 0 && r.left == 0 && r.bottom >= frame3.image.height && r.right >= frame3.image.width)) {
                 out.vignetting = true;
                 counted = true;
             }
@@ -1081,6 +1153,19 @@ Status DngOpcodeProcessor::run_list2(SensorImage& sensor, const core::Cancellati
             t.list = DngOpcodeListId::List2;
             t.parallel = options_.parallel;
             if (is(*opcode, DngOpcodeId::FixBadPixelsList)) {
+                // A repair discards the stored value, and with it the saturation normalisation
+                // flagged from it: a repaired pixel's flag is derived again from its new value,
+                // so the resaturation below never undoes a repair.
+                if (!sensor.saturation.empty()) {
+                    t.on_repaired = [&sensor](std::int32_t x, std::int32_t y, double value) {
+                        const std::int32_t c = sensor.channel_of_site(x, y);
+                        const bool saturated =
+                            c >= 0 && c <= 3 &&
+                            value >= static_cast<double>(
+                                         sensor.normalization.saturation_level[static_cast<std::size_t>(c)]);
+                        sensor.saturation.row(y)[x] = saturated ? static_cast<std::uint8_t>(1u << c) : std::uint8_t{0};
+                    };
+                }
                 status = apply_bad_pixels(*opcode, t, cancel, record);
             } else {
                 status = apply_value_opcode(*opcode, t, cancel, record);

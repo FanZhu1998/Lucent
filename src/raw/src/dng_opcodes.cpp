@@ -156,6 +156,10 @@ DngOpcodeArea read_area(Reader& r) {
     } else if (area.row_pitch == 0 || area.col_pitch == 0) {
         r.invalid(std::format("the area has RowPitch {} and ColPitch {}; both must be at least 1", area.row_pitch,
                               area.col_pitch));
+    } else if (area.rect.empty() && (area.row_pitch != 1 || area.col_pitch != 1)) {
+        // An empty rectangle stands for the whole image; the DNG SDK rejects it with a pitch.
+        r.invalid(std::format("an empty area (the whole image) has RowPitch {} and ColPitch {}; both must be 1",
+                              area.row_pitch, area.col_pitch));
     }
     return area;
 }
@@ -336,12 +340,17 @@ Expected<DngOpcodeParameters> parse_gain_map(std::uint32_t id, std::span<const s
                                   map.spacing_v, map.spacing_h));
         }
     }
-    const std::uint64_t count = std::uint64_t{map.points_v} * map.points_h * map.map_planes;
-    if (!r.expect_remaining(count * 4,
-                            std::format("{} x {} x {} gains", map.points_v, map.points_h, map.map_planes))) {
+    // Three file-controlled factors: their product can exceed 64 bits (2^22 x 2^21 x 2^21 wraps to
+    // 0), so it is checked against the bytes that remain before it is formed.
+    const std::optional<std::uint64_t> count = dng_gain_map_count(map.points_v, map.points_h, map.map_planes);
+    const std::string layout = std::format("{} x {} x {} gains", map.points_v, map.points_h, map.map_planes);
+    if (!r.failed() && (!count || *count > r.remaining() / 4)) {
+        r.invalid(std::format("{} need more than the {} bytes that remain", layout, r.remaining()));
+    }
+    if (!r.expect_remaining(count.value_or(0) * 4, layout)) {
         return finish(r, std::move(map));
     }
-    map.gains.resize(static_cast<std::size_t>(count));
+    map.gains.resize(static_cast<std::size_t>(*count));
     for (float& g : map.gains) {
         g = r.f32("a gain");
     }
@@ -609,6 +618,14 @@ DngOpcodeSupport assess_dng_opcode(const DngOpcode& opcode, const DngOpcodeImage
     if (list1 && !image.integer_samples) {
         return no("OpcodeList1 on floating-point stored samples is not implemented");
     }
+    // The radial opcodes measure r in square pixels; the DNG SDK scales the vertical axis by the
+    // pixel aspect ratio first, which Lucent does not implement.
+    const bool radial = is(opcode, DngOpcodeId::WarpRectilinear) || is(opcode, DngOpcodeId::WarpRectilinear2) ||
+                        is(opcode, DngOpcodeId::FixVignetteRadial);
+    if (radial && image.pixel_aspect != 1.0) {
+        return no(std::format("radial corrections on non-square pixels (pixel aspect {}) are not implemented",
+                              image.pixel_aspect));
+    }
     switch (static_cast<DngOpcodeId>(opcode.id)) {
         case DngOpcodeId::WarpRectilinear:
         case DngOpcodeId::WarpRectilinear2: {
@@ -655,14 +672,53 @@ DngOpcodeSupport assess_dng_opcode(const DngOpcode& opcode, const DngOpcodeImage
             return {true, {}};
         }
         case DngOpcodeId::FixVignetteRadial:
-        case DngOpcodeId::MapTable:
-        case DngOpcodeId::MapPolynomial:
-        case DngOpcodeId::GainMap:
+            return {true, {}};
+        // The invariants below are what the parser guarantees; they are checked again so that an
+        // opcode built otherwise (or altered) is never applied with an inconsistent payload.
+        case DngOpcodeId::MapTable: {
+            const auto& map = std::get<DngMapTable>(opcode.parameters);
+            if (map.table.empty() || map.table.size() > kMaxTableSize) {
+                return no(std::format("its table has {} entries (1 to {} are defined)", map.table.size(),
+                                      kMaxTableSize));
+            }
+            return {true, {}};
+        }
+        case DngOpcodeId::MapPolynomial: {
+            const auto& map = std::get<DngMapPolynomial>(opcode.parameters);
+            if (map.coefficients.empty() || map.coefficients.size() > kMaxPolynomialDegree + 1) {
+                return no(std::format("it has {} coefficients (1 to {} are defined)", map.coefficients.size(),
+                                      kMaxPolynomialDegree + 1));
+            }
+            return {true, {}};
+        }
+        case DngOpcodeId::GainMap: {
+            const auto& map = std::get<DngGainMap>(opcode.parameters);
+            if (!map.complete()) {
+                return no(std::format("its {} gains do not fill its {} x {} x {} grid", map.gains.size(),
+                                      map.points_v, map.points_h, map.map_planes));
+            }
+            return {true, {}};
+        }
         case DngOpcodeId::DeltaPerRow:
         case DngOpcodeId::DeltaPerColumn:
         case DngOpcodeId::ScalePerRow:
-        case DngOpcodeId::ScalePerColumn:
+        case DngOpcodeId::ScalePerColumn: {
+            const auto& values = std::get<DngRowColumnValues>(opcode.parameters);
+            if (values.area.rect.empty()) {
+                // The DNG SDK reads an empty area as the whole image and then reads past its
+                // (empty) table: the opcode is undefined.
+                return no("its area is empty, which stands for the whole image, but it holds no value for any row "
+                          "or column of it");
+            }
+            const bool per_row = is(opcode, DngOpcodeId::DeltaPerRow) || is(opcode, DngOpcodeId::ScalePerRow);
+            const std::uint64_t expected =
+                per_row ? values.area.affected_rows() : values.area.affected_columns();
+            if (values.values.size() != expected) {
+                return no(std::format("it holds {} values for {} affected {}", values.values.size(), expected,
+                                      per_row ? "rows" : "columns"));
+            }
             return {true, {}};
+        }
         case DngOpcodeId::WarpFisheye:
             break;
     }
