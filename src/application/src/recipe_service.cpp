@@ -1166,20 +1166,20 @@ Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& 
                     skipped_parts.insert(RecipePart::Geometry);
                     outcome.skipped.push_back(PasteSkip{
                         category, RecipePart::Geometry,
-                        std::format("the crop is not pasted: it is placed relative to the image and {}, so it would "
-                                    "frame other content with another shape",
+                        std::format("the crop and rotation are not pasted: the crop is placed relative to the image "
+                                    "and {}, so it would frame other content with another shape",
                                     mismatch)});
                     continue;
                 }
-                if (category == RecipeCategory::Local && !clipboard.settings.local_adjustments.empty() &&
+                if (category == RecipeCategory::Masks && !clipboard.settings.local_adjustments.empty() &&
                     !mismatch.empty()) {
-                    // Highlights and shadows are pasted; the masks are not.
                     skipped_parts.insert(RecipePart::LocalAdjustments);
                     outcome.skipped.push_back(PasteSkip{
                         category, RecipePart::LocalAdjustments,
                         std::format("the masks are not pasted: they are placed relative to the image and {}, so "
                                     "they would land on other content and their shapes would distort",
                                     mismatch)});
+                    continue;
                 }
                 if (category == RecipeCategory::WhiteBalance) {
                     if (mode == engine::WhiteBalanceMode::CameraNeutral &&

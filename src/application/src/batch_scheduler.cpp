@@ -15,12 +15,14 @@
 #include <nlohmann/json.hpp>
 
 #include <lucent/application/auto_develop.hpp>
+#include <lucent/application/recipe.hpp>
 #include <lucent/application/recipe_store.hpp>
 #include <lucent/core/file.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/storage.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/win32_error.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/export/metadata.hpp>
 #include <lucent/export/output_profile.hpp>
 #include <lucent/workers/job_output.hpp>
@@ -1685,12 +1687,27 @@ std::vector<std::string> Attempt::review_notes(const workers::JobResult& result)
     if (replaces_) {
         notes.push_back("Replaced the existing file " + core::path_to_utf8_lossy(final_path_.filename()) + ".");
     }
-    if (item_ && item_->probe && !item_->probe->upright_size.empty() &&
-        (static_cast<std::uint32_t>(item_->probe->upright_size.width) != result.render.width ||
-         static_cast<std::uint32_t>(item_->probe->upright_size.height) != result.render.height)) {
-        notes.push_back(std::format("The output is {} x {} pixels; the photo was catalogued as {} x {}.",
-                                    result.render.width, result.render.height, item_->probe->upright_size.width,
-                                    item_->probe->upright_size.height));
+    if (item_ && item_->probe && !item_->probe->upright_size.empty()) {
+        // The size the recipe's crop, straightening and quarter turns give the photo as catalogued:
+        // a geometry edit changes the output size by design.
+        const image::Size catalogued = item_->probe->upright_size;
+        image::Size expected = catalogued;
+        if (auto settings = read_recipe(frozen_.json)) {
+            if (auto mapping = engine::GeometryMapping::create(settings->geometry, catalogued)) {
+                expected = mapping->output_size();
+            }
+        }
+        if (static_cast<std::uint32_t>(expected.width) != result.render.width ||
+            static_cast<std::uint32_t>(expected.height) != result.render.height) {
+            notes.push_back(
+                expected == catalogued
+                    ? std::format("The output is {} x {} pixels; the photo was catalogued as {} x {}.",
+                                  result.render.width, result.render.height, catalogued.width, catalogued.height)
+                    : std::format("The output is {} x {} pixels; the photo was catalogued as {} x {}, which its "
+                                  "crop and rotation make {} x {}.",
+                                  result.render.width, result.render.height, catalogued.width, catalogued.height,
+                                  expected.width, expected.height));
+        }
     }
     return notes;
 }

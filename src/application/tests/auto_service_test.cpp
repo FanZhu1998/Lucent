@@ -8,6 +8,7 @@
 // dark (a high white level) so that the optimiser brightens them, and large enough for every metric's
 // evidence minimum.
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -73,6 +74,24 @@ engine::DevelopSettings with_parts(engine::DevelopSettings s) {
     brush.controls.shadows = 0.3;
     s.local_adjustments = {radial, brush};
     return s;
+}
+
+// A grey card under a warm cast on the left and green foliage on the right, with a little texture
+// (the synthetic camera's neutral is AsShotNeutral 0.5, 1, 0.667): the card is the neutral evidence.
+rts::SyntheticDngSpec card_and_foliage_spec() {
+    rts::SyntheticDngSpec spec = dark_spec();
+    spec.scene = [](std::uint32_t x, std::uint32_t y, std::uint32_t color) -> std::uint16_t {
+        const std::uint32_t hash = (x * 73856093u) ^ (y * 19349663u) ^ (color * 83492791u);
+        const double texture = 1.0 + 0.01 * (static_cast<double>(hash % 1000u) / 500.0 - 1.0);
+        const bool card = x < 100;
+        // The card: a checkerboard of two greys (its edges are neutral too); the foliage: smooth.
+        const double card_level = ((x / 8 + y / 8) % 2 == 0) ? 0.15 : 0.45;
+        const std::array<double, 3> ratio =
+            card ? std::array<double, 3>{0.5 * 1.25, 1.0, 0.667 * 0.85} : std::array<double, 3>{0.5 * 0.35, 1.0, 0.667 * 0.3};
+        const double level = (card ? card_level : 0.2) * ratio[color] * texture;
+        return static_cast<std::uint16_t>(256.0 + level * (65535.0 - 256.0));
+    };
+    return spec;
 }
 
 class AutoServiceTest : public ::testing::Test {
@@ -287,6 +306,30 @@ TEST_F(AutoServiceTest, AutoAdjustsGlobalControlsAndKeepsGeometryMasksAndDenoisi
     EXPECT_EQ(analysis::evaluation_settings(with_crop->chosen), plain->chosen);
     EXPECT_EQ(with_crop->chosen.geometry, cropped.geometry);
     ASSERT_TRUE(with_crop->effective);
+}
+
+// White balance is decided on the whole frame's neutral evidence (ADR 0015): a crop to the foliage,
+// without the grey card that showed the cast, keeps the decision and its full-resolution check
+// passes (it does not fail for lack of neutral surfaces inside the crop).
+TEST_F(AutoServiceTest, ACropWithoutNeutralSurfacesKeepsTheWhiteBalanceDecision) {
+    const auto path = ts::write_dng(dir_, L"card.dng", card_and_foliage_spec());
+    const engine::DevelopSettings whole;
+    auto uncropped = run_automatic(*registry_, path, 0, whole, AutoRunRequest{});
+    ASSERT_TRUE(uncropped) << uncropped.error().describe();
+    ASSERT_NE(uncropped->chosen.white_balance, whole.white_balance) << "the card's cast is corrected";
+    ASSERT_TRUE(uncropped->effective);
+    ASSERT_EQ(uncropped->attempts[*uncropped->effective].kind, AutoAttemptKind::Chosen);
+
+    engine::DevelopSettings foliage;
+    foliage.geometry.crop = engine::CropRect{0.5, 0.0, 1.0, 1.0};
+    auto cropped = run_automatic(*registry_, path, 0, foliage, AutoRunRequest{});
+    ASSERT_TRUE(cropped) << cropped.error().describe();
+    EXPECT_EQ(analysis::evaluation_settings(cropped->chosen), uncropped->chosen);
+    ASSERT_TRUE(cropped->effective);
+    const AutoAttempt& effective = cropped->attempts[*cropped->effective];
+    EXPECT_EQ(effective.kind, AutoAttemptKind::Chosen)
+        << (cropped->attempts[0].check.failures.empty() ? "" : cropped->attempts[0].check.failures.front());
+    EXPECT_EQ(effective.settings.white_balance, uncropped->chosen.white_balance);
 }
 
 TEST_F(AutoServiceTest, LockedControlsAreKeptAndTheirEffectReported) {

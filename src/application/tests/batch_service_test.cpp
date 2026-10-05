@@ -21,6 +21,7 @@
 
 #include <lucent/application/batch_service.hpp>
 #include <lucent/application/export_service.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/export/metadata.hpp>
 
 #include "batch_test_support.hpp"
@@ -371,6 +372,34 @@ TEST_F(BatchServiceTest, ASingleExportIsABatchOfOne) {
     auto batches = h().batches().list();
     ASSERT_TRUE(batches);
     EXPECT_EQ(batches->size(), 2u);
+}
+
+// A crop and a quarter turn change the output size by design: the export has the size the recipe's
+// geometry gives the photo and no review note about it.
+TEST_F(BatchServiceTest, AGeometryEditSetsTheOutputSizeWithoutAReviewNote) {
+    const auto files = ts::write_dngs(dir_, L"in", 1);
+    const std::vector<ItemId> ids = h().import(files);
+    engine::DevelopSettings settings;
+    settings.geometry.crop = engine::CropRect{0.1, 0.2, 0.7, 0.9};
+    settings.geometry.quarter_turns = 1;
+    settings.geometry.flip_horizontal = true;
+    ASSERT_TRUE(h().recipes().apply(ids[0], settings));
+    const catalog::BatchId id = h().run(h().request(ids, out_));
+    ASSERT_TRUE(id.valid());
+    const auto receipts = h().receipts(id);
+    ASSERT_EQ(receipts.size(), 1u);
+    auto details = read_receipt_details(receipts[0].settings_json);
+    ASSERT_TRUE(details) << details.error().describe();
+    const auto source = h().library().find(ids[0]);
+    ASSERT_TRUE(source && source->probe);
+    auto mapping = engine::GeometryMapping::create(settings.geometry, source->probe->upright_size);
+    ASSERT_TRUE(mapping);
+    EXPECT_NE(mapping->output_size(), source->probe->upright_size);
+    EXPECT_EQ(static_cast<std::int32_t>(details->width), mapping->output_size().width);
+    EXPECT_EQ(static_cast<std::int32_t>(details->height), mapping->output_size().height);
+    for (const std::string& note : details->review) {
+        EXPECT_EQ(note.find("catalogued"), std::string::npos) << note;
+    }
 }
 
 TEST_F(BatchServiceTest, TwoHundredPhotosWithBoundedCoordinatorMemory) {

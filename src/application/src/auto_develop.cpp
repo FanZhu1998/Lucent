@@ -388,8 +388,14 @@ Expected<std::vector<AutoAttempt>> final_check(raw::DecodedRaw&& decoded, const 
         }
     }
     // The check renders the photographer's geometry (the choice, its fallbacks and the baseline all
-    // carry it): measure in its output frame, the context mapped through the same geometry.
+    // carry it): measure in its output frame, the context mapped through the same geometry. The
+    // white balance was decided on the whole frame's neutral evidence; a crop without neutral
+    // surfaces does not fail it (NaturalV1Context::neutral_evidence_beyond_crop).
     if (!baseline.geometry.is_identity()) {
+        const auto neutral = static_cast<std::uint64_t>(
+            std::count_if(context->neutral_evidence.begin(), context->neutral_evidence.end(),
+                          [](std::uint8_t v) { return v != 0; }));
+        policy.neutral_evidence_beyond_crop = neutral >= analysis::kMinNeutralPixels;
         auto mapping = engine::GeometryMapping::create(baseline.geometry, stage_one->pixels.size());
         if (!mapping) {
             return Unexpected(std::move(mapping.error()));

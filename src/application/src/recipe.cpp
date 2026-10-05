@@ -1034,6 +1034,8 @@ std::string_view to_string(RecipeCategory category) noexcept {
             return "color";
         case RecipeCategory::Local:
             return "local";
+        case RecipeCategory::Masks:
+            return "masks";
         case RecipeCategory::Detail:
             return "detail";
         case RecipeCategory::Geometry:
@@ -1188,7 +1190,7 @@ RecipeCategory category_of(RecipePart part) noexcept {
         case RecipePart::ChromaDenoise:
             return RecipeCategory::Detail;
         case RecipePart::LocalAdjustments:
-            return RecipeCategory::Local;
+            return RecipeCategory::Masks;
         case RecipePart::Geometry:
             return RecipeCategory::Geometry;
     }

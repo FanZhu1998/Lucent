@@ -598,22 +598,25 @@ TEST(RecipeCategories, CoverEveryControlAndPartOnce) {
     }
     EXPECT_EQ(controls, kAllDevelopControls.size());
     EXPECT_EQ(parts, kAllRecipeParts.size());
-    // Masks join the local category; denoising is detail; geometry is its own category.
+    // The masks and the geometry are categories of their own; denoising is detail.
     EXPECT_EQ(controls_of(RecipeCategory::Local),
               (std::vector<engine::DevelopControl>{engine::DevelopControl::Highlights,
                                                    engine::DevelopControl::Shadows}));
-    EXPECT_EQ(parts_of(RecipeCategory::Local), std::vector<RecipePart>{RecipePart::LocalAdjustments});
+    EXPECT_TRUE(parts_of(RecipeCategory::Local).empty());
+    EXPECT_EQ(parts_of(RecipeCategory::Masks), std::vector<RecipePart>{RecipePart::LocalAdjustments});
+    EXPECT_TRUE(controls_of(RecipeCategory::Masks).empty());
     EXPECT_EQ(parts_of(RecipeCategory::Detail), std::vector<RecipePart>{RecipePart::ChromaDenoise});
     EXPECT_EQ(parts_of(RecipeCategory::Geometry), std::vector<RecipePart>{RecipePart::Geometry});
     EXPECT_TRUE(controls_of(RecipeCategory::Geometry).empty());
     EXPECT_EQ(parse_recipe_category("geometry"), RecipeCategory::Geometry);
     EXPECT_EQ(parse_recipe_category("detail"), RecipeCategory::Detail);
-    EXPECT_FALSE(parse_recipe_category("masks"));
+    EXPECT_EQ(parse_recipe_category("masks"), RecipeCategory::Masks);
     EXPECT_EQ(to_string(static_cast<RecipeCategory>(42)), "invalid");
-    // Geometry is the one category not pasted by default.
-    EXPECT_EQ(kDefaultRecipeCategories.size(), kAllRecipeCategories.size() - 1);
+    // The masks and the geometry are the categories not pasted by default.
+    EXPECT_EQ(kDefaultRecipeCategories.size(), kAllRecipeCategories.size() - 2);
     for (const RecipeCategory category : kDefaultRecipeCategories) {
         EXPECT_NE(category, RecipeCategory::Geometry);
+        EXPECT_NE(category, RecipeCategory::Masks);
     }
     // Part names (revision notes).
     for (const RecipePart part : kAllRecipeParts) {

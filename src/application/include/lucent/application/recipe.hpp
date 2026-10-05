@@ -77,8 +77,10 @@
 //   Exposure      exposure_ev
 //   Tone          contrast, tone_curve, base_look
 //   Color         saturation, vibrance
-//   Local         highlights, shadows (the guided-filter local tone operation) and the masks
-//                 (local_adjustments, RecipePart::LocalAdjustments)
+//   Local         highlights, shadows (the guided-filter local tone operation)
+//   Masks         the masks (local_adjustments, RecipePart::LocalAdjustments); not part of
+//                 kDefaultRecipeCategories (masks are placed on one photo's content, and pasting
+//                 them replaces the target's masks, also by an empty list: only when chosen)
 //   Detail        chroma_denoise (RecipePart::ChromaDenoise)
 //   Geometry      straighten, crop, quarter turns and flip (RecipePart::Geometry); not part of
 //                 kDefaultRecipeCategories (a crop rarely belongs on another photo)
@@ -135,29 +137,31 @@ enum class RecipeCategory : std::uint8_t {
     Exposure = 2,
     Tone = 3,
     Color = 4,
-    Local = 5,
+    Local = 5,     // highlights and shadows
     Detail = 6,    // chroma denoising (version 2)
     Geometry = 7,  // straighten, crop, quarter turns, flip (version 2)
+    Masks = 8,     // the masks (version 2)
 };
 
-inline constexpr std::array<RecipeCategory, 7> kAllRecipeCategories = {
-    RecipeCategory::WhiteBalance, RecipeCategory::Exposure, RecipeCategory::Tone,    RecipeCategory::Color,
-    RecipeCategory::Local,        RecipeCategory::Detail,   RecipeCategory::Geometry};
+inline constexpr std::array<RecipeCategory, 8> kAllRecipeCategories = {
+    RecipeCategory::WhiteBalance, RecipeCategory::Exposure, RecipeCategory::Tone,   RecipeCategory::Color,
+    RecipeCategory::Local,        RecipeCategory::Masks,    RecipeCategory::Detail, RecipeCategory::Geometry};
 
-// What copy/paste offers selected by default: every category but Geometry.
+// What copy/paste offers selected by default: every category but Masks and Geometry (placed on the
+// photo's content).
 inline constexpr std::array<RecipeCategory, 6> kDefaultRecipeCategories = {
     RecipeCategory::WhiteBalance, RecipeCategory::Exposure, RecipeCategory::Tone,
     RecipeCategory::Color,        RecipeCategory::Local,    RecipeCategory::Detail};
 
-// "white_balance", "exposure", "tone", "color", "local", "detail", "geometry"; "invalid" for other
-// values.
+// "white_balance", "exposure", "tone", "color", "local", "masks", "detail", "geometry"; "invalid" for
+// other values.
 [[nodiscard]] std::string_view to_string(RecipeCategory category) noexcept;
 [[nodiscard]] std::optional<RecipeCategory> parse_recipe_category(std::string_view text) noexcept;
 
 // The category a control belongs to (see the file comment).
 [[nodiscard]] RecipeCategory category_of(engine::DevelopControl control) noexcept;
 
-// The controls of `category`, in DevelopControl order (none for Detail and Geometry).
+// The controls of `category`, in DevelopControl order (none for Masks, Detail and Geometry).
 [[nodiscard]] std::vector<engine::DevelopControl> controls_of(RecipeCategory category);
 
 // Every DevelopControl, in numeric order.
@@ -190,7 +194,7 @@ void copy_value(const engine::DevelopSettings& from, engine::DevelopSettings& to
 // notes ("parts=", recipe_service.hpp) as to_string(); append only.
 enum class RecipePart : std::uint8_t {
     ChromaDenoise = 1,     // chroma_denoise; category Detail
-    LocalAdjustments = 2,  // local_adjustments (the masks); category Local
+    LocalAdjustments = 2,  // local_adjustments (the masks); category Masks
     Geometry = 3,          // geometry; category Geometry
 };
 

@@ -412,7 +412,7 @@ TEST_F(RecipeServiceTest, MasksAndCropsArePastedOnlyToPhotosOfTheSameShape) {
 
     const engine::DevelopSettings source = local_edit();
     ASSERT_TRUE(service_->apply(a(), source));
-    // The default categories: everything but geometry.
+    // The default categories: everything but the masks and the geometry.
     const std::set<RecipeCategory> defaults(kDefaultRecipeCategories.begin(), kDefaultRecipeCategories.end());
     auto clipboard = service_->copy(a(), defaults);
     ASSERT_TRUE(clipboard) << clipboard.error().describe();
@@ -421,38 +421,49 @@ TEST_F(RecipeServiceTest, MasksAndCropsArePastedOnlyToPhotosOfTheSameShape) {
     auto outcomes = service_->paste(*clipboard, targets);
     ASSERT_TRUE(outcomes) << outcomes.error().describe();
     ASSERT_EQ(outcomes->size(), 3u);
-
-    // Same shape: masks and denoising with the rest of their categories; never the crop.
-    const PasteOutcome& same = (*outcomes)[0];
-    EXPECT_FALSE(same.error);
-    EXPECT_TRUE(same.skipped.empty());
-    ASSERT_TRUE(same.revision);
-    engine::DevelopSettings expected = source;
-    expected.geometry = engine::GeometrySetting{};
-    EXPECT_EQ(state(b()).settings, expected);
-    const HistoryEntry pasted = service_->history(b())->entries.back();
-    EXPECT_EQ(pasted.info.origin, catalog::RevisionOrigin::Paste);
-    EXPECT_EQ(pasted.parts, (std::vector<RecipePart>{RecipePart::ChromaDenoise, RecipePart::LocalAdjustments}));
-    EXPECT_EQ(pasted.changed, (std::vector<DevelopControl>{DevelopControl::Highlights, DevelopControl::Shadows}));
-    EXPECT_NE(pasted.info.note.find(";parts=chroma_denoise,masks"), std::string::npos) << pasted.info.note;
-
-    // Another shape: highlights, shadows and denoising are pasted, the masks are not (reported),
-    // and the target's own masks stay.
-    for (const std::size_t i : {std::size_t{1}, std::size_t{2}}) {
-        const PasteOutcome& other = (*outcomes)[i];
-        EXPECT_FALSE(other.error);
-        ASSERT_EQ(other.skipped.size(), 1u);
-        EXPECT_EQ(other.skipped[0].category, RecipeCategory::Local);
-        EXPECT_EQ(other.skipped[0].part, RecipePart::LocalAdjustments);
-        EXPECT_NE(other.skipped[0].reason.find("masks are not pasted"), std::string::npos) << other.skipped[0].reason;
-        EXPECT_NE(std::find(other.applied.begin(), other.applied.end(), RecipeCategory::Local), other.applied.end());
-        const engine::DevelopSettings got = state(other.item).settings;
+    // Every shape: highlights, shadows and denoising; never the masks or the crop, and each target
+    // keeps its own masks.
+    for (const PasteOutcome& outcome : *outcomes) {
+        EXPECT_FALSE(outcome.error);
+        EXPECT_TRUE(outcome.skipped.empty());
+        ASSERT_TRUE(outcome.revision);
+        EXPECT_EQ(std::find(outcome.applied.begin(), outcome.applied.end(), RecipeCategory::Masks),
+                  outcome.applied.end());
+        const engine::DevelopSettings got = state(outcome.item).settings;
         EXPECT_EQ(got.highlights, source.highlights);
         EXPECT_EQ(got.shadows, source.shadows);
         EXPECT_EQ(got.chroma_denoise, source.chroma_denoise);
         EXPECT_EQ(got.local_adjustments,
-                  other.item == wide ? own.local_adjustments : std::vector<engine::LocalAdjustment>{});
+                  outcome.item == wide ? own.local_adjustments : std::vector<engine::LocalAdjustment>{});
         EXPECT_TRUE(got.geometry.is_identity());
+    }
+    const HistoryEntry pasted = service_->history(b())->entries.back();
+    EXPECT_EQ(pasted.info.origin, catalog::RevisionOrigin::Paste);
+    EXPECT_EQ(pasted.parts, (std::vector<RecipePart>{RecipePart::ChromaDenoise}));
+    EXPECT_EQ(pasted.changed, (std::vector<DevelopControl>{DevelopControl::Highlights, DevelopControl::Shadows}));
+
+    // The masks when chosen: to the same shape; another shape skips them (reported) and keeps its own.
+    auto masks = service_->copy(a(), {RecipeCategory::Masks});
+    ASSERT_TRUE(masks);
+    auto masked = service_->paste(*masks, targets);
+    ASSERT_TRUE(masked);
+    EXPECT_TRUE((*masked)[0].skipped.empty());
+    ASSERT_TRUE((*masked)[0].revision);
+    EXPECT_EQ(state(b()).settings.local_adjustments, source.local_adjustments);
+    const HistoryEntry masks_pasted = service_->history(b())->entries.back();
+    EXPECT_EQ(masks_pasted.parts, (std::vector<RecipePart>{RecipePart::LocalAdjustments}));
+    EXPECT_NE(masks_pasted.info.note.find(";parts=masks"), std::string::npos) << masks_pasted.info.note;
+    for (const std::size_t i : {std::size_t{1}, std::size_t{2}}) {
+        const PasteOutcome& other = (*masked)[i];
+        EXPECT_FALSE(other.error);
+        ASSERT_EQ(other.skipped.size(), 1u);
+        EXPECT_EQ(other.skipped[0].category, RecipeCategory::Masks);
+        EXPECT_EQ(other.skipped[0].part, RecipePart::LocalAdjustments);
+        EXPECT_NE(other.skipped[0].reason.find("masks are not pasted"), std::string::npos) << other.skipped[0].reason;
+        EXPECT_TRUE(other.applied.empty());
+        EXPECT_FALSE(other.revision);
+        EXPECT_EQ(state(other.item).settings.local_adjustments,
+                  other.item == wide ? own.local_adjustments : std::vector<engine::LocalAdjustment>{});
     }
 
     // Geometry is pasted only when chosen, and its crop only to the same shape.
@@ -485,16 +496,23 @@ TEST_F(RecipeServiceTest, MasksAndCropsArePastedOnlyToPhotosOfTheSameShape) {
     EXPECT_TRUE((*turned_outcomes)[0].skipped.empty());
     EXPECT_EQ(state(portrait).settings.geometry, turned.geometry);
 
-    // Pasting the local category of a photo without masks removes the target's masks (same shape),
-    // like any value of a pasted category.
+    // The default categories of a photo without masks leave the target's masks alone; the Masks
+    // category, chosen deliberately, removes them (same shape or not: nothing is placed).
     ASSERT_TRUE(service_->apply(c(), local_edit()));
-    auto plain = service_->copy(m(), {RecipeCategory::Local});
+    auto plain = service_->copy(m(), defaults);
     ASSERT_TRUE(plain);
-    auto cleared = service_->paste(*plain, std::vector<ItemId>{c()});
+    auto kept = service_->paste(*plain, std::vector<ItemId>{c(), wide});
+    ASSERT_TRUE(kept);
+    EXPECT_EQ(state(c()).settings.local_adjustments, local_edit().local_adjustments);
+    EXPECT_EQ(state(wide).settings.local_adjustments, own.local_adjustments);
+    auto none = service_->copy(m(), {RecipeCategory::Masks});
+    ASSERT_TRUE(none);
+    auto cleared = service_->paste(*none, std::vector<ItemId>{c(), wide});
     ASSERT_TRUE(cleared);
     EXPECT_TRUE((*cleared)[0].skipped.empty());
+    EXPECT_TRUE((*cleared)[1].skipped.empty());
     EXPECT_TRUE(state(c()).settings.local_adjustments.empty());
-    EXPECT_EQ(state(c()).settings.chroma_denoise, local_edit().chroma_denoise);  // detail was not copied
+    EXPECT_TRUE(state(wide).settings.local_adjustments.empty());
 }
 
 TEST_F(RecipeServiceTest, AMaskStrokeAndACropDragAreOneRevisionEach) {

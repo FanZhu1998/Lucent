@@ -59,7 +59,8 @@
 // Copy and paste by category (recipe.hpp, RecipeCategory). copy() takes the item's current
 // settings and its camera; paste() applies the chosen categories to each target as ONE Paste
 // revision per target that changes: every value of a pasted category becomes the copied one (the
-// Local category replaces the target's masks by the copied list, also by an empty one).
+// Masks category, chosen only deliberately, replaces the target's masks by the copied list, also by
+// an empty one; the default categories never touch the masks).
 // Camera-specific values never cross camera models:
 //   * white balance "camera_neutral" (multipliers relative to one camera's sensor) is pasted only
 //     to a target of the same camera make and model;
@@ -68,10 +69,10 @@
 //   * "as_shot" and every other category are camera independent.
 // Positions normalised to the image keep their place only on an image of the same shape (masks
 // and the crop are normalised per axis to the upright image, develop_settings.hpp):
-//   * the masks of the Local category are pasted only when the source and the target have the same
-//     upright aspect ratio (same_upright_aspect()); otherwise the rest of the category
-//     (highlights, shadows) is pasted and the masks are skipped (PasteSkip::part
-//     LocalAdjustments), since they would land on other content and their shapes would distort;
+//   * the Masks category is pasted only when the copied list is empty (nothing to place) or the
+//     source and the target have the same upright aspect ratio (same_upright_aspect()); otherwise
+//     it is skipped (PasteSkip::part LocalAdjustments), since the masks would land on other content
+//     and their shapes would distort;
 //   * the Geometry category (not pasted unless chosen: kDefaultRecipeCategories) is pasted when
 //     its crop is the whole image (a straighten angle and quarter turns fit any photo) or the
 //     upright aspect ratios are the same; otherwise it is skipped as a whole;
@@ -235,9 +236,9 @@ struct RecipeClipboard {
 
 struct PasteSkip {
     RecipeCategory category = RecipeCategory::WhiteBalance;
-    // The part of the category that was not pasted (the masks of Local: the rest of the category
-    // was pasted, and the category is also listed in PasteOutcome::applied; Geometry: the whole
-    // category); std::nullopt for a category whose controls were not pasted (white balance).
+    // The part of the category that was not pasted (Masks, Geometry: the whole category, which is
+    // then not in PasteOutcome::applied); std::nullopt for a category whose controls were not pasted
+    // (white balance).
     std::optional<RecipePart> part;
     std::string reason;  // developer-facing English
 };
