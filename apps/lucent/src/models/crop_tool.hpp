@@ -26,8 +26,11 @@
 // revision when it changed.
 //
 // Aspect ratios: Original (the photo's own as displayed), Free, 1:1, 4:5, 3:2, 16:9 and Custom; each
-// in landscape or portrait (`portrait`, swapOrientation()). Choosing one fits the largest crop of
-// that ratio, centred, inside the current crop (inside the image when the crop is the whole image).
+// in landscape or portrait. The orientation is the current crop's as displayed (`portrait`: taller
+// than wide), never a separate state, so it follows a quarter turn, Esc, undo and another photo;
+// swapOrientation() refits the crop in the other one. Choosing a ratio fits the largest crop of it,
+// centred, inside the current crop (inside the image when the crop is the whole image). The chosen
+// ratio stays for the next photo.
 //
 // Thread-safety: UI thread only.
 
@@ -94,8 +97,10 @@ class CropTool : public QObject {
     Q_PROPERTY(QRectF rect READ rect NOTIFY changed FINAL)
     Q_PROPERTY(QString aspect READ aspect NOTIFY changed FINAL)
     Q_PROPERTY(bool portrait READ portrait NOTIFY changed FINAL)
-    Q_PROPERTY(double customWidth READ custom_width NOTIFY changed FINAL)
-    Q_PROPERTY(double customHeight READ custom_height NOTIFY changed FINAL)
+    // The custom ratio; notified only when it changes, so a value being typed is not replaced
+    // whenever a frame arrives.
+    Q_PROPERTY(double customWidth READ custom_width NOTIFY customAspectChanged FINAL)
+    Q_PROPERTY(double customHeight READ custom_height NOTIFY customAspectChanged FINAL)
     Q_PROPERTY(bool constrain READ constrain WRITE setConstrain NOTIFY changed FINAL)
     Q_PROPERTY(bool dragging READ dragging NOTIFY changed FINAL)
     // The geometry is not the identity (Reset has something to do).
@@ -132,7 +137,8 @@ public:
     [[nodiscard]] bool showing() const;
     [[nodiscard]] QRectF rect() const;
     [[nodiscard]] QString aspect() const { return aspect_; }
-    [[nodiscard]] bool portrait() const noexcept { return portrait_; }
+    // The current crop is taller than wide as displayed (a square counts as landscape).
+    [[nodiscard]] bool portrait() const;
     [[nodiscard]] double custom_width() const noexcept { return custom_width_; }
     [[nodiscard]] double custom_height() const noexcept { return custom_height_; }
     [[nodiscard]] bool constrain() const noexcept { return constrain_; }
@@ -143,8 +149,11 @@ public:
     // The geometry after the straighten angle of `geometry` becomes `degrees` (clamped to +-45,
     // two decimals), the crop kept inside the image when constrained (see the file comment).
     [[nodiscard]] EditGeometry straightened(const EditGeometry& geometry, double degrees) const;
-    // The displayed aspect ratio (width / height) of the current preset; 0 for Free.
+    // The displayed aspect ratio (width / height) of the current preset in the current crop's
+    // orientation; 0 for Free.
     [[nodiscard]] double display_aspect() const;
+    // The same in the orientation given.
+    [[nodiscard]] double aspect_for(bool portrait) const;
     // The mapping of the displayed (uncropped) image for `geometry` at full resolution.
     [[nodiscard]] GeometryMap display_map(const EditGeometry& geometry) const;
     // The crop of `geometry` in displayed pixels of `map`, and back (clamped, six decimals).
@@ -153,6 +162,7 @@ public:
 
 signals:
     void changed();
+    void customAspectChanged();
 
 private:
     struct Drag {
@@ -160,6 +170,7 @@ private:
         QRectF start;  // displayed pixels
         QPointF press;
         GeometryMap map;
+        double aspect = 0.0;  // display_aspect() at the press
     };
 
     [[nodiscard]] bool inside(const EditGeometry& geometry) const;
@@ -170,12 +181,13 @@ private:
     [[nodiscard]] QSizeF min_size(const GeometryMap& map) const;
     // Applies `geometry` as one step (a pending gesture is committed first).
     void apply_geometry(const EditGeometry& geometry);
-    // The crop of the current settings refitted to the current aspect preset (one step).
-    void refit(bool swap);
+    // The crop of the current settings refitted to the current aspect preset in the orientation
+    // `portrait` (one step): the largest such crop inside the current one, or with `keep_area` the
+    // same area about the same centre (an orientation swap).
+    void refit(bool portrait, bool keep_area);
 
     EditSession& session_;
     QString aspect_ = QStringLiteral("free");
-    bool portrait_ = false;
     double custom_width_ = 5.0;
     double custom_height_ = 4.0;
     bool constrain_ = true;

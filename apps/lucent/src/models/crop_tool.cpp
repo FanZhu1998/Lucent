@@ -318,7 +318,23 @@ QString CropTool::size_text() const {
     return tr_text("%1 × %2 px").arg(map.output_size.width()).arg(map.output_size.height());
 }
 
+bool CropTool::portrait() const {
+    if (!available()) {
+        return false;
+    }
+    const GeometryMap map = display_map(session_.settings().geometry);
+    if (!map.valid) {
+        return false;
+    }
+    const QRectF shown = to_display(map, session_.settings().geometry.crop);
+    return shown.height() > shown.width() + 1.0;  // a square counts as landscape
+}
+
 double CropTool::display_aspect() const {
+    return aspect_for(portrait());
+}
+
+double CropTool::aspect_for(bool portrait) const {
     const AspectPreset* preset = preset_of(aspect_);
     double long_side = 0.0;
     double short_side = 0.0;
@@ -342,7 +358,7 @@ double CropTool::display_aspect() const {
     if (!(long_side > 0.0) || !(short_side > 0.0)) {
         return 0.0;
     }
-    return portrait_ ? short_side / long_side : long_side / short_side;
+    return portrait ? short_side / long_side : long_side / short_side;
 }
 
 QSizeF CropTool::min_size(const GeometryMap& map) const {
@@ -447,18 +463,12 @@ void CropTool::setAspect(const QString& key) {
         return;
     }
     aspect_ = key;
-    if (available()) {
-        const GeometryMap map = display_map(session_.settings().geometry);
-        const QRectF shown = to_display(map, session_.settings().geometry.crop);
-        portrait_ = shown.height() > shown.width() + 1.0;  // a square counts as landscape
-    }
-    refit(false);
+    refit(portrait(), false);  // in the crop's own orientation
     emit changed();
 }
 
 void CropTool::swapOrientation() {
-    portrait_ = !portrait_;
-    refit(true);
+    refit(!portrait(), true);
     emit changed();
 }
 
@@ -466,16 +476,20 @@ void CropTool::setCustomAspect(double width, double height) {
     if (!std::isfinite(width) || !std::isfinite(height) || width <= 0.0 || height <= 0.0) {
         return;
     }
-    custom_width_ = std::clamp(width, 0.01, 1000.0);
-    custom_height_ = std::clamp(height, 0.01, 1000.0);
-    portrait_ = custom_height_ > custom_width_;
+    const double w = std::clamp(width, 0.01, 1000.0);
+    const double h = std::clamp(height, 0.01, 1000.0);
+    if (w != custom_width_ || h != custom_height_) {
+        custom_width_ = w;
+        custom_height_ = h;
+        emit customAspectChanged();
+    }
     aspect_ = QStringLiteral("custom");
-    refit(false);
+    refit(custom_height_ > custom_width_, false);  // the ratio as typed
     emit changed();
 }
 
-void CropTool::refit(bool swap) {
-    const double aspect = display_aspect();
+void CropTool::refit(bool portrait, bool keep_area) {
+    const double aspect = aspect_for(portrait);
     if (!available() || !(aspect > 0.0) || drag_) {
         return;
     }
@@ -487,7 +501,7 @@ void CropTool::refit(bool swap) {
     const QSizeF bounds(map.output_size.width(), map.output_size.height());
     const QRectF shown = to_display(map, geometry.crop);
     QRectF target;
-    if (swap) {
+    if (keep_area) {
         // The same area in the other orientation, about the same centre.
         const double area = shown.width() * shown.height();
         const double width = std::sqrt(area * aspect);
@@ -516,7 +530,7 @@ void CropTool::beginDrag(const QString& handle, double u, double v) {
     }
     session_.begin_pointer_gesture();
     drag_ = Drag{parsed, to_display(map, session_.settings().geometry.crop),
-                 QPointF(u * map.output_size.width(), v * map.output_size.height()), map};
+                 QPointF(u * map.output_size.width(), v * map.output_size.height()), map, display_aspect()};
     emit changed();
 }
 
@@ -527,7 +541,7 @@ void CropTool::dragTo(double u, double v) {
     const GeometryMap& map = drag_->map;
     const QSizeF bounds(map.output_size.width(), map.output_size.height());
     const QPointF pointer(u * bounds.width(), v * bounds.height());
-    QRectF next = crop_math::drag(drag_->start, drag_->handle, drag_->press, pointer, bounds, display_aspect(),
+    QRectF next = crop_math::drag(drag_->start, drag_->handle, drag_->press, pointer, bounds, drag_->aspect,
                                   min_size(map));
     EditGeometry geometry = session_.settings().geometry;
     geometry.crop = from_display(map, next);
@@ -594,7 +608,6 @@ void CropTool::rotateLeft() {
         return;
     }
     apply_geometry(session_.service().turned(session_.settings().geometry, GeometryTurn::CounterClockwise));
-    portrait_ = !portrait_;
     emit changed();
 }
 
@@ -603,7 +616,6 @@ void CropTool::rotateRight() {
         return;
     }
     apply_geometry(session_.service().turned(session_.settings().geometry, GeometryTurn::Clockwise));
-    portrait_ = !portrait_;
     emit changed();
 }
 

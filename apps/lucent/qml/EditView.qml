@@ -34,6 +34,22 @@ FocusScope {
         viewer.forceActiveFocus(Qt.OtherFocusReason)
     }
 
+    // Brings the open tool's panel into view (a new mask's sliders, the crop's ratios), expanded,
+    // unless its title and most of it are visible already.
+    function revealToolPanel() {
+        const section = root.edit.tool === "crop" ? cropPanel : root.edit.tool === "masks" ? masksPanel : null
+        if (section === null)
+            return
+        section.expanded = true
+        Qt.callLater(function() {
+            const top = section.mapToItem(sidePanel, 0, 0).y + sidePanel.y - 8
+            const shown = Math.min(section.height, panelFlick.height * 0.6)
+            if (top >= panelFlick.contentY && top + shown <= panelFlick.contentY + panelFlick.height)
+                return
+            panelFlick.contentY = Math.max(0, Math.min(top, panelFlick.contentHeight - panelFlick.height))
+        })
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -401,6 +417,8 @@ FocusScope {
                     }
 
                     CropPanel {
+                        id: cropPanel
+
                         objectName: "cropPanel"
                         Layout.fillWidth: true
                         edit: root.edit
@@ -409,6 +427,8 @@ FocusScope {
                     }
 
                     MasksPanel {
+                        id: masksPanel
+
                         objectName: "masksPanel"
                         Layout.fillWidth: true
                         edit: root.edit
@@ -535,6 +555,7 @@ FocusScope {
         function onToolChanged() {
             if (root.edit.tool !== "crop")
                 root.cropLevelMode = false
+            root.revealToolPanel()
         }
     }
 

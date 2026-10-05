@@ -55,7 +55,9 @@ QString category_label(SettingsCategory category) {
         case SettingsCategory::Color:
             return tr_text("Color");
         case SettingsCategory::Local:
-            return tr_text("Highlights, shadows and masks");
+            return tr_text("Highlights and shadows");
+        case SettingsCategory::Masks:
+            return tr_text("Masks");
         case SettingsCategory::Detail:
             return tr_text("Noise reduction");
         case SettingsCategory::Geometry:

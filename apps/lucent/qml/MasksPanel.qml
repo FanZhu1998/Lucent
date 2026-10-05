@@ -11,6 +11,9 @@ import Lucent
 // duplicate and delete; the selected mask's opacity, feather and local controls (exposure, contrast,
 // highlights, shadows, saturation, temperature, tint); the brush's size, feather and flow and
 // Erase; and "Show mask" (O), which tints the selected mask's weights over the photo.
+//
+// Keyboard: Tab reaches each mask's row; Space or Enter selects it (its controls and handles), Up and
+// Down select the previous or next mask. Assistive technology selects a row with its press action.
 PanelSection {
     id: panel
 
@@ -19,6 +22,15 @@ PanelSection {
     readonly property MaskEditor masks: edit.masks
     readonly property bool editable: edit.canEdit
     readonly property bool hasSelection: masks.selectedId > 0
+
+    // Selects the mask of row `index` and moves the keyboard focus to it.
+    function selectRow(index) {
+        const item = maskRows.itemAt(index)
+        if (item === null)
+            return
+        panel.masks.selectedId = item.maskId
+        item.forceActiveFocus(Qt.TabFocusReason)
+    }
 
     title: qsTr("Masks")
 
@@ -90,6 +102,8 @@ PanelSection {
     // ---- The masks, in the order they apply ----------------------------------------------------------
 
     Repeater {
+        id: maskRows
+
         model: panel.masks.list
 
         delegate: Rectangle {
@@ -113,9 +127,23 @@ PanelSection {
             border.width: selected ? 1 : 0
             border.color: Theme.accent
 
+            activeFocusOnTab: true
+
             Accessible.role: Accessible.ListItem
             Accessible.name: qsTr("%1, %2%3").arg(name).arg(kindLabel).arg(maskEnabled ? "" : qsTr(", off"))
             Accessible.selected: selected
+            Accessible.focusable: true
+            Accessible.onPressAction: panel.masks.selectedId = row.maskId
+
+            Keys.onSpacePressed: panel.masks.selectedId = row.maskId
+            Keys.onReturnPressed: panel.masks.selectedId = row.maskId
+            Keys.onEnterPressed: panel.masks.selectedId = row.maskId
+            Keys.onUpPressed: panel.selectRow(row.index - 1)
+            Keys.onDownPressed: panel.selectRow(row.index + 1)
+            // Enter selects the mask, also while the masks tool (whose Enter closes it) is open.
+            Keys.onShortcutOverride: event => {
+                event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+            }
 
             HoverHandler {
                 id: rowHover
@@ -123,6 +151,11 @@ PanelSection {
 
             TapHandler {
                 onTapped: panel.masks.selectedId = row.maskId
+            }
+
+            FocusRing {
+                anchors.margins: -1
+                shown: row.activeFocus
             }
 
             RowLayout {

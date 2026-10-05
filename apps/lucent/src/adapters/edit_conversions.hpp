@@ -107,10 +107,15 @@ namespace lucent::ui::adapters {
 [[nodiscard]] QList<QPolygonF> mask_outline_of(const EditMask& mask, QSize upright_size);
 
 // The weight overlay of `adjustment` (shown even when disabled) for a frame whose upright image is
-// `upright` pixels with `geometry`: engine::mask_weights() at a size whose long edge is at most
-// `max_long_edge` (the overlay is stretched over the frame), mapped through the geometry
-// (engine::apply_geometry) and tinted (premultiplied ARGB, alpha proportional to the weight). Null
-// for an empty size, an invalid mask or geometry, or when memory runs out.
+// `upright` pixels with `geometry`, tinted (premultiplied ARGB, alpha proportional to the weight):
+// laid over the frame's output (the frame's GeometryMapping) at most `max_long_edge` on its long
+// edge, each overlay pixel's centre mapped back to the upright image through that mapping and the
+// weight sampled there (bilinear) from engine::mask_weights() made at the overlay's density, at most
+// kMaxMaskOverlayPlaneEdge on its long edge. So the overlay sits exactly on the frame (the crop is
+// not rounded at the overlay's scale) and keeps its resolution for a small crop. 0 outside the
+// image (a straightened frame's corners). Null for an empty size, an invalid mask or geometry, or
+// when memory runs out.
+inline constexpr int kMaxMaskOverlayPlaneEdge = 2048;
 [[nodiscard]] QImage mask_overlay_image(const engine::LocalAdjustment& adjustment,
                                         const engine::GeometrySetting& geometry, image::Size upright,
                                         int max_long_edge = 1024);

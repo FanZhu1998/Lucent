@@ -166,8 +166,8 @@ struct CategorySpec {
 constexpr std::array kCategories{
     CategorySpec{"whiteBalance", SettingsCategory::WhiteBalance}, CategorySpec{"exposure", SettingsCategory::Exposure},
     CategorySpec{"tone", SettingsCategory::Tone},                 CategorySpec{"color", SettingsCategory::Color},
-    CategorySpec{"local", SettingsCategory::Local},               CategorySpec{"detail", SettingsCategory::Detail},
-    CategorySpec{"geometry", SettingsCategory::Geometry},
+    CategorySpec{"local", SettingsCategory::Local},               CategorySpec{"masks", SettingsCategory::Masks},
+    CategorySpec{"detail", SettingsCategory::Detail},             CategorySpec{"geometry", SettingsCategory::Geometry},
 };
 
 double round_to(double value, int decimals) {
@@ -993,7 +993,7 @@ QVariantList EditSession::categories() const {
         list << QVariantMap{
             {QStringLiteral("key"), QString::fromLatin1(category.key)},
             {QStringLiteral("label"), category_label(category.category)},
-            // Selected by default: every category but Geometry (a crop rarely belongs on another photo).
+            // Selected by default: every category but Masks and Geometry (placed on this photo's content).
             {QStringLiteral("checked"), (kDefaultCategoryBits & category_bit(category.category)) != 0},
         };
     }

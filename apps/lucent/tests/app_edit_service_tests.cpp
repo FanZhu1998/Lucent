@@ -525,7 +525,8 @@ TEST_F(AppEditServiceTest, NoiseReductionMasksAndTheCropPasteByCategoryOnlyOntoT
     edits_->paste_settings({same});
     ASSERT_TRUE(QTest::qWaitFor([&] { return pastes_.size() == 1; }, kAdapterWaitMs));
     EXPECT_TRUE(pastes_.back().skipped.isEmpty()) << pastes_.back().skipped.join('\n').toStdString();
-    for (const SettingsCategory category : {SettingsCategory::Local, SettingsCategory::Detail, SettingsCategory::Geometry}) {
+    for (const SettingsCategory category :
+         {SettingsCategory::Local, SettingsCategory::Masks, SettingsCategory::Detail, SettingsCategory::Geometry}) {
         EXPECT_TRUE(pastes_.back().applied.contains(category)) << int(category);
     }
     ASSERT_TRUE(wait_idle());
@@ -543,9 +544,9 @@ TEST_F(AppEditServiceTest, NoiseReductionMasksAndTheCropPasteByCategoryOnlyOntoT
     ASSERT_TRUE(QTest::qWaitFor([&] { return pastes_.size() == 2; }, kAdapterWaitMs));
     const PasteReport& report = pastes_.back();
     ASSERT_EQ(report.skipped.size(), 2) << report.skipped.join('\n').toStdString();
-    EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("masks were not pasted")))
+    EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("Masks: not pasted because this photo has another shape")))
         << report.skipped.join('\n').toStdString();
-    EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("crop was not pasted")))
+    EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("crop and rotation were not pasted")))
         << report.skipped.join('\n').toStdString();
     ASSERT_TRUE(wait_idle());
     const EditState other = *state_for(square);

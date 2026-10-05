@@ -13,6 +13,20 @@ PanelSection {
     id: panel
 
     required property EditSession edit
+
+    // Applies the typed custom ratio (Enter, the Set button, or leaving a field) when it changed.
+    function commitCustomAspect() {
+        const w = Number(customWidth.text)
+        const h = Number(customHeight.text)
+        if (panel.crop.aspect !== "custom" || w !== panel.crop.customWidth || h !== panel.crop.customHeight)
+            panel.crop.setCustomAspect(w, h)
+    }
+
+    // Esc in a custom field: back to the ratio in use.
+    function revertCustomAspect() {
+        customWidth.text = Qt.binding(function() { return String(panel.crop.customWidth) })
+        customHeight.text = Qt.binding(function() { return String(panel.crop.customHeight) })
+    }
     // The crop overlay draws a horizon instead of moving the crop (EditView owns the flag).
     property bool levelMode: false
 
@@ -100,7 +114,13 @@ PanelSection {
             font.pixelSize: Theme.fontSmall
             color: Theme.textPrimary
             Layout.preferredWidth: 48
-            onAccepted: panel.crop.setCustomAspect(Number(customWidth.text), Number(customHeight.text))
+            onEditingFinished: panel.commitCustomAspect()
+            // Enter and Esc are the field's, not the crop tool's shortcuts (EditView).
+            Keys.onShortcutOverride: event => {
+                event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                    || event.key === Qt.Key_Escape
+            }
+            Keys.onEscapePressed: panel.revertCustomAspect()
             Accessible.name: qsTr("Custom aspect ratio width")
         }
 
@@ -118,7 +138,12 @@ PanelSection {
             font.pixelSize: Theme.fontSmall
             color: Theme.textPrimary
             Layout.preferredWidth: 48
-            onAccepted: panel.crop.setCustomAspect(Number(customWidth.text), Number(customHeight.text))
+            onEditingFinished: panel.commitCustomAspect()
+            Keys.onShortcutOverride: event => {
+                event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                    || event.key === Qt.Key_Escape
+            }
+            Keys.onEscapePressed: panel.revertCustomAspect()
             Accessible.name: qsTr("Custom aspect ratio height")
         }
 
@@ -126,7 +151,7 @@ PanelSection {
             text: qsTr("Set")
             implicitHeight: 26
             enabled: panel.editable
-            onClicked: panel.crop.setCustomAspect(Number(customWidth.text), Number(customHeight.text))
+            onClicked: panel.commitCustomAspect()
         }
     }
 

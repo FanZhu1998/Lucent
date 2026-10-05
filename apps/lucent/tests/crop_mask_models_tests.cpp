@@ -10,6 +10,8 @@
 #include <cmath>
 #include <memory>
 
+#include <QImage>
+#include <QPainter>
 #include <QTest>
 
 #include "models/crop_tool.hpp"
@@ -122,6 +124,64 @@ TEST(CropMath, HandlesKeepTheAspectRatioTheBoundsAndTheMinimumSize) {
     EXPECT_EQ(moved, QRectF(3000, 0, 3000, 2000));
 
     EXPECT_EQ(crop_math::fit_aspect(QRectF(0, 0, 6000, 4000), 1.0), QRectF(1000, 0, 4000, 4000));
+}
+
+// ---- Outline painting -------------------------------------------------------------------------------------
+
+// What OverlayPathItem paints for `paths` on a 400 x 300 item whose image covers `image_rect`.
+QImage painted(const OverlayPaths& paths, const QRectF& image_rect) {
+    OverlayPathItem item;
+    item.setSize(QSizeF(400, 300));
+    item.set_paths(QVariant::fromValue(paths));
+    item.set_image_rect(image_rect);
+    QImage image(400, 300, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    item.paint(&painter);
+    painter.end();
+    return image;
+}
+
+int painted_pixels(const QImage& image) {
+    int n = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            n += qAlpha(image.pixel(x, y)) > 0 ? 1 : 0;
+        }
+    }
+    return n;
+}
+
+// A paint costs what is seen: a stroke of 65536 points closer than a pixel apart paints the line its
+// end points give (points under 0.75 pixels from the last one drawn are skipped), and segments
+// outside the visible image are left out.
+TEST(OverlayPainting, DensePathsPaintWhatIsSeen) {
+    const QRectF image(20, 20, 360, 260);
+    QPolygonF dense;
+    for (int i = 0; i < 65536; ++i) {
+        dense << QPointF(0.1 + 0.8 * i / 65535.0, 0.5);
+    }
+    const QImage many = painted({OverlayPath{dense, true, false}}, image);
+    const QImage two = painted({OverlayPath{QPolygonF{QPointF(0.1, 0.5), QPointF(0.9, 0.5)}, true, false}}, image);
+    EXPECT_GT(painted_pixels(two), 252 * 3);
+    int different = 0;
+    for (int y = 0; y < 300; ++y) {
+        for (int x = 0; x < 400; ++x) {
+            different += std::abs(qAlpha(many.pixel(x, y)) - qAlpha(two.pixel(x, y))) > 64 ? 1 : 0;
+        }
+    }
+    EXPECT_LT(different, 8);
+    // A path whose every segment lies outside the image (here beyond the item) paints nothing; a path
+    // crossing the visible part paints only there.
+    const QRectF large(-4000, -3000, 8000, 6000);  // the image at a high zoom, the view on its centre
+    EXPECT_EQ(painted_pixels(painted({OverlayPath{QPolygonF{QPointF(0.01, 0.01), QPointF(0.02, 0.02)}, true, false}},
+                                     large)),
+              0);
+    const QImage crossing =
+        painted({OverlayPath{QPolygonF{QPointF(0.0, 0.525), QPointF(0.25, 0.525), QPointF(0.75, 0.525), QPointF(1.0, 0.525)},
+                             true, false}},
+                large);
+    EXPECT_GT(painted_pixels(crossing), 400 * 3);
 }
 
 TEST(CropMath, LevellingTurnsTheDrawnLineHorizontalOrVertical) {
@@ -273,6 +333,36 @@ TEST_F(CropMaskModelsTest, AspectPresetsFitTheCropAndSwapOrientation) {
     EXPECT_TRUE(session.settings().geometry.is_identity());
 }
 
+// The aspect ratio's orientation is the crop's own as displayed: after a quarter turn that Esc
+// takes back, a corner drag keeps a landscape 3:2 crop landscape (a separate orientation flag stayed
+// "portrait" and turned the whole crop into a 2:3 strip).
+TEST_F(CropMaskModelsTest, TheAspectOrientationFollowsTheCropThroughATurnAndEsc) {
+    open();
+    CropTool& crop = *session.crop();
+    session.setTool(QStringLiteral("crop"));
+    show_frame();
+    crop.setAspect(QStringLiteral("3:2"));
+    EXPECT_FALSE(crop.portrait());
+    EXPECT_NEAR(crop.display_aspect(), 1.5, 1e-12);
+    crop.rotateRight();
+    show_frame();
+    EXPECT_TRUE(crop.portrait());  // the crop stands upright now
+    EXPECT_NEAR(crop.display_aspect(), 2.0 / 3.0, 1e-12);
+    session.cancelTool();  // Esc: the geometry the tool was opened with
+    EXPECT_EQ(session.settings().geometry.quarter_turns, 0);
+    EXPECT_FALSE(crop.portrait());
+    session.setTool(QStringLiteral("crop"));
+    show_frame();
+    const QRectF before = crop.rect();
+    crop.beginDrag(QStringLiteral("bottomRight"), before.right(), before.bottom());
+    crop.dragTo(before.right() - 0.05, before.bottom() - 0.05);
+    crop.endDrag();
+    const EditCrop after = session.settings().geometry.crop;
+    EXPECT_NEAR((after.width() * 6000.0) / (after.height() * 4000.0), 1.5, 1e-3);
+    EXPECT_GT(after.width(), 0.8);  // shrunk by the drag, not cut to a portrait strip
+    EXPECT_EQ(crop.aspect(), QStringLiteral("3:2"));  // the ratio chosen stays
+}
+
 TEST_F(CropMaskModelsTest, LevellingAlongADrawnHorizonIsOneRevision) {
     open();
     session.setTool(QStringLiteral("crop"));
@@ -392,6 +482,123 @@ TEST_F(CropMaskModelsTest, ABrushStrokeIsOneRevisionWithSimplifiedPoints) {
     EXPECT_EQ(session.settings().masks.front().strokes.back().mode, BrushMode::Erase);
 }
 
+// While a stroke is painted the mask's earlier strokes stay one unchanged outline (drawn once) and
+// only the stroke being painted changes (strokeOutline), also across the split at 4096 points.
+TEST_F(CropMaskModelsTest, TheStrokeBeingPaintedIsTheOnlyOutlineThatChanges) {
+    open();
+    MaskEditor& masks = *session.masks();
+    session.setTool(QStringLiteral("masks"));
+    session.setValue(QStringLiteral("brushSize"), 0.1);  // 6 px of 6000: a point every 0.9 px
+    masks.beginStroke(0.1, 0.2, false);
+    for (int i = 1; i <= 50; ++i) {
+        masks.extendStroke(0.1 + i * 2.0 / 6000.0, 0.2);
+    }
+    masks.endStroke();
+    ASSERT_EQ(masks.outlines().value<OverlayPaths>().size(), 1);
+    EXPECT_TRUE(masks.stroke_outline().value<OverlayPaths>().isEmpty());
+
+    masks.beginStroke(0.1, 0.6, false);
+    const OverlayPaths first = masks.outlines().value<OverlayPaths>();
+    ASSERT_EQ(first.size(), 1);  // the earlier stroke only
+    for (int i = 1; i <= 4200; ++i) {
+        masks.extendStroke(0.1 + i * 1.2 / 6000.0, 0.6);
+        if (i == 100) {
+            const OverlayPaths during = masks.outlines().value<OverlayPaths>();
+            EXPECT_EQ(during.constData(), first.constData()) << "the same paths: nothing to redraw";
+            const OverlayPaths active = masks.stroke_outline().value<OverlayPaths>();
+            ASSERT_EQ(active.size(), 1);
+            EXPECT_EQ(active.front().points.size(), 101);
+            EXPECT_NEAR(active.front().points.back().x(), 0.1 + 120.0 / 6000.0, 1e-6);
+            EXPECT_NEAR(active.front().points.back().y(), 0.6, 1e-6);
+        }
+    }
+    // Past 4096 points the gesture went on as another stroke: the finished part joined the
+    // unchanged layer once.
+    const EditMask& painted = session.settings().masks.front();
+    ASSERT_EQ(painted.strokes.size(), 3);
+    EXPECT_EQ(painted.strokes[1].points.size(), kMaxStrokePoints);
+    EXPECT_EQ(masks.outlines().value<OverlayPaths>().size(), 2);
+    ASSERT_EQ(masks.stroke_outline().value<OverlayPaths>().size(), 1);
+    EXPECT_EQ(masks.stroke_outline().value<OverlayPaths>().front().points.size(), painted.strokes[2].points.size());
+    masks.endStroke();
+    EXPECT_EQ(service.count("commit"), 2);
+    EXPECT_EQ(masks.outlines().value<OverlayPaths>().size(), 3);
+    EXPECT_TRUE(masks.stroke_outline().value<OverlayPaths>().isEmpty());
+}
+
+// The photo-wide bound of brush points: painting stops with a message, the refusal names the limit
+// that was reached, and continuing a full stroke (two points) never passes the bound.
+TEST_F(CropMaskModelsTest, BrushPointLimitsStopPaintingWithAMessage) {
+    EditSettings settings;
+    EditMask brush;
+    brush.id = 1;
+    brush.kind = MaskKind::Brush;
+    EditBrushStroke full;
+    full.radius = 0.001;
+    for (int i = 0; i < kMaxStrokePoints; ++i) {
+        full.points << QPointF(0.1 + 0.8 * i / kMaxStrokePoints, 0.1);
+    }
+    for (int i = 0; i < kMaxBrushPoints / kMaxStrokePoints - 1; ++i) {
+        brush.strokes << full;
+    }
+    brush.strokes.back().points.removeLast();  // 61439 points
+    settings.masks << brush;
+    open(settings);
+    MaskEditor& masks = *session.masks();
+    session.setTool(QStringLiteral("masks"));
+    masks.select(1);
+    session.setValue(QStringLiteral("brushSize"), 0.1);
+    const auto points = [this] {
+        qsizetype n = 0;
+        for (const EditMask& mask : session.settings().masks) {
+            for (const EditBrushStroke& stroke : mask.strokes) {
+                n += stroke.points.size();
+            }
+        }
+        return n;
+    };
+    // A stroke of 4096 points brings the photo to 65535; its continuation would need two more.
+    masks.beginStroke(0.1, 0.9, false);
+    for (int i = 1; i < 4300; ++i) {
+        masks.extendStroke(0.1 + i * 1.2 / 6000.0, 0.9);
+        ASSERT_LE(points(), kMaxBrushPoints) << i;
+    }
+    EXPECT_EQ(points(), kMaxBrushPoints - 1);
+    EXPECT_TRUE(session.message().contains(QStringLiteral("Painting stopped"))) << session.message().toStdString();
+    EXPECT_TRUE(session.message().contains(QStringLiteral("brush points")));
+    masks.endStroke();
+    // One more point fits: the next stroke takes it, then the refusal names the limit reached.
+    session.clearMessage();
+    masks.beginStroke(0.5, 0.5, false);
+    masks.endStroke();
+    EXPECT_EQ(points(), kMaxBrushPoints);
+    masks.beginStroke(0.6, 0.6, false);
+    EXPECT_FALSE(masks.painting());
+    EXPECT_TRUE(session.message().contains(QStringLiteral("delete a brush mask"))) << session.message().toStdString();
+}
+
+// A gradient added while the crop tool is open is placed on the photo as it is about to be shown
+// (cropped), not on the uncropped frame the crop tool shows.
+TEST_F(CropMaskModelsTest, AMaskAddedFromTheCropToolIsPlacedOnTheCroppedPhoto) {
+    EditSettings settings;
+    settings.geometry.crop = EditCrop{0.5, 0.0, 1.0, 0.5};  // the top right quarter
+    open(settings);
+    session.setTool(QStringLiteral("crop"));
+    show_frame();
+    ASSERT_TRUE(session.frame_uncropped());
+    MaskEditor& masks = *session.masks();
+    ASSERT_TRUE(masks.add(QStringLiteral("radial")));
+    ASSERT_TRUE(masks.add(QStringLiteral("linear")));
+    const EditMask radial = session.settings().masks[0];
+    EXPECT_NEAR(radial.center.x(), 0.75, 1e-6);  // the middle of the crop
+    EXPECT_NEAR(radial.center.y(), 0.25, 1e-6);
+    EXPECT_NEAR(radial.radius_x, 0.3 * 2000.0 / 6000.0, 1e-6);  // 0.3 of the crop's short side
+    const EditMask linear = session.settings().masks[1];
+    EXPECT_NEAR(linear.start.y(), 0.0, 1e-6);  // from the crop's top to its middle
+    EXPECT_NEAR(linear.end.y(), 0.25, 1e-6);
+    EXPECT_NEAR(linear.start.x(), 0.75, 1e-6);
+}
+
 TEST_F(CropMaskModelsTest, AHandleDragIsOneRevisionAndTheOutlineFollowsIt) {
     open();
     MaskEditor& masks = *session.masks();
@@ -442,20 +649,24 @@ TEST_F(CropMaskModelsTest, NoiseReductionKeysAndTheCopyCategories) {
     EXPECT_DOUBLE_EQ(session.value(QStringLiteral("noiseRadius")), 8.0);
 
     const QVariantList categories = session.categories();
-    ASSERT_EQ(categories.size(), 7);
+    ASSERT_EQ(categories.size(), 8);
     QStringList keys;
     for (const QVariant& category : categories) {
         const QVariantMap entry = category.toMap();
-        keys << entry.value(QStringLiteral("key")).toString();
-        EXPECT_EQ(entry.value(QStringLiteral("checked")).toBool(), entry.value(QStringLiteral("key")).toString() != u"geometry");
+        const QString key = entry.value(QStringLiteral("key")).toString();
+        keys << key;
+        // Masks and the crop are placed on this photo's content: not selected by default.
+        EXPECT_EQ(entry.value(QStringLiteral("checked")).toBool(), key != u"geometry" && key != u"masks") << key.toStdString();
     }
+    EXPECT_TRUE(keys.contains(QStringLiteral("masks")));
     EXPECT_TRUE(keys.contains(QStringLiteral("detail")));
     EXPECT_TRUE(keys.contains(QStringLiteral("geometry")));
     session.copySettings({QStringLiteral("detail"), QStringLiteral("geometry")});
     ASSERT_EQ(service.count("copy_settings"), 1);
     EXPECT_EQ(service.calls_named("copy_settings").back().categories,
               category_bit(SettingsCategory::Detail) | category_bit(SettingsCategory::Geometry));
-    EXPECT_EQ(category_label(SettingsCategory::Local), QStringLiteral("Highlights, shadows and masks"));
+    EXPECT_EQ(category_label(SettingsCategory::Local), QStringLiteral("Highlights and shadows"));
+    EXPECT_EQ(category_label(SettingsCategory::Masks), QStringLiteral("Masks"));
 }
 
 }  // namespace

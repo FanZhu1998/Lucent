@@ -37,6 +37,16 @@ Item {
         imageRect: overlay.imageRect
     }
 
+    // The stroke being painted: the only path that changes on a pointer move, on a layer of its own,
+    // so the mask's earlier strokes are not redrawn while it grows.
+    OverlayPathItem {
+        objectName: "maskStrokeOutline"
+        anchors.fill: parent
+        visible: overlay.masks.painting
+        paths: overlay.masks.strokeOutline
+        imageRect: overlay.imageRect
+    }
+
     // Brush painting: the whole view, so a stroke may start or end beyond the image.
     MouseArea {
         id: paintArea

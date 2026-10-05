@@ -596,12 +596,13 @@ QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboa
                             const std::optional<app::CameraCapabilities>& target) {
     const QString category = category_label(to_settings_category(skip.category));
     if (skip.part == app::RecipePart::LocalAdjustments) {
-        return tr_text("%1: the masks were not pasted because this photo has another shape, so they would land "
-                       "on other parts of the picture.")
+        return tr_text("%1: not pasted because this photo has another shape, so the masks would land on other "
+                       "parts of the picture.")
             .arg(category);
     }
     if (skip.part == app::RecipePart::Geometry) {
-        return tr_text("%1: the crop was not pasted because this photo has another shape.").arg(category);
+        return tr_text("%1: the crop and rotation were not pasted because this photo has another shape.")
+            .arg(category);
     }
     if (skip.category == app::RecipeCategory::WhiteBalance) {
         switch (engine::mode_of(clipboard.settings.white_balance)) {
@@ -699,40 +700,61 @@ QImage mask_overlay_image(const engine::LocalAdjustment& adjustment, const engin
     if (upright.empty() || max_long_edge < 1) {
         return {};
     }
-    const double scale = std::min(1.0, double(max_long_edge) / double(std::max(upright.width, upright.height)));
-    const image::Size size{std::max(1, static_cast<int>(std::lround(upright.width * scale))),
-                           std::max(1, static_cast<int>(std::lround(upright.height * scale)))};
-    engine::LocalAdjustment shown = adjustment;
-    shown.enabled = true;  // the overlay shows where the mask is, also while it is switched off
-    auto weights = engine::mask_weights(shown, size);
-    if (!weights) {
-        return {};
-    }
-    auto mapping = engine::GeometryMapping::create(geometry, size);
+    // The frame's own mapping: the overlay is stretched over the frame's output, so each overlay
+    // pixel's centre is mapped back through it (no crop rounding of the overlay's own).
+    auto mapping = engine::GeometryMapping::create(geometry, upright);
     if (!mapping) {
         return {};
     }
-    engine::ColorImage plane{std::move(*weights), image::ColorEncoding{}};
-    if (!mapping->identity()) {
-        if (auto applied = engine::apply_geometry(plane, *mapping); !applied) {
-            return {};
-        }
+    const image::Size out = mapping->output_size();
+    const double scale = std::min(1.0, double(max_long_edge) / double(std::max(out.width, out.height)));
+    const image::Size size{std::max(1, static_cast<int>(std::lround(out.width * scale))),
+                           std::max(1, static_cast<int>(std::lround(out.height * scale)))};
+    // The weights at the overlay's density (about one per overlay pixel across the visible crop),
+    // their plane at most kMaxMaskOverlayPlaneEdge on its long edge.
+    const double plane_scale =
+        std::min(scale, double(kMaxMaskOverlayPlaneEdge) / double(std::max(upright.width, upright.height)));
+    const image::Size plane{std::max(1, static_cast<int>(std::lround(upright.width * plane_scale))),
+                            std::max(1, static_cast<int>(std::lround(upright.height * plane_scale)))};
+    engine::LocalAdjustment shown = adjustment;
+    shown.enabled = true;  // the overlay shows where the mask is, also while it is switched off
+    auto weights = engine::mask_weights(shown, plane);
+    if (!weights) {
+        return {};
     }
-    const image::ImageBuffer<float>& pixels = plane.pixels;
-    QImage overlay(pixels.width(), pixels.height(), QImage::Format_ARGB32_Premultiplied);
+    QImage overlay(size.width, size.height, QImage::Format_ARGB32_Premultiplied);
     if (overlay.isNull()) {
         return {};
     }
+    const image::ConstImageView<float> w = weights->const_view();
+    const double fx = double(out.width) / size.width;  // frame output pixels per overlay pixel
+    const double fy = double(out.height) / size.height;
+    const double px = double(plane.width) / upright.width;  // plane pixels per upright pixel
+    const double py = double(plane.height) / upright.height;
+    const auto at = [&](int x, int y) {
+        return static_cast<double>(w.row(std::clamp(y, 0, plane.height - 1))[std::clamp(x, 0, plane.width - 1)]);
+    };
     // Red, at most 60 % opaque: the photo stays visible under the strongest weight.
     constexpr double kMaxAlpha = 153.0;
-    const std::int32_t channels = pixels.channels();
-    for (std::int32_t y = 0; y < pixels.height(); ++y) {
-        const float* row = pixels.row(y);
-        auto* out = reinterpret_cast<QRgb*>(overlay.scanLine(y));
-        for (std::int32_t x = 0; x < pixels.width(); ++x) {
-            const double w = std::clamp(static_cast<double>(row[x * channels]), 0.0, 1.0);
-            const int alpha = static_cast<int>(std::lround(w * kMaxAlpha));
-            out[x] = alpha == 0 ? 0u : qPremultiply(qRgba(255, 48, 48, alpha));
+    for (std::int32_t y = 0; y < size.height; ++y) {
+        auto* row = reinterpret_cast<QRgb*>(overlay.scanLine(y));
+        for (std::int32_t x = 0; x < size.width; ++x) {
+            const image::PointD u = mapping->upright_from_output(image::PointD{(x + 0.5) * fx, (y + 0.5) * fy});
+            double weight = 0.0;
+            if (u.x >= 0.0 && u.y >= 0.0 && u.x <= upright.width && u.y <= upright.height) {
+                // Bilinear between the plane's pixel centres.
+                const double sx = u.x * px - 0.5;
+                const double sy = u.y * py - 0.5;
+                const auto x0 = static_cast<int>(std::floor(sx));
+                const auto y0 = static_cast<int>(std::floor(sy));
+                const double tx = sx - x0;
+                const double ty = sy - y0;
+                const double top = at(x0, y0) + tx * (at(x0 + 1, y0) - at(x0, y0));
+                const double bottom = at(x0, y0 + 1) + tx * (at(x0 + 1, y0 + 1) - at(x0, y0 + 1));
+                weight = std::clamp(top + ty * (bottom - top), 0.0, 1.0);
+            }
+            const int alpha = static_cast<int>(std::lround(weight * kMaxAlpha));
+            row[x] = alpha == 0 ? 0u : qPremultiply(qRgba(255, 48, 48, alpha));
         }
     }
     return overlay;

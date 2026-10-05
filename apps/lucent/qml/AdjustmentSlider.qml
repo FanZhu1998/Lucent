@@ -10,7 +10,9 @@ import Lucent
 // Gestures: a drag is ONE revision (pressing begins it, releasing commits it); arrow keys move by a
 // step and Shift+arrow or Page Up/Down by a coarse step, and holding a key down is one revision too
 // (EditSession.nudge, committed on release). Double-click the slider, press Home, or use the reset
-// button to return to the default; type a value and press Enter to set it exactly.
+// button to return to the default; type a value and press Enter to set it exactly (Esc abandons the
+// typed value). Enter and Esc in the field are the field's, also while a tool whose window-wide
+// shortcuts they are is open (EditView).
 //
 // Accessibility: the slider runs in the control's display units (exposure in EV, the others -100 to
 // +100), so assistive technology reads the value the field shows; temperature, whose slider is
@@ -205,6 +207,16 @@ Item {
             Layout.preferredHeight: 24
             onAccepted: {
                 row.edit.setValueText(row.key, text)
+                slider.forceActiveFocus(Qt.OtherFocusReason)
+            }
+            // A text field takes Enter and Esc before the window's shortcuts (an open tool's Enter and
+            // Esc, EditView), which would otherwise close the tool and drop the typed value.
+            Keys.onShortcutOverride: event => {
+                event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                    || event.key === Qt.Key_Escape
+            }
+            Keys.onEscapePressed: {
+                text = Qt.binding(function() { row.edit.settingsRevision; return row.edit.valueText(row.key) })
                 slider.forceActiveFocus(Qt.OtherFocusReason)
             }
             onActiveFocusChanged: {

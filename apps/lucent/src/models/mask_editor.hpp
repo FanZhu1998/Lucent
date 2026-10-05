@@ -20,8 +20,11 @@
 // pixels.
 //
 // Outlines (`outlines`, OverlayPaths) are the selected mask's: the frame's own (DevelopFrame::masks,
-// what was rendered) while nothing moves the mask, and during a handle drag or a brush stroke the
-// engine's mask_outline() of the local settings, so the outline follows the pointer between frames.
+// what was rendered) while nothing moves the mask, and during a handle drag the engine's
+// mask_outline() of the local settings, so the outline follows the pointer between frames. During a
+// brush stroke `outlines` holds the mask's strokes before the one being painted (fixed for the
+// gesture, so the view does not redraw them on every pointer move) and `strokeOutline` the stroke
+// being painted (its centre line, as the engine's outline draws it), the only path that changes.
 // Handles (`handles`) are always placed from the local settings: radial centre, the x semi-axis end
 // (its direction sets the angle) and the y semi-axis end; linear start, end and middle (moves both).
 //
@@ -120,8 +123,9 @@ class MaskEditor : public QObject {
     // pixels.
     Q_PROPERTY(double brushRadius READ brush_radius NOTIFY changed FINAL)
     Q_PROPERTY(int brushPixels READ brush_pixels NOTIFY changed FINAL)
-    // OverlayPaths of the selected mask (see the file comment).
+    // OverlayPaths of the selected mask, and of the stroke being painted (see the file comment).
     Q_PROPERTY(QVariant outlines READ outlines NOTIFY overlayChanged FINAL)
+    Q_PROPERTY(QVariant strokeOutline READ stroke_outline NOTIFY overlayChanged FINAL)
     // [{key, x, y}] of the selected linear or radial mask's handles (displayed-image fractions).
     Q_PROPERTY(QVariantList handles READ handles NOTIFY overlayChanged FINAL)
     // The weight overlay (O): EditSession.maskOverlay and its image.
@@ -179,6 +183,7 @@ public:
     [[nodiscard]] double brush_radius() const;
     [[nodiscard]] int brush_pixels() const;
     [[nodiscard]] QVariant outlines() const;
+    [[nodiscard]] QVariant stroke_outline() const;
     [[nodiscard]] QVariantList handles() const;
     [[nodiscard]] bool overlay() const;
     void set_overlay(bool overlay);
@@ -201,6 +206,10 @@ private:
         QPointF pending;     // the newest pointer position not kept (normalised)
         bool has_pending = false;
         bool full = false;   // the point bounds were reached: nothing more is painted
+        // The mask's strokes before those of this gesture still being painted (displayed), and how
+        // many strokes of the mask they are: `outlines` while painting.
+        QVariant settled;
+        qsizetype settled_strokes = 0;
     };
 
     [[nodiscard]] const EditMask* selected_mask() const;
@@ -214,6 +223,8 @@ private:
     // Adds the brush point `normalized` to the stroke (see the file comment); false when nothing
     // changed.
     bool add_stroke_point(EditSettings& settings, QPointF normalized, bool force);
+    // A brush stroke's centre line in displayed-image fractions.
+    [[nodiscard]] OverlayPath stroke_path(const EditBrushStroke& stroke, bool enabled) const;
     void refresh();
 
     EditSession& session_;

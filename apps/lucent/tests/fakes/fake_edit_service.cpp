@@ -555,8 +555,11 @@ void FakeEditService::paste_settings(const QList<ItemId>& targets) {
         if (has(SettingsCategory::Local)) {
             settings.highlights = from.highlights;
             settings.shadows = from.shadows;
-            settings.masks = from.masks;
             report.applied << SettingsCategory::Local;
+        }
+        if (has(SettingsCategory::Masks)) {
+            settings.masks = from.masks;
+            report.applied << SettingsCategory::Masks;
         }
         if (has(SettingsCategory::Detail)) {
             settings.chroma_denoise = from.chroma_denoise;

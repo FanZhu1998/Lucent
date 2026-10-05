@@ -8,7 +8,10 @@
 //
 // Each path is drawn twice, a dark halo under a light line, so it reads on any photo; the selected
 // mask's lines are brighter and wider, a switched-off mask's are dashed. Paths are clipped to the
-// image (a gradient's lines are long enough to cross it).
+// image (a gradient's lines are long enough to cross it). The cost of a paint follows what is seen,
+// not how many points the paths hold (a brush mask may hold 65536): points closer than kMinStep
+// pixels to the last one drawn are skipped (the line deviates by less than that), and segments
+// outside the visible part of the image are left out.
 //
 // Thread-safety: a Qt Quick item; UI thread only.
 
@@ -42,6 +45,9 @@ class OverlayPathItem : public QQuickPaintedItem {
     Q_PROPERTY(int pathCount READ path_count NOTIFY pathsChanged FINAL)
 
 public:
+    // Points closer than this (item pixels) to the previous point drawn are skipped.
+    static constexpr double kMinStep = 0.75;
+
     explicit OverlayPathItem(QQuickItem* parent = nullptr);
 
     void paint(QPainter* painter) override;

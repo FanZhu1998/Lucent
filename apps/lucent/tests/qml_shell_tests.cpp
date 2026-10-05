@@ -801,5 +801,112 @@ TEST_F(QmlShellTest, TheCropAndMaskToolsWorkFromTheKeyboardAndTheMouse) {
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 
+// W9 closure: while a tool is open its Enter and Esc shortcuts leave the editors alone (a slider's
+// value field, the custom aspect ratio, the masks list, the history list), the open tool's panel is
+// scrolled into view, and the masks list works from the keyboard.
+TEST_F(QmlShellTest, EditorsKeepEnterAndEscWhileAToolIsOpen) {
+    write_photos(1);
+    import_folder();
+    window->requestActivate();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window));
+    ASSERT_TRUE(controller->openItem(0));
+    auto* viewer = child<QQuickItem>("previewViewer");
+    ASSERT_TRUE(QTest::qWaitFor([viewer] { return viewer->property("status").toInt() == kImageStatusReady; },
+                                kWaitMs));
+    ASSERT_TRUE(settle());
+    EditSession& edit = *controller->edit();
+    auto* panel = child<QQuickItem>("editPanel");
+    ASSERT_NE(panel, nullptr);
+    // The section's title lies inside the side panel's visible part.
+    const auto in_view = [this, panel](const char* name) {
+        auto* section = child<QQuickItem>(name);
+        const double y = section->mapToItem(panel, QPointF(0.0, 0.0)).y();
+        return y >= 0.0 && y < panel->height() - 40.0;
+    };
+    const auto type_into = [this](QQuickItem* field, const QString& text) {
+        field->forceActiveFocus(Qt::TabFocusReason);
+        QMetaObject::invokeMethod(field, "selectAll");
+        for (const QChar c : text) {
+            QTest::keyClick(window, c.toLatin1());
+        }
+    };
+
+    // R opens the crop tool and brings its panel into view.
+    viewer->forceActiveFocus(Qt::OtherFocusReason);
+    QTest::keyClick(window, Qt::Key_R);
+    ASSERT_EQ(edit.tool(), QStringLiteral("crop"));
+    EXPECT_TRUE(QTest::qWaitFor([&] { return in_view("cropPanel"); }, kWaitMs));
+    ASSERT_TRUE(settle());
+
+    // Enter in the straighten field applies the typed value; the tool stays open.
+    QQuickItem* straighten = visual_items("field_straighten", true).front();
+    type_into(straighten, QStringLiteral("5"));
+    QTest::keyClick(window, Qt::Key_Return);
+    EXPECT_EQ(edit.tool(), QStringLiteral("crop"));
+    EXPECT_DOUBLE_EQ(edit.settings().geometry.straighten_degrees, 5.0);
+    // Esc abandons a typed value; the tool stays open and keeps its geometry.
+    type_into(straighten, QStringLiteral("9"));
+    QTest::keyClick(window, Qt::Key_Escape);
+    EXPECT_EQ(edit.tool(), QStringLiteral("crop"));
+    EXPECT_DOUBLE_EQ(edit.settings().geometry.straighten_degrees, 5.0);
+    EXPECT_FALSE(straighten->property("text").toString().startsWith(u'9'));
+    ASSERT_TRUE(settle());
+
+    // A custom ratio typed and confirmed with Enter is applied; the tool stays open.
+    edit.crop()->setAspect(QStringLiteral("custom"));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return !visual_items("cropCustomWidth", true).isEmpty(); }, kWaitMs));
+    // Typed while frames arrive: the value being typed stays until Enter.
+    type_into(visual_items("cropCustomWidth", true).front(), QStringLiteral("7"));
+    ASSERT_TRUE(settle());
+    QTest::keyClick(window, Qt::Key_Return);
+    EXPECT_EQ(edit.tool(), QStringLiteral("crop"));
+    EXPECT_DOUBLE_EQ(edit.crop()->custom_width(), 7.0);
+    ASSERT_TRUE(settle());
+
+    // From the photo, Enter still applies the crop and closes the tool.
+    viewer->forceActiveFocus(Qt::OtherFocusReason);
+    QTest::keyClick(window, Qt::Key_Return);
+    EXPECT_TRUE(edit.tool().isEmpty());
+    ASSERT_TRUE(settle());
+
+    // Two masks (Shift+R, G): the masks panel comes into view; Space, Down and Enter on its rows
+    // select masks from the keyboard while the tool stays open.
+    QTest::keyClick(window, Qt::Key_R, Qt::ShiftModifier);
+    ASSERT_TRUE(settle());
+    QTest::keyClick(window, Qt::Key_G);
+    ASSERT_TRUE(settle());
+    ASSERT_EQ(edit.tool(), QStringLiteral("masks"));
+    ASSERT_EQ(edit.settings().masks.size(), 2);
+    EXPECT_TRUE(QTest::qWaitFor([&] { return in_view("masksPanel"); }, kWaitMs));
+    const int first = static_cast<int>(edit.settings().masks[0].id);
+    const int second = static_cast<int>(edit.settings().masks[1].id);
+    EXPECT_EQ(edit.masks()->selected_id(), second);
+    ASSERT_TRUE(QTest::qWaitFor([this] { return !visual_items("maskRow_0", true).isEmpty(); }, kWaitMs));
+    QQuickItem* row = visual_items("maskRow_0", true).front();
+    row->forceActiveFocus(Qt::TabFocusReason);
+    ASSERT_TRUE(row->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Space);
+    EXPECT_EQ(edit.masks()->selected_id(), first);
+    QTest::keyClick(window, Qt::Key_Down);
+    EXPECT_EQ(edit.masks()->selected_id(), second);
+    EXPECT_TRUE(visual_items("maskRow_1", true).front()->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Up);
+    QTest::keyClick(window, Qt::Key_Return);
+    EXPECT_EQ(edit.masks()->selected_id(), first);
+    EXPECT_EQ(edit.tool(), QStringLiteral("masks"));
+
+    // Enter in the history list shows the revision chosen; the tool stays open.
+    auto* history = child<QQuickItem>("historyList");
+    history->forceActiveFocus(Qt::TabFocusReason);
+    const int revisions = edit.history()->count();
+    QTest::keyClick(window, Qt::Key_Down);
+    QTest::keyClick(window, Qt::Key_Return);
+    EXPECT_EQ(edit.tool(), QStringLiteral("masks"));
+    ASSERT_TRUE(settle());
+    EXPECT_EQ(edit.history()->count(), revisions);
+    EXPECT_LT(edit.settings().masks.size(), 2u) << "an earlier revision is shown";
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
 }  // namespace
 }  // namespace lucent::ui

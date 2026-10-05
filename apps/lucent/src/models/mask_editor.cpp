@@ -344,8 +344,20 @@ bool MaskEditor::add(const QString& kind) {
         return false;
     }
     session_.setTool(QStringLiteral("masks"));
-    const GeometryMap& map = session_.frame_map();
-    const auto at = [this](double u, double v) { return tidy_point(to_normalized(u, v).value_or(QPointF(u, v))); };
+    // Placed on the photo as it is about to be shown: the settings' geometry, not the newest frame's
+    // (still the crop tool's uncropped frame when the mask is added from it).
+    GeometryMap map = session_.service().map_geometry(session_.settings().geometry, session_.frame_full_upright_size());
+    bool invertible = false;
+    QTransform inverse = map.normalized_to_output.inverted(&invertible);
+    if (!map.valid || !invertible || map.output_size.isEmpty()) {
+        map = session_.frame_map();
+        inverse = map.normalized_to_output.inverted(&invertible);
+    }
+    const auto at = [&](double u, double v) {
+        const QPointF normalized =
+            invertible ? inverse.map(QPointF(u * map.output_size.width(), v * map.output_size.height())) : QPointF(u, v);
+        return tidy_point(normalized);
+    };
     EditMask mask;
     mask.id = next_id();
     mask.kind = *parsed;
@@ -612,11 +624,22 @@ void MaskEditor::beginStroke(double u, double v, bool erase) {
         next.masks << brush;
         mask = &next.masks.back();
     }
-    if (mask->strokes.size() >= kMaxBrushStrokes || brush_points(next.masks) >= kMaxBrushPoints) {
+    if (mask->strokes.size() >= kMaxBrushStrokes) {
         session_.show_message(
             tr_text("This brush mask holds the most strokes Lucent allows; add another brush mask to paint more."));
         return;
     }
+    if (brush_points(next.masks) >= kMaxBrushPoints) {
+        session_.show_message(tr_text("The photo's brush masks hold the most brush points Lucent allows; delete a "
+                                      "brush mask to paint more."));
+        return;
+    }
+    // The strokes painted before: drawn once for the whole gesture.
+    OverlayPaths settled;
+    for (const EditBrushStroke& before : mask->strokes) {
+        settled << stroke_path(before, mask->enabled);
+    }
+    const qsizetype settled_strokes = mask->strokes.size();
     EditBrushStroke stroke;
     stroke.mode = erase || erase_ ? BrushMode::Erase : BrushMode::Add;
     stroke.radius = std::clamp(round6(session_.brush_size() / 100.0), kMinBrushRadius, kMaxBrushRadius);
@@ -627,6 +650,8 @@ void MaskEditor::beginStroke(double u, double v, bool erase) {
     const quint32 id = mask->id;
     session_.begin_pointer_gesture();
     stroke_ = Stroke{id, to_upright_pixels(*pointer)};
+    stroke_->settled = QVariant::fromValue(settled);
+    stroke_->settled_strokes = settled_strokes;
     session_.edit_settings(next);
     session_.set_selected_mask(id);
     emit changed();
@@ -650,18 +675,30 @@ bool MaskEditor::add_stroke_point(EditSettings& settings, QPointF normalized, bo
         }
         return false;
     }
-    if (brush_points(settings.masks) >= kMaxBrushPoints) {
+    // The engine's bound for one stroke: the gesture paints on as a new stroke from here, which
+    // starts at the last point (two points).
+    const bool split = mask->strokes.back().points.size() >= kMaxStrokePoints;
+    if (brush_points(settings.masks) + (split ? 2 : 1) > kMaxBrushPoints) {
         stroke_->full = true;
+        session_.show_message(tr_text("Painting stopped: the photo's brush masks hold the most brush points Lucent "
+                                      "allows. Delete a brush mask to paint more."));
         return false;
     }
-    if (mask->strokes.back().points.size() >= kMaxStrokePoints) {
-        // The engine's bound for one stroke: the gesture paints on as a new stroke from here.
+    if (split) {
         if (mask->strokes.size() >= kMaxBrushStrokes) {
             stroke_->full = true;
+            session_.show_message(tr_text("Painting stopped: this brush mask holds the most strokes Lucent allows. "
+                                          "Add another brush mask to paint more."));
             return false;
         }
         EditBrushStroke next = mask->strokes.back();
         next.points = {next.points.back()};
+        // The finished part joins the strokes drawn once.
+        OverlayPaths settled = stroke_->settled.value<OverlayPaths>();
+        while (stroke_->settled_strokes < mask->strokes.size()) {
+            settled << stroke_path(mask->strokes[stroke_->settled_strokes++], mask->enabled);
+        }
+        stroke_->settled = QVariant::fromValue(settled);
         mask->strokes << next;
     }
     mask->strokes.back().points << tidy_point(normalized);
@@ -703,13 +740,38 @@ void MaskEditor::endStroke() {
 
 // ---- Outlines -----------------------------------------------------------------------------------------------
 
+OverlayPath MaskEditor::stroke_path(const EditBrushStroke& stroke, bool enabled) const {
+    QPolygonF shown;
+    shown.reserve(stroke.points.size());
+    for (const QPointF& point : stroke.points) {
+        shown << to_displayed(point);
+    }
+    return OverlayPath{shown, true, !enabled};
+}
+
+QVariant MaskEditor::stroke_outline() const {
+    OverlayPaths paths;
+    const EditMask* mask = selected_mask();
+    if (!stroke_ || !showing() || mask == nullptr || mask->id != stroke_->mask) {
+        return QVariant::fromValue(paths);
+    }
+    for (qsizetype i = stroke_->settled_strokes; i < mask->strokes.size(); ++i) {
+        paths << stroke_path(mask->strokes[i], mask->enabled);
+    }
+    return QVariant::fromValue(paths);
+}
+
 QVariant MaskEditor::outlines() const {
     OverlayPaths paths;
     const EditMask* mask = selected_mask();
     if (!showing() || mask == nullptr) {
         return QVariant::fromValue(paths);
     }
-    const bool moving = (handle_ && handle_->start.id == mask->id) || (stroke_ && stroke_->mask == mask->id);
+    if (stroke_ && stroke_->mask == mask->id) {
+        // Painting: the strokes before this gesture's, unchanged until it ends (strokeOutline draws it).
+        return stroke_->settled;
+    }
+    const bool moving = handle_ && handle_->start.id == mask->id;
     const FrameMaskOutline* framed = nullptr;
     for (const FrameMaskOutline& outline : session_.frame_masks()) {
         if (outline.id == mask->id) {

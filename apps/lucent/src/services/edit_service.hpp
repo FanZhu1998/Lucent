@@ -93,32 +93,34 @@ enum class EditControl : std::uint8_t {
 }
 
 // Copy and paste categories (the recipe contract's RecipeCategory values; stable). The editor offers
-// all seven (kAllSettingsCategories); Geometry is not selected by default (a crop rarely belongs on
-// another photo: kDefaultCategoryBits, the recipe contract's kDefaultRecipeCategories).
+// all eight (kAllSettingsCategories); Masks and Geometry are not selected by default (placed on one
+// photo's content: kDefaultCategoryBits, the recipe contract's kDefaultRecipeCategories).
 enum class SettingsCategory : std::uint8_t {
     WhiteBalance = 1,
     Exposure = 2,
     Tone = 3,      // contrast, tone curve, base look
     Color = 4,     // saturation, vibrance
-    Local = 5,     // highlights, shadows and the masks
+    Local = 5,     // highlights and shadows
     Detail = 6,    // chroma noise reduction
     Geometry = 7,  // crop, straighten, quarter turns
+    Masks = 8,     // the masks (pasting them replaces the photo's own)
 };
 
 [[nodiscard]] constexpr quint32 category_bit(SettingsCategory category) noexcept {
     return quint32{1} << static_cast<unsigned>(category);
 }
 
-inline constexpr std::array<SettingsCategory, 7> kAllSettingsCategories = {
-    SettingsCategory::WhiteBalance, SettingsCategory::Exposure, SettingsCategory::Tone,  SettingsCategory::Color,
-    SettingsCategory::Local,        SettingsCategory::Detail,   SettingsCategory::Geometry};
+inline constexpr std::array<SettingsCategory, 8> kAllSettingsCategories = {
+    SettingsCategory::WhiteBalance, SettingsCategory::Exposure, SettingsCategory::Tone,   SettingsCategory::Color,
+    SettingsCategory::Local,        SettingsCategory::Masks,    SettingsCategory::Detail, SettingsCategory::Geometry};
 
 inline constexpr quint32 kDefaultCategoryBits =
     category_bit(SettingsCategory::WhiteBalance) | category_bit(SettingsCategory::Exposure) |
     category_bit(SettingsCategory::Tone) | category_bit(SettingsCategory::Color) |
     category_bit(SettingsCategory::Local) | category_bit(SettingsCategory::Detail);
 
-inline constexpr quint32 kAllCategoryBits = kDefaultCategoryBits | category_bit(SettingsCategory::Geometry);
+inline constexpr quint32 kAllCategoryBits =
+    kDefaultCategoryBits | category_bit(SettingsCategory::Masks) | category_bit(SettingsCategory::Geometry);
 
 enum class WhiteBalanceMode : std::uint8_t {
     AsShot = 1,
@@ -344,7 +346,7 @@ enum class EditPart : std::uint8_t {
 
 // User-facing names: "White balance", "Exposure", "Contrast", "Highlights", "Shadows", "Tone curve",
 // "Saturation", "Vibrance", "Base look"; the categories "White balance", "Exposure", "Tone",
-// "Color", "Highlights, shadows and masks", "Noise reduction", "Crop and rotation"; the parts
+// "Color", "Highlights and shadows", "Masks", "Noise reduction", "Crop and rotation"; the parts
 // "Noise reduction", "Masks", "Crop and rotation"; the mask kinds "Brush", "Linear gradient",
 // "Radial gradient".
 [[nodiscard]] QString control_label(EditControl control);

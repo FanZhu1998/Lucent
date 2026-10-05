@@ -1,6 +1,8 @@
 // Conversions between the application services' types and the shell's (adapters/conversions.hpp).
 
 #include <QImage>
+#include <algorithm>
+#include <cmath>
 
 #include <gtest/gtest.h>
 
@@ -457,6 +459,37 @@ TEST(AdapterConversions, AMaskOverlayIsTheMasksWeightsThroughTheGeometry) {
     ASSERT_EQ(small.size(), QSize(200, 400));
     EXPECT_EQ(qAlpha(small.pixel(100, 200)), 153);  // the stroke runs down the middle
     EXPECT_EQ(qAlpha(small.pixel(20, 200)), 0);
+}
+
+// The overlay lies exactly on a frame with a small crop: its pixels are the frame's output pixels
+// mapped back through the frame's geometry (a crop rounded at the overlay's own scale was off by up
+// to an overlay pixel, 8 frame pixels here), and it keeps its resolution across the crop.
+TEST(AdapterConversions, AMaskOverlayLiesOnASmallCrop) {
+    const image::Size upright{8192, 5464};
+    engine::GeometrySetting geometry;
+    geometry.crop = engine::CropRect{0.40, 0.40, 0.45, 0.45};
+    auto mapping = engine::GeometryMapping::create(geometry, upright);
+    ASSERT_TRUE(mapping);
+    ASSERT_EQ(mapping->output_size(), (image::Size{409, 273}));
+    // A horizontal linear gradient whose transition band (0.1 of 0.05 of the width: 41 pixels) lies
+    // inside the crop.
+    engine::LocalAdjustment linear;
+    linear.id = 1;
+    linear.shape = engine::LinearGradientMask{{0.40, 0.42}, {0.45, 0.42}, 0.1};
+    linear.controls.exposure_ev = 1.0;
+    const QImage overlay = mask_overlay_image(linear, geometry, upright);
+    ASSERT_EQ(overlay.size(), QSize(409, 273));  // one overlay pixel per frame pixel
+    const double start = 0.40 * upright.width;
+    const double length = 0.05 * upright.width;
+    double worst = 0.0;
+    for (int x = 0; x < overlay.width(); ++x) {
+        // The frame's column x shows upright column 3277 + x (the crop's first pixel, rounded).
+        const double t = (3277.0 + x + 0.5 - start) / length;
+        const double u = std::clamp((t - 0.45) / 0.1, 0.0, 1.0);
+        const double expected = (1.0 - u * u * (3.0 - 2.0 * u)) * 153.0;
+        worst = std::max(worst, std::abs(qAlpha(overlay.pixel(x, 100)) - expected));
+    }
+    EXPECT_LT(worst, 4.0);
 }
 
 }  // namespace
