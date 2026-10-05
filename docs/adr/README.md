@@ -28,6 +28,7 @@ product authority. The current module structure is described in
 | [0012](0012-durable-batch-and-workers.md) | Durable batch export: worker processes, memory-budgeted scheduling, journaled publication and recovery | Accepted | 2026-10-04 | W7 |
 | [0013](0013-automatic-settings-integration.md) | Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches | Accepted (amended for the W8 integration closure) | 2026-10-04 | W8 application wiring |
 | [0014](0014-dng-opcode-processing.md) | DNG opcode processing at the stages the specification defines (amends 0005 decision 8, 0006 sections 1 and 5) | Accepted | 2026-10-04 | W9 |
+| [0015](0015-geometry-masks-and-chroma-denoise.md) | Geometry, masks and guided chroma denoising: DevelopSettings v2, coordinate frames, operation order and preview tolerances (amends 0010) | Accepted | 2026-10-05 | W9 part 2 |
 
 ## Conventions
 
