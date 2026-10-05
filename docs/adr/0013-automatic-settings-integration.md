@@ -1,8 +1,11 @@
 # ADR 0013: Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-04: "Amendment: W8 integration closure" below)
 - **Date:** 2026-10-04
-- **Workflow:** W8 application wiring (services), after the W8 core (ADR 0011) and W7 (ADR 0012)
+- **Workflow:** W8 application wiring (services and UI), after the W8 core (ADR 0011) and W7 (ADR 0012)
+
+Sections 1-12 describe the integration as it was decided. Where the closing review found them wrong
+or incomplete, the text is corrected in place with a note, and the amendment records what changed.
 
 ## Context
 
@@ -57,7 +60,8 @@ The blueprint fixes the behaviour:
    appearance, the attempts of the check and the effective one.
 
 2. **The full-resolution final check** (blueprint step 7, ADR 0011 item 22). The file is decoded
-   again; its source diagnostics are measured at full resolution (the saturation coverage of the
+   again (corrected by the closing amendment: the run's one decode is reused, a copy of the decoded
+   samples being kept through the analysis); its source diagnostics are measured at full resolution (the saturation coverage of the
    upright full-size grid, the noise model) before one interactive stage one (as shot) consumes it;
    `make_image_context()` builds the context; the analysis' own policy context is rebuilt from the
    result (the tone proposal, the white-balance evidence with its neutral-surface mask at full
@@ -68,7 +72,8 @@ The blueprint fixes the behaviour:
    baseline itself (as shot for unlocked controls, locked controls kept: locks hold through the
    fallback). The first rung that passes is the effective attempt. The baseline fails only when it is
    numerically invalid: then no attempt is effective and the photo fails (`app.auto.check`,
-   `app.batch.auto.check`); there is never a loop. Native-crop checks are not repeated (the analysis
+   `app.batch.auto.check`; corrected by the closing amendment: also when the full-resolution baseline
+   reference itself is invalid, which first ended as an Internal error); there is never a loop. Native-crop checks are not repeated (the analysis
    ran them on native-resolution pixels); the check judges the global metrics at full resolution.
    It renders the interactive stage one the analysis judged (highlights clipped after demosaicing);
    the export render clips before demosaicing, which differs within two pixels of saturated sites
@@ -120,7 +125,9 @@ The blueprint fixes the behaviour:
 7. **Interactive Auto** (`application/auto_service.hpp`). `AutoService::run(item)` queues a task on the
    executor's Background lane (never the UI thread): it reads the committed settings, checks that the
    file is still the library's (SourceChanged), waits for memory admission with
-   `estimate_automatic_memory()` (a full-resolution lease), runs (1)-(2) in process and applies (3).
+   `estimate_automatic_memory()` (a full-resolution lease; corrected by the closing amendment: the
+   lease is turned into retained memory at once, so the run keeps its bytes but not the render
+   place), runs (1)-(2) in process and applies (3).
    Progress (analysing, checking, saving) and completion are observable; `cancel()` stops it at the
    next safe point and nothing is written; one run per item at a time (`app.auto.busy`).
 
@@ -170,7 +177,8 @@ The blueprint fixes the behaviour:
     decisions do not depend on the computer; Lucent.exe's in-process Auto keeps the runtime's choice
     (a last-bit difference can only resolve a near-tie differently).
 
-11. **Memory.** `estimate_automatic_memory()` is the larger of the analysis' estimate and the final
+11. **Memory.** `estimate_automatic_memory()` is the larger of the analysis' estimate (with the copy
+    of the decoded samples the check reuses, since the closing amendment) and the final
     check's (stage one with the full-size coverage map, then stage one kept, the image context at 9
     and the baseline features at 17 bytes per pixel, and one stage two). The batch scheduler
     estimates analyze attempts with `BatchMemoryOptions::default_auto_bytes_per_pixel` (72) until one
@@ -204,15 +212,19 @@ full-resolution stage-two renders and measurements, at about 60 bytes per pixel 
 - The export identity of an automatic job is the effective revision's by construction: the catalog
   refuses publication before the freeze, and the freeze rebinds the identity once, in the transaction
   that writes the revisions.
-- The pre-pass is durable and restartable: an analysis, once recorded, is never repeated; the
-  restart test kills the service in the middle of it.
-- Cost: an automatic photo is decoded three times (analysis, final check, export) and, with
-  consistency, four (a second analysis); the final check needs about 2.6 GB for a 45 MP photo, so on
-  the 12 GB reference machine a second worker is admitted only next to small photos. Re-running Auto
-  adds revisions (each run is a decision of its own). Speed-ups that keep the decisions: reusing the
-  analysis decode for the check (keeping a copy of the decoded samples), skipping the check's
-  re-render when the choice is the baseline, and the export reusing the check's stage one; none is
-  needed for correctness.
+- The pre-pass is durable and restartable: an analysis, once recorded, is never repeated. (Corrected:
+  the restart test closes the service gracefully in the middle of it; the crash tests that end the
+  coordinator process after an analysis was answered, recorded or frozen were added by the closing
+  amendment.)
+- Cost: an automatic photo is decoded twice (analysis and final check share one decode since the
+  closing amendment; the export decodes again) and, with consistency, three times (a second
+  analysis); the final check needs about 2.6 GB for a 45 MP photo, so on the 12 GB reference machine
+  a second worker is admitted only next to small photos. Re-running Auto adds revisions (each run is a
+  decision of its own). (Corrected: the check's dominant cost is its two full-resolution
+  `measure_render()` calls, about 3.9 s of a 7.4 s R5 run, not the second decode; the export cannot
+  reuse the check's stage one, which is the interactive kind at the as-shot white balance while the
+  export renders the Export kind at the settings' white balance (ADR 0010), so that would change
+  exported pixels. The speed-ups that keep every decision are listed in the amendment.)
 - A Failed job that is retried after the pre-pass joins the related-shot plan late: members frozen
   before it were regularised without it (the plan is recomputed when the document count changes).
 - Grouping depends on capture times; synthetic test photos use the user-group override.
@@ -241,3 +253,140 @@ full-resolution stage-two renders and measurements, at about 60 bytes per pixel 
 - **Interactive Auto in a worker process**: crash isolation for an in-process analysis of the photo
   being edited is not needed (the editor already renders it in process), and the in-process run
   shares the executor's memory admission with the editor's previews.
+
+## Amendment: W8 integration closure (2026-10-04) - review fixes and Auto speed-ups
+
+### Context
+
+Two closing reviews (data and services; UX and performance, with a scratch harness over the build's
+libraries and the real `Lucent.exe` automation) checked the integration against blueprint sections
+2, 6 (steps 5-7), 7 and 8, after main's W9 DNG-opcode work (decoded-RAW contract 1.3, ADR 0014) was
+merged in. The one high finding: the interactive Auto held the executor's only render place for its
+whole run, so while it ran the editor showed nothing for another photo, never refined a settled
+white balance and never rendered 100 % (a new photo's first final frame took 7.6 s instead of 0.7 s
+next to an R5 Auto). The others concerned anchors, the freeze racing the editor, redo, durability
+of the "edited meanwhile" outcome, cancellation, recovery, cost and wording.
+
+### Decision
+
+13. **Auto holds memory, not the render place.** `AutoService` is admitted with its estimate as
+    before and then turns the lease into retained memory (`AdmissionLease::retain_only`, the
+    mechanism the develop sessions use for their cached stage ones): the budget still counts the
+    run's bytes, but the editor's stage-one builds, refines and 100 % views are admitted beside it
+    when they fit (2646 MiB for an R5 Auto plus 725 MiB for an R5 refine or 100 % stage one stays
+    within 4096 MiB). A claim that does not fit reports the new stage `WaitingForMemory` ("Waiting
+    for memory: other photos are being rendered…") and calls `AutoServiceOptions::make_room` once;
+    `Lucent.exe` releases the edit sessions' cached full-resolution stage ones there (rebuilt on
+    demand), so a 61 MP photo's Auto no longer waits behind its own 100 % view. After the run the
+    file is checked again (`SourceChanged`, nothing written, when it changed during the run). The
+    service keeps the results of its last `kKeptAutoResults` (16) finished runs only.
+
+14. **One decode; a baseline choice is checked for validity only.** `run_automatic()` checks the
+    memory of the whole run before the analysis, keeps a copy of the decoded samples while
+    `AutoSession::open()` consumes the original, and hands the copy to the final check: no second
+    probe and decode. When the choice is the baseline (the analysis kept the camera's rendering, or
+    every searched control is locked) the ladder is that one rung, and `evaluate_candidate()` can
+    fail a baseline on numerical validity only: the check renders it once and scans it for
+    non-finite samples, an empty render and non-monotone curves (the same outcome by construction;
+    its check values are not recorded). A full-resolution baseline reference that is itself invalid
+    ends the ladder as a failed check (`check_failed()`, `app.auto.check`, `app.batch.auto.check`),
+    not as an Internal error. Progress follows measured cost (the analysis a quarter of the run,
+    then steps after the check's source pass, stage one, context, baseline render and measurement,
+    and each attempt).
+
+15. **Anchors keep their settings.** In a batch that keeps related shots consistent, a caller-marked
+    anchor (`BatchItem::anchor`) is not analysed again after the pre-pass: `anchor_run()` turns its
+    pre-pass analysis into one effective attempt of kind `Anchor` ("anchor", final check `not_run`)
+    with its starting settings, confidence 1, no diagnostics of the independent choice, and the
+    target of the group its look sets as its consistency record. It is frozen like any automatic
+    job (one Auto revision with the submission recipe's settings, so its export identity and
+    exported recipe are the submission's); the other members are regularised towards its look. The
+    report marks it (`AutomaticReport::anchor`), the history names it "Auto batch: kept as anchor".
+
+16. **The freeze goes through the recipe service.** `RecipeService::write_automatic(item, base,
+    write)` runs the batch's freeze transaction under the service's lock with `make_current` = the
+    item shows the job's starting revision and no gesture is pending (the editor's rule, item 3);
+    `apply_automatic()` is the same call over the store. A gesture in progress therefore keeps its
+    own base (the automatic revisions are a branch) and no commit can interleave with the write.
+
+17. **A branch says so, durably; redo follows the photographer.** The stores append the note field
+    `branch=kept` (`kAutomaticBranchNote`) to every automatic revision written as a branch. Batch
+    receipts (also after a restart), the report's review notes and the Analyse-only reason read it
+    ("kept in the history (the photo was edited meanwhile, so they were not applied)";
+    `AutomaticReport::branch`). `RecipeService::redo()` returns to the child `undo()` last left in
+    the session when it is a child of the current revision, otherwise to the newest child that is not
+    such a branch, otherwise to the newest child: undoing the photographer's edit and redoing never
+    lands on an Auto result the app had decided not to apply.
+
+18. **Nothing is written after a cancellation; recovery and plans degrade gracefully.** The
+    attempt checks the batch's stop state after a worker's analysis arrives (new test point
+    "answered") and before anything of it is recorded; an anchor's freeze is checked the same way.
+    A recorded pre-pass document this build cannot read (another document version, after an update)
+    leaves its job out of the related-shot plan (it is developed on its own) instead of failing the
+    plan. Recovery no longer defers an interrupted job of an Analyse-only batch while its folder is
+    out of reach: such a batch publishes nothing there but its report.
+
+19. **Wording.** `describe_auto_flag(kFlagLocksPreventedTargets)` is the generic "Locked controls
+    kept Auto from its usual targets." (the specifics are the locks report's, listed once); a
+    baseline fallback is worded as such in the panel's review box, which the fallback line no longer
+    repeats (it says why, as plain text that keyboard and screen-reader users reach); "every control
+    is locked" (`kEveryControlLockedNote`) is information, not a lock that prevented something; a
+    revision that changed no control shows no confidence; the library card's flag line no longer
+    repeats the Review badge; the HTML report's details cell has no stray line break; the Analyse-
+    only dialog is titled "Analyse batch", asks for a report folder and hides the export settings.
+
+### Measurements (closure)
+
+Reference laptop, `dev` (RelWithDebInfo), idle machine, 2026-10-04; "before" is HEAD 1d34103's
+build, "after" this closure's, alternated on the same files.
+
+| Run | Before | After |
+|---|---|---|
+| `run_automatic`, Canon EOS R5 (+0.77 EV, confidence 0.90 in both), 3 alternated pairs | 7.33-7.44 s (check 5.44-5.58 s) | 6.82-6.93 s (check 4.93-5.04 s) |
+| `run_automatic`, Nikon Z 6 kept as shot | 3.72 s (check 2.19 s), peak working set 1442 MB | 1.89 s (check 0.38 s), 574 MB |
+| `Lucent.exe --auto`, R5 | 8.3 s | 7.3 s |
+| `Lucent.exe --auto`, R5, every control locked | 5.1 s | 2.65 s |
+| A new photo's first final frame (Nikon Z 6) opened 1.5 s into an R5 Auto | 7.65 s (Auto: 9.1 s) | 0.90 s (Auto: 7.3 s; idle 0.69 s) |
+| Sony A7R V (61 MP) Auto started while the photo is shown at 100 % | waited until the 100 % stage one was released (20 s in the harness, never in the app while at 100 %) | starts at once (the stage one is released and rebuilt on demand) |
+
+Every decision is unchanged (same choices, confidences and checks); the speed-ups only remove work
+whose outcome was already determined.
+
+### Review findings and their resolution
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| AUX-01 Auto holds the render place | high | Fixed: item 13; tests `TheRunHoldsItsMemoryButNotTheRenderPlace` and the harness numbers above |
+| AUT-1 anchors re-optimised | medium | Fixed: item 15; `AnAnchorKeepsItsSettingsAndSetsItsGroupsLook` |
+| AUT-2 freeze behind the recipe service | medium | Fixed: item 16; `AGestureInProgressKeepsItsBaseWhenAutomaticRevisionsArrive`, `APhotoEditedDuringTheBatchKeepsItsEditAndTheResultIsABranch` |
+| AUT-3, AUX-05 redo lands on the branch | medium, low | Fixed: item 17; `RedoReturnsToThePhotographersEditNotToAnAutomaticBranch` (in session and after a restart) |
+| AUX-02 waiting on a 100 % view; refused above about 69 MP | medium | The wait is fixed (item 13, `ARunWaitingForMemoryAsksForRoomOnce`). The ceiling is deferred to W12: the check's full-resolution context and baseline features (26 bytes per pixel, the analysis library's `measure_render()` contract) need a banded or reduced-precision measurement, a metric-contract change |
+| AUX-03 the check re-decodes and rebuilds the stage one | medium | The second probe and decode are removed (item 14, about 0.5 s of 7.4 s on the R5). Keeping the analysis' own stage one, folding the upright grid into its source pass and skipping local contrast in the check's measurements need options inside `lucent_analysis` (`AutoSession`, `measure_render`) and are deferred with the `measure_render()` speed-up (52 % of the run, a metric-contract version) to the W12 performance work |
+| AUX-04 a no-change result pays the full check | medium | Fixed: item 14 (validity scan) and item 19 (no confidence without a change, "everything locked" as information); the revision is still written: it is the run's record (its locks report and review), and the history names it "Auto" with no change |
+| AUT-4 the branch outcome is not stored | low | Fixed: item 17 |
+| AUT-5 no crash test for the pre-pass or the freeze | low | Fixed: `lucent_batch_test_coordinator` gained automatic and related-shot modes; `AutoRecovery` ends it at "answered" (independent and consistent), "analysed" and "frozen" and checks one freeze per photo, recorded analyses unchanged and receipts bound to the effective revisions |
+| AUT-6 an invalid baseline is an Internal error | low | Fixed: item 14; `AnInvalidBaselineFailsTheCheckNotTheRun` (test hook `AutoRunOptions::test_invalid_baseline`) |
+| AUT-7 identity checked only before the run | low | Fixed: item 13; `AFileThatChangesDuringTheRunGetsNoRevision` |
+| AUT-8 locks report covers brightness only | low | Deferred to the Natural v1 calibration (ADR 0011, pending part of W8): the analysis makes no white-balance proposal when white balance is locked (`AutoResult::white_balance` is for unlocked white balance), so a prevented correction cannot be judged without an analysis change; the brightness findings are documented as measured on the optimiser's choice |
+| AUT-9 the pre-pass needs an exact document version | low | Fixed: item 18; `AnAnalysisThisBuildCannotReadIsLeftOutOfThePlan` |
+| AUT-10 a cancellation does not stop the freeze | low | Fixed: item 18; `NothingIsWrittenAfterACancellation` |
+| AUT-11 recovery holds Analyse-only jobs back | low | Fixed: item 18; `AutoRecoveryAnalyzeOnly.IsNotHeldBackByAnUnreachableReportFolder` |
+| AUX-06 duplicate or conflicting review wording | low | Fixed: item 19; conversion, model and QML tests |
+| AUX-07 Analyse only asks for export settings | low | Fixed: item 19; model and QML tests |
+| AUX-08 progress not proportional to time | low | Fixed: item 14 (R5: 25 % after 1.9 s, 50 % after 3.3 s of 6.8 s) |
+| AUX-09 every result kept for the process' life | low | Fixed: item 13; `OnlyTheLastResultsAreKept` |
+| AUX-10 two progress bars; hover-only details | low | Fixed: the progress bar alone carries the stage as its name; the failed checks are plain text |
+| (new) `WorkerServer.MemoryCountersDescribeThisProcess` failed once (peak working set 4 KiB below the current one) | low | Fixed: `GetProcessMemoryInfo` does not read its counters atomically; `current_process_memory()` never reports a peak below the current value |
+| AUX-11 documentation inaccuracies | low | Fixed: Consequences and items 2, 7 and 11 corrected in place; `edit_session.hpp`, `auto_settings_model.hpp`, `presentation.hpp` and the plan's cost note ("for large photos about twice as long as their export") |
+
+### Consequences (closure)
+
+- Interactive editing stays usable while Auto runs: only memory is shared, and the budget still
+  bounds the sum.
+- The decode copy costs the raw frame's bytes during the analysis (about 90 MB for 45 MP), counted
+  by `estimate_automatic_memory()`; it never raises the R5's estimate (the check's phase dominates).
+- An anchor's revision is a record of its role, not a decision: its confidence is 1 and it is never
+  checked, as the photographer's own look is exported unchanged.
+- Remaining costs, deferred to W12: `measure_render()` (two calls, about 3.9 s of the R5's run), the
+  check's stage one and upright source pass that the analysis already computed, and the check's
+  26 bytes per pixel that refuse Auto above about 69 MP (GFX100-class files) on the 4 GiB budget.
