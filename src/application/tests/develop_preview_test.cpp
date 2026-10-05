@@ -1,14 +1,18 @@
 // DevelopPreviewService (develop_preview.hpp): latest-wins stage-two renders with stale-frame
 // suppression, the refine rule, full resolution on demand, histogram and clipping masks, memory
-// admission, lifetime; with a scripted renderer (deterministic timing) and with the engine on
-// synthetic DNGs. Also pins the application's export render to engine::render_develop_file.
+// admission, lifetime; the W9 session caches (brush rasters, the denoised image) as retained
+// memory, frames' geometry and mask overlays, coalesced mask strokes; with a scripted renderer
+// (deterministic timing) and with the engine on synthetic DNGs. Also pins the application's export
+// render to engine::render_develop_file.
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <cmath>
 #include <optional>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -122,6 +126,10 @@ TEST_F(DevelopPreviewTest, FirstRequestBuildsTheProxyAndDeliversAFinalFrame) {
     ASSERT_EQ(frame.clipping.flags.size(), 7500u);
     EXPECT_EQ(frame.summary.rendered_size, (image::Size{400, 300}));
     EXPECT_GT(frame.latency_seconds, 0.0);
+    ASSERT_TRUE(frame.geometry);  // the identity geometry of the proxy
+    EXPECT_EQ(frame.geometry->upright_size(), (image::Size{100, 75}));
+    EXPECT_EQ(frame.geometry->output_size(), (image::Size{100, 75}));
+    EXPECT_TRUE(frame.masks.empty());
 
     auto stats = service_->stats(item_);
     ASSERT_TRUE(stats);
@@ -469,6 +477,186 @@ TEST_F(DevelopEngineTest, FullResolutionIsBuiltOnDemandAndMatchesTheExportRender
     EXPECT_EQ(stats->full_bytes, 0u);
     EXPECT_EQ(stats->retained_bytes, stats->proxy_bytes);
     EXPECT_EQ(executor_->admission().stats().retained_bytes, stats->proxy_bytes);
+}
+
+// Settings with chroma denoising and a brush mask (both fill a session cache) and a radial mask.
+engine::DevelopSettings cached_settings() {
+    engine::DevelopSettings s;
+    s.chroma_denoise = engine::ChromaDenoiseSetting{0.6, 8.0};
+    engine::LocalAdjustment brush;
+    brush.id = 1;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.08, 0.5, 1.0,
+                                                         {{0.2, 0.3}, {0.5, 0.5}, {0.8, 0.4}}}}};
+    brush.controls.exposure_ev = 0.7;
+    engine::LocalAdjustment radial;
+    radial.id = 2;
+    radial.shape = engine::RadialGradientMask{{0.4, 0.6}, 0.2, 0.1, 30.0, 0.5};
+    radial.controls.saturation = -0.4;
+    s.local_adjustments = {brush, radial};
+    return s;
+}
+
+TEST_F(DevelopEngineTest, SessionCachesAreReusedAndCountedAsRetainedMemory) {
+    const engine::DevelopSettings plain;
+    auto first_plain = service_->request(item_, view_of(plain, true));
+    ASSERT_TRUE(first_plain);
+    auto plain_frame = final_frame(*first_plain);
+    ASSERT_TRUE(plain_frame);
+    auto stats = service_->stats(item_);
+    ASSERT_TRUE(stats);
+    EXPECT_EQ(stats->cache_bytes, 0u);  // nothing to keep as shot
+    EXPECT_EQ(stats->retained_bytes, stats->proxy_bytes);
+
+    // Denoising and a brush mask: the denoised image and the brush raster are kept.
+    engine::DevelopSettings settings = cached_settings();
+    auto generation = service_->request(item_, view_of(settings, true));
+    ASSERT_TRUE(generation);
+    auto first = final_frame(*generation);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(first->report->chroma_denoise);
+    ASSERT_TRUE(first->report->local_adjustments);
+    EXPECT_EQ(first->report->local_adjustments->rasterized, 1u);
+    // The settings-aware estimate claims the denoising's working memory.
+    EXPECT_GT(first->summary.estimated_peak_bytes, plain_frame->summary.estimated_peak_bytes);
+    stats = service_->stats(item_);
+    ASSERT_TRUE(stats);
+    // The 64 x 48 proxy's denoised image (3 floats per pixel) and the brush raster.
+    EXPECT_GE(stats->cache_bytes, 64u * 48u * 3u * sizeof(float));
+    EXPECT_EQ(stats->retained_bytes, stats->proxy_bytes + stats->cache_bytes);
+    EXPECT_EQ(executor_->admission().stats().retained_bytes, stats->retained_bytes);
+    EXPECT_EQ(executor_->admission().stats().active, 0u);
+
+    // A control after the denoising moves: neither is made again, and the pixels are those of a
+    // render without caches.
+    settings.contrast = 0.3;
+    settings.local_adjustments[1].controls.saturation = 0.2;
+    auto moved = service_->request(item_, view_of(settings, true));
+    ASSERT_TRUE(moved);
+    auto reused = final_frame(*moved);
+    ASSERT_TRUE(reused);
+    EXPECT_EQ(reused->report->local_adjustments->rasterized, 0u);
+    EXPECT_EQ(reused->report->local_adjustments->cache_hits, 1u);
+    stats = service_->stats(item_);
+    EXPECT_GE(stats->mask_cache_hits, 1u);
+    EXPECT_GE(stats->stage_two_cache_hits, 1u);
+    EXPECT_EQ(stats->retained_bytes, stats->proxy_bytes + stats->cache_bytes);
+    {
+        DevelopPreviewOptions uncached;
+        uncached.proxy_long_edge = 64;
+        uncached.mask_cache_bytes = 0;
+        uncached.stage_two_cache_bytes = 0;
+        DevelopPreviewService other(library_, *executor_, renderer_, uncached);
+        ts::Collector<DevelopEvent> events;
+        ASSERT_TRUE(other.open(item_, [&](const DevelopEvent& e) { events.add(e); }));
+        // Built at the same (as-shot) white balance as the cached session's proxy.
+        ASSERT_TRUE(other.request(item_, view_of(settings, true)));
+        ASSERT_TRUE(eventually([&] {
+            for (const DevelopEvent& e : events.values()) {
+                if (e.kind == DevelopEvent::Kind::Frame && e.frame->phase == DevelopPhase::Final) {
+                    return true;
+                }
+            }
+            return false;
+        }));
+        std::shared_ptr<const DevelopFrame> fresh;
+        for (const DevelopEvent& e : events.values()) {
+            if (e.kind == DevelopEvent::Kind::Frame && e.frame->phase == DevelopPhase::Final) {
+                fresh = e.frame;
+            }
+        }
+        ASSERT_TRUE(fresh);
+        EXPECT_EQ(fresh->report->local_adjustments->rasterized, 1u);
+        EXPECT_EQ(fresh->image.rgb, reused->image.rgb);
+        EXPECT_EQ(other.stats(item_)->cache_bytes, 0u);
+        other.close(item_);
+    }
+
+    // Closing returns everything.
+    service_->close(item_);
+    EXPECT_EQ(executor_->admission().stats().retained_bytes, 0u);
+}
+
+TEST_F(DevelopEngineTest, FramesCarryTheirGeometryAndMaskOutlines) {
+    engine::DevelopSettings settings = cached_settings();
+    settings.geometry.crop = engine::CropRect{0.25, 0.0, 0.75, 1.0};
+    settings.geometry.quarter_turns = 1;
+    auto generation = service_->request(item_, view_of(settings, true));
+    ASSERT_TRUE(generation);
+    auto frame = final_frame(*generation);
+    ASSERT_TRUE(frame);
+    // The 64 x 48 proxy cropped to 32 x 48 and turned: 48 x 32.
+    EXPECT_EQ(frame->image.width, 48);
+    EXPECT_EQ(frame->image.height, 32);
+    ASSERT_TRUE(frame->geometry);
+    EXPECT_EQ(frame->geometry->upright_size(), (image::Size{64, 48}));
+    EXPECT_EQ(frame->geometry->output_size(), (image::Size{48, 32}));
+    EXPECT_EQ(frame->report->upright_size, (image::Size{64, 48}));
+    EXPECT_EQ(frame->report->output_size, (image::Size{48, 32}));
+    // The full-resolution size of the developed image: 256 x 192 cropped to 128 x 192, turned.
+    EXPECT_EQ(frame->summary.rendered_size, (image::Size{192, 128}));
+    // The outlines, in the frame's pixels, in the settings' order.
+    ASSERT_EQ(frame->masks.size(), 2u);
+    EXPECT_EQ(frame->masks[0].id, 1u);
+    EXPECT_EQ(frame->masks[0].kind, engine::MaskKind::Brush);
+    ASSERT_EQ(frame->masks[0].polylines.size(), 1u);  // the stroke's centre line
+    ASSERT_EQ(frame->masks[0].polylines[0].size(), 3u);
+    const engine::GeometryMapping& mapping = *frame->geometry;
+    const image::PointD middle = mapping.output_from_normalized(engine::MaskPoint{0.5, 0.5});
+    EXPECT_NEAR(frame->masks[0].polylines[0][1].x, middle.x, 1e-9);
+    EXPECT_NEAR(frame->masks[0].polylines[0][1].y, middle.y, 1e-9);
+    // A pointer position maps back to the brush point it shows.
+    const engine::MaskPoint back = mapping.normalized_from_output(frame->masks[0].polylines[0][1]);
+    EXPECT_NEAR(back.x, 0.5, 1e-9);
+    EXPECT_NEAR(back.y, 0.5, 1e-9);
+    EXPECT_EQ(frame->masks[1].kind, engine::MaskKind::RadialGradient);
+    EXPECT_EQ(frame->masks[1].polylines.size(), 2u);  // the ellipse and its feather's inner ellipse
+    for (const MaskOverlay& overlay : frame->masks) {
+        for (const auto& line : overlay.polylines) {
+            for (const image::PointD& p : line) {
+                EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y));
+            }
+        }
+    }
+}
+
+TEST_F(DevelopEngineTest, AMaskStrokesPositionsAreCoalescedLikeASliderGesture) {
+    ASSERT_TRUE(service_->request(item_, view_of(engine::DevelopSettings{}, true)));
+    ASSERT_TRUE(eventually([&] { return frames_of(1) >= 1; }));
+    // 40 pointer positions of one stroke arrive faster than the proxy renders them.
+    engine::DevelopSettings stroke;
+    engine::LocalAdjustment brush;
+    brush.id = 1;
+    brush.controls.exposure_ev = 1.0;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{}}};
+    stroke.local_adjustments = {brush};
+    auto& points = std::get<engine::BrushMask>(stroke.local_adjustments[0].shape).strokes[0].points;
+    std::uint64_t last = 0;
+    for (int step = 0; step < 40; ++step) {
+        points.push_back(engine::MaskPoint{0.1 + 0.02 * step, 0.5});
+        DevelopView view = view_of(stroke, false);
+        view.transient_generation = static_cast<std::uint64_t>(step + 1);
+        auto generation = service_->request(item_, view);
+        ASSERT_TRUE(generation);
+        last = *generation;
+    }
+    // The end of the stroke settles it.
+    auto settled = service_->request(item_, view_of(stroke, true));
+    ASSERT_TRUE(settled);
+    auto frame = final_frame(*settled);
+    ASSERT_TRUE(frame);
+    EXPECT_GT(*settled, last);
+    const auto stats = service_->stats(item_);
+    ASSERT_TRUE(stats);
+    EXPECT_EQ(stats->requests, 42u);
+    // Every position was either rendered or replaced by a newer one before its render (latest
+    // wins: how many depends on the machine's speed), and frames came in order.
+    EXPECT_EQ(stats->proxy_renders + stats->requests_coalesced, stats->requests);
+    std::uint64_t previous = 0;
+    for (const DevelopEvent& e : events_.values()) {
+        ASSERT_EQ(e.kind, DevelopEvent::Kind::Frame);
+        EXPECT_GE(e.generation, previous);
+        previous = e.generation;
+    }
 }
 
 TEST(EngineRenderer, TheExportRenderIsRenderDevelopFile) {

@@ -71,24 +71,37 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         bool queued = false;  // a flush is queued on the command thread
     };
 
+    // A develop request of a session.
+    struct Request {
+        quint64 token = 0;
+        bool uncropped = false;  // rendered without the crop (the crop tool is open)
+    };
+
     struct Session {
         quint64 id = 0;  // tells a reopened session of the same item from the closed one
         bool open = false;  // the develop session is open
         bool full = false;  // 100 %
         bool want_before = false;
+        bool crop_editing = false;  // render without the crop (set_crop_editing)
+        quint32 mask_overlay = 0;   // mask whose weights the frames show (0: none)
         engine::DevelopSettings committed;  // what to_develop_settings() builds on
         // Develop requests of the session.
-        std::map<quint64, quint64> tokens;  // generation -> token
+        std::map<quint64, Request> tokens;  // generation -> request
         quint64 current_generation = 0;     // newest request of the photo's own settings
         bool current_settled = true;
         bool current_done = true;           // its last frame (Final, or Quick when unsettled) arrived
         quint64 before_generation = 0;      // outstanding as-shot request (0: none)
         bool before_valid = false;
         bool before_failed = false;
+        // The geometry of the current request's pixels: the as-shot frame for before/after is
+        // rendered with it (so the two line up), and again when it changes.
+        engine::GeometrySetting shown_geometry;
+        engine::GeometrySetting before_geometry;
         bool reported_final = false;
-        // The newest current frame, for the clipping overlay toggle.
+        // The newest current frame, for the clipping and mask overlay toggles.
         EditFramePtr last_frame;
         std::shared_ptr<const app::ClippingMask> last_mask;
+        std::shared_ptr<const engine::DevelopReport> last_report;
         // The current revision of the newest published state (0: as shot), once one was published.
         quint64 revision = 0;
         bool revision_known = false;
@@ -400,6 +413,10 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         }
         app::DevelopView view;
         view.settings = state.settings;
+        if (s.crop_editing) {
+            // The crop tool shows the whole straightened image under its overlay.
+            view.settings.geometry.crop = engine::CropRect{};
+        }
         view.revision = state.transient ? std::nullopt : state.revision;
         view.transient_generation = state.transient ? state.transient_generation : 0;
         view.settled = !state.transient;
@@ -411,10 +428,14 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             update_busy_locked();
             return;
         }
-        s.tokens[*generation] = token;
+        s.tokens[*generation] = Request{token, s.crop_editing};
         s.current_generation = *generation;
         s.current_settled = view.settled;
         s.current_done = false;
+        s.shown_geometry = view.settings.geometry;
+        if (s.before_valid && !(s.before_geometry == s.shown_geometry)) {
+            s.before_valid = false;  // rendered again once the current settings are
+        }
         update_busy_locked();
     }
 
@@ -424,8 +445,9 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             s.before_generation != 0 || !s.current_done) {
             return;
         }
-        app::DevelopView view;  // default settings: as shot
-        view.settled = false;   // the proxy corrected in stage two: no refine
+        app::DevelopView view;  // as shot, with the geometry shown (so before and after line up)
+        view.settings.geometry = s.shown_geometry;
+        view.settled = false;  // the proxy corrected in stage two: no refine
         view.quality = app::PreviewQuality::fit(app::kDefaultProxyLongEdge);
         auto generation = develop->request(app_id(item), view);
         if (!generation) {
@@ -433,7 +455,8 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             return;
         }
         s.before_generation = *generation;
-        s.tokens[*generation] = 0;
+        s.before_geometry = s.shown_geometry;
+        s.tokens[*generation] = Request{0, false};
         update_busy_locked();
     }
 
@@ -636,10 +659,11 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             return;
         }
         const quint64 generation = event.generation;
-        quint64 token = 0;
+        Request request;
         if (const auto found = s->tokens.find(generation); found != s->tokens.end()) {
-            token = found->second;
+            request = found->second;
         }
+        const quint64 token = request.token;
         s->tokens.erase(s->tokens.begin(), s->tokens.lower_bound(generation));
         const bool before = s->before_generation != 0 && generation == s->before_generation;
 
@@ -682,20 +706,40 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             s->reported_final = true;
         }
         const bool overlay = clipping && !before;
+        const quint32 mask_overlay = before ? 0 : s->mask_overlay;
+        const bool uncropped = request.uncropped;
         maybe_request_before_locked(item, *s);
         update_busy_locked();
         conversions->start([weak = weak_from_this(), item, id, frame = std::move(frame), token, before, overlay,
-                            report_final] {
+                            mask_overlay, uncropped, report_final] {
             if (auto self = weak.lock()) {
-                self->convert(item, id, *frame, token, before, overlay, report_final);
+                self->convert(item, id, *frame, token, before, overlay, mask_overlay, uncropped, report_final);
             }
         });
     }
 
+    // The weight overlay of mask `mask_id` for a frame rendered as `report` says (null when the
+    // settings have no such mask).
+    static QImage mask_overlay_for(const engine::DevelopReport& report, quint32 mask_id) {
+        for (const engine::LocalAdjustment& adjustment : report.settings.local_adjustments) {
+            if (adjustment.id == mask_id) {
+                return mask_overlay_image(adjustment, report.settings.geometry, report.upright_size);
+            }
+        }
+        return {};
+    }
+
     // Conversion thread, in delivery order.
     void convert(ItemId item, quint64 id, const app::DevelopFrame& frame, quint64 token, bool before, bool overlay,
-                 bool report_final) {
+                 quint32 mask_overlay, bool uncropped, bool report_final) {
         std::shared_ptr<EditFrame> out = to_edit_frame(frame, overlay);
+        if (out) {
+            out->uncropped = uncropped;
+            if (mask_overlay != 0 && frame.report) {
+                out->mask_overlay = mask_overlay_for(*frame.report, mask_overlay);
+                out->mask_overlay_id = out->mask_overlay.isNull() ? 0 : mask_overlay;
+            }
+        }
         std::shared_ptr<const app::ClippingMask> mask;
         if (out && !before) {
             try {
@@ -722,6 +766,7 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         if (!before) {
             s->last_frame = out;
             s->last_mask = std::move(mask);
+            s->last_report = frame.report;
         }
         EditFramePtr published = out;
         dispatcher->post([owner = owner, published] { emit owner->frame_ready(published); });
@@ -750,6 +795,40 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         auto out = std::make_shared<EditFrame>(*frame);
         out->clipping = clipping_overlay(*mask);
         if (out->clipping.isNull()) {
+            return;
+        }
+        const std::lock_guard lock(mutex);
+        Session* s = find_locked(item, id);
+        if (stopped || s == nullptr || s->last_frame != frame) {
+            return;  // a newer frame was published meanwhile (with its own overlay)
+        }
+        out->sequence = ++next_sequence;
+        s->last_frame = out;
+        EditFramePtr published = out;
+        dispatcher->post([owner = owner, published] { emit owner->frame_ready(published); });
+    }
+
+    // Conversion thread: the newest frame of `item` again, with the weight overlay of the session's
+    // chosen mask.
+    void add_mask_overlay(ItemId item, quint64 id) {
+        EditFramePtr frame;
+        std::shared_ptr<const engine::DevelopReport> report;
+        quint32 mask = 0;
+        {
+            const std::lock_guard lock(mutex);
+            const Session* s = find_locked(item, id);
+            if (s == nullptr || s->mask_overlay == 0 || !s->last_frame || !s->last_report ||
+                s->last_frame->mask_overlay_id == s->mask_overlay) {
+                return;
+            }
+            frame = s->last_frame;
+            report = s->last_report;
+            mask = s->mask_overlay;
+        }
+        auto out = std::make_shared<EditFrame>(*frame);
+        out->mask_overlay = mask_overlay_for(*report, mask);
+        out->mask_overlay_id = out->mask_overlay.isNull() ? 0 : mask;
+        if (out->mask_overlay.isNull()) {
             return;
         }
         const std::lock_guard lock(mutex);
@@ -981,6 +1060,40 @@ void AppEditService::set_clipping(bool wanted) {
     }
 }
 
+void AppEditService::set_crop_editing(ItemId item, bool editing) {
+    {
+        const std::lock_guard lock(state_->mutex);
+        State::Session* s = state_->find_locked(item);
+        if (s == nullptr || s->crop_editing == editing) {
+            return;
+        }
+        s->crop_editing = editing;
+    }
+    // The settings shown again, with or without their crop.
+    state_->queue([item](State& self) { self.finish(item, 0, self.recipes->state(app_id(item)), true, false); });
+}
+
+void AppEditService::set_mask_overlay(ItemId item, quint32 mask_id) {
+    quint64 id = 0;
+    {
+        const std::lock_guard lock(state_->mutex);
+        State::Session* s = state_->find_locked(item);
+        if (s == nullptr || s->mask_overlay == mask_id) {
+            return;
+        }
+        s->mask_overlay = mask_id;
+        if (mask_id == 0) {
+            return;
+        }
+        id = s->id;
+    }
+    conversions_->start([weak = std::weak_ptr<State>(state_), item, id] {
+        if (auto self = weak.lock()) {
+            self->add_mask_overlay(item, id);
+        }
+    });
+}
+
 quint64 AppEditService::set_transient(ItemId item, const EditSettings& settings) {
     const quint64 token = state_->new_token();
     bool queue = false;
@@ -1138,6 +1251,26 @@ void AppEditService::note_auto_progress(const AutoProgress& progress) {
 void AppEditService::note_auto_finished(const AutoOutcome& outcome) {
     auto_runs_.remove(outcome.item);
     emit auto_finished(outcome);
+}
+
+GeometryMap AppEditService::map_geometry(const EditGeometry& geometry, QSize upright_size) const {
+    return geometry_map(geometry, upright_size);
+}
+
+bool AppEditService::crop_inside_image(const EditGeometry& geometry, QSize upright_size) const {
+    return geometry_crop_inside(geometry, upright_size);
+}
+
+EditCrop AppEditService::largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect) const {
+    return geometry_largest_inside_crop(straighten_degrees, upright_size, aspect);
+}
+
+EditGeometry AppEditService::turned(const EditGeometry& geometry, GeometryTurn turn) const {
+    return geometry_turned(geometry, turn);
+}
+
+QList<QPolygonF> AppEditService::mask_outline(const EditMask& mask, QSize upright_size) const {
+    return mask_outline_of(mask, upright_size);
 }
 
 QList<double> AppEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {

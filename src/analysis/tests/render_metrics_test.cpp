@@ -1,9 +1,11 @@
 #include <cmath>
+#include <cstdint>
 #include <functional>
 
 #include <gtest/gtest.h>
 
 #include <lucent/analysis/render_metrics.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/engine/develop_operations.hpp>
 #include <lucent/engine/display_rendering.hpp>
 
@@ -165,6 +167,66 @@ TEST(RenderMetrics, RejectsMismatchedInput) {
     auto wrong = measure_render(scene, context(), nullptr, nullptr);
     ASSERT_FALSE(wrong);
     EXPECT_EQ(wrong.error().code, ErrorCode::InvalidArgument);
+}
+
+// The final check's context in a geometry's output frame (ADR 0015): nearest upright pixel per output
+// pixel, nothing on uncovered canvas.
+TEST(RenderMetrics, ContextsMapThroughTheGeometry) {
+    ImageContext upright;
+    upright.size = image::Size{8, 6};
+    const auto n = static_cast<std::size_t>(upright.size.area());
+    for (std::size_t i = 0; i < n; ++i) {
+        upright.signal.push_back(static_cast<float>(i));
+        upright.saturation.push_back(static_cast<float>(i) / 100.0f);
+        upright.neutral_evidence.push_back(static_cast<std::uint8_t>(i % 2));
+    }
+    // Identity: a copy.
+    auto identity = engine::GeometryMapping::create(engine::GeometrySetting{}, upright.size);
+    ASSERT_TRUE(identity);
+    auto same = map_image_context(upright, *identity);
+    ASSERT_TRUE(same);
+    EXPECT_EQ(same->signal, upright.signal);
+    EXPECT_EQ(same->size, upright.size);
+
+    // Crop columns 2..5 and rows 0..2, then a quarter turn clockwise: 3 x 4.
+    engine::GeometrySetting crop;
+    crop.crop = engine::CropRect{0.25, 0.0, 0.75, 0.5};
+    crop.quarter_turns = 1;
+    auto mapping = engine::GeometryMapping::create(crop, upright.size);
+    ASSERT_TRUE(mapping);
+    auto mapped = map_image_context(upright, *mapping);
+    ASSERT_TRUE(mapped) << mapped.error().describe();
+    ASSERT_EQ(mapped->size, (image::Size{3, 4}));
+    ASSERT_EQ(mapped->signal.size(), 12u);
+    for (std::int32_t y = 0; y < 4; ++y) {
+        for (std::int32_t x = 0; x < 3; ++x) {
+            const image::PointD p = mapping->upright_from_output(image::PointD{x + 0.5, y + 0.5});
+            const auto from = static_cast<std::size_t>(std::floor(p.y)) * 8 + static_cast<std::size_t>(std::floor(p.x));
+            const auto to = static_cast<std::size_t>(y) * 3 + static_cast<std::size_t>(x);
+            EXPECT_EQ(mapped->signal[to], upright.signal[from]) << x << "," << y;
+            EXPECT_EQ(mapped->saturation[to], upright.saturation[from]);
+            EXPECT_EQ(mapped->neutral_evidence[to], upright.neutral_evidence[from]);
+        }
+    }
+    // The output's top-left pixel is the crop's bottom-left (a clockwise turn).
+    EXPECT_EQ(mapped->signal[0], upright.signal[2 * 8 + 2]);
+
+    // Straightened without a crop: corners of the canvas are uncovered (no signal, not neutral).
+    engine::GeometrySetting turned;
+    turned.straighten_degrees = 30.0;
+    auto rotated = engine::GeometryMapping::create(turned, upright.size);
+    ASSERT_TRUE(rotated);
+    auto canvas = map_image_context(upright, *rotated);
+    ASSERT_TRUE(canvas);
+    EXPECT_EQ(canvas->size, upright.size);
+    EXPECT_EQ(canvas->signal[0], 0.0f);
+    EXPECT_EQ(canvas->saturation[0], 0.0f);
+    EXPECT_EQ(canvas->neutral_evidence[0], 0u);
+
+    // A mapping for another size is refused.
+    auto other = engine::GeometryMapping::create(crop, image::Size{16, 12});
+    ASSERT_TRUE(other);
+    EXPECT_EQ(map_image_context(upright, *other).error().code, ErrorCode::InvalidArgument);
 }
 
 }  // namespace

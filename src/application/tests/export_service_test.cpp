@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <string>
 #include <thread>
 #include <vector>
@@ -386,7 +387,7 @@ TEST_F(ExportTest, RecordsCarryTheRecipeIdentityAndTheOriginalIsPreserved) {
     EXPECT_EQ(recipe.revision, edited->revision);
     EXPECT_EQ(recipe.revision_number, 1u);
     EXPECT_EQ(recipe.schema, "lucent.develop");
-    EXPECT_EQ(recipe.schema_version, 1u);
+    EXPECT_EQ(recipe.schema_version, kRecipeSchemaVersion);  // the canonical document's version
     EXPECT_EQ(recipe.settings_sha256, edited->committed_sha256);
     EXPECT_EQ(recipe.settings_json, write_recipe(settings)->json);
     EXPECT_EQ(recipe.operations, engine::DevelopOperationVersions{});
@@ -400,6 +401,64 @@ TEST_F(ExportTest, RecordsCarryTheRecipeIdentityAndTheOriginalIsPreserved) {
     ASSERT_TRUE(source_after);
     EXPECT_EQ(source_after->digest, source_before->digest);
     EXPECT_EQ(source_after->identity, source_before->identity);
+}
+
+// W9 (ADR 0015): an export of a recipe with masks, geometry and chroma denoising records the
+// identity of the whole recipe and renders the cropped and turned image.
+TEST_F(ExportTest, ReceiptsCarryTheIdentityOfRecipesWithMasksAndGeometry) {
+    const SourceItem item = import(ts::write_dng(dir_, L"in\\masked.dng"));  // 64 x 48
+    RecipeServiceOptions recipe_options;
+    recipe_options.registry = registry_;
+    RecipeService recipes(library_, create_memory_recipe_store(), recipe_options);
+    engine::DevelopSettings settings;
+    settings.exposure_ev = 0.3;
+    engine::LocalAdjustment radial;
+    radial.id = 1;
+    radial.shape = engine::RadialGradientMask{{0.5, 0.5}, 0.3, 0.2, 0.0, 0.5};
+    radial.controls.exposure_ev = 1.0;
+    engine::LocalAdjustment brush;
+    brush.id = 2;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.05, 0.5, 1.0,
+                                                         {{0.3, 0.3}, {0.6, 0.4}}}}};
+    brush.controls.saturation = -0.5;
+    settings.local_adjustments = {radial, brush};
+    settings.chroma_denoise = engine::ChromaDenoiseSetting{0.5, 4.0};
+    settings.geometry.crop = engine::CropRect{0.25, 0.0, 0.75, 1.0};  // 32 x 48 pixels
+    settings.geometry.quarter_turns = 1;                               // 48 x 32
+    auto edited = recipes.apply(item.id, settings);
+    ASSERT_TRUE(edited) << edited.error().describe();
+
+    auto executor = TaskExecutor::create(ExecutorOptions{});
+    ASSERT_TRUE(executor);
+    ts::Collector<Expected<ExportRecord>> done;
+    {
+        ExportService service(library_, **executor, renderer_, &recipes);
+        ExportRequest request = request_for(item);
+        request.settings.reset();  // the current recipe
+        ASSERT_TRUE(
+            service.submit(request, {}, [&](ItemId, const Expected<ExportRecord>& r) { done.add(r); }));
+        ASSERT_TRUE(done.wait_for(1));
+    }
+    const Expected<ExportRecord> record = done.values()[0];
+    ASSERT_TRUE(record) << record.error().describe();
+    EXPECT_EQ(record->settings, settings);
+    const RecipeIdentity& recipe = record->recipe;
+    EXPECT_EQ(recipe.revision, edited->revision);
+    EXPECT_EQ(recipe.schema_version, kRecipeSchemaVersion);
+    EXPECT_EQ(recipe.settings_sha256, edited->committed_sha256);
+    EXPECT_EQ(recipe.settings_json, write_recipe(settings)->json);
+    auto recorded = read_recipe(recipe.settings_json);  // the identity names exactly what was rendered
+    ASSERT_TRUE(recorded) << recorded.error().describe();
+    EXPECT_EQ(*recorded, settings);
+    EXPECT_EQ(recipe.operations, engine::DevelopOperationVersions{});
+    // Another mask position is another identity.
+    engine::DevelopSettings moved = settings;
+    moved.local_adjustments[0].shape = engine::RadialGradientMask{{0.4, 0.5}, 0.3, 0.2, 0.0, 0.5};
+    EXPECT_NE(write_recipe(moved)->sha256, recipe.settings_sha256);
+    // The export is the cropped, turned image; the summary says so.
+    EXPECT_EQ(record->receipt.width, 48);
+    EXPECT_EQ(record->receipt.height, 32);
+    EXPECT_EQ(record->render.rendered_size, (image::Size{48, 32}));
 }
 
 TEST(ExportRecipes, AQueuedExportKeepsItsFrozenRevision) {
@@ -445,8 +504,8 @@ TEST(ExportRecipes, ARecipeThisBuildCannotReadIsNeverExported) {
     auto store = create_memory_recipe_store();
     catalog::NewRevision newer;
     newer.schema_name = "lucent.develop";
-    newer.schema_version = 2;  // written by a newer Lucent
-    newer.settings_json = R"({"schema":"lucent.develop","version":2})";
+    newer.schema_version = kRecipeSchemaVersion + 1;  // written by a newer Lucent
+    newer.settings_json = std::format(R"({{"schema":"lucent.develop","version":{}}})", kRecipeSchemaVersion + 1);
     newer.created_at = catalog::current_time();
     ASSERT_TRUE(store->append(item, newer, std::nullopt));
     RecipeService recipes(library, store);

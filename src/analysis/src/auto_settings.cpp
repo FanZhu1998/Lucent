@@ -163,8 +163,10 @@ bool fatal(const Error& e) noexcept {
 
 class AutoSession::Impl {
 public:
+    // The evaluation uses `current` without its geometry and local adjustments (auto_settings.hpp,
+    // "Global controls only"); results carry them unchanged.
     Impl(const engine::DevelopSettings& current, const AutoOptions& options, Clock::time_point start)
-        : current_(current), options_(options), start_(start) {}
+        : current_(evaluation_settings(current)), user_(current), options_(options), start_(start) {}
 
     // The independent analysis (steps 1-8).
     Status open(raw::DecodedRaw&& decoded, const core::CancellationToken& cancel);
@@ -174,8 +176,13 @@ public:
     Expected<engine::ColorImage> preview(const engine::DevelopSettings& settings, std::int32_t edge,
                                          const core::CancellationToken& cancel);
 
-    [[nodiscard]] const AutoResult& independent() const noexcept { return independent_; }
-    [[nodiscard]] AutoResult& independent() noexcept { return independent_; }
+    // The independent result as callers see it (carrying the current geometry and masks).
+    [[nodiscard]] const AutoResult& independent() const noexcept { return independent_out_; }
+    [[nodiscard]] AutoResult take_independent() noexcept { return std::move(independent_out_); }
+    void set_decode_seconds(double seconds) noexcept {
+        independent_.timing.decode_seconds = seconds;
+        independent_out_.timing.decode_seconds = seconds;
+    }
     [[nodiscard]] std::uint64_t retained_bytes() const noexcept { return independent_.memory.retained_bytes; }
 
 private:
@@ -240,8 +247,12 @@ private:
     // Adds (or finds) the fallback candidate of `settings` derived from `source` and returns its
     // index; candidates.size() when `source` has no search point to derive one from.
     std::size_t add_fallback(std::size_t source, const engine::DevelopSettings& settings);
+    // `result` with the current geometry and local adjustments in every settings value (internal
+    // results never have them).
+    [[nodiscard]] AutoResult with_user_parts(AutoResult result) const;
 
-    engine::DevelopSettings current_;
+    engine::DevelopSettings current_;  // evaluation_settings() of the current settings
+    engine::DevelopSettings user_;     // the current settings as given
     AutoOptions options_;
     Clock::time_point start_;
     const core::CancellationToken* cancel_ = nullptr;
@@ -276,10 +287,29 @@ private:
     std::vector<std::optional<SearchPoint>> stage_points_;  // per candidate, in the stage's axis
     ConsistencyRecord record_;
 
-    // The independent result and its metrics (regularise() starts from them).
+    // The independent result and its metrics (regularise() starts from them), and the result as
+    // independent() returns it.
     AutoResult independent_;
     std::vector<std::vector<MetricResult>> independent_metrics_;
+    AutoResult independent_out_;
 };
+
+AutoResult AutoSession::Impl::with_user_parts(AutoResult result) const {
+    const auto carry = [this](engine::DevelopSettings& s) {
+        s.geometry = user_.geometry;
+        s.local_adjustments = user_.local_adjustments;
+    };
+    carry(result.settings);
+    for (CandidateRecord& c : result.candidates) {
+        carry(c.settings);
+    }
+    if (result.consistency) {
+        carry(result.consistency->independent_settings);
+    }
+    result.set_aside_geometry = !user_.geometry.is_identity();
+    result.set_aside_masks = !user_.local_adjustments.empty();
+    return result;
+}
 
 bool AutoSession::Impl::searchable(Coordinate c) const {
     switch (c) {
@@ -1600,7 +1630,7 @@ Status AutoSession::Impl::open(raw::DecodedRaw&& decoded, const core::Cancellati
     if (auto valid = validate_options(options_); !valid) {
         return valid;
     }
-    if (auto valid = current_.validate(); !valid) {
+    if (auto valid = user_.validate(); !valid) {
         return fail(ErrorCode::InvalidArgument, "the current settings are invalid: " + valid.error().message,
                     kWhere);
     }
@@ -1631,6 +1661,7 @@ Status AutoSession::Impl::open(raw::DecodedRaw&& decoded, const core::Cancellati
     result_.timing.total_seconds = seconds_since(start_);
     independent_ = result_;
     independent_metrics_ = analysis_metrics_;
+    independent_out_ = with_user_parts(independent_);
     cancel_ = nullptr;
     return ok();
 }
@@ -1678,7 +1709,7 @@ Expected<AutoResult> AutoSession::Impl::regularise(const ConsistencyTarget& targ
         target_ = nullptr;
         cancel_ = nullptr;
         result_ = AutoResult{};
-        return out;
+        return with_user_parts(std::move(out));
     }
 
     auto status = consistency_search();
@@ -1741,7 +1772,7 @@ Expected<AutoResult> AutoSession::Impl::regularise(const ConsistencyTarget& targ
     cancel_ = nullptr;
     AutoResult out = std::move(result_);
     result_ = AutoResult{};
-    return out;
+    return with_user_parts(std::move(out));
 }
 
 Expected<Appearance> AutoSession::Impl::appearance_of(const engine::DevelopSettings& settings,
@@ -1749,7 +1780,8 @@ Expected<Appearance> AutoSession::Impl::appearance_of(const engine::DevelopSetti
     if (auto valid = settings.validate(); !valid) {
         return fail(ErrorCode::InvalidArgument, "invalid settings: " + valid.error().message, kWhere);
     }
-    auto rendered = engine::render_stage_two(analysis_, settings, options_.develop, cancel);
+    const engine::DevelopSettings evaluated = evaluation_settings(settings);
+    auto rendered = engine::render_stage_two(analysis_, evaluated, options_.develop, cancel);
     if (!rendered) {
         return Unexpected(std::move(rendered.error()));
     }
@@ -1757,7 +1789,7 @@ Expected<Appearance> AutoSession::Impl::appearance_of(const engine::DevelopSetti
     if (!stats) {
         return Unexpected(std::move(stats.error()));
     }
-    return appearance_from(*stats, settings);
+    return appearance_from(*stats, evaluated);
 }
 
 Expected<engine::ColorImage> AutoSession::Impl::preview(const engine::DevelopSettings& settings,
@@ -1870,6 +1902,12 @@ const MetricResult* AutoResult::diagnostic(MetricId id) const noexcept {
 
 // ---- Entry points ------------------------------------------------------------------------------
 
+engine::DevelopSettings evaluation_settings(engine::DevelopSettings settings) {
+    settings.geometry = engine::GeometrySetting{};
+    settings.local_adjustments.clear();
+    return settings;
+}
+
 namespace {
 
 // Probe, memory check and decode of auto_develop_file / AutoSession::open_file.
@@ -1944,7 +1982,7 @@ Expected<AutoSession> AutoSession::open_file(const raw::DecoderRegistry& registr
         if (auto status = impl->open(std::move(*decoded), cancel); !status) {
             return Unexpected(std::move(status.error()));
         }
-        impl->independent().timing.decode_seconds = decode_seconds;
+        impl->set_decode_seconds(decode_seconds);
         return AutoSession(std::move(impl));
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "out of memory during the automatic settings", kWhere);
@@ -1992,7 +2030,7 @@ Expected<AutoResult> auto_develop(raw::DecodedRaw&& decoded, const engine::Devel
         if (auto status = impl.open(std::move(decoded), cancel); !status) {
             return Unexpected(std::move(status.error()));
         }
-        return std::move(impl.independent());
+        return impl.take_independent();
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "out of memory during the automatic settings", kWhere);
     }
@@ -2014,7 +2052,7 @@ Expected<AutoResult> auto_develop_file(const raw::DecoderRegistry& registry,
         if (auto status = impl.open(std::move(*decoded), cancel); !status) {
             return Unexpected(std::move(status.error()));
         }
-        AutoResult result = std::move(impl.independent());
+        AutoResult result = impl.take_independent();
         result.timing.decode_seconds = decode_seconds;
         return result;
     } catch (const std::bad_alloc&) {

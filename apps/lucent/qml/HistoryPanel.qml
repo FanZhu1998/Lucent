@@ -78,6 +78,10 @@ ColumnLayout {
 
         Keys.onReturnPressed: panel.edit.selectRevision(currentIndex)
         Keys.onEnterPressed: panel.edit.selectRevision(currentIndex)
+        // Enter selects the revision, also while a tool whose Enter shortcut would close it is open.
+        Keys.onShortcutOverride: event => {
+            event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+        }
 
         delegate: Rectangle {
             id: entry

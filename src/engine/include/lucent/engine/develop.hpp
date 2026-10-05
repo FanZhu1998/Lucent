@@ -1,8 +1,8 @@
 #pragma once
 
 // The develop pipeline (blueprint section 5 and section 4 "quick preview, then refine"):
-// DevelopSettings v1 rendered from a decoded RAW image, split for interactive editing into a
-// cached stage one and a fast stage two.
+// DevelopSettings (v2, and v1 values) rendered from a decoded RAW image, split for interactive
+// editing into a cached stage one and a fast stage two.
 //
 // Stage one (render_stage_one), done once per image and cached by the caller:
 //     decode [-> DNG OpcodeList1] -> normalise [-> DNG OpcodeList2] -> white balance -> demosaic
@@ -19,20 +19,30 @@
 //     render path does. The export path (render_develop) is this stage one with the settings'
 //     white balance at full resolution, followed by stage two.
 //
-// Stage two (render_stage_two), per settings change, in this order (develop_operations.hpp):
+// Stage two (render_stage_two), per settings change, in this order (develop_operations.hpp,
+// chroma_denoise.hpp, local_adjustments.hpp, develop_geometry.hpp):
 //   1. white balance, camera colour, working space, exposure (one fused pass):
 //        c = min(v * d, clip) per camera channel, rgb = gain * M_ws * M_cam(target) * c, where
 //        d = target sample multipliers / stage one's (1 for the export kind), clip = the target's
 //        lowest white-balanced saturation level (sensor.hpp), M_cam = resolve_camera_color() for
 //        the target white (DNG: calibration interpolated at the target's temperature),
 //        M_ws = XYZ -> Rec.2020 / D65 (Bradford), gain = 2^(exposure_ev + DNG BaselineExposure);
-//   2. local highlights/shadows (guided filter; radius in full-image pixels, scaled with the
+//   2. guided chroma denoising (luminance-preserving; radius in full-image pixels, scaled with the
+//      proxy: chroma_denoise_radius());
+//   3. local highlights/shadows (guided filter; radius in full-image pixels, scaled with the
 //      proxy: local_tone_radius());
-//   3. contrast and 4. tone curve (display-lightness curves, conjugated with the base look);
-//   5. saturation and vibrance;
-//   6. base look "neutral" v1 with white point W = gain * clip * neutral_scale (a fully clipped
+//   4. local adjustments: brush, linear and radial masks rasterised at the render scale from their
+//      normalised definitions, with their local controls;
+//   5. contrast and 6. tone curve (display-lightness curves, conjugated with the base look);
+//   7. saturation and vibrance;
+//   8. base look "neutral" v1 with white point W = gain * clip * neutral_scale (a fully clipped
 //      neutral is display white at every exposure) -> display-linear Rec.2020 / D65
-//      (display_linear_rec2020(), the exporter's input).
+//      (display_linear_rec2020(), the exporter's input);
+//   9. geometry: straighten, crop, quarter turns and flip (DevelopReport::output_size is the
+//      result's size, DevelopReport::upright_size the size of the stage-one image).
+// Operations 2-8 work on the upright image (stage one's frame, in which masks are defined), so
+// the crop and the rotation never move a mask relative to the content; GeometryMapping
+// (develop_geometry.hpp) maps mask coordinates to output pixels for overlays.
 // An operation whose settings are the identity is skipped (recorded with applied = false).
 //
 // Preview versus export (measured in develop_fixture_test.cpp and stated in the W6 report):
@@ -57,6 +67,8 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -64,11 +76,14 @@
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/engine/camera_color.hpp>
+#include <lucent/engine/chroma_denoise.hpp>
 #include <lucent/engine/demosaic.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/engine/develop_operations.hpp>
 #include <lucent/engine/develop_settings.hpp>
 #include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/guided_filter.hpp>
+#include <lucent/engine/local_adjustments.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/engine/sensor.hpp>
 #include <lucent/engine/white_balance_model.hpp>
@@ -84,7 +99,8 @@ namespace lucent::engine {
 // Version of the develop pipeline's stage graph (bump when stages are added, removed or
 // reordered, or the split between the stages changes).
 //   2: the DNG opcode stages (opcode processing version kDngOpcodeProcessingVersion 1).
-inline constexpr std::uint32_t kDevelopPipelineVersion = 2;
+//   3: chroma denoising, local adjustments and geometry in stage two (DevelopSettings v2, ADR 0015).
+inline constexpr std::uint32_t kDevelopPipelineVersion = 3;
 // Version of the proxy downscale semantics.
 inline constexpr std::uint32_t kBoxDownscaleVersion = 1;
 
@@ -117,12 +133,70 @@ struct StageOneRequest {
     std::int32_t proxy_long_edge = 0;
 };
 
+inline constexpr std::uint64_t kDefaultStageTwoCacheBytes = std::uint64_t{256} << 20;
+
+// Stage two's scene-linear image after the fused pass and chroma denoising, kept between renders of
+// one stage-one image (an edit session's quick frames), so that moving a control that comes after
+// the denoising (local tone, masks, curves, colour, geometry) does not repeat it. Used only when
+// chroma denoising is applied, by the non-consuming render_stage_two() of a StageOneImage with an
+// id; keyed by that id, the white balance, the exposure and the chroma-denoise setting (everything
+// the fused pass and the denoising depend on). One entry, replaced on every miss; an image larger
+// than `max_bytes` is not kept (the default keeps a 2048-pixel proxy's 32 MiB, not a full-resolution
+// image's). A hit copies the kept image and is bit-identical to a render without the cache. Its
+// memory is the caller's (stats().bytes). Internally synchronised.
+class StageTwoCache {
+public:
+    struct Key {
+        std::uint64_t stage_one = 0;  // StageOneImage::id
+        WhiteBalanceSetting white_balance = AsShotWhiteBalance{};
+        double exposure_ev = 0.0;
+        ChromaDenoiseSetting chroma_denoise;
+
+        friend bool operator==(const Key&, const Key&) = default;
+    };
+    struct Entry {
+        Key key;
+        image::ImageBuffer<float> pixels;  // scene-linear Rec.2020 after chroma denoising
+        ChromaDenoiseRecord record;
+    };
+    struct Stats {
+        std::uint64_t bytes = 0;
+        std::uint64_t hits = 0;
+        std::uint64_t misses = 0;
+    };
+
+    explicit StageTwoCache(std::uint64_t max_bytes = kDefaultStageTwoCacheBytes) noexcept : max_bytes_(max_bytes) {}
+    StageTwoCache(const StageTwoCache&) = delete;
+    StageTwoCache& operator=(const StageTwoCache&) = delete;
+
+    // The entry for `key`, or nullptr (counted as a hit or a miss).
+    [[nodiscard]] std::shared_ptr<const Entry> find(const Key& key);
+    // Replaces the entry (ignored when its pixels exceed max_bytes).
+    void insert(std::shared_ptr<const Entry> entry) noexcept;
+    [[nodiscard]] std::uint64_t max_bytes() const noexcept { return max_bytes_; }
+    void clear() noexcept;
+    [[nodiscard]] Stats stats() const;
+
+private:
+    mutable std::mutex mutex_;
+    std::shared_ptr<const Entry> entry_;
+    std::uint64_t max_bytes_ = 0;
+    std::uint64_t hits_ = 0;
+    std::uint64_t misses_ = 0;
+};
+
 // Execution options: they never change the pixels.
 struct DevelopOptions {
     raw::DecodeLimits decode_limits;  // *_file functions only
     image::AllocationLimits limits;   // per buffer
     std::uint64_t memory_budget_bytes = kDefaultRenderMemoryBudget;
     bool parallel = true;
+    // Brush-mask rasters kept between stage-two renders of one image (an edit session's); null:
+    // rasterised on every render. Its memory is the caller's (MaskRasterCache::stats()).
+    std::shared_ptr<MaskRasterCache> mask_cache;
+    // The denoised image kept between stage-two renders of one stage-one image (an edit session's
+    // proxy); null: no reuse. Its memory is the caller's (StageTwoCache::stats()).
+    std::shared_ptr<StageTwoCache> stage_two_cache;
 };
 
 // The proxy downscale (make_proxy).
@@ -135,6 +209,10 @@ struct DownscaleRecord {
 
 // Stage one's output: white-balanced camera RGB (or monochrome), upright. Move-only.
 struct StageOneImage {
+    // Unique per stage-one image this process made (render_stage_one*, make_proxy), so that caches
+    // can recognise its pixels (StageTwoCache); 0 means unknown and is never cached. Code that
+    // changes `pixels` of an image with an id must set it to 0.
+    std::uint64_t id = 0;
     image::ImageBuffer<float> pixels;  // 3 channels (camera R, G, B) or 1 (monochrome)
     // camera_native_linear() or raw::camera_native_monochrome().
     image::ColorEncoding encoding = image::ColorEncoding::camera_native_linear();
@@ -171,6 +249,10 @@ enum class DevelopOperation : std::uint8_t {
     ToneCurve = 7,
     Color = 8,  // saturation and vibrance
     BaseLook = 9,
+    // DevelopSettings v2 (ADR 0015).
+    ChromaDenoise = 10,
+    LocalAdjustments = 11,  // masks and their local controls
+    Geometry = 12,          // straighten, crop, quarter turns, flip
 };
 
 [[nodiscard]] std::string_view to_string(DevelopOperation operation) noexcept;  // "white_balance", ...
@@ -189,8 +271,9 @@ struct DevelopReport {
     std::uint32_t pipeline_version = kDevelopPipelineVersion;
     DevelopSettings settings;
     StageOneKind stage_one_kind = StageOneKind::Interactive;
-    image::Size full_size;
-    image::Size output_size;
+    image::Size full_size;     // upright size of the full-resolution image
+    image::Size upright_size;  // the stage-one image rendered (full_size or a proxy's), before geometry
+    image::Size output_size;   // the result, after geometry
     double scale = 1.0;
     // White balance: absolute target multipliers (camera R, G, B, green = 1), those applied to
     // the samples overall, and stage two's correction factor d.
@@ -205,8 +288,11 @@ struct DevelopReport {
     double gain = 1.0;                                  // 2^(exposure_ev + baseline)
     double scene_white = 1.0;                           // clip_level * neutral_scale
     double white = 1.0;                                 // W = gain * scene_white
-    std::optional<LocalToneRecord> local_tone;
+    std::optional<ChromaDenoiseRecord> chroma_denoise;        // when applied
+    std::optional<LocalToneRecord> local_tone;                // when applied
+    std::optional<LocalAdjustmentsRecord> local_adjustments;  // when applied
     BaseLookRecord base_look;
+    std::optional<GeometryRecord> geometry;  // when applied
     std::vector<OperationRecord> operations;  // in execution order
     // Stage one, copied from the StageOneImage.
     NormalizationRecord normalization;
@@ -222,7 +308,9 @@ struct DevelopReport {
 };
 
 struct DevelopResult {
-    ColorImage display;  // display_linear_rec2020(), upright: the exporter's input
+    // display_linear_rec2020(), upright, after the geometry (cropped and turned): the exporter's
+    // input.
+    ColorImage display;
     DevelopReport report;
 };
 
@@ -231,8 +319,12 @@ struct DevelopMemoryEstimate {
     MemoryEstimate render;              // W2 per-stage estimate (decode .. orientation)
     std::uint64_t stage_one_peak = 0;   // render stage one (with the proxy downscale)
     std::uint64_t stage_one_bytes = 0;  // the StageOneImage kept (full or proxy)
-    std::uint64_t stage_two_bytes = 0;  // new allocations of stage two at that size
-    std::uint64_t export_peak = 0;      // render_develop: max(stage one, stage one kept + stage two)
+    // New allocations of stage two at that size: its RGB image and the largest operation's working
+    // memory (local tone, chroma denoising, local adjustments with each brush raster over its
+    // strokes' extent, the geometry's output). Without settings: chroma denoising at
+    // kMaxChromaDenoiseRadius and no brush raster.
+    std::uint64_t stage_two_bytes = 0;
+    std::uint64_t export_peak = 0;  // render_develop: max(stage one, stage one kept + stage two)
 };
 
 // Size of a proxy whose long edge is `long_edge` (aspect ratio kept, each side rounded, at least
@@ -255,6 +347,12 @@ struct DevelopMemoryEstimate {
 [[nodiscard]] Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& metadata,
                                                                       const StageOneRequest& request,
                                                                       const DevelopOptions& options = {});
+// The same for known settings (their chroma-denoise radius, brush masks and highlight/shadow
+// masks), which callers with local adjustments should use.
+[[nodiscard]] Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& metadata,
+                                                                      const StageOneRequest& request,
+                                                                      const DevelopSettings& settings,
+                                                                      const DevelopOptions& options = {});
 
 // Stage one from decoded data, consuming it. Errors: Unsupported (engine.develop.white_balance)
 // for a white balance the calibration cannot express (Kelvin without a CCT mapping, any colour
@@ -264,7 +362,10 @@ struct DevelopMemoryEstimate {
                                                        const core::CancellationToken& cancel = {});
 
 // Selects a decoder, checks the memory estimate from its probe, decodes image `subimage` and
-// runs stage one. Errors: those of the registry and decoder, and of render_stage_one().
+// runs stage one. The check knows no settings (estimate_develop_memory() without them: an export
+// request is checked against its export_peak for the worst chroma denoising and no brush raster);
+// render_develop_file() checks with its settings instead. Errors: those of the registry and
+// decoder, and of render_stage_one().
 [[nodiscard]] Expected<StageOneImage> render_stage_one_file(const raw::DecoderRegistry& registry,
                                                             const std::filesystem::path& path,
                                                             std::optional<std::uint32_t> subimage,
@@ -296,7 +397,8 @@ struct DevelopMemoryEstimate {
                                                      const DevelopOptions& options = {},
                                                      const core::CancellationToken& cancel = {});
 
-// render_develop() for a file (decoder selection, probe memory check, decode).
+// render_develop() for a file (decoder selection, decode): the probe's memory check is the one
+// render_develop() makes, the export_peak of estimate_develop_memory() with `settings`.
 [[nodiscard]] Expected<DevelopResult> render_develop_file(const raw::DecoderRegistry& registry,
                                                           const std::filesystem::path& path,
                                                           std::optional<std::uint32_t> subimage,

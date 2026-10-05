@@ -149,6 +149,12 @@ struct NaturalV1Context {
     double red_target = 1.0;  // proposal gains (1 without evidence)
     double blue_target = 1.0;
     bool color = true;  // colour data (false for monochrome)
+    // The final check measures inside the photographer's crop (application auto_develop.cpp): true
+    // when the analysis' neutral evidence on the whole frame had at least kMinNeutralPixels pixels.
+    // A white-balance change then stays feasible when the crop holds fewer near-neutral pixels
+    // (InsufficientEvidence, not a failure): the analysis verified it on the whole frame, and the
+    // outcome must not depend on the crop (ADR 0015).
+    bool neutral_evidence_beyond_crop = false;
 };
 
 // ---- Objective ---------------------------------------------------------------------------------

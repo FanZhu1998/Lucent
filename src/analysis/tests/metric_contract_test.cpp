@@ -281,5 +281,38 @@ TEST(MetricContract, NativeHighlightClippingIsCheckedAndScored) {
     EXPECT_NE(failed.failures.front().find("highlight crop"), std::string::npos);
 }
 
+// The final check measures inside the photographer's crop: a white-balance change the whole
+// frame's neutral evidence supports stays feasible when the crop holds no neutral surface (the
+// outcome does not depend on the crop, ADR 0015), and still fails without evidence anywhere.
+TEST(MetricContract, AWhiteBalanceChangeIsNotFailedByACropWithoutNeutralSurfaces) {
+    RenderStats s;
+    s.pixels = 100000;
+    s.signal_pixels = 100000;
+    s.quantiles.p50 = 0.45;
+    s.quantiles.p90 = 0.7;
+    s.neutral_pixels = 10;  // the crop shows foliage only
+    NaturalV1Context ctx;
+    ctx.tone.evidence = true;
+    ctx.white_balance_evidence = true;
+    ctx.white_balance_confidence = 0.8;
+    EditVector edit;
+    edit.red_gain = 0.95;
+    edit.blue_gain = 1.04;
+    const CandidateEvaluation without = evaluate_candidate(s, s, edit, ctx, nullptr, false, true);
+    EXPECT_FALSE(without.feasible);
+    ctx.neutral_evidence_beyond_crop = true;
+    const CandidateEvaluation beyond = evaluate_candidate(s, s, edit, ctx, nullptr, false, true);
+    EXPECT_TRUE(beyond.feasible) << (beyond.failures.empty() ? "" : beyond.failures.front());
+    const auto wb = std::find_if(beyond.metrics.begin(), beyond.metrics.end(),
+                                 [](const MetricResult& m) { return m.id == MetricId::WhiteBalance; });
+    ASSERT_NE(wb, beyond.metrics.end());
+    EXPECT_EQ(wb->status, MetricStatus::InsufficientEvidence);
+    EXPECT_NE(wb->detail.find("outside the crop"), std::string::npos) << wb->detail;
+    // With neutral surfaces inside the crop the change is verified there as before.
+    s.neutral_pixels = 5000;
+    s.neutral_shift_de = 50.0;
+    EXPECT_FALSE(evaluate_candidate(s, s, edit, ctx, nullptr, false, true).feasible);
+}
+
 }  // namespace
 }  // namespace lucent::analysis

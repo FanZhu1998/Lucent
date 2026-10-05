@@ -21,6 +21,7 @@
 #include <lucent/application/recipe_service.hpp>
 #include <lucent/catalog/jobs.hpp>
 #include <lucent/core/error.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/engine/develop_settings.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 
@@ -33,9 +34,17 @@ namespace lucent::ui::adapters {
 [[nodiscard]] EditSettings to_edit_settings(const engine::DevelopSettings& settings);
 
 // `settings` over `base`, which supplies what the editor does not change (the schema version, the
-// base look and the operation versions; the item's committed settings).
+// base look and the operation versions; the item's committed settings). Version-1 bases are
+// upgraded (the editor's settings are always version 2).
 [[nodiscard]] engine::DevelopSettings to_develop_settings(const EditSettings& settings,
                                                           const engine::DevelopSettings& base);
+
+// The version-2 members one by one.
+[[nodiscard]] EditGeometry to_edit_geometry(const engine::GeometrySetting& geometry);
+[[nodiscard]] engine::GeometrySetting to_geometry_setting(const EditGeometry& geometry);
+[[nodiscard]] EditMask to_edit_mask(const engine::LocalAdjustment& adjustment);
+[[nodiscard]] engine::LocalAdjustment to_local_adjustment(const EditMask& mask);
+[[nodiscard]] image::Size to_image_size(QSize size) noexcept;
 
 [[nodiscard]] engine::DevelopControl to_develop_control(EditControl control) noexcept;
 [[nodiscard]] EditControl to_edit_control(engine::DevelopControl control) noexcept;
@@ -89,6 +98,28 @@ namespace lucent::ui::adapters {
 [[nodiscard]] QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboard& clipboard,
                                           const std::optional<app::CameraCapabilities>& target);
 
+// ---- Geometry and masks (the EditService helpers; engine/develop_geometry.hpp) ----------------------
+
+[[nodiscard]] GeometryMap geometry_map(const EditGeometry& geometry, QSize upright_size);
+[[nodiscard]] bool geometry_crop_inside(const EditGeometry& geometry, QSize upright_size);
+[[nodiscard]] EditCrop geometry_largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect);
+[[nodiscard]] EditGeometry geometry_turned(const EditGeometry& geometry, GeometryTurn turn);
+[[nodiscard]] QList<QPolygonF> mask_outline_of(const EditMask& mask, QSize upright_size);
+
+// The weight overlay of `adjustment` (shown even when disabled) for a frame whose upright image is
+// `upright` pixels with `geometry`, tinted (premultiplied ARGB, alpha proportional to the weight):
+// laid over the frame's output (the frame's GeometryMapping) at most `max_long_edge` on its long
+// edge, each overlay pixel's centre mapped back to the upright image through that mapping and the
+// weight sampled there (bilinear) from engine::mask_weights() made at the overlay's density, at most
+// kMaxMaskOverlayPlaneEdge on its long edge. So the overlay sits exactly on the frame (the crop is
+// not rounded at the overlay's scale) and keeps its resolution for a small crop. 0 outside the
+// image (a straightened frame's corners). Null for an empty size, an invalid mask or geometry, or
+// when memory runs out.
+inline constexpr int kMaxMaskOverlayPlaneEdge = 2048;
+[[nodiscard]] QImage mask_overlay_image(const engine::LocalAdjustment& adjustment,
+                                        const engine::GeometrySetting& geometry, image::Size upright,
+                                        int max_long_edge = 1024);
+
 // ---- Frames ------------------------------------------------------------------------------------------
 
 // The clipping overlay of `mask`: highlights (some channel at 255) red, shadows (some channel at 0)
@@ -96,9 +127,10 @@ namespace lucent::ui::adapters {
 // null image when the mask is empty or memory runs out.
 [[nodiscard]] QImage clipping_overlay(const app::ClippingMask& mask);
 
-// The shell's frame of `frame` (pixels converted, histogram and render facts), with its overlay when
-// `clipping`; sequence, token and `before` are left for the caller. Null when the pixels cannot be
-// converted (out of memory).
+// The shell's frame of `frame` (pixels converted, histogram and render facts, the geometry and mask
+// outlines of its render), with its overlay when `clipping`; sequence, token, `before`, `uncropped`
+// and the mask overlay are left for the caller. Null when the pixels cannot be converted (out of
+// memory).
 [[nodiscard]] std::shared_ptr<EditFrame> to_edit_frame(const app::DevelopFrame& frame, bool clipping);
 
 }  // namespace lucent::ui::adapters

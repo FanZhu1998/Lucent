@@ -16,7 +16,8 @@ QString tr_text(const char* text) {
 
 enum class Scale : std::uint8_t {
     Linear,
-    Reciprocal,  // equal slider distances are equal distances in 1/value (mired for temperature)
+    Reciprocal,   // equal slider distances are equal distances in 1/value (mired for temperature)
+    Logarithmic,  // equal slider distances are equal ratios (brush size, noise radius)
 };
 
 struct ControlSpec {
@@ -31,7 +32,25 @@ struct ControlSpec {
     EditControl lock;
     bool signed_value;
     Scale scale;
+    bool lockable = true;  // W9's controls have no lock (Auto never changes them; ADR 0015)
+    double default_value = 0.0;
 };
+
+enum class KeyGroup : std::uint8_t {
+    Global,  // the photo's controls (white balance .. vibrance, straighten, noise reduction)
+    Mask,    // the selected mask's
+    Tool,    // the brush: tool settings, not part of the recipe
+};
+
+KeyGroup group_of(const QString& key) {
+    if (key.startsWith(u"mask")) {
+        return KeyGroup::Mask;
+    }
+    if (key.startsWith(u"brush")) {
+        return KeyGroup::Tool;
+    }
+    return KeyGroup::Global;
+}
 
 // Display units: exposure in EV, temperature in kelvin, tint in DNG units, the others -100..+100
 // (the settings' -1..+1; for the camera channels, +-100 is +-2 EV red against blue and +-1 EV
@@ -57,7 +76,48 @@ constexpr std::array kControls{
                 0, "", EditControl::Saturation, true, Scale::Linear},
     ControlSpec{"vibrance", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Vibrance"), -100.0, 100.0, 1.0, 10.0, 0, "",
                 EditControl::Vibrance, true, Scale::Linear},
+    // W9 (ADR 0015).
+    ControlSpec{"straighten", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Straighten"), -kMaxStraighten,
+                kMaxStraighten, 0.1, 1.0, 1, "°", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"noiseReduction", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Amount"), 0.0, 100.0, 1.0, 10.0, 0,
+                "", EditControl::BaseLook, false, Scale::Linear, false, 0.0},
+    ControlSpec{"noiseRadius", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Radius"), kMinDenoiseRadius,
+                kMaxDenoiseRadius, 1.0, 4.0, 0, "px", EditControl::BaseLook, false, Scale::Logarithmic, false,
+                kDefaultDenoiseRadius},
+    ControlSpec{"maskExposure", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Exposure"), -kMaxLocalExposure,
+                kMaxLocalExposure, 0.05, 0.5, 2, "EV", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskContrast", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Contrast"), -100.0, 100.0, 1.0, 10.0, 0,
+                "", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskHighlights", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Highlights"), -100.0, 100.0, 1.0,
+                10.0, 0, "", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskShadows", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Shadows"), -100.0, 100.0, 1.0, 10.0, 0,
+                "", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskSaturation", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Saturation"), -100.0, 100.0, 1.0,
+                10.0, 0, "", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskTemperature", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Temperature"), -100.0, 100.0, 1.0,
+                10.0, 0, "", EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskTint", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Tint"), -100.0, 100.0, 1.0, 10.0, 0, "",
+                EditControl::BaseLook, true, Scale::Linear, false, 0.0},
+    ControlSpec{"maskOpacity", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Opacity"), 0.0, 100.0, 1.0, 10.0, 0, "%",
+                EditControl::BaseLook, false, Scale::Linear, false, 100.0},
+    ControlSpec{"maskFeather", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Feather"), 0.0, 100.0, 1.0, 10.0, 0, "",
+                EditControl::BaseLook, false, Scale::Linear, false, 50.0},
+    ControlSpec{"brushSize", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Size"), 0.1, 25.0, 0.1, 1.0, 1, "%",
+                EditControl::BaseLook, false, Scale::Logarithmic, false, 2.0},
+    ControlSpec{"brushFeather", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Feather"), 0.0, 100.0, 1.0, 10.0, 0, "",
+                EditControl::BaseLook, false, Scale::Linear, false, 50.0},
+    ControlSpec{"brushFlow", QT_TRANSLATE_NOOP("lucent::ui::EditSession", "Flow"), 1.0, 100.0, 1.0, 10.0, 0, "",
+                EditControl::BaseLook, false, Scale::Linear, false, 100.0},
 };
+
+const EditMask* mask_in(const EditSettings& settings, quint32 id) {
+    for (const EditMask& mask : settings.masks) {
+        if (mask.id == id) {
+            return &mask;
+        }
+    }
+    return nullptr;
+}
 
 const ControlSpec* spec_of(const QString& key) {
     for (const ControlSpec& spec : kControls) {
@@ -106,7 +166,8 @@ struct CategorySpec {
 constexpr std::array kCategories{
     CategorySpec{"whiteBalance", SettingsCategory::WhiteBalance}, CategorySpec{"exposure", SettingsCategory::Exposure},
     CategorySpec{"tone", SettingsCategory::Tone},                 CategorySpec{"color", SettingsCategory::Color},
-    CategorySpec{"local", SettingsCategory::Local},
+    CategorySpec{"local", SettingsCategory::Local},               CategorySpec{"masks", SettingsCategory::Masks},
+    CategorySpec{"detail", SettingsCategory::Detail},             CategorySpec{"geometry", SettingsCategory::Geometry},
 };
 
 double round_to(double value, int decimals) {
@@ -143,6 +204,8 @@ EditSession::EditSession(EditService& service, std::shared_ptr<FrameStore> store
     connect(&service_, &EditService::pasted, this, &EditSession::on_pasted);
     connect(&service_, &EditService::busy_changed, this, &EditSession::busyChanged);
     curve_samples_ = service_.sample_tone_curve(settings_.tone_curve, kCurveSamples);
+    crop_ = std::make_unique<CropTool>(*this);
+    masks_ = std::make_unique<MaskEditor>(*this);
 }
 
 EditSession::~EditSession() = default;
@@ -164,6 +227,9 @@ void EditSession::set_item(ItemId item) {
         store_->remove(item_);
     }
     item_ = item;
+    const bool had_tool = !tool_.isEmpty();
+    tool_.clear();
+    selected_mask_ = 0;
     state_.reset();
     answered_token_ = last_token_;
     paste_pending_ = false;
@@ -180,6 +246,10 @@ void EditSession::set_item(ItemId item) {
             service_.set_full_resolution(item_, true);
         }
     }
+    if (had_tool) {
+        emit toolChanged();
+    }
+    emit maskSelectionChanged();
     emit activeChanged();
     emit stateChanged();
     emit whiteBalanceChanged();
@@ -191,6 +261,12 @@ void EditSession::reset_frames() {
     frame_source_.clear();
     before_source_.clear();
     clipping_source_.clear();
+    mask_overlay_source_.clear();
+    frame_full_upright_ = QSize();
+    frame_geometry_ = EditGeometry{};
+    frame_map_ = GeometryMap{};
+    frame_uncropped_ = false;
+    frame_masks_.clear();
     frame_info_.reset();
     frame_full_resolution_ = false;
     frame_error_.clear();
@@ -237,6 +313,40 @@ double EditSession::display_value(const EditSettings& settings, const QString& k
     if (key == u"exposure") {
         return settings.exposure_ev;
     }
+    if (key == u"straighten") {
+        return settings.geometry.straighten_degrees;
+    }
+    if (key == u"noiseReduction") {
+        return round_to(settings.chroma_denoise.strength * 100.0, 6);
+    }
+    if (key == u"noiseRadius") {
+        return settings.chroma_denoise.radius;
+    }
+    switch (group_of(key)) {
+        case KeyGroup::Tool:
+            return key == u"brushSize" ? brush_size_ : key == u"brushFeather" ? brush_feather_ : brush_flow_;
+        case KeyGroup::Mask: {
+            const EditMask* mask = mask_in(settings, selected_mask_);
+            if (mask == nullptr) {
+                return spec->default_value;
+            }
+            const EditLocalControls& c = mask->controls;
+            if (key == u"maskExposure") {
+                return c.exposure_ev;
+            }
+            const double unit = key == u"maskContrast"      ? c.contrast
+                                : key == u"maskHighlights"  ? c.highlights
+                                : key == u"maskShadows"     ? c.shadows
+                                : key == u"maskSaturation"  ? c.saturation
+                                : key == u"maskTemperature" ? c.temperature
+                                : key == u"maskTint"        ? c.tint
+                                : key == u"maskOpacity"     ? mask->opacity
+                                                            : mask->feather;
+            return round_to(unit * 100.0, 6);
+        }
+        case KeyGroup::Global:
+            break;
+    }
     const double unit = key == u"contrast"     ? settings.contrast
                         : key == u"highlights" ? settings.highlights
                         : key == u"shadows"    ? settings.shadows
@@ -274,6 +384,57 @@ EditSettings EditSession::with_value(const EditSettings& settings, const QString
         next.exposure_ev = v;
         return next;
     }
+    if (key == u"straighten") {
+        next.geometry = crop_->straightened(settings.geometry, v);
+        return next;
+    }
+    if (key == u"noiseReduction") {
+        next.chroma_denoise.strength = v / 100.0;
+        return next;
+    }
+    if (key == u"noiseRadius") {
+        next.chroma_denoise.radius = v;
+        return next;
+    }
+    switch (group_of(key)) {
+        case KeyGroup::Tool:
+            return next;  // not part of the settings (set_tool_value)
+        case KeyGroup::Mask: {
+            EditMask* mask = nullptr;
+            for (EditMask& candidate : next.masks) {
+                if (candidate.id == selected_mask_) {
+                    mask = &candidate;
+                }
+            }
+            if (mask == nullptr) {
+                return next;
+            }
+            EditLocalControls& c = mask->controls;
+            const double fraction = v / 100.0;
+            if (key == u"maskExposure") {
+                c.exposure_ev = v;
+            } else if (key == u"maskContrast") {
+                c.contrast = fraction;
+            } else if (key == u"maskHighlights") {
+                c.highlights = fraction;
+            } else if (key == u"maskShadows") {
+                c.shadows = fraction;
+            } else if (key == u"maskSaturation") {
+                c.saturation = fraction;
+            } else if (key == u"maskTemperature") {
+                c.temperature = fraction;
+            } else if (key == u"maskTint") {
+                c.tint = fraction;
+            } else if (key == u"maskOpacity") {
+                mask->opacity = fraction;
+            } else if (key == u"maskFeather" && mask->kind != MaskKind::Brush) {
+                mask->feather = fraction;
+            }
+            return next;
+        }
+        case KeyGroup::Global:
+            break;
+    }
     const double unit = v / 100.0;
     if (key == u"contrast") {
         next.contrast = unit;
@@ -294,10 +455,7 @@ QVariantMap EditSession::control(const QString& key) const {
     if (spec == nullptr) {
         return {};
     }
-    double default_value = 0.0;
-    if (key == u"temperature" || key == u"tint") {
-        default_value = display_value(EditSettings{}, key);
-    }
+    const double default_value = default_of(key);
     return QVariantMap{
         {QStringLiteral("label"), tr_text(spec->label)},
         {QStringLiteral("minimum"), spec->minimum},
@@ -307,9 +465,40 @@ QVariantMap EditSession::control(const QString& key) const {
         {QStringLiteral("decimals"), spec->decimals},
         {QStringLiteral("unit"), QString::fromLatin1(spec->unit)},
         {QStringLiteral("defaultValue"), default_value},
-        {QStringLiteral("lockKey"), lock_key(spec->lock)},
-        {QStringLiteral("reciprocal"), spec->scale == Scale::Reciprocal},
+        {QStringLiteral("lockKey"), spec->lockable ? lock_key(spec->lock) : QString()},
+        // The slider runs in position() (not linear in the display value).
+        {QStringLiteral("reciprocal"), spec->scale != Scale::Linear},
     };
+}
+
+double EditSession::default_of(const QString& key) const {
+    const ControlSpec* spec = spec_of(key);
+    if (spec == nullptr) {
+        return 0.0;
+    }
+    if (key == u"temperature" || key == u"tint") {
+        return display_value(EditSettings{}, key);
+    }
+    if (key == u"maskFeather") {
+        const EditMask* mask = mask_in(settings_, selected_mask_);
+        return mask != nullptr && mask->kind == MaskKind::Linear ? 100.0 : 50.0;
+    }
+    return spec->default_value;
+}
+
+void EditSession::set_tool_value(const QString& key, double value) {
+    const ControlSpec* spec = spec_of(key);
+    if (spec == nullptr || !std::isfinite(value)) {
+        return;
+    }
+    const double v = std::clamp(round_to(value, spec->decimals), spec->minimum, spec->maximum);
+    double& target = key == u"brushSize" ? brush_size_ : key == u"brushFeather" ? brush_feather_ : brush_flow_;
+    if (target == v) {
+        return;
+    }
+    target = v;
+    ++settings_revision_;
+    emit settingsChanged();
 }
 
 double EditSession::value(const QString& key) const {
@@ -352,6 +541,10 @@ double EditSession::position(const QString& key) const {
         const double high = 1.0 / spec->maximum;
         return std::clamp((low - 1.0 / v) / (low - high), 0.0, 1.0);
     }
+    if (spec->scale == Scale::Logarithmic) {
+        return std::clamp(std::log(std::max(v, spec->minimum) / spec->minimum) / std::log(spec->maximum / spec->minimum),
+                          0.0, 1.0);
+    }
     return std::clamp((v - spec->minimum) / (spec->maximum - spec->minimum), 0.0, 1.0);
 }
 
@@ -366,6 +559,8 @@ void EditSession::setPosition(const QString& key, double position) {
         const double low = 1.0 / spec->minimum;
         const double high = 1.0 / spec->maximum;
         v = 1.0 / (low - p * (low - high));
+    } else if (spec->scale == Scale::Logarithmic) {
+        v = spec->minimum * std::pow(spec->maximum / spec->minimum, p);
     } else {
         v = spec->minimum + p * (spec->maximum - spec->minimum);
     }
@@ -374,6 +569,10 @@ void EditSession::setPosition(const QString& key, double position) {
 
 void EditSession::setValue(const QString& key, double value) {
     if (spec_of(key) == nullptr) {
+        return;
+    }
+    if (group_of(key) == KeyGroup::Tool) {
+        set_tool_value(key, value);
         return;
     }
     change(with_value(settings_, key, value));
@@ -422,7 +621,7 @@ void EditSession::resetValue(const QString& key) {
     }
     endNudge();
     commit_gesture();
-    setValue(key, 0.0);
+    setValue(key, default_of(key));
 }
 
 void EditSession::resetWhiteBalance() {
@@ -540,6 +739,7 @@ void EditSession::change(const EditSettings& next) {
 void EditSession::set_local(const EditSettings& settings) {
     const bool curve_changed = settings.tone_curve != settings_.tone_curve || curve_samples_.isEmpty();
     settings_ = settings;
+    validate_selection();
     ++settings_revision_;
     if (curve_changed) {
         curve_samples_ = service_.sample_tone_curve(settings_.tone_curve, kCurveSamples);
@@ -790,8 +990,12 @@ void EditSession::resetToAsShot() {
 QVariantList EditSession::categories() const {
     QVariantList list;
     for (const CategorySpec& category : kCategories) {
-        list << QVariantMap{{QStringLiteral("key"), QString::fromLatin1(category.key)},
-                            {QStringLiteral("label"), category_label(category.category)}};
+        list << QVariantMap{
+            {QStringLiteral("key"), QString::fromLatin1(category.key)},
+            {QStringLiteral("label"), category_label(category.category)},
+            // Selected by default: every category but Masks and Geometry (placed on this photo's content).
+            {QStringLiteral("checked"), (kDefaultCategoryBits & category_bit(category.category)) != 0},
+        };
     }
     return list;
 }
@@ -961,6 +1165,94 @@ QString EditSession::describe_committed(EditControl control) const {
     return control_label(control);
 }
 
+// ---- Tools (W9) -----------------------------------------------------------------------------------------
+
+void EditSession::finish_pending_gesture() {
+    endNudge();
+    commit_gesture();
+}
+
+void EditSession::show_message(const QString& text) {
+    set_message(text);
+    emit notice(text);
+}
+
+void EditSession::setTool(const QString& tool) {
+    const QString next = tool == u"crop" || tool == u"masks" ? tool : QString();
+    if (next == tool_ || (!next.isEmpty() && item_ == 0)) {
+        return;
+    }
+    finish_pending_gesture();
+    if (tool_ == u"crop" && item_ != 0) {
+        service_.set_crop_editing(item_, false);
+    }
+    tool_ = next;
+    if (tool_ == u"crop") {
+        crop_opened_with_ = settings_.geometry;
+        service_.set_crop_editing(item_, true);
+    }
+    emit toolChanged();
+}
+
+void EditSession::finishTool() {
+    setTool(QString());
+}
+
+void EditSession::cancelTool() {
+    if (tool_ == u"crop" && can_edit() && settings_.geometry != crop_opened_with_) {
+        finish_pending_gesture();
+        EditSettings next = settings_;
+        next.geometry = crop_opened_with_;
+        change(next);
+    }
+    setTool(QString());
+}
+
+void EditSession::validate_selection() {
+    quint32 selected = selected_mask_;
+    if (mask_in(settings_, selected) == nullptr) {
+        selected = settings_.masks.isEmpty() ? 0u : settings_.masks.back().id;
+    }
+    if (selected != selected_mask_) {
+        selected_mask_ = selected;
+        send_mask_overlay();
+        emit maskSelectionChanged();
+    }
+}
+
+void EditSession::set_selected_mask(quint32 id) {
+    if (id == selected_mask_ || (id != 0 && mask_in(settings_, id) == nullptr)) {
+        return;
+    }
+    selected_mask_ = id;
+    send_mask_overlay();
+    ++settings_revision_;  // the local controls show the newly selected mask
+    emit maskSelectionChanged();
+    emit settingsChanged();
+}
+
+void EditSession::set_mask_overlay(bool overlay) {
+    if (overlay == mask_overlay_) {
+        return;
+    }
+    mask_overlay_ = overlay;
+    send_mask_overlay();
+    if (!overlay) {
+        if (item_ != 0) {
+            store_->drop(FrameStore::Kind::Mask, item_);
+        }
+        mask_overlay_source_.clear();
+    }
+    emit maskOverlayChanged();
+    emit frameChanged();
+}
+
+void EditSession::send_mask_overlay() {
+    if (item_ != 0) {
+        service_.set_mask_overlay(item_, mask_overlay_ ? selected_mask_ : 0u);
+    }
+}
+
 void EditSession::set_message(const QString& message) {
     if (message == message_) {
         return;
@@ -1033,6 +1325,19 @@ void EditSession::on_frame(const EditFramePtr& frame) {
     }
     store_->put(FrameStore::Kind::Frame, item_, frame->sequence, frame->image);
     frame_source_ = FrameStore::url(FrameStore::Kind::Frame, item_, frame->sequence);
+    // W9: the frame's geometry and masks for the tools, and the selected mask's weights.
+    frame_full_upright_ = frame->full_upright_size;
+    frame_geometry_ = frame->geometry;
+    frame_uncropped_ = frame->uncropped;
+    frame_masks_ = frame->masks;
+    frame_map_ = frame_full_upright_.isEmpty() ? GeometryMap{}
+                                               : service_.map_geometry(frame_geometry_, frame_full_upright_);
+    if (mask_overlay_ && !frame->mask_overlay.isNull() && frame->mask_overlay_id == selected_mask_) {
+        store_->put(FrameStore::Kind::Mask, item_, frame->sequence, frame->mask_overlay);
+        mask_overlay_source_ = FrameStore::url(FrameStore::Kind::Mask, item_, frame->sequence);
+    } else {
+        mask_overlay_source_.clear();
+    }
     if (!frame->clipping.isNull()) {
         store_->put(FrameStore::Kind::Clipping, item_, frame->sequence, frame->clipping);
         clipping_source_ = FrameStore::url(FrameStore::Kind::Clipping, item_, frame->sequence);

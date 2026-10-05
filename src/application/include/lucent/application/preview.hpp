@@ -67,8 +67,11 @@ struct RenderSummary {
     // Interpretation of the decoded image (after unpacking) and its issues.
     raw::InterpretationStatus interpretation = raw::InterpretationStatus::Complete;
     std::vector<raw::InterpretationIssue> issues;
-    std::vector<std::string> warnings;                            // DevelopReport::warnings
-    image::Size rendered_size;                                    // full-resolution upright size
+    std::vector<std::string> warnings;  // DevelopReport::warnings
+    // The size of the developed image at full resolution: after the geometry (crop, straighten,
+    // quarter turns), i.e. DevelopReport::output_size of a full-resolution render
+    // (rendered_full_size()).
+    image::Size rendered_size;
     image::Orientation orientation = image::Orientation::Normal;  // baked into the pixels
     std::string demosaic;      // demosaic algorithm id, e.g. "malvar-he-cutler-2004"
     std::string camera_color;  // camera-colour algorithm id, e.g. "camera-to-xyz-dng_color_matrix"
@@ -77,6 +80,10 @@ struct RenderSummary {
     std::uint64_t estimated_peak_bytes = 0;    // the memory admitted for the render
     double render_seconds = 0.0;               // stage one + stage two
 };
+
+// The full-resolution size of a develop report's image: its output_size when the render was at full
+// resolution (upright_size == full_size), otherwise the settings' geometry mapped for full_size.
+[[nodiscard]] image::Size rendered_full_size(const engine::DevelopReport& report);
 
 // The summary of a develop report; `interpretation` is the decoded image's.
 [[nodiscard]] RenderSummary summarize_render(const engine::DevelopReport& report,

@@ -29,11 +29,103 @@ double seconds_since(Clock::time_point start) {
     return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
-// Working memory of a stage-two render of `size` and its display products: the RGB float result,
-// the local-tone planes (three floats per pixel), the 8-bit image and the clipping mask.
-std::uint64_t stage_two_bytes(image::Size size) {
+// Working memory of a stage-two render of `size` and its display products when the engine cannot
+// estimate it (no metadata): the RGB float result, the local-tone planes (three floats per pixel),
+// the 8-bit image and the clipping mask.
+std::uint64_t fallback_stage_two_bytes(image::Size size) {
     return size.empty() ? 0 : static_cast<std::uint64_t>(size.area()) * (12 + 12 + 3 + 1);
 }
+
+// Working memory of a stage-two render of `source` with `settings` and its display products: the
+// engine's settings-aware stage-two estimate at the source's size (its RGB image and the largest
+// operation's working memory: local tone, chroma denoising, brush rasters and the masks' base
+// layer, the geometry's output), plus the 8-bit image and the clipping mask (4 bytes per pixel).
+std::uint64_t stage_two_claim(const engine::StageOneImage& source, const engine::DevelopSettings& settings) {
+    const image::Size size = source.pixels.size();
+    if (size.empty()) {
+        return 0;
+    }
+    engine::StageOneRequest request;
+    request.kind = source.kind;
+    request.proxy_long_edge = source.scale < 1.0 ? std::max(size.width, size.height) : 0;
+    auto estimate = engine::estimate_develop_memory(source.metadata, request, settings);
+    if (!estimate || estimate->stage_two_bytes == 0) {
+        return fallback_stage_two_bytes(size);
+    }
+    return estimate->stage_two_bytes + static_cast<std::uint64_t>(size.area()) * 4;
+}
+
+// True when a render of `settings` can fill a session cache: the denoised image is kept when
+// denoising is applied, brush rasters when a brush mask has an effect.
+bool uses_stage_two_cache(const engine::DevelopSettings& settings) {
+    return !settings.chroma_denoise.is_identity();
+}
+
+bool uses_mask_cache(const engine::DevelopSettings& settings) {
+    return std::any_of(settings.local_adjustments.begin(), settings.local_adjustments.end(),
+                       [](const engine::LocalAdjustment& a) {
+                           return a.has_effect() && a.kind() == engine::MaskKind::Brush;
+                       });
+}
+
+// The masks of `settings` for an overlay of a render whose geometry is `mapping`.
+std::vector<MaskOverlay> mask_overlays(const engine::DevelopSettings& settings, const engine::GeometryMapping& mapping) {
+    std::vector<MaskOverlay> out;
+    out.reserve(settings.local_adjustments.size());
+    for (const engine::LocalAdjustment& a : settings.local_adjustments) {
+        MaskOverlay overlay;
+        overlay.id = a.id;
+        overlay.kind = a.kind();
+        overlay.enabled = a.enabled;
+        overlay.invert = a.invert;
+        const engine::MaskOutline outline = engine::mask_outline(a.shape, mapping.upright_size());
+        overlay.polylines.reserve(outline.polylines.size());
+        for (const std::vector<engine::MaskPoint>& line : outline.polylines) {
+            std::vector<image::PointD> mapped;
+            mapped.reserve(line.size());
+            for (const engine::MaskPoint& point : line) {
+                mapped.push_back(mapping.output_from_normalized(point));
+            }
+            overlay.polylines.push_back(std::move(mapped));
+        }
+        out.push_back(std::move(overlay));
+    }
+    return out;
+}
+
+// Retained memory that grows by adding leases and shrinks without waiting: what a session's caches
+// hold. Not synchronised (the session's mutex guards it).
+class RetainedClaim {
+public:
+    [[nodiscard]] std::uint64_t bytes() const noexcept {
+        std::uint64_t total = 0;
+        for (const AdmissionLease& lease : leases_) {
+            total += lease.bytes();
+        }
+        return total;
+    }
+    // Keeps `lease` (a retained lease). Throws std::bad_alloc (the lease is then released).
+    void add(AdmissionLease lease) {
+        if (lease.held() && lease.bytes() > 0) {
+            leases_.push_back(std::move(lease));
+        }
+    }
+    // Returns everything above `target` bytes at once.
+    void shrink_to(std::uint64_t target) noexcept {
+        std::uint64_t total = bytes();
+        while (!leases_.empty() && total - leases_.back().bytes() >= target) {
+            total -= leases_.back().bytes();
+            leases_.pop_back();
+        }
+        if (total > target && !leases_.empty()) {
+            leases_.back().retain_only(leases_.back().bytes() - (total - target));
+        }
+    }
+    void release() noexcept { leases_.clear(); }
+
+private:
+    std::vector<AdmissionLease> leases_;
+};
 
 enum class BuildKind : std::uint8_t { Proxy = 1, Full = 2 };
 enum class RenderKind : std::uint8_t { ProxyQuick = 1, ProxyFinal = 2, Full = 3 };
@@ -89,6 +181,12 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         engine::WhiteBalanceSetting full_white_balance;
         AdmissionLease full_lease;
 
+        // The proxy renders' caches (set at open, never replaced; internally synchronised) and the
+        // retained memory they hold.
+        std::shared_ptr<engine::MaskRasterCache> mask_cache;
+        std::shared_ptr<engine::StageTwoCache> stage_two_cache;
+        RetainedClaim cache_claim;
+
         std::optional<Job> build;
         std::optional<Job> render;
         std::uint64_t next_job = 1;
@@ -112,6 +210,30 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         std::lock_guard lock(mutex);
         const auto found = sessions.find(item.value);
         return found == sessions.end() ? nullptr : found->second;
+    }
+
+    // The bytes the session's caches hold now.
+    static std::uint64_t cache_bytes(const Session& s) {
+        std::uint64_t bytes = 0;
+        if (s.mask_cache) {
+            bytes += s.mask_cache->stats().bytes;
+        }
+        if (s.stage_two_cache) {
+            bytes += s.stage_two_cache->stats().bytes;
+        }
+        return bytes;
+    }
+
+    // Drops what the caches hold and its claim (the brush rasters too when `masks`). Requires
+    // s.mutex.
+    static void clear_caches_locked(Session& s, bool masks) {
+        if (s.stage_two_cache) {
+            s.stage_two_cache->clear();
+        }
+        if (masks && s.mask_cache) {
+            s.mask_cache->clear();
+        }
+        s.cache_claim.shrink_to(cache_bytes(s));
     }
 
     // ---- Scheduling (all under the session's mutex) ---------------------------------------------
@@ -295,6 +417,7 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
                         s->proxy = std::make_shared<const engine::StageOneImage>(std::move(*one));
                         s->proxy_white_balance = wb;
                         s->proxy_lease = std::move(lease);
+                        clear_caches_locked(*s, false);  // the denoised image was another stage one's
                     } else {
                         s->full = std::make_shared<const engine::StageOneImage>(std::move(*one));
                         s->full_white_balance = wb;
@@ -303,6 +426,7 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
                             s->proxy = std::make_shared<const engine::StageOneImage>(std::move(*derived));
                             s->proxy_white_balance = wb;
                             s->proxy_lease = std::move(derived_lease);
+                            clear_caches_locked(*s, false);
                         }
                     }
                     if (refine) {
@@ -334,16 +458,43 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         const core::CancellationToken& cancel = context.cancel();
         Expected<std::shared_ptr<DevelopFrame>> frame =
             fail(ErrorCode::Cancelled, "cancelled", std::string(kWhere));
+        const engine::DevelopSettings& settings = request.view.settings;
+        const bool proxy = kind != RenderKind::Full;
+        StageTwoCaches caches;
+        if (proxy) {
+            caches.masks = s->mask_cache;
+            caches.stage_two = s->stage_two_cache;
+        }
+        // Room for the caches to fill (see the header): their capacities beyond what they hold.
+        std::uint64_t cache_room = 0;
+        if (proxy) {
+            const bool masks = caches.masks && uses_mask_cache(settings);
+            const bool denoised = caches.stage_two && uses_stage_two_cache(settings);
+            if (masks || denoised) {
+                const std::uint64_t capacity = (caches.masks ? options.mask_cache_bytes : 0) +
+                                               (caches.stage_two ? options.stage_two_cache_bytes : 0);
+                std::uint64_t claimed = 0;
+                {
+                    std::lock_guard lock(s->mutex);
+                    claimed = s->cache_claim.bytes();
+                }
+                cache_room = capacity > claimed ? capacity - claimed : 0;
+            }
+        }
+        AdmissionLease render_lease;
+        std::uint64_t bytes = 0;
         try {
             if (!cancel.is_cancelled() && source) {
-                const std::uint64_t bytes = stage_two_bytes(source->pixels.size());
+                bytes = stage_two_claim(*source, settings);
                 Expected<AdmissionLease> lease = kind == RenderKind::Full
                                                      ? context.admit(bytes)
-                                                     : context.admission().retain(bytes, cancel);
+                                                     : context.admission().retain(bytes + cache_room, cancel);
                 if (!lease) {
                     frame = Unexpected(std::move(lease.error()));
                 } else {
-                    auto rendered = renderer->render_stage_two(*source, request.view.settings, cancel);
+                    render_lease = std::move(*lease);
+                    auto rendered = proxy ? renderer->render_stage_two_cached(*source, settings, caches, cancel)
+                                          : renderer->render_stage_two(*source, settings, cancel);
                     if (!rendered) {
                         frame = Unexpected(std::move(rendered.error()));
                     } else {
@@ -372,6 +523,11 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
                                     summarize_render(rendered->report, source->metadata.interpretation);
                                 out->summary.estimated_peak_bytes = bytes;
                                 out->stage_two_seconds = rendered->report.stage_two_seconds;
+                                if (auto mapping =
+                                        engine::GeometryMapping::create(settings.geometry, source->pixels.size())) {
+                                    out->masks = mask_overlays(settings, *mapping);
+                                    out->geometry = std::move(*mapping);
+                                }
                                 out->display_seconds = seconds_since(display_start);
                                 out->report = std::make_shared<const engine::DevelopReport>(
                                     std::move(rendered->report));
@@ -395,6 +551,22 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
             if (s->render && s->render->id == job) {
                 s->render.reset();
             }
+            if (proxy && !s->closed) {
+                // The caches' bytes stay claimed (from this render's room); the rest is returned.
+                const std::uint64_t held = cache_bytes(*s);
+                const std::uint64_t claimed = s->cache_claim.bytes();
+                if (held > claimed && render_lease.held()) {
+                    render_lease.retain_only(held - claimed);
+                    try {
+                        s->cache_claim.add(std::move(render_lease));
+                    } catch (const std::bad_alloc&) {
+                        // Accounting only: the lease is released with the vector's failure.
+                    }
+                } else {
+                    s->cache_claim.shrink_to(held);
+                }
+            }
+            render_lease.release();
             if (!s->closed) {
                 const std::uint64_t g = request.generation;
                 if (frame) {
@@ -475,6 +647,13 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         s.proxy_lease.release();
         s.full.reset();
         s.full_lease.release();
+        if (s.mask_cache) {
+            s.mask_cache->clear();
+        }
+        if (s.stage_two_cache) {
+            s.stage_two_cache->clear();
+        }
+        s.cache_claim.release();
     }
 
     // Drops the caches of a session whose file changed (the next request rebuilds them).
@@ -489,6 +668,7 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         s.proxy_lease.release();
         s.full.reset();
         s.full_lease.release();
+        clear_caches_locked(s, true);
         s.build_failed_for = 0;
     }
 
@@ -570,6 +750,12 @@ Status DevelopPreviewService::open(ItemId item, DevelopSink sink) {
         session->source = std::move(*source);
         session->sink = std::move(sink);
         session->stats.item = item;
+        if (state_->options.mask_cache_bytes > 0) {
+            session->mask_cache = std::make_shared<engine::MaskRasterCache>(state_->options.mask_cache_bytes);
+        }
+        if (state_->options.stage_two_cache_bytes > 0) {
+            session->stage_two_cache = std::make_shared<engine::StageTwoCache>(state_->options.stage_two_cache_bytes);
+        }
         std::lock_guard lock(state_->mutex);
         if (state_->shut_down) {
             return fail(ErrorCode::Cancelled, "the develop service is shutting down", std::string(kWhere));
@@ -690,7 +876,14 @@ std::optional<DevelopSessionStats> DevelopPreviewService::stats(ItemId item) con
         stats.full_size = s->full->pixels.size();
         stats.full_bytes = s->full->byte_size();
     }
-    stats.retained_bytes = s->proxy_lease.bytes() + s->full_lease.bytes();
+    stats.cache_bytes = State::cache_bytes(*s);
+    if (s->mask_cache) {
+        stats.mask_cache_hits = s->mask_cache->stats().hits;
+    }
+    if (s->stage_two_cache) {
+        stats.stage_two_cache_hits = s->stage_two_cache->stats().hits;
+    }
+    stats.retained_bytes = s->proxy_lease.bytes() + s->full_lease.bytes() + s->cache_claim.bytes();
     return stats;
 }
 

@@ -5,8 +5,8 @@
 // UI thread; ADR 0010, "quick, then refine").
 //
 // URLs: image://frame/<item>/<sequence> (the current settings), image://before/<item>/<sequence>
-// (the as-shot comparison) and image://clipping/<item>/<sequence> (the clipping overlay of the
-// frame with that sequence). Sequences increase per service, so every frame is a new URL and Qt
+// (the as-shot comparison), image://clipping/<item>/<sequence> (the clipping overlay of the
+// frame with that sequence) and image://mask/<item>/<sequence> (the weight overlay of a mask, W9). Sequences increase per service, so every frame is a new URL and Qt
 // Quick never shows an older frame for a newer URL.
 //
 // Only the newest image of each kind is kept per item (a 100 % frame of a 45 MP photo is about
@@ -32,9 +32,9 @@ namespace lucent::ui {
 
 class FrameStore {
 public:
-    enum class Kind { Frame, Before, Clipping };
+    enum class Kind { Frame, Before, Clipping, Mask };
 
-    // Provider ids: "frame", "before", "clipping".
+    // Provider ids: "frame", "before", "clipping", "mask".
     [[nodiscard]] static QString provider_id(Kind kind);
     // "image://<provider>/<item>/<sequence>"; empty for item or sequence 0.
     [[nodiscard]] static QString url(Kind kind, ItemId item, quint64 sequence);
@@ -58,6 +58,7 @@ private:
         Slot frame;
         Slot before;
         Slot clipping;
+        Slot mask;
     };
 
     static Slot& slot(Entry& entry, Kind kind);
@@ -81,7 +82,7 @@ private:
     std::shared_ptr<const FrameStore> store_;
 };
 
-// Registers the frame, before and clipping providers with `engine` (which takes ownership).
+// Registers the frame, before, clipping and mask providers with `engine` (which takes ownership).
 void install_frame_providers(QQmlEngine& engine, const std::shared_ptr<const FrameStore>& store);
 
 }  // namespace lucent::ui

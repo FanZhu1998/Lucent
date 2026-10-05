@@ -107,7 +107,8 @@ analysis::EditVector edit_of(const engine::DevelopSettings& s, const EditReferen
 // Probe and decode; with the final check, the memory check of the whole run first (the decode is
 // kept for the check, so the file is decoded once).
 Expected<raw::DecodedRaw> decode_photo(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
-                                       std::uint32_t subimage, const AutoRunOptions& options, bool final_check,
+                                       std::uint32_t subimage, const engine::DevelopSettings& current,
+                                       const AutoRunOptions& options, bool final_check,
                                        const core::CancellationToken& cancel) {
     raw::ProbeOptions probe_options;
     probe_options.subimage = subimage;
@@ -118,7 +119,7 @@ Expected<raw::DecodedRaw> decode_photo(const raw::DecoderRegistry& registry, con
         return Unexpected(std::move(selection.error()));
     }
     if (final_check) {
-        auto estimate = estimate_automatic_memory(selection->probe.metadata, options);
+        auto estimate = estimate_automatic_memory(selection->probe.metadata, current, options);
         if (!estimate) {
             return Unexpected(std::move(estimate.error()));
         }
@@ -386,6 +387,25 @@ Expected<std::vector<AutoAttempt>> final_check(raw::DecodedRaw&& decoded, const 
             context->neutral_evidence = std::move(*mask);
         }
     }
+    // The check renders the photographer's geometry (the choice, its fallbacks and the baseline all
+    // carry it): measure in its output frame, the context mapped through the same geometry. The
+    // white balance was decided on the whole frame's neutral evidence; a crop without neutral
+    // surfaces does not fail it (NaturalV1Context::neutral_evidence_beyond_crop).
+    if (!baseline.geometry.is_identity()) {
+        const auto neutral = static_cast<std::uint64_t>(
+            std::count_if(context->neutral_evidence.begin(), context->neutral_evidence.end(),
+                          [](std::uint8_t v) { return v != 0; }));
+        policy.neutral_evidence_beyond_crop = neutral >= analysis::kMinNeutralPixels;
+        auto mapping = engine::GeometryMapping::create(baseline.geometry, stage_one->pixels.size());
+        if (!mapping) {
+            return Unexpected(std::move(mapping.error()));
+        }
+        auto mapped = analysis::map_image_context(*context, *mapping);
+        if (!mapped) {
+            return Unexpected(std::move(mapped.error()));
+        }
+        *context = std::move(*mapped);
+    }
     EditReference reference;
     reference.baseline = baseline;
     reference.color = color;
@@ -483,6 +503,15 @@ Expected<std::vector<AutoAttempt>> final_check(raw::DecodedRaw&& decoded, const 
         analysis::RenderStats stats;
         if (is_baseline) {
             stats = base;
+        } else if (!(attempt.settings.geometry == baseline.geometry)) {
+            // Never by construction (every rung carries the photographer's geometry): a render of
+            // another frame cannot be compared with the baseline.
+            attempt.check.outcome = catalog::AutoCheckOutcome::Failed;
+            attempt.check.failures.push_back("geometry: the attempt's geometry is not the baseline's");
+            attempt.check.seconds = seconds_since(started);
+            attempts.push_back(std::move(attempt));
+            progress(attempt_done(i));
+            continue;
         } else {
             auto rendered = engine::render_stage_two(*stage_one, attempt.settings, develop, cancel);
             if (!rendered) {
@@ -764,14 +793,19 @@ std::string auto_revision_note(const AutoRun& run, const AutoAttempt& attempt) {
 
 // ---- Running ------------------------------------------------------------------------------------
 
-Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata, const AutoRunOptions& options) {
+namespace {
+
+Expected<std::uint64_t> automatic_memory(const raw::RawMetadata& metadata, const engine::DevelopSettings* current,
+                                         const AutoRunOptions& options) {
     auto analysis_bytes = analysis::estimate_auto_memory(metadata, options.analysis);
     if (!analysis_bytes) {
         return Unexpected(std::move(analysis_bytes.error()));
     }
     engine::StageOneRequest request;
     request.kind = engine::StageOneKind::Interactive;
-    auto develop = engine::estimate_develop_memory(metadata, request, options.analysis.develop);
+    auto develop = current != nullptr
+                       ? engine::estimate_develop_memory(metadata, request, *current, options.analysis.develop)
+                       : engine::estimate_develop_memory(metadata, request, options.analysis.develop);
     if (!develop) {
         return Unexpected(std::move(develop.error()));
     }
@@ -786,6 +820,18 @@ Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metada
     const std::uint64_t first = develop->stage_one_peak + pixels * 4;
     const std::uint64_t second = develop->stage_one_bytes + pixels * (9 + 17) + develop->stage_two_bytes;
     return std::max({analysis_with_copy, first, second});
+}
+
+}  // namespace
+
+Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata, const AutoRunOptions& options) {
+    return automatic_memory(metadata, nullptr, options);
+}
+
+Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata,
+                                                  const engine::DevelopSettings& current,
+                                                  const AutoRunOptions& options) {
+    return automatic_memory(metadata, &current, options);
 }
 
 Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
@@ -805,7 +851,7 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
         analysing(0.0);
 
         // 1-2. Decode once (a copy is kept for the final check); the independent analysis.
-        auto decoded = decode_photo(registry, path, subimage, options, request.final_check, cancel);
+        auto decoded = decode_photo(registry, path, subimage, current, options, request.final_check, cancel);
         if (!decoded) {
             return Unexpected(std::move(decoded.error()));
         }
@@ -813,7 +859,7 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
             return Unexpected(std::move(supported.error()));
         }
         run.interpretation = decoded->metadata.interpretation.status;
-        if (auto estimate = estimate_automatic_memory(decoded->metadata, options)) {
+        if (auto estimate = estimate_automatic_memory(decoded->metadata, current, options)) {
             run.estimated_peak_bytes = *estimate;
         }
         std::optional<raw::DecodedRaw> kept;

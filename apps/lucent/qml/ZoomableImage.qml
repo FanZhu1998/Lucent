@@ -30,6 +30,10 @@ import Lucent
 // camera's embedded JPEG, already loaded for the filmstrip) is shown in its place, labelled, with
 // a visible rendering state: a camera preview is never presented as Lucent's render.
 //
+// W9: `maskOverlaySource` is the selected mask's weight tint (EditSession.maskOverlaySource, O),
+// stretched over the frame like the clipping overlay; `imageRect` is where the image is in this
+// item's coordinates, for the crop and mask tools' overlays drawn over it (EditView).
+//
 // `incompleteRender` marks a preview rendered without a mandatory interpretation step (an
 // Unsupported file) with a banner on the image: it is never presented as an accurate result
 // (blueprint section 3).
@@ -53,6 +57,7 @@ FocusScope {
     property string frameSource
     property string beforeSource
     property string clippingSource
+    property string maskOverlaySource
     property string frameError  // why the session cannot render the photo; empty when it can
     property bool refining: false  // a Final frame is on its way
     property bool compare: false
@@ -84,6 +89,9 @@ FocusScope {
                                                      : image.status === Image.Loading
     readonly property bool showingPlaceholder: placeholder.visible
     readonly property bool showingBefore: framesExpected && (compare || split) && beforeImage.status === Image.Ready
+    // The displayed image in this item's coordinates (it follows panning at 100 %).
+    readonly property rect imageRect: Qt.rect(image.x - flick.contentX, image.y - flick.contentY, image.width,
+                                              image.height)
 
     function roundUp(value) {
         return Math.max(256, Math.ceil(value / 256) * 256)
@@ -230,6 +238,26 @@ FocusScope {
             smooth: false
             retainWhileLoading: true
             visible: frameImage.visible && root.clippingOverlay && status === Image.Ready
+                     && !(root.compare && !root.split)
+            Accessible.ignored: true
+        }
+
+        // W9: the selected mask's weights, tinted.
+        Image {
+            id: maskImage
+
+            objectName: "maskOverlayImage"
+            x: image.x
+            y: image.y
+            width: image.width
+            height: image.height
+            source: root.laidOut && root.framesExpected ? root.maskOverlaySource : ""
+            fillMode: Image.Stretch
+            asynchronous: true
+            cache: false
+            smooth: true
+            retainWhileLoading: true
+            visible: frameImage.visible && root.maskOverlaySource.length > 0 && status === Image.Ready
                      && !(root.compare && !root.split)
             Accessible.ignored: true
         }

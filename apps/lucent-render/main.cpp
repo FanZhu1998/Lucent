@@ -1,6 +1,7 @@
 // lucent-render: renders one RAW file through the engine's develop pipeline (ADR 0010: the export
-// render, engine::render_develop_file's composition, with DevelopSettings v1 and the "neutral" v1
-// base look) and exports it with lucent::exporter (verified, no-clobber publication).
+// render, engine::render_develop_file's composition, with DevelopSettings v2 (ADR 0015: chroma
+// denoising, masks, geometry) and the "neutral" v1 base look) and exports it with lucent::exporter
+// (verified, no-clobber publication).
 //
 // Usage:
 //   lucent-render <raw> --out <dir> [--format jpeg|tiff16] [--profile srgb|display-p3]
@@ -10,8 +11,9 @@
 //                 [--no-dng-opcodes] [other options as above, without --develop]
 //
 //   --develop F        the settings to render: a "lucent.develop" recipe document (recipe.hpp),
-//                      read strictly (an unknown field or operation, or a newer version, is an
-//                      error, never ignored). Default: "as shot".
+//                      version 1 (upgraded on read) or 2, read strictly (an unknown field or
+//                      operation, or a newer version, is an error, never ignored). Default: "as
+//                      shot".
 //   --legacy-neutral-v0  render with the W2 path instead (engine::render_file, provisional
 //                      Neutral v0 display rendering; ADR 0006), for the W2 reference comparisons
 //                      (research/tools/render_reference.py).
@@ -181,14 +183,32 @@ void print_usage(std::FILE* stream) {
         stream);
 }
 
-// Reads the --develop recipe strictly (recipe.hpp). Its errors are usage errors.
-lucent::Expected<lucent::engine::DevelopSettings> read_settings_file(const std::filesystem::path& path) {
+// A --develop recipe: its settings (always the current version) and the version the file had.
+struct SettingsFile {
+    lucent::engine::DevelopSettings settings;
+    std::uint32_t file_version = 0;
+};
+
+// Reads the --develop recipe strictly (recipe.hpp; version 1 is upgraded). Its errors are usage
+// errors.
+lucent::Expected<SettingsFile> read_settings_file(const std::filesystem::path& path) {
     auto bytes = lucent::core::read_file_bytes(path, std::uint64_t{16} << 20);
     if (!bytes) {
         return lucent::Unexpected(std::move(bytes.error()));
     }
     const std::string text(reinterpret_cast<const char*>(bytes->data()), bytes->size());
-    return lucent::app::read_recipe(text);
+    auto settings = lucent::app::read_recipe(text);
+    if (!settings) {
+        return lucent::Unexpected(std::move(settings.error()));
+    }
+    SettingsFile out;
+    out.settings = std::move(*settings);
+    // A readable recipe has an unsigned "version" member (read_recipe checked it).
+    const Json document = Json::parse(text, nullptr, /*allow_exceptions=*/false);
+    if (document.is_object() && document.contains("version") && document.at("version").is_number_unsigned()) {
+        out.file_version = document.at("version").get<std::uint32_t>();
+    }
+    return out;
 }
 
 bool write_line(const Json& j) {
@@ -393,13 +413,15 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
     lucent::engine::DevelopSettings settings;
     lucent::app::RecipeDocument recipe;
     Json recipe_json = nullptr;
+    std::uint32_t file_version = 0;
     if (!args.legacy) {
         if (args.develop) {
             auto read = read_settings_file(*args.develop);
             if (!read) {
                 return recipe_error(read.error());
             }
-            settings = std::move(*read);
+            settings = std::move(read->settings);
+            file_version = read->file_version;
         }
         if (args.exposure_ev) {
             settings.exposure_ev = *args.exposure_ev;
@@ -411,10 +433,11 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
         recipe = std::move(*document);
         recipe_json = Json{
             {"schema", std::string(lucent::app::kRecipeSchema)},
-            {"version", settings.version},
+            {"version", lucent::app::kRecipeSchemaVersion},
             {"sha256", lucent::core::to_hex(recipe.sha256)},
             {"document", Json::parse(recipe.json)},
-            {"file", args.develop ? Json(lucent::core::path_to_utf8_lossy(*args.develop)) : Json(nullptr)}};
+            {"file", args.develop ? Json(lucent::core::path_to_utf8_lossy(*args.develop)) : Json(nullptr)},
+            {"file_version", args.develop ? Json(file_version) : Json(nullptr)}};
     }
 
     Json report{{"schema", lucent::render_tool::kReportSchema},

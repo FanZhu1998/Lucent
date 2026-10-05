@@ -288,6 +288,62 @@ Expected<ImageContext> make_image_context(const engine::StageOneImage& stage_one
     return ctx;
 }
 
+Expected<ImageContext> map_image_context(const ImageContext& upright, const engine::GeometryMapping& mapping) {
+    const auto n = static_cast<std::size_t>(std::max<std::int64_t>(0, upright.size.area()));
+    if (mapping.upright_size() != upright.size || upright.signal.size() != n ||
+        (!upright.saturation.empty() && upright.saturation.size() != n) ||
+        (!upright.neutral_evidence.empty() && upright.neutral_evidence.size() != n)) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("the geometry is for an upright image of {}x{}, the context is {}x{} (or its "
+                                "planes do not match it)",
+                                mapping.upright_size().width, mapping.upright_size().height, upright.size.width,
+                                upright.size.height),
+                    kWhere);
+    }
+    try {
+        if (mapping.identity()) {
+            return upright;
+        }
+        ImageContext out;
+        out.size = mapping.output_size();
+        out.noise = upright.noise;
+        const auto m = static_cast<std::size_t>(out.size.area());
+        out.signal.assign(m, 0.0f);
+        if (!upright.saturation.empty()) {
+            out.saturation.assign(m, 0.0f);
+        }
+        if (!upright.neutral_evidence.empty()) {
+            out.neutral_evidence.assign(m, 0);
+        }
+        const std::int32_t w = upright.size.width;
+        const std::int32_t h = upright.size.height;
+        for (std::int32_t y = 0; y < out.size.height; ++y) {
+            for (std::int32_t x = 0; x < out.size.width; ++x) {
+                const image::PointD p = mapping.upright_from_output(image::PointD{x + 0.5, y + 0.5});
+                const double fx = std::floor(p.x);
+                const double fy = std::floor(p.y);
+                if (!(fx >= 0.0 && fy >= 0.0 && fx < w && fy < h)) {
+                    continue;  // uncovered canvas
+                }
+                const std::size_t from = static_cast<std::size_t>(fy) * static_cast<std::size_t>(w) +
+                                         static_cast<std::size_t>(fx);
+                const std::size_t to =
+                    static_cast<std::size_t>(y) * static_cast<std::size_t>(out.size.width) + static_cast<std::size_t>(x);
+                out.signal[to] = upright.signal[from];
+                if (!out.saturation.empty()) {
+                    out.saturation[to] = upright.saturation[from];
+                }
+                if (!out.neutral_evidence.empty()) {
+                    out.neutral_evidence[to] = upright.neutral_evidence[from];
+                }
+            }
+        }
+        return out;
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the mapped image context", kWhere);
+    }
+}
+
 Expected<RenderStats> measure_render(const engine::ColorImage& display, const ImageContext& context,
                                      const BaselineFeatures* baseline, BaselineFeatures* features,
                                      bool parallel, const core::CancellationToken& cancel) {

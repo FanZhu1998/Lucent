@@ -104,6 +104,17 @@ struct ImageContext {
                                                         const CoverageMap* coverage,
                                                         const SensorNoiseModel& noise);
 
+// The context of a geometry's output (DevelopSettings::geometry, ADR 0015) for renders whose
+// geometry is `mapping` (made for the context's size as the upright size): every output pixel takes
+// the values of the upright pixel its centre maps back to (the nearest pixel: saturation, signal and
+// the neutral surfaces are per-pixel facts of the scene, not values to interpolate); an output pixel
+// whose centre lies outside the upright image (canvas a straightened image does not cover, black in
+// every render) has no saturation, no signal and is not neutral. The noise model is kept. The
+// identity mapping gives a copy. Errors (analysis.metrics): InvalidArgument when the mapping's
+// upright size is not the context's or the context's planes do not match its size; OutOfMemory.
+[[nodiscard]] Expected<ImageContext> map_image_context(const ImageContext& upright,
+                                                       const engine::GeometryMapping& mapping);
+
 // Per-pixel features of the baseline render, the reference of every comparison.
 struct BaselineFeatures {
     image::Size size;

@@ -314,7 +314,9 @@ CandidateEvaluation evaluate_candidate(const RenderStats& c, const RenderStats& 
                 m.detail = std::format(
                     "{} near-neutral pixels (at least {} needed) to verify a white-balance change",
                     c.neutral_pixels, kMinNeutralPixels);
-                if (!is_baseline) {
+                if (ctx.neutral_evidence_beyond_crop) {
+                    m.detail += "; the neutral evidence of the whole frame lies outside the crop";
+                } else if (!is_baseline) {
                     out.feasible = false;
                     out.failures.push_back("white_balance: no neutral evidence for a residual change");
                 }

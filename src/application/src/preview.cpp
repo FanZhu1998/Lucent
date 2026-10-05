@@ -17,6 +17,19 @@ std::size_t combine(std::size_t seed, std::size_t value) noexcept {
 
 }  // namespace
 
+image::Size rendered_full_size(const engine::DevelopReport& report) {
+    // A full-resolution render's own output; a proxy's geometry mapped at full resolution (the
+    // crop rounds to whole pixels of the render, so the proxy's output size is not scaled up).
+    if (report.upright_size == report.full_size && !report.output_size.empty()) {
+        return report.output_size;
+    }
+    if (report.full_size.empty()) {
+        return report.output_size;
+    }
+    auto mapping = engine::GeometryMapping::create(report.settings.geometry, report.full_size);
+    return mapping ? mapping->output_size() : report.full_size;
+}
+
 Status PreviewQuality::validate() const {
     switch (kind) {
         case PreviewQualityKind::Full:
@@ -50,7 +63,7 @@ RenderSummary summarize_render(const engine::DevelopReport& report,
     summary.interpretation = interpretation.status;
     summary.issues = interpretation.issues;
     summary.warnings = report.warnings;
-    summary.rendered_size = report.full_size;
+    summary.rendered_size = rendered_full_size(report);
     summary.orientation = report.orientation;
     summary.demosaic = std::string(report.demosaic.algorithm);
     summary.limited_display_pixels = report.base_look.limited_pixels;

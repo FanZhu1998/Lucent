@@ -344,7 +344,7 @@ struct PreviewService::State : std::enable_shared_from_this<State> {
         engine::StageOneRequest export_request;
         export_request.kind = engine::StageOneKind::Export;
         export_request.white_balance = resolved.settings.white_balance;
-        auto estimate = renderer->estimate(item, export_request, cancel);
+        auto estimate = renderer->estimate_for(item, export_request, resolved.settings, cancel);
         if (!estimate) {
             return Unexpected(std::move(estimate.error()));
         }

@@ -8,11 +8,26 @@
 // Controls. Every slider is a control key: "temperature" and "tint" (Kelvin white balance),
 // "redBlue" and "greenMagenta" (camera-neutral white balance: the camera's own channel balance,
 // relative to as shot, when the calibration has no colour temperature), "exposure", "contrast",
-// "highlights", "shadows", "saturation", "vibrance". Values are in display units (exposure in EV,
-// temperature in kelvin, the others -100 to +100); control() describes each (range, steps, default,
-// lock key) and position()/setPosition() map them to a 0..1 slider (temperature in reciprocal
-// kelvin, so equal slider distances are about equal colour changes). Moving a white-balance slider
-// while the photo shows "as shot" starts a custom balance from the as-shot values.
+// "highlights", "shadows", "saturation", "vibrance". Version 2 (W9, ADR 0015) adds "straighten"
+// (degrees; the crop follows it when CropTool.constrain), "noiseReduction" (0..100) and
+// "noiseRadius" (full-image pixels) for the guided chroma noise reduction, the selected mask's local
+// controls "maskExposure" (EV), "maskContrast", "maskHighlights", "maskShadows",
+// "maskSaturation", "maskTemperature", "maskTint" (-100..+100), "maskOpacity" and "maskFeather"
+// (0..100), and the brush of the masks tool, "brushSize" (percent of the long edge),
+// "brushFeather" and "brushFlow" (0..100), which are tool settings, not part of the recipe. Values
+// are in display units (exposure in EV, temperature in kelvin, the others -100 to +100); control()
+// describes each (range, steps, default, lock key) and position()/setPosition() map them to a 0..1
+// slider (temperature in reciprocal kelvin, so equal slider distances are about equal colour
+// changes; the brush size and the noise radius on a logarithmic scale). Moving a white-balance
+// slider while the photo shows "as shot" starts a custom balance from the as-shot values.
+//
+// Tools (W9). `tool` is "" (none), "crop" (CropTool, `crop`: the frames are rendered without the
+// crop while it is open) or "masks" (MaskEditor, `masks`: handles, outlines and brush painting).
+// finishTool() (Enter) closes the tool; cancelTool() (Esc) closes it too and, for the crop tool,
+// restores the geometry it was opened with (one revision when it changed). The newest frame's
+// geometry (its full-resolution upright size, the geometry of its pixels, uncropped or not) gives
+// the tools their mapping (frame_map(): EditService::map_geometry(), the engine's GeometryMapping).
+// maskOverlay (O) tints the selected mask's weights over the image (EditService::set_mask_overlay).
 //
 // Gestures. beginGesture() ... setPosition()/setValue() ... endGesture() (a pointer press and its
 // release) is ONE revision: the positions in between are transient (EditService::set_transient) and
@@ -69,7 +84,9 @@
 
 #include "imaging/frame_store.hpp"
 #include "models/auto_settings_model.hpp"
+#include "models/crop_tool.hpp"
 #include "models/edit_history_model.hpp"
+#include "models/mask_editor.hpp"
 #include "services/edit_service.hpp"
 
 namespace lucent::ui {
@@ -130,6 +147,18 @@ class EditSession : public QObject {
     Q_PROPERTY(lucent::ui::AutoSettingsModel* automatic READ automatic CONSTANT FINAL)
     // Auto can start: the photo can be edited, its settings are known and no run of it is in progress.
     Q_PROPERTY(bool canRunAuto READ can_run_auto NOTIFY canRunAutoChanged FINAL)
+    // W9 (see the file comment): the open tool, the crop and mask tools, the newest frame's geometry.
+    Q_PROPERTY(QString tool READ tool NOTIFY toolChanged FINAL)
+    Q_PROPERTY(bool toolActive READ tool_active NOTIFY toolChanged FINAL)
+    Q_PROPERTY(lucent::ui::CropTool* crop READ crop CONSTANT FINAL)
+    Q_PROPERTY(lucent::ui::MaskEditor* masks READ masks CONSTANT FINAL)
+    // The full-resolution size of the newest frame's image (after its geometry); 0 without a frame.
+    Q_PROPERTY(int frameOutputWidth READ frame_output_width NOTIFY frameChanged FINAL)
+    Q_PROPERTY(int frameOutputHeight READ frame_output_height NOTIFY frameChanged FINAL)
+    Q_PROPERTY(bool frameUncropped READ frame_uncropped NOTIFY frameChanged FINAL)
+    Q_PROPERTY(bool maskOverlay READ mask_overlay WRITE set_mask_overlay NOTIFY maskOverlayChanged FINAL)
+    // The selected mask's weight overlay of the newest frame (empty while off or not rendered yet).
+    Q_PROPERTY(QString maskOverlaySource READ mask_overlay_source NOTIFY frameChanged FINAL)
 
 public:
     static constexpr int kNudgeCommitMs = 600;
@@ -203,6 +232,13 @@ public:
     Q_INVOKABLE void runAuto();
     Q_INVOKABLE void cancelAuto();
 
+    // ---- QML: tools (W9; see the file comment) ----------------------------------------------------
+
+    // "", "crop" or "masks".
+    Q_INVOKABLE void setTool(const QString& tool);
+    Q_INVOKABLE void finishTool();
+    Q_INVOKABLE void cancelTool();
+
     // ---- Property accessors ----------------------------------------------------------------------
 
     [[nodiscard]] bool active() const noexcept { return item_ != 0; }
@@ -250,6 +286,18 @@ public:
     [[nodiscard]] double last_latency_ms() const noexcept { return last_latency_ms_; }
     [[nodiscard]] AutoSettingsModel* automatic() const noexcept { return automatic_.get(); }
     [[nodiscard]] bool can_run_auto() const;
+    [[nodiscard]] QString tool() const { return tool_; }
+    [[nodiscard]] bool tool_active() const noexcept { return !tool_.isEmpty(); }
+    [[nodiscard]] CropTool* crop() const noexcept { return crop_.get(); }
+    [[nodiscard]] MaskEditor* masks() const noexcept { return masks_.get(); }
+    [[nodiscard]] int frame_output_width() const noexcept { return frame_map_.valid ? frame_map_.output_size.width() : 0; }
+    [[nodiscard]] int frame_output_height() const noexcept {
+        return frame_map_.valid ? frame_map_.output_size.height() : 0;
+    }
+    [[nodiscard]] bool frame_uncropped() const noexcept { return frame_uncropped_; }
+    [[nodiscard]] bool mask_overlay() const noexcept { return mask_overlay_; }
+    void set_mask_overlay(bool overlay);
+    [[nodiscard]] QString mask_overlay_source() const { return mask_overlay_ ? mask_overlay_source_ : QString(); }
     // A control's committed value as the Auto panel lists it ("Exposure +0.75 EV", "White balance
     // 5450 K, tint +3", "Tone curve").
     [[nodiscard]] QString describe_committed(EditControl control) const;
@@ -257,6 +305,28 @@ public:
     // ---- C++ ---------------------------------------------------------------------------------------
 
     [[nodiscard]] const EditSettings& settings() const noexcept { return settings_; }
+    [[nodiscard]] EditService& service() const noexcept { return service_; }
+    // For the tools: a change (transient within a gesture, otherwise one step), a pointer gesture,
+    // and ending whatever gesture is pending before a one-step command.
+    void edit_settings(const EditSettings& next) { change(next); }
+    void begin_pointer_gesture() { beginGesture(); }
+    void end_pointer_gesture() { endGesture(); }
+    void finish_pending_gesture();
+    // A user-facing message for the panel and the status line.
+    void show_message(const QString& text);
+    // The newest frame (not the as-shot one): the photo's full-resolution upright size, the geometry
+    // of its pixels and its mapping at full resolution (invalid without a frame), and its masks.
+    [[nodiscard]] QSize frame_full_upright_size() const noexcept { return frame_full_upright_; }
+    [[nodiscard]] const EditGeometry& frame_geometry() const noexcept { return frame_geometry_; }
+    [[nodiscard]] const GeometryMap& frame_map() const noexcept { return frame_map_; }
+    [[nodiscard]] const QList<FrameMaskOutline>& frame_masks() const noexcept { return frame_masks_; }
+    // The mask the local controls and the mask tool edit (0: none).
+    [[nodiscard]] quint32 selected_mask() const noexcept { return selected_mask_; }
+    void set_selected_mask(quint32 id);
+    // The masks tool's brush: size in percent of the long edge, feather and flow 0..100.
+    [[nodiscard]] double brush_size() const noexcept { return brush_size_; }
+    [[nodiscard]] double brush_feather() const noexcept { return brush_feather_; }
+    [[nodiscard]] double brush_flow() const noexcept { return brush_flow_; }
     [[nodiscard]] const std::optional<EditState>& state() const noexcept { return state_; }
     [[nodiscard]] const WhiteBalanceInfo& white_balance() const noexcept { return white_balance_; }
     // Latencies measured since the last reset, in milliseconds: call to frame shown, and call to
@@ -290,6 +360,9 @@ signals:
     void gestureChanged();
     void latencyChanged();
     void canRunAutoChanged();
+    void toolChanged();
+    void maskOverlayChanged();
+    void maskSelectionChanged();
     // A user-facing outcome for the status line (paste results, refused edits).
     void notice(const QString& text);
 
@@ -325,11 +398,20 @@ private:
     [[nodiscard]] QString value_text_of(const EditSettings& settings, const QString& key) const;
     [[nodiscard]] EditSettings with_value(const EditSettings& settings, const QString& key, double value) const;
     [[nodiscard]] std::array<double, 3> as_shot_neutral() const;
+    // The default of a control key (the mask feather's depends on the selected mask's kind).
+    [[nodiscard]] double default_of(const QString& key) const;
+    // The brush keys are tool settings: they change these members, never the recipe.
+    void set_tool_value(const QString& key, double value);
+    // Keeps the selected mask one of the settings' masks (the last one, or none).
+    void validate_selection();
+    void send_mask_overlay();
 
     EditService& service_;
     std::shared_ptr<FrameStore> store_;
     std::unique_ptr<EditHistoryModel> history_;
     std::unique_ptr<AutoSettingsModel> automatic_;
+    std::unique_ptr<CropTool> crop_;
+    std::unique_ptr<MaskEditor> masks_;
     ItemId item_ = 0;
     std::optional<EditState> state_;
     EditSettings settings_;
@@ -356,6 +438,20 @@ private:
     bool frame_full_resolution_ = false;
     QString frame_error_;
     quint64 last_sequence_ = 0;
+    // W9: the newest frame's geometry and masks, tools, the mask overlay and the brush.
+    QSize frame_full_upright_;
+    EditGeometry frame_geometry_;
+    GeometryMap frame_map_;
+    bool frame_uncropped_ = false;
+    QList<FrameMaskOutline> frame_masks_;
+    QString mask_overlay_source_;
+    bool mask_overlay_ = false;
+    QString tool_;
+    EditGeometry crop_opened_with_;  // the geometry when the crop tool opened (cancelTool restores it)
+    quint32 selected_mask_ = 0;
+    double brush_size_ = 2.0;
+    double brush_feather_ = 50.0;
+    double brush_flow_ = 100.0;
 
     bool compare_ = false;
     bool split_ = false;

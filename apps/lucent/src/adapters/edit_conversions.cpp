@@ -10,6 +10,7 @@
 #include <new>
 #include <variant>
 
+#include <lucent/engine/local_adjustments.hpp>
 #include <lucent/engine/white_balance_model.hpp>
 
 #include "adapters/conversions.hpp"
@@ -69,6 +70,23 @@ QJsonObject parse_object(const std::string& json) {
     return document.isObject() ? document.object() : QJsonObject();
 }
 
+// The affine map that `map` (a function of normalised x, y returning image::PointD) is.
+template <typename Map>
+QTransform affine_of(Map&& map) {
+    const image::PointD origin = map(0.0, 0.0);
+    const image::PointD ex = map(1.0, 0.0);
+    const image::PointD ey = map(0.0, 1.0);
+    return QTransform(ex.x - origin.x, ex.y - origin.y, ey.x - origin.x, ey.y - origin.y, origin.x, origin.y);
+}
+
+QPointF to_qpoint(const engine::MaskPoint& point) {
+    return QPointF(point.x, point.y);
+}
+
+engine::MaskPoint to_mask_point(const QPointF& point) {
+    return engine::MaskPoint{point.x(), point.y()};
+}
+
 void add_unique(QStringList& list, const QString& text) {
     if (!text.isEmpty() && !list.contains(text)) {
         list << text;
@@ -109,11 +127,22 @@ EditSettings to_edit_settings(const engine::DevelopSettings& settings) {
     for (const engine::DevelopControl control : settings.locks) {
         out.locks |= control_bit(to_edit_control(control));
     }
+    out.chroma_denoise = EditDenoise{settings.chroma_denoise.strength, settings.chroma_denoise.radius};
+    out.masks.reserve(static_cast<qsizetype>(settings.local_adjustments.size()));
+    for (const engine::LocalAdjustment& adjustment : settings.local_adjustments) {
+        out.masks << to_edit_mask(adjustment);
+    }
+    out.geometry = to_edit_geometry(settings.geometry);
     return out;
 }
 
 engine::DevelopSettings to_develop_settings(const EditSettings& settings, const engine::DevelopSettings& base) {
     engine::DevelopSettings out = base;
+    if (out.version != engine::kDevelopSettingsVersion) {
+        if (auto upgraded = engine::upgrade_develop_settings(out); upgraded) {
+            out = std::move(*upgraded);
+        }
+    }
     switch (settings.white_balance) {
         case WhiteBalanceMode::Kelvin:
             out.white_balance = engine::KelvinWhiteBalance{settings.temperature_k, settings.tint};
@@ -143,7 +172,122 @@ engine::DevelopSettings to_develop_settings(const EditSettings& settings, const 
             out.locks.insert(control);
         }
     }
+    out.chroma_denoise = engine::ChromaDenoiseSetting{settings.chroma_denoise.strength, settings.chroma_denoise.radius};
+    out.local_adjustments.clear();
+    out.local_adjustments.reserve(static_cast<std::size_t>(settings.masks.size()));
+    for (const EditMask& mask : settings.masks) {
+        out.local_adjustments.push_back(to_local_adjustment(mask));
+    }
+    out.geometry = to_geometry_setting(settings.geometry);
     return out;
+}
+
+EditGeometry to_edit_geometry(const engine::GeometrySetting& geometry) {
+    EditGeometry out;
+    out.straighten_degrees = geometry.straighten_degrees;
+    out.crop = EditCrop{geometry.crop.left, geometry.crop.top, geometry.crop.right, geometry.crop.bottom};
+    out.quarter_turns = static_cast<int>(std::min<std::uint32_t>(geometry.quarter_turns, 4u));
+    out.flip_horizontal = geometry.flip_horizontal;
+    return out;
+}
+
+engine::GeometrySetting to_geometry_setting(const EditGeometry& geometry) {
+    engine::GeometrySetting out;
+    out.straighten_degrees = geometry.straighten_degrees;
+    out.crop = engine::CropRect{geometry.crop.left, geometry.crop.top, geometry.crop.right, geometry.crop.bottom};
+    // Out-of-range turns stay out of range so that validation refuses them (never wrapped).
+    out.quarter_turns = geometry.quarter_turns < 0 ? 4u : static_cast<std::uint32_t>(geometry.quarter_turns);
+    out.flip_horizontal = geometry.flip_horizontal;
+    return out;
+}
+
+EditMask to_edit_mask(const engine::LocalAdjustment& adjustment) {
+    EditMask out;
+    out.id = adjustment.id;
+    out.enabled = adjustment.enabled;
+    out.invert = adjustment.invert;
+    out.opacity = adjustment.opacity;
+    const engine::LocalControls& c = adjustment.controls;
+    out.controls = EditLocalControls{c.exposure_ev, c.contrast, c.highlights, c.shadows, c.saturation, c.temperature,
+                                     c.tint};
+    std::visit(
+        [&out](const auto& shape) {
+            using T = std::decay_t<decltype(shape)>;
+            if constexpr (std::is_same_v<T, engine::BrushMask>) {
+                out.kind = MaskKind::Brush;
+                out.strokes.reserve(static_cast<qsizetype>(shape.strokes.size()));
+                for (const engine::BrushStroke& stroke : shape.strokes) {
+                    EditBrushStroke edit;
+                    edit.mode = stroke.mode == engine::BrushMode::Erase ? BrushMode::Erase : BrushMode::Add;
+                    edit.radius = stroke.radius;
+                    edit.hardness = stroke.hardness;
+                    edit.flow = stroke.flow;
+                    edit.points.reserve(static_cast<qsizetype>(stroke.points.size()));
+                    for (const engine::MaskPoint& point : stroke.points) {
+                        edit.points << to_qpoint(point);
+                    }
+                    out.strokes << edit;
+                }
+            } else if constexpr (std::is_same_v<T, engine::LinearGradientMask>) {
+                out.kind = MaskKind::Linear;
+                out.start = to_qpoint(shape.start);
+                out.end = to_qpoint(shape.end);
+                out.feather = shape.feather;
+            } else {
+                out.kind = MaskKind::Radial;
+                out.center = to_qpoint(shape.center);
+                out.radius_x = shape.radius_x;
+                out.radius_y = shape.radius_y;
+                out.angle_degrees = shape.angle_degrees;
+                out.feather = shape.feather;
+            }
+        },
+        adjustment.shape);
+    return out;
+}
+
+engine::LocalAdjustment to_local_adjustment(const EditMask& mask) {
+    engine::LocalAdjustment out;
+    out.id = mask.id;
+    out.enabled = mask.enabled;
+    out.invert = mask.invert;
+    out.opacity = mask.opacity;
+    const EditLocalControls& c = mask.controls;
+    out.controls = engine::LocalControls{c.exposure_ev, c.contrast, c.highlights, c.shadows, c.saturation,
+                                         c.temperature, c.tint};
+    switch (mask.kind) {
+        case MaskKind::Brush: {
+            engine::BrushMask brush;
+            brush.strokes.reserve(static_cast<std::size_t>(mask.strokes.size()));
+            for (const EditBrushStroke& stroke : mask.strokes) {
+                engine::BrushStroke out_stroke;
+                out_stroke.mode = stroke.mode == BrushMode::Erase ? engine::BrushMode::Erase : engine::BrushMode::Add;
+                out_stroke.radius = stroke.radius;
+                out_stroke.hardness = stroke.hardness;
+                out_stroke.flow = stroke.flow;
+                out_stroke.points.reserve(static_cast<std::size_t>(stroke.points.size()));
+                for (const QPointF& point : stroke.points) {
+                    out_stroke.points.push_back(to_mask_point(point));
+                }
+                brush.strokes.push_back(std::move(out_stroke));
+            }
+            out.shape = std::move(brush);
+            break;
+        }
+        case MaskKind::Linear:
+            out.shape = engine::LinearGradientMask{to_mask_point(mask.start), to_mask_point(mask.end), mask.feather};
+            break;
+        case MaskKind::Radial:
+        default:
+            out.shape = engine::RadialGradientMask{to_mask_point(mask.center), mask.radius_x, mask.radius_y,
+                                                   mask.angle_degrees, mask.feather};
+            break;
+    }
+    return out;
+}
+
+image::Size to_image_size(QSize size) noexcept {
+    return image::Size{size.width(), size.height()};
 }
 
 engine::DevelopControl to_develop_control(EditControl control) noexcept {
@@ -216,6 +360,9 @@ QList<EditHistoryEntry> to_edit_history(const app::RecipeHistory& history) {
         }
         for (const engine::DevelopControl control : entry.locks) {
             out.locks << to_edit_control(control);
+        }
+        for (const app::RecipePart part : entry.parts) {
+            out.parts << static_cast<EditPart>(static_cast<std::uint8_t>(part));
         }
         out.reverted_from = entry.reverted_from.value_or(0);
         out.current = entry.current;
@@ -448,6 +595,15 @@ AutoOutcome to_auto_outcome(ItemId item, const app::AutoTaskResult& result) {
 QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboard& clipboard,
                             const std::optional<app::CameraCapabilities>& target) {
     const QString category = category_label(to_settings_category(skip.category));
+    if (skip.part == app::RecipePart::LocalAdjustments) {
+        return tr_text("%1: not pasted because this photo has another shape, so the masks would land on other "
+                       "parts of the picture.")
+            .arg(category);
+    }
+    if (skip.part == app::RecipePart::Geometry) {
+        return tr_text("%1: the crop and rotation were not pasted because this photo has another shape.")
+            .arg(category);
+    }
     if (skip.category == app::RecipeCategory::WhiteBalance) {
         switch (engine::mode_of(clipboard.settings.white_balance)) {
             case engine::WhiteBalanceMode::CameraNeutral:
@@ -462,6 +618,146 @@ QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboa
         }
     }
     return tr_text("%1: not pasted.").arg(category);
+}
+
+// ---- Geometry and masks ------------------------------------------------------------------------------
+
+GeometryMap geometry_map(const EditGeometry& geometry, QSize upright_size) {
+    GeometryMap out;
+    const engine::GeometrySetting setting = to_geometry_setting(geometry);
+    auto mapping = engine::GeometryMapping::create(setting, to_image_size(upright_size));
+    if (!mapping) {
+        return out;
+    }
+    // The crop frame: the same crop and orientation without the straightening maps the
+    // straightened canvas (in U's coordinates) to the output.
+    engine::GeometrySetting level = setting;
+    level.straighten_degrees = 0.0;
+    auto straightened = engine::GeometryMapping::create(level, to_image_size(upright_size));
+    if (!straightened) {
+        return out;
+    }
+    out.valid = true;
+    out.upright_size = upright_size;
+    out.output_size = QSize(mapping->output_size().width, mapping->output_size().height);
+    const image::PixelRect crop = mapping->crop_pixels();
+    out.crop_pixels = QRect(crop.x, crop.y, crop.width, crop.height);
+    out.normalized_to_output =
+        affine_of([&](double x, double y) { return mapping->output_from_normalized(engine::MaskPoint{x, y}); });
+    out.straightened_to_output =
+        affine_of([&](double x, double y) { return straightened->output_from_normalized(engine::MaskPoint{x, y}); });
+    out.pixels_per_unit_length = mapping->pixels_per_unit_length();
+    return out;
+}
+
+bool geometry_crop_inside(const EditGeometry& geometry, QSize upright_size) {
+    return engine::crop_inside_image(to_geometry_setting(geometry), to_image_size(upright_size));
+}
+
+EditCrop geometry_largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect) {
+    const engine::CropRect crop = engine::largest_inside_crop(straighten_degrees, to_image_size(upright_size), aspect);
+    return EditCrop{crop.left, crop.top, crop.right, crop.bottom};
+}
+
+EditGeometry geometry_turned(const EditGeometry& geometry, GeometryTurn turn) {
+    const engine::GeometrySetting setting = to_geometry_setting(geometry);
+    switch (turn) {
+        case GeometryTurn::Clockwise:
+            return to_edit_geometry(engine::rotated_clockwise(setting));
+        case GeometryTurn::CounterClockwise:
+            return to_edit_geometry(engine::rotated_counter_clockwise(setting));
+        case GeometryTurn::FlipHorizontal:
+            return to_edit_geometry(engine::flipped_horizontally(setting));
+    }
+    return geometry;
+}
+
+QList<QPolygonF> mask_outline_of(const EditMask& mask, QSize upright_size) {
+    QList<QPolygonF> polylines;
+    if (upright_size.isEmpty()) {
+        return polylines;
+    }
+    try {
+        const engine::MaskOutline outline =
+            engine::mask_outline(to_local_adjustment(mask).shape, to_image_size(upright_size));
+        polylines.reserve(static_cast<qsizetype>(outline.polylines.size()));
+        for (const std::vector<engine::MaskPoint>& line : outline.polylines) {
+            QPolygonF polygon;
+            polygon.reserve(static_cast<qsizetype>(line.size()));
+            for (const engine::MaskPoint& point : line) {
+                polygon << to_qpoint(point);
+            }
+            polylines << polygon;
+        }
+    } catch (const std::bad_alloc&) {
+        polylines.clear();
+    }
+    return polylines;
+}
+
+QImage mask_overlay_image(const engine::LocalAdjustment& adjustment, const engine::GeometrySetting& geometry,
+                          image::Size upright, int max_long_edge) {
+    if (upright.empty() || max_long_edge < 1) {
+        return {};
+    }
+    // The frame's own mapping: the overlay is stretched over the frame's output, so each overlay
+    // pixel's centre is mapped back through it (no crop rounding of the overlay's own).
+    auto mapping = engine::GeometryMapping::create(geometry, upright);
+    if (!mapping) {
+        return {};
+    }
+    const image::Size out = mapping->output_size();
+    const double scale = std::min(1.0, double(max_long_edge) / double(std::max(out.width, out.height)));
+    const image::Size size{std::max(1, static_cast<int>(std::lround(out.width * scale))),
+                           std::max(1, static_cast<int>(std::lround(out.height * scale)))};
+    // The weights at the overlay's density (about one per overlay pixel across the visible crop),
+    // their plane at most kMaxMaskOverlayPlaneEdge on its long edge.
+    const double plane_scale =
+        std::min(scale, double(kMaxMaskOverlayPlaneEdge) / double(std::max(upright.width, upright.height)));
+    const image::Size plane{std::max(1, static_cast<int>(std::lround(upright.width * plane_scale))),
+                            std::max(1, static_cast<int>(std::lround(upright.height * plane_scale)))};
+    engine::LocalAdjustment shown = adjustment;
+    shown.enabled = true;  // the overlay shows where the mask is, also while it is switched off
+    auto weights = engine::mask_weights(shown, plane);
+    if (!weights) {
+        return {};
+    }
+    QImage overlay(size.width, size.height, QImage::Format_ARGB32_Premultiplied);
+    if (overlay.isNull()) {
+        return {};
+    }
+    const image::ConstImageView<float> w = weights->const_view();
+    const double fx = double(out.width) / size.width;  // frame output pixels per overlay pixel
+    const double fy = double(out.height) / size.height;
+    const double px = double(plane.width) / upright.width;  // plane pixels per upright pixel
+    const double py = double(plane.height) / upright.height;
+    const auto at = [&](int x, int y) {
+        return static_cast<double>(w.row(std::clamp(y, 0, plane.height - 1))[std::clamp(x, 0, plane.width - 1)]);
+    };
+    // Red, at most 60 % opaque: the photo stays visible under the strongest weight.
+    constexpr double kMaxAlpha = 153.0;
+    for (std::int32_t y = 0; y < size.height; ++y) {
+        auto* row = reinterpret_cast<QRgb*>(overlay.scanLine(y));
+        for (std::int32_t x = 0; x < size.width; ++x) {
+            const image::PointD u = mapping->upright_from_output(image::PointD{(x + 0.5) * fx, (y + 0.5) * fy});
+            double weight = 0.0;
+            if (u.x >= 0.0 && u.y >= 0.0 && u.x <= upright.width && u.y <= upright.height) {
+                // Bilinear between the plane's pixel centres.
+                const double sx = u.x * px - 0.5;
+                const double sy = u.y * py - 0.5;
+                const auto x0 = static_cast<int>(std::floor(sx));
+                const auto y0 = static_cast<int>(std::floor(sy));
+                const double tx = sx - x0;
+                const double ty = sy - y0;
+                const double top = at(x0, y0) + tx * (at(x0 + 1, y0) - at(x0, y0));
+                const double bottom = at(x0, y0 + 1) + tx * (at(x0 + 1, y0 + 1) - at(x0, y0 + 1));
+                weight = std::clamp(top + ty * (bottom - top), 0.0, 1.0);
+            }
+            const int alpha = static_cast<int>(std::lround(weight * kMaxAlpha));
+            row[x] = alpha == 0 ? 0u : qPremultiply(qRgba(255, 48, 48, alpha));
+        }
+    }
+    return overlay;
 }
 
 // ---- Frames ------------------------------------------------------------------------------------------
@@ -513,6 +809,31 @@ std::shared_ptr<EditFrame> to_edit_frame(const app::DevelopFrame& frame, bool cl
         info->clipped_highlights = frame.clipping.highlight_pixels;
         info->clipped_shadows = frame.clipping.shadow_pixels;
         out->info = std::move(info);
+        out->full_output_size = QSize(frame.summary.rendered_size.width, frame.summary.rendered_size.height);
+        if (frame.report) {
+            out->full_upright_size = QSize(frame.report->full_size.width, frame.report->full_size.height);
+            out->geometry = to_edit_geometry(frame.report->settings.geometry);
+        }
+        const double width = std::max(1, frame.image.width);
+        const double height = std::max(1, frame.image.height);
+        out->masks.reserve(static_cast<qsizetype>(frame.masks.size()));
+        for (const app::MaskOverlay& mask : frame.masks) {
+            FrameMaskOutline outline;
+            outline.id = mask.id;
+            outline.kind = static_cast<MaskKind>(static_cast<std::uint8_t>(mask.kind));
+            outline.enabled = mask.enabled;
+            outline.invert = mask.invert;
+            outline.polylines.reserve(static_cast<qsizetype>(mask.polylines.size()));
+            for (const std::vector<image::PointD>& line : mask.polylines) {
+                QPolygonF polygon;
+                polygon.reserve(static_cast<qsizetype>(line.size()));
+                for (const image::PointD& point : line) {
+                    polygon << QPointF(point.x / width, point.y / height);
+                }
+                outline.polylines << polygon;
+            }
+            out->masks << outline;
+        }
         out->latency_seconds = frame.latency_seconds;
         out->stage_two_seconds = frame.stage_two_seconds;
         out->display_seconds = frame.display_seconds;

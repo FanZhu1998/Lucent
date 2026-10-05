@@ -147,9 +147,10 @@ ApplicationWindow {
         onActivated: window.controller.showView(AppController.Exports)
     }
 
+    // In Edit, Esc first closes an open tool (EditView).
     Shortcut {
         sequence: "Esc"
-        enabled: window.controller.currentView !== AppController.Library
+        enabled: window.controller.currentView !== AppController.Library && !window.controller.edit.toolActive
         onActivated: window.controller.goBack()
     }
 

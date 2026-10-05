@@ -12,6 +12,8 @@
 //     resolution and as a 2048-pixel proxy against the export box-downscaled to the proxy grid.
 //     CIEDE2000 of display-linear Rec.2020 (D65 white, unclipped), statistics over every pixel of
 //     the compared grid. Gates are stated at the comparison.
+//   * MasksDenoiseAndGeometryOnTheR5: DevelopSettings v2 (three masks, chroma denoising, geometry):
+//     stage-two timings on the 2048-pixel proxy and the interactive renders against the export.
 //   * DISABLED_Benchmark: stage timings and memory for the performance report (run with
 //     --gtest_also_run_disabled_tests --gtest_filter=*Benchmark*).
 
@@ -24,6 +26,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <numbers>
 #include <string>
 #include <thread>
@@ -469,6 +472,264 @@ std::ostream& operator<<(std::ostream& os, const Timing& t) {
               << " ms)";
 }
 
+// ---- DevelopSettings v2 on the R5 ---------------------------------------------------------------------
+
+BrushStroke fixture_stroke(std::vector<MaskPoint> points, double radius, double hardness, double flow) {
+    BrushStroke s;
+    s.points = std::move(points);
+    s.radius = radius;
+    s.hardness = hardness;
+    s.flow = flow;
+    return s;
+}
+
+// Three masks (radial, linear, brush) with several local controls, and chroma denoising.
+DevelopSettings masks_and_denoise() {
+    DevelopSettings s;
+    s.chroma_denoise.strength = 0.7;
+    s.chroma_denoise.radius = 6.0;
+    LocalAdjustment radial;
+    radial.id = 1;
+    RadialGradientMask r;
+    r.center = {0.45, 0.5};
+    r.radius_x = 0.22;
+    r.radius_y = 0.15;
+    r.angle_degrees = 15.0;
+    r.feather = 0.6;
+    radial.shape = r;
+    radial.controls.exposure_ev = 0.5;
+    radial.controls.saturation = 0.2;
+    radial.controls.temperature = 0.2;
+    LocalAdjustment sky;
+    sky.id = 2;
+    sky.shape = LinearGradientMask{{0.5, 0.0}, {0.5, 0.4}, 1.0};
+    sky.controls.highlights = -0.6;
+    sky.controls.contrast = 0.2;
+    LocalAdjustment brush;
+    brush.id = 3;
+    BrushMask paint;
+    std::vector<MaskPoint> points;
+    for (int i = 0; i <= 200; ++i) {  // a 200-segment stroke across the frame
+        const double t = i / 200.0;
+        points.push_back({0.1 + 0.8 * t, 0.75 + 0.08 * std::sin(6.0 * t)});
+    }
+    paint.strokes.push_back(fixture_stroke(points, 0.03, 0.4, 0.9));
+    paint.strokes.push_back(fixture_stroke({{0.3, 0.6}, {0.35, 0.9}}, 0.02, 0.7, 1.0));
+    brush.shape = paint;
+    brush.controls.shadows = 0.5;
+    brush.controls.exposure_ev = -0.3;
+    s.local_adjustments = {radial, sky, brush};
+    return s;
+}
+
+TEST(DevelopFixtures, MasksDenoiseAndGeometryOnTheR5) {
+    // The performance-reference camera with three masks and chroma denoising: stage-two timings on
+    // the 2048-pixel proxy (the editor's quick frame), and the interactive renders (full resolution
+    // and proxy) against the export render of the same settings. CIEDE2000 gates as
+    // InteractiveMatchesExport's (as-shot balance): the full-resolution interactive render differs
+    // only by the clip placement; the proxy also by the non-commuting downscale (the guided filters
+    // at scaled radii, the mask edges at proxy pixels).
+    LUCENT_ENGINE_REQUIRE_FIXTURE(file, "canon-eos-r5-cr3-raw");
+    auto registry = raw::create_default_registry();
+    ASSERT_TRUE(registry);
+    auto one = render_stage_one_file(*registry, file, 0u, StageOneRequest{});
+    ASSERT_TRUE(one) << one.error().describe();
+    auto proxy = make_proxy(*one, 2048);
+    ASSERT_TRUE(proxy) << proxy.error().describe();
+    const DevelopSettings s = masks_and_denoise();
+    DevelopSettings turned = s;
+    turned.geometry.straighten_degrees = 2.5;
+    turned.geometry.crop = largest_inside_crop(2.5, proxy->pixels.size());
+    turned.geometry.quarter_turns = 1;
+
+    // ---- Timings on the proxy -----------------------------------------------------------------------
+    const auto run = [&](const DevelopSettings& settings, const DevelopOptions& options) {
+        auto r = render_stage_two(*proxy, settings, options);
+        EXPECT_TRUE(r) << r.error().describe();
+        return r;
+    };
+    DevelopOptions cached;
+    cached.mask_cache = std::make_shared<MaskRasterCache>();
+    (void)run(s, cached);  // warm the thread pool and the cache
+    const Timing defaults = time_runs([&] { (void)run(DevelopSettings{}, DevelopOptions{}); }, 9);
+    const Timing uncached = time_runs([&] { (void)run(s, DevelopOptions{}); }, 9);
+    std::vector<std::vector<double>> per_operation;
+    std::vector<DevelopOperation> names;
+    const Timing with_cache = time_runs(
+        [&] {
+            auto r = run(s, cached);
+            if (r) {
+                per_operation.resize(r->report.operations.size());
+                names.resize(r->report.operations.size());
+                for (std::size_t i = 0; i < r->report.operations.size(); ++i) {
+                    per_operation[i].push_back(r->report.operations[i].seconds);
+                    names[i] = r->report.operations[i].operation;
+                }
+            }
+        },
+        9);
+    DevelopOptions session = cached;  // the edit session's caches: a mask or tone control is moving
+    session.stage_two_cache = std::make_shared<StageTwoCache>();
+    (void)run(s, session);
+    const Timing reused = time_runs([&] { (void)run(s, session); }, 9);
+    const Timing geometry = time_runs([&] { (void)run(turned, session); }, 9);
+    EXPECT_EQ(session.stage_two_cache->stats().misses, 1u);
+    auto sample = run(s, cached);
+    ASSERT_TRUE(sample);
+    ASSERT_TRUE(sample->report.local_adjustments.has_value());
+    EXPECT_EQ(sample->report.local_adjustments->cache_hits, 1u);
+    std::cout << "R5 proxy " << proxy->pixels.width() << "x" << proxy->pixels.height() << " stage two: defaults "
+              << defaults << "; 3 masks + chroma denoise " << uncached << " (brush rasterised), " << with_cache
+              << " (brush cached), " << reused << " (the denoised image reused as well); + straighten 2.5 deg,"
+              << " crop and a quarter turn " << geometry << "\n  per operation (min of 9, brush cached, ms):";
+    for (std::size_t i = 0; i < per_operation.size(); ++i) {
+        std::cout << " " << to_string(names[i]) << " " << std::fixed << std::setprecision(1)
+                  << *std::min_element(per_operation[i].begin(), per_operation[i].end()) * 1000.0 << ";";
+    }
+    std::cout << "\n  brush raster " << sample->report.local_adjustments->raster_bytes / 1024 << " KiB, mask cache "
+              << cached.mask_cache->stats().bytes / 1024 << " KiB, chroma-denoise working memory "
+              << sample->report.chroma_denoise->working_bytes / (1024 * 1024) << " MiB (radius "
+              << sample->report.chroma_denoise->radius << ")\n";
+    // Interactive bounds on the reference laptop (generous: the machine may be busy); the measured
+    // values are in ADR 0015.
+    EXPECT_LT(with_cache.median, 1.0);
+    EXPECT_LT(reused.median, with_cache.median);
+
+    // ---- Interactive against export ---------------------------------------------------------------------
+    auto full = render_stage_two(*one, s);
+    ASSERT_TRUE(full) << full.error().describe();
+    one = Unexpected(Error{});  // release the full-resolution stage one
+    const auto start = Clock::now();
+    auto exported = render_develop_file(*registry, file, 0u, s);
+    const double export_seconds = seconds_since(start);
+    ASSERT_TRUE(exported) << exported.error().describe();
+    const DeltaE full_delta = compare(full->display.pixels, exported->display.pixels, 3);
+    full = Unexpected(Error{});
+    std::cout << "  export render with masks and denoising (decode included): " << std::setprecision(2)
+              << export_seconds << " s; per operation:";
+    for (const OperationRecord& op : exported->report.operations) {
+        if (op.seconds > 0.0) {
+            std::cout << " " << to_string(op.operation) << " " << std::setprecision(0) << op.seconds * 1000.0 << " ms;";
+        }
+    }
+    std::cout << "\n  interactive full resolution vs export: " << full_delta << "\n";
+    EXPECT_LT(full_delta.mean, 0.01);
+    EXPECT_LT(full_delta.p99, 0.05);
+    // The proxy against the export for the masks, the denoising and both (each its own export).
+    DevelopSettings masks_only = s;
+    masks_only.chroma_denoise = ChromaDenoiseSetting{};
+    DevelopSettings denoise_only;
+    denoise_only.chroma_denoise = s.chroma_denoise;
+    struct Case {
+        const char* name;
+        const DevelopSettings* settings;
+        double mean;
+        double p99;
+    };
+    const Case cases[] = {{"both", &s, 0.1, 0.8}, {"masks", &masks_only, 0.05, 0.3}, {"denoise", &denoise_only, 0.1, 0.8}};
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        if (c.settings != &s) {
+            exported = render_develop_file(*registry, file, 0u, *c.settings);
+            ASSERT_TRUE(exported) << exported.error().describe();
+        }
+        auto small = render_stage_two(*proxy, *c.settings);
+        ASSERT_TRUE(small);
+        const image::ImageBuffer<float> reduced = downscaled(exported->display.pixels, small->display.pixels.size());
+        const DeltaE d = compare(small->display.pixels, reduced);
+        std::cout << "  proxy vs export, " << c.name << ": " << d << "\n";
+        EXPECT_LT(d.mean, c.mean);
+        EXPECT_LT(d.p99, c.p99);
+    }
+}
+
+TEST(DevelopFixtures, DISABLED_BenchmarkMasksAndDenoise) {
+    // Breakdown of the v2 operations on the R5 proxy (run with --gtest_also_run_disabled_tests
+    // --gtest_filter=*BenchmarkMasks*): each mask kind alone, chroma denoising in bands and whole,
+    // serial and parallel.
+    LUCENT_ENGINE_REQUIRE_FIXTURE(file, "canon-eos-r5-cr3-raw");
+    auto registry = raw::create_default_registry();
+    ASSERT_TRUE(registry);
+    StageOneRequest request;
+    request.proxy_long_edge = 2048;
+    auto proxy = render_stage_one_file(*registry, file, 0u, request);
+    ASSERT_TRUE(proxy) << proxy.error().describe();
+    const DevelopSettings all = masks_and_denoise();
+    const auto stage_two_ms = [&](const DevelopSettings& s, DevelopOperation op) {
+        std::vector<double> t;
+        for (int i = 0; i < 7; ++i) {
+            auto r = render_stage_two(*proxy, s);
+            EXPECT_TRUE(r);
+            for (const OperationRecord& o : r->report.operations) {
+                if (o.operation == op) {
+                    t.push_back(o.seconds * 1000.0);
+                }
+            }
+        }
+        std::sort(t.begin(), t.end());
+        return t.empty() ? 0.0 : t[t.size() / 2];
+    };
+    for (std::size_t k = 0; k < all.local_adjustments.size(); ++k) {
+        DevelopSettings one_mask;
+        one_mask.local_adjustments = {all.local_adjustments[k]};
+        std::cout << "mask " << to_string(all.local_adjustments[k].kind()) << " alone: "
+                  << stage_two_ms(one_mask, DevelopOperation::LocalAdjustments) << " ms\n";
+        DevelopSettings no_tone = one_mask;
+        no_tone.local_adjustments[0].controls.highlights = 0.0;
+        no_tone.local_adjustments[0].controls.shadows = 0.0;
+        if (!no_tone.local_adjustments[0].controls.is_identity()) {
+            std::cout << "  without highlights/shadows: " << stage_two_ms(no_tone, DevelopOperation::LocalAdjustments)
+                      << " ms\n";
+        }
+    }
+    DevelopSettings masks_only = all;
+    masks_only.chroma_denoise = ChromaDenoiseSetting{};
+    std::cout << "three masks: " << stage_two_ms(masks_only, DevelopOperation::LocalAdjustments) << " ms\n";
+    DevelopSettings denoise_only;
+    denoise_only.chroma_denoise = all.chroma_denoise;
+    std::cout << "chroma denoise (pipeline): " << stage_two_ms(denoise_only, DevelopOperation::ChromaDenoise)
+              << " ms\n";
+    auto camera = proxy->pixels.clone();
+    ASSERT_TRUE(camera);
+    for (const std::int32_t band : {kChromaDenoiseBandRows, 0}) {
+        for (const bool parallel : {true, false}) {
+            std::vector<double> t;
+            for (int i = 0; i < (parallel ? 7 : 2); ++i) {
+                auto pixels = proxy->pixels.clone();
+                ASSERT_TRUE(pixels);
+                ColorImage image{std::move(*pixels), image::ColorEncoding::scene_linear_rec2020_d65()};
+                ChromaDenoiseParameters p;
+                p.strength = 0.7;
+                p.radius = 2;
+                p.band_rows = band;
+                const auto start = Clock::now();
+                auto r = apply_chroma_denoise(image, p, {}, {}, parallel);
+                t.push_back(seconds_since(start) * 1000.0);
+                ASSERT_TRUE(r);
+            }
+            std::sort(t.begin(), t.end());
+            std::cout << "chroma denoise direct, band rows " << band << (parallel ? ", parallel: " : ", serial: ")
+                      << t[t.size() / 2] << " ms\n";
+        }
+    }
+    {
+        std::vector<double> t;
+        for (int i = 0; i < 7; ++i) {
+            auto pixels = proxy->pixels.clone();
+            ASSERT_TRUE(pixels);
+            auto plane = image::ImageBuffer<float>::create(pixels->width(), pixels->height(), 2);
+            ASSERT_TRUE(plane);
+            auto guide = image::ImageBuffer<float>::create(pixels->width(), pixels->height(), 1);
+            ASSERT_TRUE(guide);
+            const auto start = Clock::now();
+            ASSERT_TRUE(guided_filter(guide->const_view(), plane->const_view(), plane->view(), 2, 0.01));
+            t.push_back(seconds_since(start) * 1000.0);
+        }
+        std::sort(t.begin(), t.end());
+        std::cout << "guided filter alone (whole proxy, 2-channel input, radius 2): " << t[t.size() / 2] << " ms\n";
+    }
+}
+
 TEST(DevelopFixtures, DISABLED_Benchmark) {
     LUCENT_ENGINE_REQUIRE_FIXTURE(file, "canon-eos-r5-cr3-raw");
     auto registry = raw::create_default_registry();
@@ -485,13 +746,16 @@ TEST(DevelopFixtures, DISABLED_Benchmark) {
     DevelopSettings all = comparison_settings(TemperatureTint{5200.0, 5.0})[2].settings;
     all.white_balance = KelvinWhiteBalance{4800.0, 4.0};
     std::vector<std::vector<double>> per_operation;
+    std::vector<DevelopOperation> operation_order;
     const auto stage_two = [&](const StageOneImage& image, const DevelopSettings& s, bool record) {
         auto r = render_stage_two(image, s);
         ASSERT_TRUE(r) << r.error().describe();
         if (record) {
             per_operation.resize(r->report.operations.size());
+            operation_order.resize(r->report.operations.size());
             for (std::size_t i = 0; i < r->report.operations.size(); ++i) {
                 per_operation[i].push_back(r->report.operations[i].seconds);
+                operation_order[i] = r->report.operations[i].operation;
             }
         }
     };
@@ -532,7 +796,7 @@ TEST(DevelopFixtures, DISABLED_Benchmark) {
               << "\n  peak working set after stage one " << after_stage_one_mb << " MiB, at the end "
               << peak_working_set_mb() << " MiB\n  proxy, all operations, per operation (min of 15, ms):";
     for (std::size_t i = 0; i < per_operation.size(); ++i) {
-        std::cout << " " << to_string(static_cast<DevelopOperation>(i + 1)) << " " << std::setprecision(1)
+        std::cout << " " << to_string(operation_order[i]) << " " << std::setprecision(1)
                   << *std::min_element(per_operation[i].begin(), per_operation[i].end()) * 1000.0 << ";";
     }
     std::cout << "\n";

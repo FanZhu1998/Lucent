@@ -1,6 +1,6 @@
 # ADR 0010: Develop pipeline, recipes and interactive previews
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-05 for DevelopSettings v2: "Amendment: DevelopSettings v2" below, ADR 0015)
 - **Date:** 2026-10-03
 - **Workflow:** W6 (Recipes and editor), phase 2 of 4
 
@@ -304,3 +304,28 @@ DevelopSettings v1 had not shipped, so its operation versions stay 1.
 - **Thumbnails from the edit session's proxy frames.** Cheaper, but a second definition of the
   thumbnail (proxy downscale does not commute with the operations); the Fit render of the export
   path is the single definition, cached by settings so it is rendered once.
+
+## Amendment: DevelopSettings v2 (W9 part 2, 2026-10-05)
+
+ADR 0015 extends this record; its "Amendment: phase 2 of 4" holds the details. In short:
+
+- **Decisions 2 and 3 (recipes).** The recipe document is "lucent.develop" **version 2**: three
+  more members (`chroma_denoise`, `geometry`, `local_adjustments`) and three more operations, all
+  written in the same canonical form, so every identity changed once (the default recipe's is now
+  `3104dbcc...`). Version-1 documents are still read strictly and returned as their version-2
+  conversion; only version 2 is written; a version-2 document without the new members is
+  `InvalidArgument`, a newer one `VersionMismatch` (read-only), as decided here.
+- **Decision 4 (revisions).** Notes gain `parts=<chroma_denoise|masks|geometry>`; a mask stroke or
+  a crop drag is a gesture (`set_transient()` per position, one revision at `commit()`).
+- **Decision 5 (copy and paste).** Categories `detail` (chroma denoising), `geometry` and `masks`
+  are added; `local` stays highlights and shadows, and neither `geometry` nor `masks` is pasted by
+  default (both are placed on one photo's content; ADR 0015's closing amendment, decision 5:
+  pasting `masks` replaces the target's masks, also by none). Masks are pasted only to a photo of
+  the same upright aspect ratio (within 0.5 %), a cropping geometry likewise, and what is not
+  pasted is reported. The new parts have no locks.
+- **Decisions 6 and 7 (edit sessions, memory).** Each session keeps a brush-raster cache and the
+  denoised proxy image for its proxy renders, claimed as retained memory; stage-two claims use the
+  engine's settings-aware estimate; frames carry their `GeometryMapping` and mask outlines;
+  `RenderSummary::rendered_size` is the developed image's full-resolution size after the geometry.
+- **Decision 10 (`lucent-render`).** `--develop` reads version 1 and 2; the report adds the stage-one
+  size and the three new operation records.

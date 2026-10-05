@@ -7,7 +7,10 @@ import Lucent
 
 // Copy settings by category (blueprint section 2: "Copy/paste adjustments offers specific
 // categories"). Paste applies the copied categories to the photo shown; camera-specific white
-// balance is never pasted to another camera model (the result message says what was not pasted).
+// balance is never pasted to another camera model, and masks and a crop only to photos of the same
+// shape (the result message names what was not pasted and why). Masks and Crop and rotation are not
+// selected by default: they are placed on this photo's content, and pasting masks replaces the other
+// photo's masks (also by none when this photo has none).
 Dialog {
     id: dialog
 
@@ -76,12 +79,14 @@ Dialog {
 
                 objectName: "copyCategory_" + modelData.key
                 text: modelData.label
-                checked: true
+                checked: modelData.checked
             }
         }
 
         Text {
-            text: qsTr("A white balance specific to this camera is only pasted to photos from the same camera model.")
+            text: qsTr("A white balance specific to this camera is only pasted to photos from the same camera model. "
+                       + "Masks and a crop are only pasted to photos of the same shape, and pasted masks replace the "
+                       + "photo's own; anything not pasted is listed with the reason.")
             color: Theme.textTertiary
             font.pixelSize: Theme.fontSmall
             wrapMode: Text.Wrap

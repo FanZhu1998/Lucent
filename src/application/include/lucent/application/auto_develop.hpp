@@ -38,6 +38,15 @@
 //      The check's stage one is the interactive kind the analysis judged (highlights clipped after
 //      demosaicing); the export render clips before it, which differs within two pixels of
 //      saturated sites only (ADR 0010).
+//      Geometry, masks and denoising (DevelopSettings v2, ADR 0015): Auto adjusts global controls
+//      only. The analysis evaluates its candidates on the current settings without their geometry
+//      and local adjustments (analysis::evaluation_settings(): native crops line up, masks never land
+//      on the wrong content, and the decision is the same whatever the crop), and every settings
+//      value it returns carries the current geometry, masks and chroma denoising unchanged. The
+//      final check renders the full settings, geometry and masks included, for the choice, its
+//      fallbacks and the baseline alike (they share the photographer's geometry and masks), and
+//      measures them in the geometry's output frame: the image context (saturation, signal, the
+//      neutral surfaces) is mapped through the same geometry (analysis::map_image_context()).
 //   5. The locks report: the controls the optimiser sets that are locked, and whether they kept it
 //      from its usual targets (a brightness deficit or excess of more than kLockedTargetEv left with
 //      exposure, shadows or highlights locked; locked settings that clip), each with a user-facing
@@ -265,8 +274,15 @@ struct AutoRun {
 // Estimated peak pixel memory of run_automatic for `metadata` (probe metadata): the analysis'
 // (analysis::estimate_auto_memory) with the copy of the decoded samples kept for the check, or the
 // final check's (stage one, the full-resolution context and baseline features, one stage two), the
-// larger.
+// larger. Without settings the final check's stage two is the engine's settings-agnostic estimate
+// (denoising at its largest radius, no brush raster).
 [[nodiscard]] Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata,
+                                                                const AutoRunOptions& options = {});
+// The same for the item's `current` settings: the final check's stage two is estimated for them
+// (engine::estimate_develop_memory with settings: their denoising radius, brush masks and the masks'
+// base layer), which callers whose photos may have masks should use.
+[[nodiscard]] Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata,
+                                                                const engine::DevelopSettings& current,
                                                                 const AutoRunOptions& options = {});
 
 // ---- Revisions and records ---------------------------------------------------------------------

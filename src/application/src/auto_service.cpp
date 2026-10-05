@@ -168,7 +168,7 @@ struct AutoService::Impl {
                                             core::path_to_utf8_lossy(item->path)),
                                 std::string(kWhere), 0});
         }
-        auto estimate = estimate_automatic_memory(selection->probe.metadata, options.run);
+        auto estimate = estimate_automatic_memory(selection->probe.metadata, current->settings, options.run);
         if (!estimate) {
             return failed(estimate.error());
         }

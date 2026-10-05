@@ -64,6 +64,31 @@
 //                              photo (as the Auto button does), wait for it and for the frame of its
 //                              revision, and report the outcome and the Automatic settings panel's
 //                              summary (confidence, review reasons, what changed, locks, fallback).
+//   W9 geometry and masks, with --open-first, after the --set edits and before --drag, each one
+//   revision (or two) waiting for its final frame, in this order:
+//   --turn <cw|ccw|flip>       A quarter turn or the mirror, as the crop panel's buttons (repeatable).
+//   --straighten <degrees>     The straighten slider's value (-45..45; the crop follows it while
+//                              "Constrain to image" is on).
+//   --crop <l,t,w,h>           The crop as fractions of the straightened image (left, top, width,
+//                              height).
+//   --add-mask <spec>          Adds a mask as the panel's buttons do, then sets its shape when given:
+//                              radial[:cx,cy,rx,ry[,angle[,feather]]] (normalised upright positions,
+//                              radii as fractions of the long edge), linear[:x1,y1,x2,y2[,feather]] or
+//                              brush. Repeatable; each added mask then gets the --mask-set values.
+//   --mask-set <control=value> A local control of every mask the automation adds or paints
+//                              (maskExposure, maskContrast, maskHighlights, maskShadows,
+//                              maskSaturation, maskTemperature, maskTint, maskOpacity, maskFeather;
+//                              display units). Repeatable.
+//   --mask-exposure <ev>       Shorthand for --mask-set maskExposure=<ev>.
+//   --brush <x1,y1;x2,y2;...>  Paints one stroke through these normalised upright points with the
+//                              masks tool: synthetic mouse events on the brush overlay (press,
+//                              --drag-steps moves 16 ms apart along the path, release), into the
+//                              selected brush mask or a new one. With --measure it is reported like
+//                              --drag (pointer to frame latency, frames, UI-thread gaps). Repeatable.
+//   --brush-size <percent>     The brush size for --brush, percent of the long edge (default 3).
+//   --mask-overlay             Shows the selected mask's weight overlay (O) before the screenshot.
+//   --tool <crop|masks>        Opens that tool before the screenshot (crop: waits for the uncropped
+//                              frame).
 //   --export-batch <folder>    W7: when the imports have finished, export every photo of <folder>
 //                              (and its subfolders with --include-subfolders) as one durable batch,
 //                              as the Export batch dialog's Start does: the folder is added to the
@@ -92,6 +117,9 @@
 // Positional arguments are photos or folders to add to the library, like --import; this is the
 // one user-facing part of the command line (drag-and-drop onto Lucent.exe, "Open with").
 
+#include <array>
+#include <deque>
+#include <functional>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -133,6 +161,16 @@ struct DeveloperOptions {
     bool clipping = false;
     std::optional<double> panel_scroll;  // --scroll-panel
     bool run_auto = false;               // --auto (W8)
+    // W9 geometry and masks (see the file comment).
+    QStringList turns;                                     // --turn
+    std::optional<double> straighten;                      // --straighten
+    std::optional<std::array<double, 4>> crop;             // --crop l,t,w,h
+    QStringList add_masks;                                 // --add-mask specs
+    std::vector<std::pair<QString, QString>> mask_values;  // --mask-set / --mask-exposure
+    std::vector<QList<QPointF>> brushes;                   // --brush strokes
+    double brush_size = 3.0;                               // --brush-size, percent
+    bool mask_overlay = false;                             // --mask-overlay
+    QString tool;                                          // --tool
     // W7 batch automation (see the file comment).
     QString batch_folder;  // --export-batch
     QString batch_to;      // --to
@@ -196,6 +234,13 @@ private:
     [[nodiscard]] bool wants_editing() const;
     void edit_step();
     bool apply_edit(const QString& key, const QString& value);
+    // W9: the geometry and mask steps (see the file comment), in order; each returns whether a final
+    // frame follows.
+    [[nodiscard]] std::deque<std::pair<QString, std::function<bool()>>> geometry_and_mask_steps();
+    bool add_mask(const QString& spec);
+    bool apply_mask_values();
+    // Starts a synthetic stroke (see --brush); false when the masks tool cannot paint.
+    bool paint_brush(const QList<QPointF>& points);
     void start_drag();
     void drag_tick();
     void send_mouse(QEvent::Type type, QPointF position);
@@ -241,6 +286,8 @@ private:
     bool edit_waiting_ = false;    // an edit was made; waiting for its final frame
     int finals_before_ = 0;
     QString edit_label_;
+    bool steps_built_ = false;
+    std::deque<std::pair<QString, std::function<bool()>>> steps_;  // W9 steps not run yet
     QTimer drag_timer_;
     bool drag_active_ = false;     // between the press and the release
     bool drag_measuring_ = false;  // from the press until the drag's final frame
@@ -248,6 +295,10 @@ private:
     int drag_step_ = 0;
     QPointF drag_from_;
     QPointF drag_to_;
+    QList<QPointF> drag_path_;  // --brush: the scene positions of the moves (empty: a slider drag)
+    QString drag_label_;
+    int drag_moves_ = 0;
+    EditSettings drag_settings_;  // at the press (a drag that changed nothing waits for no frame)
     qint64 drag_start_ms_ = -1;
     qint64 drag_release_ms_ = -1;
     std::vector<qint64> drag_gaps_ms_;

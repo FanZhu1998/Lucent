@@ -20,9 +20,11 @@ add_library(lucent_ui_fakes STATIC
     fakes/fake_services.hpp
 )
 target_include_directories(lucent_ui_fakes PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+# The simulated edit service maps geometry and masks with the engine's own helpers (the adapters'),
+# so the view models see the real crop and mask mapping.
 target_link_libraries(lucent_ui_fakes
     PUBLIC lucent_ui_services
-    PRIVATE Lucent::compiler_options)
+    PRIVATE Lucent::compiler_options lucent_ui_adapters)
 set_target_properties(lucent_ui_fakes PROPERTIES FOLDER "tests")
 
 add_executable(lucent_ui_tests
@@ -37,6 +39,7 @@ add_executable(lucent_ui_tests
     batch_models_tests.cpp
     application_shell_tests.cpp
     catalog_adapters_tests.cpp
+    crop_mask_models_tests.cpp
     developer_options_tests.cpp
     edit_session_tests.cpp
     fake_services_tests.cpp

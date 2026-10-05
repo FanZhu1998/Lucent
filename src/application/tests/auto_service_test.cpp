@@ -2,10 +2,13 @@
 // interactive "Auto" creates automatic revisions with their analysis records, respects and reports
 // locks, keeps a failed final-check attempt with its reason (the fallback ladder, forced by the test
 // hook), writes nothing when nothing passes or the run is cancelled, keeps its revisions as a branch
-// when the photo changed meanwhile, and its documents read back exactly. Items are synthetic DNGs:
+// when the photo changed meanwhile, adjusts global controls only (the photographer's geometry, masks
+// and chroma denoising survive unchanged, and the decision is the one made without the geometry and
+// masks), and its documents read back exactly. Items are synthetic DNGs:
 // dark (a high white level) so that the optimiser brightens them, and large enough for every metric's
 // evidence minimum.
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -28,6 +31,7 @@
 #include <lucent/application/recipe_service.hpp>
 #include <lucent/application/recipe_store.hpp>
 #include <lucent/application/task_executor.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 
 #include "app_test_support.hpp"
 
@@ -49,6 +53,44 @@ rts::SyntheticDngSpec dark_spec(std::string model = "Synthetic DNG") {
     spec.black_level = 256;
     spec.model = std::move(model);
     spec.raw_noise_profile = {2e-5, 2e-7, 2e-5, 2e-7, 2e-5, 2e-7};
+    return spec;
+}
+
+// The photographer's geometry (a straightened crop inside the image, a quarter turn), masks and
+// chroma denoising on top of `s` (DevelopSettings v2, ADR 0015).
+engine::DevelopSettings with_parts(engine::DevelopSettings s) {
+    s.chroma_denoise = engine::ChromaDenoiseSetting{0.3, 4.0};
+    s.geometry.straighten_degrees = 1.5;
+    s.geometry.crop = engine::largest_inside_crop(1.5, image::Size{256, 192});
+    s.geometry.quarter_turns = 1;
+    engine::LocalAdjustment radial;
+    radial.id = 1;
+    radial.shape = engine::RadialGradientMask{{0.5, 0.5}, 0.2, 0.15, 0.0, 0.5};
+    radial.controls.exposure_ev = 0.5;
+    engine::LocalAdjustment brush;
+    brush.id = 2;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.05, 0.5, 1.0,
+                                                         {{0.2, 0.7}, {0.4, 0.75}}}}};
+    brush.controls.shadows = 0.3;
+    s.local_adjustments = {radial, brush};
+    return s;
+}
+
+// A grey card under a warm cast on the left and green foliage on the right, with a little texture
+// (the synthetic camera's neutral is AsShotNeutral 0.5, 1, 0.667): the card is the neutral evidence.
+rts::SyntheticDngSpec card_and_foliage_spec() {
+    rts::SyntheticDngSpec spec = dark_spec();
+    spec.scene = [](std::uint32_t x, std::uint32_t y, std::uint32_t color) -> std::uint16_t {
+        const std::uint32_t hash = (x * 73856093u) ^ (y * 19349663u) ^ (color * 83492791u);
+        const double texture = 1.0 + 0.01 * (static_cast<double>(hash % 1000u) / 500.0 - 1.0);
+        const bool card = x < 100;
+        // The card: a checkerboard of two greys (its edges are neutral too); the foliage: smooth.
+        const double card_level = ((x / 8 + y / 8) % 2 == 0) ? 0.15 : 0.45;
+        const std::array<double, 3> ratio =
+            card ? std::array<double, 3>{0.5 * 1.25, 1.0, 0.667 * 0.85} : std::array<double, 3>{0.5 * 0.35, 1.0, 0.667 * 0.3};
+        const double level = (card ? card_level : 0.2) * ratio[color] * texture;
+        return static_cast<std::uint16_t>(256.0 + level * (65535.0 - 256.0));
+    };
     return spec;
 }
 
@@ -204,6 +246,90 @@ TEST_F(AutoServiceTest, AutoCreatesAnEditableRevisionWithItsAnalysisRecord) {
     auto undone = recipes_->undo(item_);
     ASSERT_TRUE(undone);
     EXPECT_FALSE(undone->revision.has_value());
+}
+
+TEST_F(AutoServiceTest, AutoAdjustsGlobalControlsAndKeepsGeometryMasksAndDenoising) {
+    const engine::DevelopSettings current = with_parts({});
+    ASSERT_TRUE(recipes_->apply(item_, current));
+    const AutoTaskResult result = run(service());
+    ASSERT_FALSE(result.error) << result.error->describe();
+    ASSERT_TRUE(result.run);
+    const AutoRun& run = *result.run;
+    EXPECT_EQ(run.start, current);
+    EXPECT_GT(run.chosen.exposure_ev, 0.0) << "a dark photo is brightened";
+    // The choice and every attempt of the full-resolution check carry them unchanged.
+    EXPECT_EQ(run.chosen.geometry, current.geometry);
+    EXPECT_EQ(run.chosen.local_adjustments, current.local_adjustments);
+    EXPECT_EQ(run.chosen.chroma_denoise, current.chroma_denoise);
+    for (const AutoAttempt& attempt : run.attempts) {
+        EXPECT_EQ(attempt.settings.geometry, current.geometry);
+        EXPECT_EQ(attempt.settings.local_adjustments, current.local_adjustments);
+        EXPECT_EQ(attempt.settings.chroma_denoise, current.chroma_denoise);
+    }
+    // The check rendered the full settings (crop, rotation and masks) against a baseline with them,
+    // measured in the cropped frame, and passed.
+    ASSERT_TRUE(run.effective);
+    EXPECT_EQ(*run.effective, 0u);
+    EXPECT_EQ(run.attempts[0].check.outcome, catalog::AutoCheckOutcome::Passed)
+        << (run.attempts[0].check.failures.empty() ? "" : run.attempts[0].check.failures.front());
+    EXPECT_FALSE(run.attempts[0].check.values.empty());
+
+    // The revision: the global controls changed, the parts did not.
+    const RecipeState after = state();
+    EXPECT_EQ(after.committed, run.effective_settings());
+    EXPECT_EQ(after.committed.geometry, current.geometry);
+    EXPECT_EQ(after.committed.local_adjustments, current.local_adjustments);
+    EXPECT_EQ(after.committed.chroma_denoise, current.chroma_denoise);
+    auto history = recipes_->history(item_);
+    ASSERT_TRUE(history);
+    EXPECT_EQ(history->entries.back().info.origin, catalog::RevisionOrigin::Auto);
+    EXPECT_TRUE(history->entries.back().parts.empty());
+    EXPECT_FALSE(history->entries.back().changed.empty());
+
+    // The decision is the one Auto makes for the same photo without the geometry and masks.
+    engine::DevelopSettings global = current;
+    global.geometry = engine::GeometrySetting{};
+    global.local_adjustments.clear();
+    EXPECT_EQ(analysis::evaluation_settings(current), global);
+    auto plain = run_automatic(*registry_, fixture_.library->find(item_)->path, 0, global, AutoRunRequest{});
+    ASSERT_TRUE(plain) << plain.error().describe();
+    EXPECT_EQ(analysis::evaluation_settings(run.chosen), plain->chosen);
+    EXPECT_EQ(run.confidence, plain->confidence);
+    ASSERT_TRUE(plain->effective);
+    EXPECT_EQ(plain->attempts[*plain->effective].kind, run.attempts[*run.effective].kind);
+
+    // A crop alone: the same decision again.
+    engine::DevelopSettings cropped = global;
+    cropped.geometry.crop = engine::CropRect{0.0, 0.0, 0.6, 0.6};
+    auto with_crop = run_automatic(*registry_, fixture_.library->find(item_)->path, 0, cropped, AutoRunRequest{});
+    ASSERT_TRUE(with_crop) << with_crop.error().describe();
+    EXPECT_EQ(analysis::evaluation_settings(with_crop->chosen), plain->chosen);
+    EXPECT_EQ(with_crop->chosen.geometry, cropped.geometry);
+    ASSERT_TRUE(with_crop->effective);
+}
+
+// White balance is decided on the whole frame's neutral evidence (ADR 0015): a crop to the foliage,
+// without the grey card that showed the cast, keeps the decision and its full-resolution check
+// passes (it does not fail for lack of neutral surfaces inside the crop).
+TEST_F(AutoServiceTest, ACropWithoutNeutralSurfacesKeepsTheWhiteBalanceDecision) {
+    const auto path = ts::write_dng(dir_, L"card.dng", card_and_foliage_spec());
+    const engine::DevelopSettings whole;
+    auto uncropped = run_automatic(*registry_, path, 0, whole, AutoRunRequest{});
+    ASSERT_TRUE(uncropped) << uncropped.error().describe();
+    ASSERT_NE(uncropped->chosen.white_balance, whole.white_balance) << "the card's cast is corrected";
+    ASSERT_TRUE(uncropped->effective);
+    ASSERT_EQ(uncropped->attempts[*uncropped->effective].kind, AutoAttemptKind::Chosen);
+
+    engine::DevelopSettings foliage;
+    foliage.geometry.crop = engine::CropRect{0.5, 0.0, 1.0, 1.0};
+    auto cropped = run_automatic(*registry_, path, 0, foliage, AutoRunRequest{});
+    ASSERT_TRUE(cropped) << cropped.error().describe();
+    EXPECT_EQ(analysis::evaluation_settings(cropped->chosen), uncropped->chosen);
+    ASSERT_TRUE(cropped->effective);
+    const AutoAttempt& effective = cropped->attempts[*cropped->effective];
+    EXPECT_EQ(effective.kind, AutoAttemptKind::Chosen)
+        << (cropped->attempts[0].check.failures.empty() ? "" : cropped->attempts[0].check.failures.front());
+    EXPECT_EQ(effective.settings.white_balance, uncropped->chosen.white_balance);
 }
 
 TEST_F(AutoServiceTest, LockedControlsAreKeptAndTheirEffectReported) {

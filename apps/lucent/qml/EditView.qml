@@ -13,7 +13,10 @@ import Lucent
 // Fit, Ctrl+1 100 %, Z toggles the zoom, \ before/after, J clipping overlay, Ctrl+Z undo, Ctrl+Y
 // (or Ctrl+Shift+Z) redo, Ctrl+Shift+C copy settings, Ctrl+Shift+V paste settings, Ctrl+Shift+A
 // Auto (W8), Ctrl+E export, Esc returns to the library (Main.qml). In a slider: arrows step (Shift:
-// coarse), Home resets.
+// coarse), Home resets. W9 tools: R crop and rotate (the image is shown uncropped under the crop
+// frame), B brush mask, G linear gradient mask, Shift+R radial gradient mask, O shows the selected
+// mask's weights; Enter closes the open tool, Esc cancels it (the crop tool restores the geometry it
+// was opened with) before it returns to the library.
 FocusScope {
     id: root
 
@@ -22,10 +25,29 @@ FocusScope {
     readonly property CurrentItem current: controller.current
     readonly property EditSession edit: controller.edit
 
+    // The crop overlay draws a horizon to level the photo instead of moving the crop.
+    property bool cropLevelMode: false
+
     signal exportRequested()
 
     function takeFocus() {
         viewer.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
+    // Brings the open tool's panel into view (a new mask's sliders, the crop's ratios), expanded,
+    // unless its title and most of it are visible already.
+    function revealToolPanel() {
+        const section = root.edit.tool === "crop" ? cropPanel : root.edit.tool === "masks" ? masksPanel : null
+        if (section === null)
+            return
+        section.expanded = true
+        Qt.callLater(function() {
+            const top = section.mapToItem(sidePanel, 0, 0).y + sidePanel.y - 8
+            const shown = Math.min(section.height, panelFlick.height * 0.6)
+            if (top >= panelFlick.contentY && top + shown <= panelFlick.contentY + panelFlick.height)
+                return
+            panelFlick.contentY = Math.max(0, Math.min(top, panelFlick.contentHeight - panelFlick.height))
+        })
     }
 
     RowLayout {
@@ -63,7 +85,10 @@ FocusScope {
                         font.pixelSize: Theme.fontTitle
                         font.weight: Font.DemiBold
                         elide: Text.ElideMiddle
-                        Layout.maximumWidth: 280
+                        // Shrinks (eliding) before the tool buttons are pushed out of a narrow window.
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 60
+                        Layout.maximumWidth: Math.min(implicitWidth, 280)
                     }
 
                     Text {
@@ -126,6 +151,32 @@ FocusScope {
                     ToolSeparator {}
 
                     StyledToolButton {
+                        objectName: "cropToolToggle"
+                        text: qsTr("Crop")
+                        checkable: true
+                        checked: root.edit.tool === "crop"
+                        enabled: root.edit.tool === "crop" || root.edit.crop.available
+                        onClicked: root.edit.tool === "crop" ? root.edit.finishTool() : root.edit.setTool("crop")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Crop, straighten and rotate (R)")
+                        ToolTip.delay: 800
+                    }
+
+                    StyledToolButton {
+                        objectName: "masksToolToggle"
+                        text: qsTr("Masks")
+                        checkable: true
+                        checked: root.edit.tool === "masks"
+                        enabled: root.edit.tool === "masks" || root.edit.masks.canAdd || root.edit.masks.count > 0
+                        onClicked: root.edit.tool === "masks" ? root.edit.finishTool() : root.edit.setTool("masks")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Local adjustments with brush (B), linear (G) and radial (Shift+R) masks")
+                        ToolTip.delay: 800
+                    }
+
+                    ToolSeparator {}
+
+                    StyledToolButton {
                         objectName: "fitButton"
                         text: qsTr("Fit")
                         checkable: true
@@ -173,36 +224,63 @@ FocusScope {
                 }
             }
 
-            ZoomableImage {
-                id: viewer
+            Item {
+                id: imageArea
 
-                objectName: "previewViewer"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                activeFocusOnTab: true  // Tab back here to use Left/Right and the zoom keys
-                focus: true
-                // Previews are requested only while Edit is shown.
-                active: root.visible
-                source: root.current.previewSource
-                pixelWidth: root.current.pixelWidth
-                pixelHeight: root.current.pixelHeight
-                accessibleName: qsTr("Preview of %1").arg(root.current.fileName)
-                unavailableText: root.current.processingDetail.length > 0 ? root.current.processingDetail
-                                                                          : root.current.supportDetail
-                placeholderSource: root.current.thumbnailSource
-                placeholderIsCameraPreview: root.current.thumbnailIsCameraPreview
-                incompleteRender: root.current.renderIncomplete
-                clippingOverlay: root.controller.clippingOverlay
-                framesExpected: root.edit.active
-                frameSource: root.edit.frameSource
-                beforeSource: root.edit.beforeSource
-                clippingSource: root.edit.clippingSource
-                frameError: root.edit.frameError
-                refining: root.edit.busy && root.edit.framePhase === "quick" && !root.edit.gestureActive
-                compare: root.edit.compare
-                split: root.edit.split
-                onShownFrameChanged: root.edit.noteFrameShown(shownFrame)
-                onFitModeChanged: root.edit.setFullResolution(!fitMode)
+
+                ZoomableImage {
+                    id: viewer
+
+                    objectName: "previewViewer"
+                    anchors.fill: parent
+                    activeFocusOnTab: true  // Tab back here to use Left/Right and the zoom keys
+                    focus: true
+                    // Previews are requested only while Edit is shown.
+                    active: root.visible
+                    source: root.current.previewSource
+                    // The frames' own full-resolution size (after the crop and turns) once one is shown.
+                    pixelWidth: root.edit.frameOutputWidth > 0 ? root.edit.frameOutputWidth : root.current.pixelWidth
+                    pixelHeight: root.edit.frameOutputHeight > 0 ? root.edit.frameOutputHeight : root.current.pixelHeight
+                    accessibleName: qsTr("Preview of %1").arg(root.current.fileName)
+                    unavailableText: root.current.processingDetail.length > 0 ? root.current.processingDetail
+                                                                              : root.current.supportDetail
+                    placeholderSource: root.current.thumbnailSource
+                    placeholderIsCameraPreview: root.current.thumbnailIsCameraPreview
+                    incompleteRender: root.current.renderIncomplete
+                    clippingOverlay: root.controller.clippingOverlay
+                    framesExpected: root.edit.active
+                    frameSource: root.edit.frameSource
+                    beforeSource: root.edit.beforeSource
+                    clippingSource: root.edit.clippingSource
+                    maskOverlaySource: root.edit.maskOverlaySource
+                    frameError: root.edit.frameError
+                    refining: root.edit.busy && root.edit.framePhase === "quick" && !root.edit.gestureActive
+                    compare: root.edit.compare
+                    split: root.edit.split
+                    onShownFrameChanged: root.edit.noteFrameShown(shownFrame)
+                    onFitModeChanged: root.edit.setFullResolution(!fitMode)
+                }
+
+                // W9: the tools' overlays over the displayed image.
+                CropOverlay {
+                    objectName: "cropOverlay"
+                    anchors.fill: parent
+                    crop: root.edit.crop
+                    imageRect: viewer.imageRect
+                    levelMode: root.cropLevelMode
+                    visible: root.edit.crop.showing && !viewer.showingBefore
+                    onLevelled: root.cropLevelMode = false
+                }
+
+                MaskOverlay {
+                    objectName: "maskOverlay"
+                    anchors.fill: parent
+                    masks: root.edit.masks
+                    imageRect: viewer.imageRect
+                    visible: root.edit.masks.showing && !viewer.showingBefore
+                }
             }
 
             Rectangle {
@@ -338,6 +416,30 @@ FocusScope {
                         }
                     }
 
+                    CropPanel {
+                        id: cropPanel
+
+                        objectName: "cropPanel"
+                        Layout.fillWidth: true
+                        edit: root.edit
+                        levelMode: root.cropLevelMode
+                        onLevelModeRequested: on => root.cropLevelMode = on
+                    }
+
+                    MasksPanel {
+                        id: masksPanel
+
+                        objectName: "masksPanel"
+                        Layout.fillWidth: true
+                        edit: root.edit
+                    }
+
+                    DetailPanel {
+                        objectName: "detailPanel"
+                        Layout.fillWidth: true
+                        edit: root.edit
+                    }
+
                     PanelSection {
                         objectName: "historySection"
                         title: qsTr("History")
@@ -443,5 +545,64 @@ FocusScope {
         sequence: "Ctrl+Shift+A"
         enabled: root.visible && root.edit.canRunAuto
         onActivated: root.edit.runAuto()
+    }
+
+    // ---- W9 tools -------------------------------------------------------------------------------------
+
+    Connections {
+        target: root.edit
+
+        function onToolChanged() {
+            if (root.edit.tool !== "crop")
+                root.cropLevelMode = false
+            root.revealToolPanel()
+        }
+    }
+
+    Shortcut {
+        sequence: "R"
+        enabled: root.visible && (root.edit.tool === "crop" || root.edit.crop.available)
+        onActivated: root.edit.tool === "crop" ? root.edit.finishTool() : root.edit.setTool("crop")
+    }
+
+    Shortcut {
+        sequence: "B"
+        enabled: root.visible && root.edit.canEdit && (root.edit.masks.canAdd || root.edit.masks.selectedKind === "brush")
+        onActivated: root.edit.masks.startBrush()
+    }
+
+    Shortcut {
+        sequence: "G"
+        enabled: root.visible && root.edit.masks.canAdd
+        onActivated: root.edit.masks.add("linear")
+    }
+
+    Shortcut {
+        sequence: "Shift+R"
+        enabled: root.visible && root.edit.masks.canAdd
+        onActivated: root.edit.masks.add("radial")
+    }
+
+    Shortcut {
+        sequence: "O"
+        enabled: root.visible && root.edit.masks.selectedId > 0
+        onActivated: root.edit.maskOverlay = !root.edit.maskOverlay
+    }
+
+    Shortcut {
+        sequences: ["Return", "Enter"]
+        enabled: root.visible && root.edit.toolActive
+        onActivated: root.edit.finishTool()
+    }
+
+    Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && root.edit.toolActive
+        onActivated: {
+            if (root.cropLevelMode)
+                root.cropLevelMode = false
+            else
+                root.edit.cancelTool()
+        }
     }
 }

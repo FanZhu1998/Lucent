@@ -273,7 +273,7 @@ Expected<workers::JobResult> DevelopJobRunner::run(const workers::JobRequest& re
     engine::StageOneRequest stage_one;
     stage_one.kind = engine::StageOneKind::Export;
     stage_one.white_balance = settings->white_balance;
-    LUCENT_TRY(estimate, renderer->get()->estimate(item, stage_one, cancel));
+    LUCENT_TRY(estimate, renderer->get()->estimate_for(item, stage_one, *settings, cancel));
     result.render.estimated_peak_bytes = estimate->export_peak;
     result.timings.prepare_seconds = seconds_since(started);
     context.progress(JobStage::Preparing, 0.05);

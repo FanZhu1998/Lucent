@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -29,6 +30,11 @@ namespace lucent::engine {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+// Ids of the stage-one images this process makes (StageOneImage::id); 0 is never issued.
+std::atomic<std::uint64_t> g_next_stage_one_id{1};
+
+std::uint64_t next_stage_one_id() noexcept { return g_next_stage_one_id.fetch_add(1, std::memory_order_relaxed); }
 
 constexpr const char* kWhereStage = "engine.develop.stage";
 constexpr const char* kWhereMemory = "engine.develop.memory";
@@ -138,6 +144,36 @@ std::uint64_t plane_bytes(image::Size size, std::int32_t channels, const image::
                                                     sizeof(float), limits);
     return layout ? static_cast<std::uint64_t>(layout->byte_size)
                   : static_cast<std::uint64_t>(size.area()) * static_cast<std::uint64_t>(channels) * sizeof(float);
+}
+
+// The largest working memory of one stage-two operation on an upright render of `size` at
+// `scale` whose local-tone radius is `tone_radius` (the operations run one after the other): local
+// tone (a log-luminance plane and the guided filter's two-channel plane), chroma denoising (its
+// bands), local adjustments (brush rasters over their extents and their base layer) and the
+// geometry's output image. Without settings: chroma denoising at its largest radius, local tone, a
+// base layer and a full-size geometry output.
+std::uint64_t stage_two_working_bytes(image::Size size, double scale, std::int32_t tone_radius,
+                                      std::int32_t channels_out, const DevelopSettings* settings,
+                                      const image::AllocationLimits& limits) {
+    const std::uint64_t one = plane_bytes(size, 1, limits);
+    if (settings == nullptr) {
+        const std::uint64_t denoise =
+            chroma_denoise_working_bytes(size, chroma_denoise_radius(kMaxChromaDenoiseRadius, scale));
+        return std::max({3 * one, denoise, plane_bytes(size, channels_out, limits)});
+    }
+    std::uint64_t bytes = 0;
+    if (settings->highlights != 0.0 || settings->shadows != 0.0) {
+        bytes = std::max(bytes, 3 * one);
+    }
+    if (!settings->chroma_denoise.is_identity()) {
+        bytes = std::max(bytes, chroma_denoise_working_bytes(
+                                    size, chroma_denoise_radius(settings->chroma_denoise.radius, scale)));
+    }
+    bytes = std::max(bytes, local_adjustments_working_bytes(settings->local_adjustments, size, tone_radius));
+    if (auto mapping = GeometryMapping::create(settings->geometry, size); mapping && !mapping->identity()) {
+        bytes = std::max(bytes, plane_bytes(mapping->output_size(), channels_out, limits));
+    }
+    return bytes;
 }
 
 // The white balance stage one applies (WhiteBalance per channel index) and its policy.
@@ -495,6 +531,7 @@ Expected<StageOneImage> run_stage_one(raw::DecodedRaw&& decoded, const StageOneR
     }
     out.metadata = std::move(decoded.metadata);
     out.seconds = seconds_since(start);
+    out.id = next_stage_one_id();
     return out;
 }
 
@@ -523,8 +560,13 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     const image::Size size = one.pixels.size();
     const raw::RawMetadata& metadata = one.metadata;
     const bool local_tone = settings.highlights != 0.0 || settings.shadows != 0.0;
+    auto mapping = GeometryMapping::create(settings.geometry, size);
+    if (!mapping) {
+        return Unexpected(std::move(mapping.error()));
+    }
     {
-        std::uint64_t bytes = local_tone ? 3 * plane_bytes(size, 1, options.limits) : 0;
+        std::uint64_t bytes = stage_two_working_bytes(size, one.scale, local_tone_radius(one.full_size, one.scale), 3,
+                                                      &settings, options.limits);
         if (reuse == nullptr || mono) {
             bytes += plane_bytes(size, 3, options.limits);
         }
@@ -538,6 +580,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     report.settings = settings;
     report.stage_one_kind = one.kind;
     report.full_size = one.full_size;
+    report.upright_size = size;
     report.output_size = size;
     report.scale = one.scale;
     report.normalization = one.normalization;
@@ -635,6 +678,18 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         return fail(ErrorCode::Internal, "the stage-two matrix is not finite", kWhereTwo);
     }
 
+    // The denoised image of an earlier render with the same inputs (DevelopOptions::stage_two_cache).
+    const bool denoise = !settings.chroma_denoise.is_identity() && !mono;
+    StageTwoCache* cache = (denoise && reuse == nullptr && one.id != 0) ? options.stage_two_cache.get() : nullptr;
+    const StageTwoCache::Key cache_key{one.id, settings.white_balance, settings.exposure_ev, settings.chroma_denoise};
+    std::shared_ptr<const StageTwoCache::Entry> cached;
+    if (cache != nullptr) {
+        cached = cache->find(cache_key);
+        if (cached && cached->pixels.size() != size) {
+            return fail(ErrorCode::Internal, "the stage-two cache holds an image of another size", kWhereTwo);
+        }
+    }
+
     ColorImage& image = result.display;
     if (reuse != nullptr && !mono) {
         image.pixels = std::move(*reuse);
@@ -660,8 +715,12 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         const image::ImageView<float> dst = image.pixels.view();
         const std::int32_t width = size.width;
         auto status = detail::for_each_row(size.height, options.parallel, cancel, kWhereTwo, [&](std::int32_t y) {
-            const float* s = src.row(y);
             float* o = dst.row(y);
+            if (cached) {  // the kept result of this pass and the denoising
+                std::memcpy(o, cached->pixels.row(y), static_cast<std::size_t>(width) * 3 * sizeof(float));
+                return;
+            }
+            const float* s = src.row(y);
             if (mono) {
                 for (std::int32_t x = 0; x < width; ++x, o += 3) {
                     const float v = std::min(s[x], clip_f);
@@ -746,7 +805,61 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         return Unexpected(std::move(cancelled.error()));
     }
 
-    // ---- 2. local highlights / shadows ------------------------------------------------------------
+    // ---- 2. chroma denoising ------------------------------------------------------------------------
+    {
+        const ChromaDenoiseSetting& d = settings.chroma_denoise;
+        OperationRecord r;
+        r.operation = DevelopOperation::ChromaDenoise;
+        r.algorithm = "guided-chroma-denoise";
+        r.version = kChromaDenoiseOperationVersion;
+        // Monochrome data is neutral after the fused pass: there is no chroma to filter.
+        r.applied = !d.is_identity() && !mono;
+        r.parameters = {param("strength", d.strength), param("radius_full_image", d.radius)};
+        if (r.applied) {
+            t = Clock::now();
+            Expected<ChromaDenoiseRecord> applied = ChromaDenoiseRecord{};
+            if (cached) {
+                applied = cached->record;  // the image was copied with the fused pass
+            } else {
+                ChromaDenoiseParameters p;
+                p.strength = d.strength;
+                p.radius = chroma_denoise_radius(d.radius, one.scale);
+                p.white = report.white;
+                applied = apply_chroma_denoise(image, p, options.limits, cancel, options.parallel);
+                if (!applied) {
+                    return Unexpected(std::move(applied.error()));
+                }
+                if (cache != nullptr && image.pixels.byte_size() <= cache->max_bytes()) {
+                    if (auto copy = image.pixels.clone()) {
+                        try {
+                            cache->insert(std::make_shared<const StageTwoCache::Entry>(
+                                StageTwoCache::Entry{cache_key, std::move(*copy), *applied}));
+                        } catch (const std::bad_alloc&) {
+                            // Not kept: the cache is an optimisation.
+                        }
+                    }
+                }
+            }
+            report.chroma_denoise = *applied;
+            r.parameters.push_back(param("reused", static_cast<bool>(cached)));
+            r.parameters.push_back(param("radius", static_cast<std::int64_t>(applied->radius)));
+            r.parameters.push_back(param("epsilon_ev2", applied->epsilon));
+            r.parameters.push_back(param("floor_ev", kChromaDenoiseFloorEv));
+            r.parameters.push_back(param("guided_filter_version", static_cast<std::int64_t>(kGuidedFilterVersion)));
+            r.parameters.push_back(param("bands", static_cast<std::int64_t>(applied->bands)));
+            r.parameters.push_back(param("band_rows", static_cast<std::int64_t>(applied->band_rows)));
+            r.parameters.push_back(param("halo_rows", static_cast<std::int64_t>(applied->halo_rows)));
+            r.seconds = seconds_since(t);
+        } else if (!d.is_identity()) {
+            r.parameters.push_back(param("skipped", std::string("monochrome data has no chroma")));
+        }
+        report.operations.push_back(std::move(r));
+    }
+    if (auto cancelled = cancel.check(kWhereTwo); !cancelled) {
+        return Unexpected(std::move(cancelled.error()));
+    }
+
+    // ---- 3. local highlights / shadows ------------------------------------------------------------
     {
         OperationRecord r;
         r.operation = DevelopOperation::LocalTone;
@@ -782,7 +895,47 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         return Unexpected(std::move(cancelled.error()));
     }
 
-    // ---- 3./4. contrast and tone curve ------------------------------------------------------------
+    // ---- 4. local adjustments (masks) ---------------------------------------------------------------
+    {
+        OperationRecord r;
+        r.operation = DevelopOperation::LocalAdjustments;
+        r.algorithm = "normalised-masks-local-controls";
+        r.version = kLocalAdjustmentsOperationVersion;
+        r.applied = std::any_of(settings.local_adjustments.begin(), settings.local_adjustments.end(),
+                                [](const LocalAdjustment& a) { return a.has_effect(); });
+        r.parameters = {param("adjustments", static_cast<std::int64_t>(settings.local_adjustments.size()))};
+        if (r.applied) {
+            t = Clock::now();
+            LocalAdjustmentsParameters p;
+            p.white = report.white;
+            p.tone_radius = local_tone_radius(one.full_size, one.scale);
+            auto applied = apply_local_adjustments(image, settings.local_adjustments, p, options.mask_cache.get(),
+                                                   options.limits, cancel, options.parallel);
+            if (!applied) {
+                return Unexpected(std::move(applied.error()));
+            }
+            report.local_adjustments = *applied;
+            std::vector<double> ids;
+            for (const LocalAdjustment& a : settings.local_adjustments) {
+                if (a.has_effect()) {
+                    ids.push_back(static_cast<double>(a.id));
+                }
+            }
+            r.parameters.push_back(param("applied_ids", std::move(ids)));
+            r.parameters.push_back(param("rasterized", static_cast<std::int64_t>(applied->rasterized)));
+            r.parameters.push_back(param("cache_hits", static_cast<std::int64_t>(applied->cache_hits)));
+            r.parameters.push_back(param("raster_bytes", static_cast<std::int64_t>(applied->raster_bytes)));
+            r.parameters.push_back(param("tone_radius", static_cast<std::int64_t>(applied->tone_radius)));
+            r.parameters.push_back(param("changed_pixels", static_cast<std::int64_t>(applied->changed_pixels)));
+            r.seconds = seconds_since(t);
+        }
+        report.operations.push_back(std::move(r));
+    }
+    if (auto cancelled = cancel.check(kWhereTwo); !cancelled) {
+        return Unexpected(std::move(cancelled.error()));
+    }
+
+    // ---- 5./6. contrast and tone curve ------------------------------------------------------------
     auto base = NeutralV1Curve::create(report.white);
     if (!base) {
         return Unexpected(std::move(base.error()));
@@ -840,7 +993,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         return Unexpected(std::move(cancelled.error()));
     }
 
-    // ---- 5. saturation and vibrance ---------------------------------------------------------------
+    // ---- 7. saturation and vibrance ---------------------------------------------------------------
     {
         const bool apply = settings.saturation != 0.0 || settings.vibrance != 0.0;
         OperationRecord r;
@@ -864,7 +1017,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         return Unexpected(std::move(cancelled.error()));
     }
 
-    // ---- 6. base look and display hand-off --------------------------------------------------------
+    // ---- 8. base look and display hand-off --------------------------------------------------------
     {
         t = Clock::now();
         auto applied = apply_base_look(image, *base, cancel, options.parallel);
@@ -890,6 +1043,44 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         r.seconds = seconds_since(t);
         report.operations.push_back(std::move(r));
     }
+    if (auto cancelled = cancel.check(kWhereTwo); !cancelled) {
+        return Unexpected(std::move(cancelled.error()));
+    }
+
+    // ---- 9. geometry ------------------------------------------------------------------------------
+    {
+        const GeometrySetting& g = settings.geometry;
+        OperationRecord r;
+        r.operation = DevelopOperation::Geometry;
+        r.algorithm = "straighten-catmull-rom-crop-orient";
+        r.version = kGeometryOperationVersion;
+        r.applied = !mapping->identity();
+        r.parameters = {
+            param("straighten_degrees", g.straighten_degrees),
+            param("crop", std::vector<double>{g.crop.left, g.crop.top, g.crop.right, g.crop.bottom}),
+            param("quarter_turns", static_cast<std::int64_t>(g.quarter_turns)),
+            param("flip_horizontal", g.flip_horizontal),
+        };
+        if (r.applied) {
+            t = Clock::now();
+            auto applied = apply_geometry(image, *mapping, options.limits, cancel, options.parallel);
+            if (!applied) {
+                return Unexpected(std::move(applied.error()));
+            }
+            report.geometry = *applied;
+            const image::PixelRect& c = applied->crop;
+            r.parameters.push_back(param("crop_pixels", std::vector<double>{static_cast<double>(c.x),
+                                                                            static_cast<double>(c.y),
+                                                                            static_cast<double>(c.width),
+                                                                            static_cast<double>(c.height)}));
+            r.parameters.push_back(param("orientation", std::string(image::to_string(applied->orientation))));
+            r.parameters.push_back(param("resampled", applied->resampled));
+            r.parameters.push_back(param("uncovered_pixels", static_cast<std::int64_t>(applied->uncovered_pixels)));
+            r.seconds = seconds_since(t);
+        }
+        report.operations.push_back(std::move(r));
+    }
+    report.output_size = image.pixels.size();
     report.stage_two_seconds = seconds_since(start);
     return result;
 }
@@ -897,6 +1088,34 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
 }  // namespace
 
 // ---- Public functions -----------------------------------------------------------------------------
+
+std::shared_ptr<const StageTwoCache::Entry> StageTwoCache::find(const Key& key) {
+    const std::lock_guard lock(mutex_);
+    if (entry_ && entry_->key == key) {
+        ++hits_;
+        return entry_;
+    }
+    ++misses_;
+    return nullptr;
+}
+
+void StageTwoCache::insert(std::shared_ptr<const Entry> entry) noexcept {
+    if (!entry || entry->pixels.byte_size() > max_bytes_) {
+        return;
+    }
+    const std::lock_guard lock(mutex_);
+    entry_ = std::move(entry);
+}
+
+void StageTwoCache::clear() noexcept {
+    const std::lock_guard lock(mutex_);
+    entry_.reset();
+}
+
+StageTwoCache::Stats StageTwoCache::stats() const {
+    const std::lock_guard lock(mutex_);
+    return Stats{entry_ ? static_cast<std::uint64_t>(entry_->pixels.byte_size()) : 0u, hits_, misses_};
+}
 
 std::string_view to_string(StageOneKind kind) noexcept {
     switch (kind) {
@@ -928,6 +1147,12 @@ std::string_view to_string(DevelopOperation operation) noexcept {
             return "color";
         case DevelopOperation::BaseLook:
             return "base_look";
+        case DevelopOperation::ChromaDenoise:
+            return "chroma_denoise";
+        case DevelopOperation::LocalAdjustments:
+            return "local_adjustments";
+        case DevelopOperation::Geometry:
+            return "geometry";
     }
     return "invalid";
 }
@@ -1026,9 +1251,10 @@ Status box_downscale(image::ConstImageView<float> src, image::ImageView<float> d
     });
 }
 
-Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& metadata,
-                                                        const StageOneRequest& request,
-                                                        const DevelopOptions& options) {
+namespace {
+
+Expected<DevelopMemoryEstimate> estimate_memory(const raw::RawMetadata& metadata, const StageOneRequest& request,
+                                                const DevelopSettings* settings, const DevelopOptions& options) {
     RenderSettings render_settings;
     RenderOptions render_options;
     render_options.limits = options.limits;
@@ -1057,12 +1283,31 @@ Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& 
     }
     e.stage_one_peak = one_peak;
     const image::Size kept = proxy_size(full, request.proxy_long_edge);
-    e.stage_two_bytes = plane_bytes(kept, 3, options.limits) + 3 * plane_bytes(kept, 1, options.limits);
+    const double scale =
+        static_cast<double>(long_edge(kept)) / static_cast<double>(std::max(1, long_edge(full)));
+    const std::uint64_t working =
+        stage_two_working_bytes(kept, scale, local_tone_radius(full, scale), 3, settings, options.limits);
+    e.stage_two_bytes = plane_bytes(kept, 3, options.limits) + working;
     // The export path consumes stage one: RGB is reused in place, monochrome expands to RGB.
-    const std::uint64_t in_place = (channels == 1 ? plane_bytes(kept, 3, options.limits) : 0) +
-                                   3 * plane_bytes(kept, 1, options.limits);
+    const std::uint64_t in_place = (channels == 1 ? plane_bytes(kept, 3, options.limits) : 0) + working;
     e.export_peak = std::max(e.stage_one_peak, e.stage_one_bytes + in_place);
     return e;
+}
+
+}  // namespace
+
+
+Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& metadata,
+                                                        const StageOneRequest& request,
+                                                        const DevelopOptions& options) {
+    return estimate_memory(metadata, request, nullptr, options);
+}
+
+Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& metadata,
+                                                        const StageOneRequest& request,
+                                                        const DevelopSettings& settings,
+                                                        const DevelopOptions& options) {
+    return estimate_memory(metadata, request, &settings, options);
 }
 
 Expected<StageOneImage> render_stage_one(raw::DecodedRaw&& decoded, const StageOneRequest& request,
@@ -1070,9 +1315,14 @@ Expected<StageOneImage> render_stage_one(raw::DecodedRaw&& decoded, const StageO
     return run_stage_one(std::move(decoded), request, options, cancel, std::nullopt, Clock::now());
 }
 
-Expected<StageOneImage> render_stage_one_file(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
-                                              std::optional<std::uint32_t> subimage, const StageOneRequest& request,
-                                              const DevelopOptions& options, const core::CancellationToken& cancel) {
+namespace {
+
+// render_stage_one_file(), its memory check made with `settings` when given (render_develop_file:
+// the same export estimate as render_develop) and without them otherwise.
+Expected<StageOneImage> stage_one_file(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
+                                       std::optional<std::uint32_t> subimage, const StageOneRequest& request,
+                                       const DevelopSettings* settings, const DevelopOptions& options,
+                                       const core::CancellationToken& cancel) {
     const auto start = Clock::now();
     if (auto cancelled = cancel.check(kWhereStage); !cancelled) {
         return Unexpected(std::move(cancelled.error()));
@@ -1085,7 +1335,9 @@ Expected<StageOneImage> render_stage_one_file(const raw::DecoderRegistry& regist
     if (!selection) {
         return Unexpected(std::move(selection.error()));
     }
-    auto estimate = estimate_develop_memory(selection->probe.metadata, request, options);
+    auto estimate = settings != nullptr
+                        ? estimate_develop_memory(selection->probe.metadata, request, *settings, options)
+                        : estimate_develop_memory(selection->probe.metadata, request, options);
     if (!estimate) {
         return Unexpected(std::move(estimate.error()));
     }
@@ -1117,6 +1369,14 @@ Expected<StageOneImage> render_stage_one_file(const raw::DecoderRegistry& regist
     return run_stage_one(std::move(*decoded), request, options, cancel, std::move(s), start);
 }
 
+}  // namespace
+
+Expected<StageOneImage> render_stage_one_file(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
+                                              std::optional<std::uint32_t> subimage, const StageOneRequest& request,
+                                              const DevelopOptions& options, const core::CancellationToken& cancel) {
+    return stage_one_file(registry, path, subimage, request, nullptr, options, cancel);
+}
+
 Expected<StageOneImage> make_proxy(const StageOneImage& source, std::int32_t edge, const DevelopOptions& options,
                                    const core::CancellationToken& cancel) {
     const image::Size from = source.pixels.size();
@@ -1136,6 +1396,7 @@ Expected<StageOneImage> make_proxy(const StageOneImage& source, std::int32_t edg
         return Unexpected(std::move(status.error()));
     }
     StageOneImage out = copy_records(source);
+    out.id = next_stage_one_id();
     out.pixels = std::move(*pixels);
     out.scale = static_cast<double>(long_edge(to)) / static_cast<double>(long_edge(source.full_size));
     out.downscale = DownscaleRecord{kBoxDownscaleVersion, from, to, seconds_since(t)};
@@ -1160,7 +1421,7 @@ Expected<DevelopResult> render_develop(raw::DecodedRaw&& decoded, const DevelopS
     StageOneRequest request;
     request.kind = StageOneKind::Export;
     request.white_balance = settings.white_balance;
-    auto estimate = estimate_develop_memory(decoded.metadata, request, options);
+    auto estimate = estimate_develop_memory(decoded.metadata, request, settings, options);
     if (!estimate) {
         return Unexpected(std::move(estimate.error()));
     }
@@ -1183,7 +1444,7 @@ Expected<DevelopResult> render_develop_file(const raw::DecoderRegistry& registry
     StageOneRequest request;
     request.kind = StageOneKind::Export;
     request.white_balance = settings.white_balance;
-    auto one = render_stage_one_file(registry, path, subimage, request, options, cancel);
+    auto one = stage_one_file(registry, path, subimage, request, &settings, options, cancel);
     if (!one) {
         return Unexpected(std::move(one.error()));
     }

@@ -1,5 +1,5 @@
-// Recipe documents: canonical writing (RFC 8785) and strict reading of "lucent.develop" v1
-// (recipe.hpp).
+// Recipe documents: canonical writing (RFC 8785) of "lucent.develop" v2 and strict reading of v1
+// and v2 (recipe.hpp).
 
 #include <algorithm>
 #include <charconv>
@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <limits>
 #include <new>
+#include <optional>
 #include <set>
 #include <span>
 #include <string>
@@ -28,6 +29,7 @@ namespace lucent::app {
 namespace {
 
 using Json = nlohmann::json;  // std::map objects: members iterate in byte order of their names
+using Names = std::vector<std::string_view>;
 
 constexpr std::string_view kWhere = "app.recipe";
 
@@ -45,6 +47,10 @@ constexpr std::string_view kSaturationKey = "saturation";
 constexpr std::string_view kVibranceKey = "vibrance";
 constexpr std::string_view kBaseLookKey = "base_look";
 constexpr std::string_view kLocksKey = "locks";
+// Added by version 2.
+constexpr std::string_view kChromaDenoiseKey = "chroma_denoise";
+constexpr std::string_view kLocalAdjustmentsKey = "local_adjustments";
+constexpr std::string_view kGeometryKey = "geometry";
 
 // Operation names in "operations".
 constexpr std::string_view kOpWhiteBalance = "white_balance";
@@ -53,6 +59,10 @@ constexpr std::string_view kOpLocalTone = "local_tone";
 constexpr std::string_view kOpContrast = "contrast";
 constexpr std::string_view kOpToneCurve = "tone_curve";
 constexpr std::string_view kOpColor = "color";
+// Added by version 2.
+constexpr std::string_view kOpChromaDenoise = "chroma_denoise";
+constexpr std::string_view kOpLocalAdjustments = "local_adjustments";
+constexpr std::string_view kOpGeometry = "geometry";
 
 Error invalid(std::string message) {
     return Error{ErrorCode::InvalidArgument, std::move(message), std::string(kWhere), 0};
@@ -181,6 +191,68 @@ Json white_balance_json(const engine::WhiteBalanceSetting& setting) {
     return out;
 }
 
+Json point_json(const engine::MaskPoint& p) {
+    return Json::array({p.x, p.y});
+}
+
+Json mask_json(const engine::MaskShape& shape) {
+    Json out = Json::object();
+    out["kind"] = std::string(engine::to_string(engine::kind_of(shape)));
+    if (const auto* brush = std::get_if<engine::BrushMask>(&shape)) {
+        Json strokes = Json::array();
+        for (const engine::BrushStroke& stroke : brush->strokes) {
+            Json points = Json::array();
+            for (const engine::MaskPoint& p : stroke.points) {
+                points.push_back(point_json(p));
+            }
+            strokes.push_back(Json{{"mode", std::string(engine::to_string(stroke.mode))},
+                                   {"radius", stroke.radius},
+                                   {"hardness", stroke.hardness},
+                                   {"flow", stroke.flow},
+                                   {"points", std::move(points)}});
+        }
+        out["strokes"] = std::move(strokes);
+    } else if (const auto* linear = std::get_if<engine::LinearGradientMask>(&shape)) {
+        out["start"] = point_json(linear->start);
+        out["end"] = point_json(linear->end);
+        out["feather"] = linear->feather;
+    } else if (const auto* radial = std::get_if<engine::RadialGradientMask>(&shape)) {
+        out["center"] = point_json(radial->center);
+        out["radius_x"] = radial->radius_x;
+        out["radius_y"] = radial->radius_y;
+        out["angle_degrees"] = radial->angle_degrees;
+        out["feather"] = radial->feather;
+    }
+    return out;
+}
+
+Json adjustment_json(const engine::LocalAdjustment& a) {
+    const engine::LocalControls& c = a.controls;
+    return Json{{"id", a.id},
+                {"enabled", a.enabled},
+                {"invert", a.invert},
+                {"opacity", a.opacity},
+                {"mask", mask_json(a.shape)},
+                {"controls", Json{{"exposure_ev", c.exposure_ev},
+                                  {"contrast", c.contrast},
+                                  {"highlights", c.highlights},
+                                  {"shadows", c.shadows},
+                                  {"saturation", c.saturation},
+                                  {"temperature", c.temperature},
+                                  {"tint", c.tint}}}};
+}
+
+Json geometry_json(const engine::GeometrySetting& g) {
+    return Json{{"straighten_degrees", g.straighten_degrees},
+                {"crop", Json{{"left", g.crop.left},
+                              {"top", g.crop.top},
+                              {"right", g.crop.right},
+                              {"bottom", g.crop.bottom}}},
+                {"quarter_turns", g.quarter_turns},
+                {"flip_horizontal", g.flip_horizontal}};
+}
+
+// The version-2 document of current (version-2) settings.
 Json settings_json(const engine::DevelopSettings& s) {
     Json doc = Json::object();
     doc[std::string(kSchemaKey)] = std::string(kRecipeSchema);
@@ -190,7 +262,10 @@ Json settings_json(const engine::DevelopSettings& s) {
                                             {std::string(kOpLocalTone), s.operations.local_tone},
                                             {std::string(kOpContrast), s.operations.contrast},
                                             {std::string(kOpToneCurve), s.operations.tone_curve},
-                                            {std::string(kOpColor), s.operations.color}};
+                                            {std::string(kOpColor), s.operations.color},
+                                            {std::string(kOpChromaDenoise), s.operations.chroma_denoise},
+                                            {std::string(kOpLocalAdjustments), s.operations.local_adjustments},
+                                            {std::string(kOpGeometry), s.operations.geometry}};
     doc[std::string(kWhiteBalanceKey)] = white_balance_json(s.white_balance);
     doc[std::string(kExposureKey)] = s.exposure_ev;
     doc[std::string(kContrastKey)] = s.contrast;
@@ -209,12 +284,20 @@ Json settings_json(const engine::DevelopSettings& s) {
         locks.push_back(std::string(engine::to_string(control)));
     }
     doc[std::string(kLocksKey)] = std::move(locks);
+    doc[std::string(kChromaDenoiseKey)] =
+        Json{{"strength", s.chroma_denoise.strength}, {"radius", s.chroma_denoise.radius}};
+    Json adjustments = Json::array();
+    for (const engine::LocalAdjustment& a : s.local_adjustments) {
+        adjustments.push_back(adjustment_json(a));
+    }
+    doc[std::string(kLocalAdjustmentsKey)] = std::move(adjustments);
+    doc[std::string(kGeometryKey)] = geometry_json(s.geometry);
     return doc;
 }
 
 // ---- Strict reader --------------------------------------------------------------------------
 
-std::string member_list(std::initializer_list<std::string_view> names) {
+std::string member_list(const Names& names) {
     std::string out;
     for (const std::string_view name : names) {
         out += out.empty() ? "" : ", ";
@@ -224,16 +307,14 @@ std::string member_list(std::initializer_list<std::string_view> names) {
 }
 
 // `object` must have exactly the members `names`.
-Status exact_members(const Json& object, std::initializer_list<std::string_view> names,
-                     std::string_view what) {
+Status exact_members(const Json& object, const Names& names, std::string_view what, std::uint32_t version) {
     if (!object.is_object()) {
         return Unexpected(invalid(std::format("{} must be a JSON object", what)));
     }
     for (const auto& [name, value] : object.items()) {
         if (std::find(names.begin(), names.end(), std::string_view(name)) == names.end()) {
-            return Unexpected(
-                invalid(std::format("{} has an unknown member '{}' (a version {} recipe has {})", what, name,
-                                    kRecipeSchemaVersion, member_list(names))));
+            return Unexpected(invalid(std::format("{} has an unknown member '{}' (a version {} recipe has {})", what,
+                                                  name, version, member_list(names))));
         }
     }
     for (const std::string_view name : names) {
@@ -255,6 +336,25 @@ Expected<double> number_of(const Json& value, std::string_view what) {
     return v;
 }
 
+Expected<bool> bool_of(const Json& value, std::string_view what) {
+    if (!value.is_boolean()) {
+        return Unexpected(invalid(std::format("{} must be true or false", what)));
+    }
+    return value.get<bool>();
+}
+
+// An unsigned integer that fits 32 bits (0 allowed).
+Expected<std::uint32_t> unsigned_of(const Json& value, std::string_view what) {
+    if (!value.is_number_unsigned()) {
+        return Unexpected(invalid(std::format("{} must be an unsigned integer", what)));
+    }
+    const std::uint64_t v = value.get<std::uint64_t>();
+    if (v > std::numeric_limits<std::uint32_t>::max()) {
+        return Unexpected(invalid(std::format("{} {} is out of range", what, v)));
+    }
+    return static_cast<std::uint32_t>(v);
+}
+
 Expected<std::uint32_t> version_of(const Json& value, std::string_view what) {
     if (!value.is_number_unsigned()) {
         return Unexpected(invalid(std::format("{} must be an unsigned integer", what)));
@@ -264,6 +364,19 @@ Expected<std::uint32_t> version_of(const Json& value, std::string_view what) {
         return Unexpected(invalid(std::format("{} {} is not a valid version", what, v)));
     }
     return static_cast<std::uint32_t>(v);
+}
+
+// Reads numbers into their destinations; the first failure is returned.
+Status read_numbers(const Json& object, std::initializer_list<std::pair<std::string_view, double*>> members,
+                    std::string_view prefix) {
+    for (const auto& [name, out] : members) {
+        auto value = number_of(object.at(std::string(name)), std::format("{}{}", prefix, name));
+        if (!value) {
+            return Unexpected(std::move(value.error()));
+        }
+        *out = *value;
+    }
+    return ok();
 }
 
 Status operation_version(const Json& operations, std::string_view name, std::uint32_t supported,
@@ -282,44 +395,44 @@ Status operation_version(const Json& operations, std::string_view name, std::uin
     return ok();
 }
 
-Expected<engine::WhiteBalanceSetting> read_white_balance(const Json& value) {
+Expected<engine::WhiteBalanceSetting> read_white_balance(const Json& value, std::uint32_t version) {
     if (!value.is_object() || !value.contains("mode") || !value.at("mode").is_string()) {
         return Unexpected(invalid("white_balance must be an object with a string 'mode'"));
     }
     const std::string& mode = value.at("mode").get_ref<const std::string&>();
     if (mode == engine::to_string(engine::WhiteBalanceMode::AsShot)) {
-        if (auto status = exact_members(value, {"mode"}, "white_balance (as_shot)"); !status) {
+        if (auto status = exact_members(value, {"mode"}, "white_balance (as_shot)", version); !status) {
             return Unexpected(std::move(status.error()));
         }
         return engine::WhiteBalanceSetting{engine::AsShotWhiteBalance{}};
     }
     if (mode == engine::to_string(engine::WhiteBalanceMode::Kelvin)) {
-        if (auto status = exact_members(value, {"mode", "temperature_k", "tint"}, "white_balance (kelvin)");
+        if (auto status = exact_members(value, {"mode", "temperature_k", "tint"}, "white_balance (kelvin)", version);
             !status) {
             return Unexpected(std::move(status.error()));
         }
-        auto t = number_of(value.at("temperature_k"), "white_balance.temperature_k");
-        auto tint = number_of(value.at("tint"), "white_balance.tint");
-        if (!t || !tint) {
-            return Unexpected(!t ? std::move(t.error()) : std::move(tint.error()));
+        engine::KelvinWhiteBalance kelvin;
+        if (auto status = read_numbers(value, {{"temperature_k", &kelvin.temperature_k}, {"tint", &kelvin.tint}},
+                                       "white_balance.");
+            !status) {
+            return Unexpected(std::move(status.error()));
         }
-        return engine::WhiteBalanceSetting{engine::KelvinWhiteBalance{*t, *tint}};
+        return engine::WhiteBalanceSetting{kelvin};
     }
     if (mode == engine::to_string(engine::WhiteBalanceMode::CameraNeutral)) {
-        if (auto status = exact_members(value, {"mode", "r", "g", "b"}, "white_balance (camera_neutral)");
+        if (auto status = exact_members(value, {"mode", "r", "g", "b"}, "white_balance (camera_neutral)", version);
             !status) {
             return Unexpected(std::move(status.error()));
         }
-        auto r = number_of(value.at("r"), "white_balance.r");
-        auto g = number_of(value.at("g"), "white_balance.g");
-        auto b = number_of(value.at("b"), "white_balance.b");
-        if (!r || !g || !b) {
-            return Unexpected(!r ? std::move(r.error()) : !g ? std::move(g.error()) : std::move(b.error()));
+        engine::CameraNeutralWhiteBalance neutral;
+        if (auto status =
+                read_numbers(value, {{"r", &neutral.r}, {"g", &neutral.g}, {"b", &neutral.b}}, "white_balance.");
+            !status) {
+            return Unexpected(std::move(status.error()));
         }
-        return engine::WhiteBalanceSetting{engine::CameraNeutralWhiteBalance{*r, *g, *b}};
+        return engine::WhiteBalanceSetting{neutral};
     }
-    return Unexpected(invalid(
-        std::format("unknown white-balance mode '{}' in a version {} recipe", mode, kRecipeSchemaVersion)));
+    return Unexpected(invalid(std::format("unknown white-balance mode '{}' in a version {} recipe", mode, version)));
 }
 
 Expected<engine::ToneCurveSetting> read_tone_curve(const Json& value) {
@@ -344,7 +457,7 @@ Expected<engine::ToneCurveSetting> read_tone_curve(const Json& value) {
     return curve;
 }
 
-Expected<std::set<engine::DevelopControl>> read_locks(const Json& value) {
+Expected<std::set<engine::DevelopControl>> read_locks(const Json& value, std::uint32_t version) {
     if (!value.is_array()) {
         return Unexpected(invalid("locks must be an array of control names"));
     }
@@ -356,8 +469,8 @@ Expected<std::set<engine::DevelopControl>> read_locks(const Json& value) {
         const std::string& text = name.get_ref<const std::string&>();
         const std::optional<engine::DevelopControl> control = engine::parse_develop_control(text);
         if (!control) {
-            return Unexpected(invalid(std::format("unknown locked control '{}' in a version {} recipe", text,
-                                                  kRecipeSchemaVersion)));
+            return Unexpected(
+                invalid(std::format("unknown locked control '{}' in a version {} recipe", text, version)));
         }
         if (!locks.insert(*control).second) {
             return Unexpected(invalid(std::format("the control '{}' is locked twice", text)));
@@ -366,33 +479,281 @@ Expected<std::set<engine::DevelopControl>> read_locks(const Json& value) {
     return locks;
 }
 
-Expected<engine::DevelopSettings> read_v1(const Json& doc, std::uint32_t version) {
-    if (auto status = exact_members(doc,
-                                    {kSchemaKey, kVersionKey, kOperationsKey, kWhiteBalanceKey, kExposureKey,
-                                     kContrastKey, kHighlightsKey, kShadowsKey, kToneCurveKey, kSaturationKey,
-                                     kVibranceKey, kBaseLookKey, kLocksKey},
-                                    "the recipe");
+// ---- Version-2 members ------------------------------------------------------------------------
+
+Expected<engine::MaskPoint> read_point(const Json& value, std::string_view what) {
+    if (!value.is_array() || value.size() != 2) {
+        return Unexpected(invalid(std::format("{} must be an [x, y] array", what)));
+    }
+    auto x = number_of(value.at(0), std::format("{} x", what));
+    auto y = number_of(value.at(1), std::format("{} y", what));
+    if (!x || !y) {
+        return Unexpected(!x ? std::move(x.error()) : std::move(y.error()));
+    }
+    return engine::MaskPoint{*x, *y};
+}
+
+Expected<engine::ChromaDenoiseSetting> read_chroma_denoise(const Json& value) {
+    if (auto status = exact_members(value, {"radius", "strength"}, "chroma_denoise", 2); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    engine::ChromaDenoiseSetting out;
+    if (auto status = read_numbers(value, {{"strength", &out.strength}, {"radius", &out.radius}}, "chroma_denoise.");
         !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    return out;
+}
+
+Expected<engine::GeometrySetting> read_geometry(const Json& value) {
+    if (auto status =
+            exact_members(value, {"crop", "flip_horizontal", "quarter_turns", "straighten_degrees"}, "geometry", 2);
+        !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    engine::GeometrySetting out;
+    const Json& crop = value.at("crop");
+    if (auto status = exact_members(crop, {"bottom", "left", "right", "top"}, "geometry.crop", 2); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    if (auto status = read_numbers(crop,
+                                   {{"left", &out.crop.left},
+                                    {"top", &out.crop.top},
+                                    {"right", &out.crop.right},
+                                    {"bottom", &out.crop.bottom}},
+                                   "geometry.crop.");
+        !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    if (auto status = read_numbers(value, {{"straighten_degrees", &out.straighten_degrees}}, "geometry."); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    auto turns = unsigned_of(value.at("quarter_turns"), "geometry.quarter_turns");
+    if (!turns) {
+        return Unexpected(std::move(turns.error()));
+    }
+    out.quarter_turns = *turns;
+    auto flip = bool_of(value.at("flip_horizontal"), "geometry.flip_horizontal");
+    if (!flip) {
+        return Unexpected(std::move(flip.error()));
+    }
+    out.flip_horizontal = *flip;
+    return out;
+}
+
+Expected<engine::BrushStroke> read_stroke(const Json& value, const std::string& what) {
+    if (auto status = exact_members(value, {"flow", "hardness", "mode", "points", "radius"}, what, 2); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    engine::BrushStroke out;
+    const Json& mode = value.at("mode");
+    if (!mode.is_string()) {
+        return Unexpected(invalid(std::format("{}.mode must be a string", what)));
+    }
+    const std::optional<engine::BrushMode> parsed = engine::parse_brush_mode(mode.get_ref<const std::string&>());
+    if (!parsed) {
+        return Unexpected(invalid(std::format("unknown brush mode '{}' in a version 2 recipe",
+                                              mode.get_ref<const std::string&>())));
+    }
+    out.mode = *parsed;
+    if (auto status = read_numbers(value, {{"radius", &out.radius}, {"hardness", &out.hardness}, {"flow", &out.flow}},
+                                   what + ".");
+        !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    const Json& points = value.at("points");
+    if (!points.is_array()) {
+        return Unexpected(invalid(std::format("{}.points must be an array of [x, y] points", what)));
+    }
+    if (points.size() > engine::kMaxStrokePoints) {
+        return Unexpected(invalid(std::format("{} has {} points; a stroke has at most {}", what, points.size(),
+                                              engine::kMaxStrokePoints)));
+    }
+    out.points.reserve(points.size());
+    std::size_t index = 0;
+    for (const Json& p : points) {
+        auto point = read_point(p, std::format("{} point {}", what, index));
+        if (!point) {
+            return Unexpected(std::move(point.error()));
+        }
+        out.points.push_back(*point);
+        ++index;
+    }
+    return out;
+}
+
+Expected<engine::MaskShape> read_mask(const Json& value, const std::string& what) {
+    if (!value.is_object() || !value.contains("kind") || !value.at("kind").is_string()) {
+        return Unexpected(invalid(std::format("{} must be an object with a string 'kind'", what)));
+    }
+    const std::string& kind_text = value.at("kind").get_ref<const std::string&>();
+    const std::optional<engine::MaskKind> kind = engine::parse_mask_kind(kind_text);
+    if (!kind) {
+        return Unexpected(invalid(std::format("unknown mask kind '{}' in a version 2 recipe", kind_text)));
+    }
+    switch (*kind) {
+        case engine::MaskKind::Brush: {
+            if (auto status = exact_members(value, {"kind", "strokes"}, what + " (brush)", 2); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            const Json& strokes = value.at("strokes");
+            if (!strokes.is_array()) {
+                return Unexpected(invalid(std::format("{}.strokes must be an array", what)));
+            }
+            if (strokes.size() > engine::kMaxBrushStrokes) {
+                return Unexpected(invalid(std::format("{} has {} strokes; a brush mask has at most {}", what,
+                                                      strokes.size(), engine::kMaxBrushStrokes)));
+            }
+            engine::BrushMask brush;
+            brush.strokes.reserve(strokes.size());
+            std::size_t index = 0;
+            for (const Json& s : strokes) {
+                auto stroke = read_stroke(s, std::format("{} stroke {}", what, index));
+                if (!stroke) {
+                    return Unexpected(std::move(stroke.error()));
+                }
+                brush.strokes.push_back(std::move(*stroke));
+                ++index;
+            }
+            return engine::MaskShape{std::move(brush)};
+        }
+        case engine::MaskKind::LinearGradient: {
+            if (auto status = exact_members(value, {"end", "feather", "kind", "start"}, what + " (linear)", 2);
+                !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            engine::LinearGradientMask linear;
+            auto start = read_point(value.at("start"), what + ".start");
+            auto end = read_point(value.at("end"), what + ".end");
+            if (!start || !end) {
+                return Unexpected(!start ? std::move(start.error()) : std::move(end.error()));
+            }
+            linear.start = *start;
+            linear.end = *end;
+            if (auto status = read_numbers(value, {{"feather", &linear.feather}}, what + "."); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            return engine::MaskShape{linear};
+        }
+        case engine::MaskKind::RadialGradient: {
+            if (auto status = exact_members(value, {"angle_degrees", "center", "feather", "kind", "radius_x", "radius_y"},
+                                            what + " (radial)", 2);
+                !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            engine::RadialGradientMask radial;
+            auto center = read_point(value.at("center"), what + ".center");
+            if (!center) {
+                return Unexpected(std::move(center.error()));
+            }
+            radial.center = *center;
+            if (auto status = read_numbers(value,
+                                           {{"radius_x", &radial.radius_x},
+                                            {"radius_y", &radial.radius_y},
+                                            {"angle_degrees", &radial.angle_degrees},
+                                            {"feather", &radial.feather}},
+                                           what + ".");
+                !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            return engine::MaskShape{radial};
+        }
+    }
+    return Unexpected(invalid(std::format("unknown mask kind '{}' in a version 2 recipe", kind_text)));
+}
+
+Expected<std::vector<engine::LocalAdjustment>> read_local_adjustments(const Json& value) {
+    if (!value.is_array()) {
+        return Unexpected(invalid("local_adjustments must be an array"));
+    }
+    if (value.size() > engine::kMaxLocalAdjustments) {
+        return Unexpected(invalid(std::format("the recipe has {} local adjustments; at most {} are allowed",
+                                              value.size(), engine::kMaxLocalAdjustments)));
+    }
+    std::vector<engine::LocalAdjustment> out;
+    out.reserve(value.size());
+    std::size_t index = 0;
+    for (const Json& item : value) {
+        const std::string what = std::format("local adjustment {}", index);
+        if (auto status = exact_members(item, {"controls", "enabled", "id", "invert", "mask", "opacity"}, what, 2);
+            !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        engine::LocalAdjustment a;
+        auto id = unsigned_of(item.at("id"), what + " id");
+        if (!id) {
+            return Unexpected(std::move(id.error()));
+        }
+        a.id = *id;
+        auto enabled = bool_of(item.at("enabled"), what + " enabled");
+        auto inverted = bool_of(item.at("invert"), what + " invert");
+        if (!enabled || !inverted) {
+            return Unexpected(!enabled ? std::move(enabled.error()) : std::move(inverted.error()));
+        }
+        a.enabled = *enabled;
+        a.invert = *inverted;
+        if (auto status = read_numbers(item, {{"opacity", &a.opacity}}, what + " "); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        auto shape = read_mask(item.at("mask"), what + " mask");
+        if (!shape) {
+            return Unexpected(std::move(shape.error()));
+        }
+        a.shape = std::move(*shape);
+        const Json& controls = item.at("controls");
+        if (auto status = exact_members(
+                controls, {"contrast", "exposure_ev", "highlights", "saturation", "shadows", "temperature", "tint"},
+                what + " controls", 2);
+            !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        engine::LocalControls& c = a.controls;
+        if (auto status = read_numbers(controls,
+                                       {{"exposure_ev", &c.exposure_ev},
+                                        {"contrast", &c.contrast},
+                                        {"highlights", &c.highlights},
+                                        {"shadows", &c.shadows},
+                                        {"saturation", &c.saturation},
+                                        {"temperature", &c.temperature},
+                                        {"tint", &c.tint}},
+                                       what + " controls.");
+            !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        out.push_back(std::move(a));
+        ++index;
+    }
+    return out;
+}
+
+// Reads a version-1 or version-2 document (`version` is the document's).
+Expected<engine::DevelopSettings> read_document(const Json& doc, std::uint32_t version) {
+    const bool v2 = version >= 2;
+    Names members = {kSchemaKey,     kVersionKey,    kOperationsKey, kWhiteBalanceKey, kExposureKey,
+                     kContrastKey,   kHighlightsKey, kShadowsKey,    kToneCurveKey,    kSaturationKey,
+                     kVibranceKey,   kBaseLookKey,   kLocksKey};
+    Names operation_names = {kOpWhiteBalance, kOpExposure, kOpLocalTone, kOpContrast, kOpToneCurve, kOpColor};
+    if (v2) {
+        members.insert(members.end(), {kChromaDenoiseKey, kLocalAdjustmentsKey, kGeometryKey});
+        operation_names.insert(operation_names.end(), {kOpChromaDenoise, kOpLocalAdjustments, kOpGeometry});
+    }
+    if (auto status = exact_members(doc, members, "the recipe", version); !status) {
         return Unexpected(std::move(status.error()));
     }
     engine::DevelopSettings s;
     s.version = version;
 
     const Json& operations = doc.at(std::string(kOperationsKey));
-    if (auto status = exact_members(
-            operations, {kOpWhiteBalance, kOpExposure, kOpLocalTone, kOpContrast, kOpToneCurve, kOpColor},
-            "operations");
-        !status) {
+    if (auto status = exact_members(operations, operation_names, "operations", version); !status) {
         if (operations.is_object()) {
             // An operation name this version does not define is reported as such.
-            return Unexpected(
-                Error{ErrorCode::InvalidArgument,
-                      status.error().message + " (unknown operations are never treated as no-ops)",
-                      std::string(kWhere), 0});
+            return Unexpected(Error{ErrorCode::InvalidArgument,
+                                    status.error().message + " (unknown operations are never treated as no-ops)",
+                                    std::string(kWhere), 0});
         }
         return Unexpected(std::move(status.error()));
     }
-    const std::initializer_list<std::tuple<std::string_view, std::uint32_t, std::uint32_t*>> ops = {
+    std::vector<std::tuple<std::string_view, std::uint32_t, std::uint32_t*>> ops = {
         {kOpWhiteBalance, engine::kWhiteBalanceOperationVersion, &s.operations.white_balance},
         {kOpExposure, engine::kExposureOperationVersion, &s.operations.exposure},
         {kOpLocalTone, engine::kLocalToneOperationVersion, &s.operations.local_tone},
@@ -400,6 +761,12 @@ Expected<engine::DevelopSettings> read_v1(const Json& doc, std::uint32_t version
         {kOpToneCurve, engine::kToneCurveOperationVersion, &s.operations.tone_curve},
         {kOpColor, engine::kColorOperationVersion, &s.operations.color},
     };
+    if (v2) {
+        ops.insert(ops.end(),
+                   {{kOpChromaDenoise, engine::kChromaDenoiseOperationVersion, &s.operations.chroma_denoise},
+                    {kOpLocalAdjustments, engine::kLocalAdjustmentsOperationVersion, &s.operations.local_adjustments},
+                    {kOpGeometry, engine::kGeometryOperationVersion, &s.operations.geometry}});
+    }
     for (const auto& [name, supported, out] : ops) {
         if (auto status = operation_version(operations, name, supported, *out); !status) {
             return Unexpected(std::move(status.error()));
@@ -407,7 +774,7 @@ Expected<engine::DevelopSettings> read_v1(const Json& doc, std::uint32_t version
     }
 
     const Json& look = doc.at(std::string(kBaseLookKey));
-    if (auto status = exact_members(look, {"id", "version"}, "base_look"); !status) {
+    if (auto status = exact_members(look, {"id", "version"}, "base_look", version); !status) {
         return Unexpected(std::move(status.error()));
     }
     if (!look.at("id").is_string()) {
@@ -420,32 +787,31 @@ Expected<engine::DevelopSettings> read_v1(const Json& doc, std::uint32_t version
     }
     s.base_look.version = *look_version;
     if (s.base_look.id != engine::kNeutralLookId) {
-        return Unexpected(newer(std::format(
-            "the recipe uses the base look '{}', which this build does not know", s.base_look.id)));
+        return Unexpected(
+            newer(std::format("the recipe uses the base look '{}', which this build does not know", s.base_look.id)));
     }
     if (s.base_look.version != engine::kNeutralLookVersion) {
-        return Unexpected(
-            newer(std::format("the recipe uses version {} of the base look '{}'; this build implements "
-                              "version {}",
-                              s.base_look.version, s.base_look.id, engine::kNeutralLookVersion)));
+        return Unexpected(newer(std::format("the recipe uses version {} of the base look '{}'; this build implements "
+                                            "version {}",
+                                            s.base_look.version, s.base_look.id, engine::kNeutralLookVersion)));
     }
 
-    auto white_balance = read_white_balance(doc.at(std::string(kWhiteBalanceKey)));
+    auto white_balance = read_white_balance(doc.at(std::string(kWhiteBalanceKey)), version);
     if (!white_balance) {
         return Unexpected(std::move(white_balance.error()));
     }
     s.white_balance = *white_balance;
 
-    const std::initializer_list<std::pair<std::string_view, double*>> numbers = {
-        {kExposureKey, &s.exposure_ev}, {kContrastKey, &s.contrast},     {kHighlightsKey, &s.highlights},
-        {kShadowsKey, &s.shadows},      {kSaturationKey, &s.saturation}, {kVibranceKey, &s.vibrance},
-    };
-    for (const auto& [name, out] : numbers) {
-        auto value = number_of(doc.at(std::string(name)), name);
-        if (!value) {
-            return Unexpected(std::move(value.error()));
-        }
-        *out = *value;
+    if (auto status = read_numbers(doc,
+                                   {{kExposureKey, &s.exposure_ev},
+                                    {kContrastKey, &s.contrast},
+                                    {kHighlightsKey, &s.highlights},
+                                    {kShadowsKey, &s.shadows},
+                                    {kSaturationKey, &s.saturation},
+                                    {kVibranceKey, &s.vibrance}},
+                                   "");
+        !status) {
+        return Unexpected(std::move(status.error()));
     }
 
     auto curve = read_tone_curve(doc.at(std::string(kToneCurveKey)));
@@ -454,16 +820,43 @@ Expected<engine::DevelopSettings> read_v1(const Json& doc, std::uint32_t version
     }
     s.tone_curve = std::move(*curve);
 
-    auto locks = read_locks(doc.at(std::string(kLocksKey)));
+    auto locks = read_locks(doc.at(std::string(kLocksKey)), version);
     if (!locks) {
         return Unexpected(std::move(locks.error()));
     }
     s.locks = std::move(*locks);
 
+    if (v2) {
+        auto denoise = read_chroma_denoise(doc.at(std::string(kChromaDenoiseKey)));
+        if (!denoise) {
+            return Unexpected(std::move(denoise.error()));
+        }
+        s.chroma_denoise = *denoise;
+        auto adjustments = read_local_adjustments(doc.at(std::string(kLocalAdjustmentsKey)));
+        if (!adjustments) {
+            return Unexpected(std::move(adjustments.error()));
+        }
+        s.local_adjustments = std::move(*adjustments);
+        auto geometry = read_geometry(doc.at(std::string(kGeometryKey)));
+        if (!geometry) {
+            return Unexpected(std::move(geometry.error()));
+        }
+        s.geometry = *geometry;
+    }
+
     if (auto valid = s.validate(); !valid) {
         const Error& e = valid.error();
-        return Unexpected(
-            Error{e.code, "the recipe's values are not valid: " + e.message, std::string(kWhere), 0});
+        return Unexpected(Error{e.code, "the recipe's values are not valid: " + e.message, std::string(kWhere), 0});
+    }
+    if (!v2) {
+        // Version 1: its conversion (no denoising, no masks, identity geometry).
+        auto upgraded = engine::upgrade_develop_settings(std::move(s));
+        if (!upgraded) {
+            const Error& e = upgraded.error();
+            return Unexpected(Error{e.code, "the version 1 recipe cannot be upgraded: " + e.message,
+                                    std::string(kWhere), 0});
+        }
+        return upgraded;
     }
     return s;
 }
@@ -472,8 +865,7 @@ Expected<engine::DevelopSettings> read_v1(const Json& doc, std::uint32_t version
 
 Expected<std::string> canonical_number(double value) {
     if (!std::isfinite(value)) {
-        return fail(ErrorCode::InvalidArgument, std::format("{} has no JSON form", value),
-                    std::string(kWhere));
+        return fail(ErrorCode::InvalidArgument, std::format("{} has no JSON form", value), std::string(kWhere));
     }
     if (value == 0.0) {
         return std::string("0");  // also -0 (RFC 8785, ECMAScript ToString)
@@ -485,8 +877,7 @@ Expected<std::string> canonical_number(double value) {
     }
     // Shortest round-trip digits: "d[.ddd]e[+-]XX".
     char buffer[64];
-    const auto [end, ec] =
-        std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::scientific);
+    const auto [end, ec] = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::scientific);
     if (ec != std::errc{}) {
         return fail(ErrorCode::Internal, "cannot format a number", std::string(kWhere));
     }
@@ -540,8 +931,17 @@ Expected<RecipeDocument> write_recipe(const engine::DevelopSettings& settings) {
         return Unexpected(std::move(valid.error()));
     }
     try {
+        // Older (valid) settings are written as their conversion: one identity per rendering.
+        std::optional<engine::DevelopSettings> upgraded;
+        if (settings.version != kRecipeSchemaVersion) {
+            auto converted = engine::upgrade_develop_settings(settings);
+            if (!converted) {
+                return Unexpected(std::move(converted.error()));
+            }
+            upgraded = std::move(*converted);
+        }
         RecipeDocument document;
-        if (auto status = append_canonical(document.json, settings_json(settings)); !status) {
+        if (auto status = append_canonical(document.json, settings_json(upgraded ? *upgraded : settings)); !status) {
             return Unexpected(std::move(status.error()));
         }
         auto digest = core::sha256(std::as_bytes(std::span(document.json.data(), document.json.size())));
@@ -592,8 +992,7 @@ Expected<engine::DevelopSettings> read_recipe(std::string_view text) {
             return Unexpected(invalid("a recipe is a JSON object"));
         }
         const auto schema = doc.find(std::string(kSchemaKey));
-        if (schema == doc.end() || !schema->is_string() ||
-            schema->get_ref<const std::string&>() != kRecipeSchema) {
+        if (schema == doc.end() || !schema->is_string() || schema->get_ref<const std::string&>() != kRecipeSchema) {
             return Unexpected(invalid(std::format("the document is not a '{}' recipe", kRecipeSchema)));
         }
         const auto version_member = doc.find(std::string(kVersionKey));
@@ -605,12 +1004,15 @@ Expected<engine::DevelopSettings> read_recipe(std::string_view text) {
             return Unexpected(std::move(version.error()));
         }
         if (*version > kRecipeSchemaVersion) {
-            return Unexpected(
-                newer(std::format("the recipe has version {} of '{}'; this build reads version {} (it "
-                                  "was made by a newer Lucent)",
-                                  *version, kRecipeSchema, kRecipeSchemaVersion)));
+            return Unexpected(newer(std::format("the recipe has version {} of '{}'; this build reads versions {} to {} "
+                                                "(it was made by a newer Lucent)",
+                                                *version, kRecipeSchema, kOldestRecipeSchemaVersion,
+                                                kRecipeSchemaVersion)));
         }
-        return read_v1(doc, *version);
+        if (*version < kOldestRecipeSchemaVersion) {
+            return Unexpected(invalid(std::format("version {} of '{}' does not exist", *version, kRecipeSchema)));
+        }
+        return read_document(doc, *version);
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "cannot read the recipe", std::string(kWhere));
     } catch (const std::exception& e) {
@@ -632,6 +1034,12 @@ std::string_view to_string(RecipeCategory category) noexcept {
             return "color";
         case RecipeCategory::Local:
             return "local";
+        case RecipeCategory::Masks:
+            return "masks";
+        case RecipeCategory::Detail:
+            return "detail";
+        case RecipeCategory::Geometry:
+            return "geometry";
     }
     return "invalid";
 }
@@ -700,8 +1108,7 @@ bool same_value(const engine::DevelopSettings& a, const engine::DevelopSettings&
     return true;
 }
 
-void copy_value(const engine::DevelopSettings& from, engine::DevelopSettings& to,
-                engine::DevelopControl control) {
+void copy_value(const engine::DevelopSettings& from, engine::DevelopSettings& to, engine::DevelopControl control) {
     switch (control) {
         case engine::DevelopControl::WhiteBalance:
             to.white_balance = from.white_balance;
@@ -750,6 +1157,87 @@ std::vector<engine::DevelopControl> changed_locks(const engine::DevelopSettings&
     for (const engine::DevelopControl control : kAllDevelopControls) {
         if (a.locks.contains(control) != b.locks.contains(control)) {
             out.push_back(control);
+        }
+    }
+    return out;
+}
+
+// ---- Parts -----------------------------------------------------------------------------------
+
+std::string_view to_string(RecipePart part) noexcept {
+    switch (part) {
+        case RecipePart::ChromaDenoise:
+            return "chroma_denoise";
+        case RecipePart::LocalAdjustments:
+            return "masks";
+        case RecipePart::Geometry:
+            return "geometry";
+    }
+    return "invalid";
+}
+
+std::optional<RecipePart> parse_recipe_part(std::string_view text) noexcept {
+    for (const RecipePart part : kAllRecipeParts) {
+        if (to_string(part) == text) {
+            return part;
+        }
+    }
+    return std::nullopt;
+}
+
+RecipeCategory category_of(RecipePart part) noexcept {
+    switch (part) {
+        case RecipePart::ChromaDenoise:
+            return RecipeCategory::Detail;
+        case RecipePart::LocalAdjustments:
+            return RecipeCategory::Masks;
+        case RecipePart::Geometry:
+            return RecipeCategory::Geometry;
+    }
+    return RecipeCategory::Geometry;
+}
+
+std::vector<RecipePart> parts_of(RecipeCategory category) {
+    std::vector<RecipePart> out;
+    for (const RecipePart part : kAllRecipeParts) {
+        if (category_of(part) == category) {
+            out.push_back(part);
+        }
+    }
+    return out;
+}
+
+bool same_value(const engine::DevelopSettings& a, const engine::DevelopSettings& b, RecipePart part) noexcept {
+    switch (part) {
+        case RecipePart::ChromaDenoise:
+            return a.chroma_denoise == b.chroma_denoise;
+        case RecipePart::LocalAdjustments:
+            return a.local_adjustments == b.local_adjustments;
+        case RecipePart::Geometry:
+            return a.geometry == b.geometry;
+    }
+    return true;
+}
+
+void copy_value(const engine::DevelopSettings& from, engine::DevelopSettings& to, RecipePart part) {
+    switch (part) {
+        case RecipePart::ChromaDenoise:
+            to.chroma_denoise = from.chroma_denoise;
+            return;
+        case RecipePart::LocalAdjustments:
+            to.local_adjustments = from.local_adjustments;
+            return;
+        case RecipePart::Geometry:
+            to.geometry = from.geometry;
+            return;
+    }
+}
+
+std::vector<RecipePart> changed_parts(const engine::DevelopSettings& a, const engine::DevelopSettings& b) {
+    std::vector<RecipePart> out;
+    for (const RecipePart part : kAllRecipeParts) {
+        if (!same_value(a, b, part)) {
+            out.push_back(part);
         }
     }
     return out;

@@ -59,6 +59,15 @@ set(LUCENT_ENGINE_SOURCES
     src/develop_operations.cpp
     include/lucent/engine/develop.hpp
     src/develop.cpp
+
+    # DevelopSettings v2 (W9 part 2, ADR 0015): guided chroma denoising, masks and local
+    # adjustments, geometry (straighten, crop, quarter turns) and the mask/output point mapping.
+    include/lucent/engine/chroma_denoise.hpp
+    src/chroma_denoise.cpp
+    include/lucent/engine/local_adjustments.hpp
+    src/local_adjustments.cpp
+    include/lucent/engine/develop_geometry.hpp
+    src/develop_geometry.cpp
 )
 
 lucent_add_library(engine
@@ -96,6 +105,11 @@ set(LUCENT_ENGINE_TEST_SOURCES
     # DNG opcode processing (ADR 0014).
     tests/dng_opcode_test_support.hpp
     tests/dng_opcode_processing_test.cpp
+    # DevelopSettings v2 (ADR 0015).
+    tests/develop_geometry_test.cpp
+    tests/local_adjustments_test.cpp
+    tests/chroma_denoise_test.cpp
+    tests/develop_v2_test.cpp
 )
 
 lucent_add_test(lucent_engine_tests
