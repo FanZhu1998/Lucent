@@ -3,6 +3,8 @@
 #include <QColor>
 #include <QImage>
 
+#include "adapters/edit_conversions.hpp"
+
 namespace lucent::ui::testing {
 namespace {
 
@@ -91,6 +93,27 @@ QList<double> RecordingEditService::sample_tone_curve(const QList<QPointF>& poin
         samples << y;
     }
     return samples;
+}
+
+GeometryMap RecordingEditService::map_geometry(const EditGeometry& geometry, QSize upright_size) const {
+    return adapters::geometry_map(geometry, upright_size);
+}
+
+bool RecordingEditService::crop_inside_image(const EditGeometry& geometry, QSize upright_size) const {
+    return adapters::geometry_crop_inside(geometry, upright_size);
+}
+
+EditCrop RecordingEditService::largest_inside_crop(double straighten_degrees, QSize upright_size,
+                                                   double aspect) const {
+    return adapters::geometry_largest_inside_crop(straighten_degrees, upright_size, aspect);
+}
+
+EditGeometry RecordingEditService::turned(const EditGeometry& geometry, GeometryTurn turn) const {
+    return adapters::geometry_turned(geometry, turn);
+}
+
+QList<QPolygonF> RecordingEditService::mask_outline(const EditMask& mask, QSize upright_size) const {
+    return adapters::mask_outline_of(mask, upright_size);
 }
 
 std::vector<RecordingEditService::Call> RecordingEditService::calls_named(const QString& name) const {

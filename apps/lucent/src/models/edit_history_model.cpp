@@ -18,6 +18,18 @@ QString join_controls(const QList<EditControl>& controls) {
     return labels.join(QStringLiteral(", "));
 }
 
+// The controls and the version-2 parts (masks, crop, noise reduction) a revision changed.
+QString join_changes(const EditHistoryEntry& entry) {
+    QStringList labels;
+    for (const EditControl control : entry.changed) {
+        labels << control_label(control);
+    }
+    for (const EditPart part : entry.parts) {
+        labels << part_label(part);
+    }
+    return labels.join(QStringLiteral(", "));
+}
+
 // The origin as the history list names it.
 QString origin_label(const QString& origin) {
     if (origin == u"reset") {
@@ -47,7 +59,7 @@ int EditHistoryModel::rowCount(const QModelIndex& parent) const {
 }
 
 QString EditHistoryModel::title_of(const EditHistoryEntry& entry) {
-    const QString changed = join_controls(entry.changed);
+    const QString changed = join_changes(entry);
     if (entry.origin == u"reset") {
         return tr_text("Reset to as shot");
     }

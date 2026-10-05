@@ -86,6 +86,9 @@ set(_lucent_qml_files
     qml/BatchReportPane.qml
     qml/BatchRow.qml
     qml/CopySettingsDialog.qml
+    qml/CropOverlay.qml
+    qml/CropPanel.qml
+    qml/DetailPanel.qml
     qml/EditView.qml
     qml/ExportDialog.qml
     qml/ExportJobRow.qml
@@ -99,6 +102,8 @@ set(_lucent_qml_files
     qml/LibraryView.qml
     qml/LockButton.qml
     qml/Main.qml
+    qml/MaskOverlay.qml
+    qml/MasksPanel.qml
     qml/MetadataPanel.qml
     qml/NavButton.qml
     qml/PanelSection.qml
@@ -135,6 +140,8 @@ qt_add_qml_module(lucent_ui
         src/imaging/image_id.hpp
         src/imaging/image_provider.cpp
         src/imaging/image_provider.hpp
+        src/imaging/overlay_path_item.cpp
+        src/imaging/overlay_path_item.hpp
         src/imaging/tone_curve_plot.cpp
         src/imaging/tone_curve_plot.hpp
         src/models/auto_settings_model.cpp
@@ -147,6 +154,8 @@ qt_add_qml_module(lucent_ui
         src/models/batch_report_model.hpp
         src/models/batch_setup.cpp
         src/models/batch_setup.hpp
+        src/models/crop_tool.cpp
+        src/models/crop_tool.hpp
         src/models/current_item.cpp
         src/models/current_item.hpp
         src/models/edit_history_model.cpp
@@ -157,6 +166,8 @@ qt_add_qml_module(lucent_ui
         src/models/export_job_model.hpp
         src/models/library_model.cpp
         src/models/library_model.hpp
+        src/models/mask_editor.cpp
+        src/models/mask_editor.hpp
         src/models/presentation.cpp
         src/models/presentation.hpp
         src/shell.cpp

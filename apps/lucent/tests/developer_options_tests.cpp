@@ -182,5 +182,42 @@ TEST(CommandLine, ParsesTheAutomaticSettingsAutomation) {
     EXPECT_EQ(parse({"--automatic", "auto"}).action, CommandLine::Action::Error);  // needs --export-batch
 }
 
+TEST(CommandLine, ParsesTheGeometryAndMaskAutomation) {
+    const CommandLine command_line =
+        parse({"--open-first", "--turn", "CW", "--turn", "flip", "--straighten", "-2.5", "--crop", "0.1,0.2,0.7,0.6",
+               "--add-mask", "radial:0.5,0.4,0.2,0.1,30", "--add-mask", "linear", "--add-mask", "brush",
+               "--mask-set", "maskSaturation=+25", "--mask-exposure", "0.7", "--brush", "0.1,0.2;0.3,0.4",
+               "--brush-size", "4", "--mask-overlay", "--tool", "crop"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    const DeveloperOptions& options = command_line.options;
+    EXPECT_EQ(options.turns, (QStringList{"cw", "flip"}));
+    EXPECT_EQ(options.straighten, -2.5);
+    ASSERT_TRUE(options.crop.has_value());
+    EXPECT_DOUBLE_EQ((*options.crop)[2], 0.7);
+    EXPECT_EQ(options.add_masks.size(), 3);
+    ASSERT_EQ(options.mask_values.size(), 2u);
+    EXPECT_EQ(options.mask_values.back().first, QStringLiteral("maskExposure"));
+    ASSERT_EQ(options.brushes.size(), 1u);
+    EXPECT_EQ(options.brushes.front(), (QList<QPointF>{QPointF(0.1, 0.2), QPointF(0.3, 0.4)}));
+    EXPECT_DOUBLE_EQ(options.brush_size, 4.0);
+    EXPECT_TRUE(options.mask_overlay);
+    EXPECT_EQ(options.tool, QStringLiteral("crop"));
+
+    for (const QStringList& invalid : {
+             QStringList{"--open-first", "--turn", "half"},
+             QStringList{"--open-first", "--straighten", "50"},
+             QStringList{"--open-first", "--crop", "0.5,0.5,0.6,0.2"},
+             QStringList{"--open-first", "--add-mask", "radial:0.5,0.5"},
+             QStringList{"--open-first", "--add-mask", "square"},
+             QStringList{"--open-first", "--mask-set", "exposure=1"},
+             QStringList{"--open-first", "--brush", "0.1;0.2"},
+             QStringList{"--open-first", "--brush-size", "40"},
+             QStringList{"--open-first", "--tool", "lasso"},
+             QStringList{"--crop", "0.1,0.1,0.5,0.5"},
+         }) {
+        EXPECT_EQ(parse(invalid).action, CommandLine::Action::Error) << invalid.join(' ').toStdString();
+    }
+}
+
 }  // namespace
 }  // namespace lucent::ui

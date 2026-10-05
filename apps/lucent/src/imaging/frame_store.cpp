@@ -14,6 +14,8 @@ QString FrameStore::provider_id(Kind kind) {
         return QStringLiteral("before");
     case Kind::Clipping:
         return QStringLiteral("clipping");
+    case Kind::Mask:
+        return QStringLiteral("mask");
     }
     return {};
 }
@@ -32,6 +34,8 @@ FrameStore::Slot& FrameStore::slot(Entry& entry, Kind kind) {
         return entry.before;
     case Kind::Clipping:
         return entry.clipping;
+    case Kind::Mask:
+        return entry.mask;
     case Kind::Frame:
         break;
     }
@@ -44,6 +48,8 @@ const FrameStore::Slot& FrameStore::slot(const Entry& entry, Kind kind) {
         return entry.before;
     case Kind::Clipping:
         return entry.clipping;
+    case Kind::Mask:
+        return entry.mask;
     case Kind::Frame:
         break;
     }
@@ -108,7 +114,8 @@ QImage FrameImageProvider::requestImage(const QString& id, QSize* size, const QS
 }
 
 void install_frame_providers(QQmlEngine& engine, const std::shared_ptr<const FrameStore>& store) {
-    for (const FrameStore::Kind kind : {FrameStore::Kind::Frame, FrameStore::Kind::Before, FrameStore::Kind::Clipping}) {
+    for (const FrameStore::Kind kind :
+         {FrameStore::Kind::Frame, FrameStore::Kind::Before, FrameStore::Kind::Clipping, FrameStore::Kind::Mask}) {
         engine.addImageProvider(FrameStore::provider_id(kind), new FrameImageProvider(kind, store));
     }
 }

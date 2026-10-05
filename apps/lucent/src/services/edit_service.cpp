@@ -1,6 +1,7 @@
 #include "services/edit_service.hpp"
 
 #include <QCoreApplication>
+#include <algorithm>
 
 namespace lucent::ui {
 namespace {
@@ -15,7 +16,8 @@ bool EditSettings::renders_as_shot() const noexcept {
     const EditSettings defaults;
     return white_balance == WhiteBalanceMode::AsShot && exposure_ev == 0.0 && contrast == 0.0 &&
            highlights == 0.0 && shadows == 0.0 && saturation == 0.0 && vibrance == 0.0 &&
-           tone_curve == defaults.tone_curve;
+           tone_curve == defaults.tone_curve && chroma_denoise.strength == 0.0 && geometry.is_identity() &&
+           std::none_of(masks.cbegin(), masks.cend(), [](const EditMask& mask) { return mask.has_effect(); });
 }
 
 QString control_label(EditControl control) {
@@ -53,11 +55,35 @@ QString category_label(SettingsCategory category) {
         case SettingsCategory::Color:
             return tr_text("Color");
         case SettingsCategory::Local:
-            return tr_text("Highlights and shadows");
+            return tr_text("Highlights, shadows and masks");
         case SettingsCategory::Detail:
             return tr_text("Noise reduction");
         case SettingsCategory::Geometry:
             return tr_text("Crop and rotation");
+    }
+    return {};
+}
+
+QString part_label(EditPart part) {
+    switch (part) {
+        case EditPart::ChromaDenoise:
+            return tr_text("Noise reduction");
+        case EditPart::Masks:
+            return tr_text("Masks");
+        case EditPart::Geometry:
+            return tr_text("Crop and rotation");
+    }
+    return {};
+}
+
+QString mask_kind_label(MaskKind kind) {
+    switch (kind) {
+        case MaskKind::Brush:
+            return tr_text("Brush");
+        case MaskKind::Linear:
+            return tr_text("Linear gradient");
+        case MaskKind::Radial:
+            return tr_text("Radial gradient");
     }
     return {};
 }

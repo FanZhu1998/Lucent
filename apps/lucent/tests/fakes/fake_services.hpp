@@ -193,6 +193,10 @@ public:
     void set_full_resolution(ItemId item, bool full) override;
     void set_comparison(ItemId item, bool wanted) override;
     void set_clipping(bool wanted) override;
+    // Simulated frames follow the geometry (crop, quarter turns, mirror; straightening rotates the
+    // painted scene) and carry the masks' outlines and weight overlay from the engine's helpers.
+    void set_crop_editing(ItemId item, bool editing) override;
+    void set_mask_overlay(ItemId item, quint32 mask_id) override;
     quint64 set_transient(ItemId item, const EditSettings& settings) override;
     quint64 commit(ItemId item) override;
     quint64 apply(ItemId item, const EditSettings& settings) override;
@@ -212,6 +216,12 @@ public:
     void cancel_auto(ItemId item) override;
     [[nodiscard]] bool is_auto_running(ItemId item = 0) const override;
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
+    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const override;
+    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const override;
+    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+                                               double aspect) const override;
+    [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
+    [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;
     [[nodiscard]] bool is_busy() const override { return pending_ > 0; }
 
     // Revisions of `item` (for tests).
@@ -230,6 +240,7 @@ private:
         QString origin;
         QDateTime created;
         QList<EditControl> changed;
+        QList<EditPart> parts;
         std::optional<AutoSummary> summary;  // automatic revisions
         QString auto_kind;
         bool auto_failed = false;
@@ -246,6 +257,8 @@ private:
         quint64 transient_generation = 0;
         bool open = false;
         bool before = false;
+        bool crop_editing = false;
+        quint32 mask_overlay = 0;
     };
     struct Clipboard {
         ItemId source = 0;
@@ -263,6 +276,10 @@ private:
     void publish(ItemId id, quint64 token, bool history, bool frame, bool settled);
     void later(std::function<void()> work);
     [[nodiscard]] QImage paint(ItemId id, const EditSettings& settings) const;
+    [[nodiscard]] QSize full_size(ItemId id) const;
+    // The frame's geometry, outlines and overlay for `settings` shown with `geometry`.
+    void describe(EditFrame& frame, ItemId id, const EditSettings& settings, const EditGeometry& geometry,
+                  quint32 mask_overlay) const;
     [[nodiscard]] AutoSummary summary_of(ItemId id) const;
     void auto_step(ItemId id);
     void finish_auto(ItemId id, const AutoRun& run);

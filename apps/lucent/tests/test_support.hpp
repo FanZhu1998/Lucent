@@ -201,6 +201,12 @@ public:
     }
     void set_comparison(ItemId item, bool wanted) override { record({"set_comparison", item, 0, {}, 0, 0, wanted}); }
     void set_clipping(bool wanted) override { record({"set_clipping", 0, 0, {}, 0, 0, wanted}); }
+    void set_crop_editing(ItemId item, bool editing) override {
+        record({"set_crop_editing", item, 0, {}, 0, 0, editing});
+    }
+    void set_mask_overlay(ItemId item, quint32 mask_id) override {
+        record({"set_mask_overlay", item, 0, {}, mask_id, 0, mask_id != 0});
+    }
     quint64 set_transient(ItemId item, const EditSettings& settings) override {
         return record({"set_transient", item, next_token(), settings});
     }
@@ -234,6 +240,13 @@ public:
     }
     // Piecewise linear (the real curve is the renderer's monotone cubic).
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
+    // The engine's own geometry and mask helpers (the adapters'), so models are tested against them.
+    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const override;
+    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const override;
+    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+                                               double aspect) const override;
+    [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
+    [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;
     [[nodiscard]] bool is_busy() const override { return busy; }
 
     // Auto's signals, as the service would emit them.

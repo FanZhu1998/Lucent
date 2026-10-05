@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <utility>
 #include <vector>
@@ -128,6 +129,55 @@ QQuickItem* find_visible_item(QQuickItem* root, const QString& name) {
         }
     }
     return nullptr;
+}
+
+// "a,b,c,..." as doubles; nullopt unless there are `minimum` to `maximum` finite numbers.
+std::optional<QList<double>> parse_numbers(const QString& text, qsizetype minimum, qsizetype maximum) {
+    QList<double> values;
+    for (const QString& part : text.split(u',')) {
+        bool ok = false;
+        const double value = part.trimmed().toDouble(&ok);
+        if (!ok || !std::isfinite(value)) {
+            return std::nullopt;
+        }
+        values << value;
+    }
+    if (values.size() < minimum || values.size() > maximum) {
+        return std::nullopt;
+    }
+    return values;
+}
+
+// "x1,y1;x2,y2;..." (normalised upright positions within [-1, 2]).
+std::optional<QList<QPointF>> parse_stroke(const QString& text) {
+    QList<QPointF> points;
+    for (const QString& pair : text.split(u';', Qt::SkipEmptyParts)) {
+        const std::optional<QList<double>> xy = parse_numbers(pair, 2, 2);
+        if (!xy || (*xy)[0] < -1.0 || (*xy)[0] > 2.0 || (*xy)[1] < -1.0 || (*xy)[1] > 2.0) {
+            return std::nullopt;
+        }
+        points << QPointF((*xy)[0], (*xy)[1]);
+    }
+    if (points.isEmpty()) {
+        return std::nullopt;
+    }
+    return points;
+}
+
+// An --add-mask spec: "brush", "linear[:x1,y1,x2,y2[,feather]]" or "radial[:cx,cy,rx,ry[,angle[,feather]]]".
+bool valid_mask_spec(const QString& spec) {
+    const QString kind = spec.section(u':', 0, 0).trimmed();
+    const QString values = spec.section(u':', 1);
+    if (kind == u"brush") {
+        return values.isEmpty();
+    }
+    if (kind == u"linear") {
+        return values.isEmpty() || parse_numbers(values, 4, 5).has_value();
+    }
+    if (kind == u"radial") {
+        return values.isEmpty() || parse_numbers(values, 4, 6).has_value();
+    }
+    return false;
 }
 
 bool is_lock_key(const QString& key) {
@@ -265,6 +315,43 @@ CommandLine parse_command_line(const QStringList& arguments) {
                                               QStringLiteral("mode"));
     const QCommandLineOption consistent_option(QStringLiteral("keep-consistent"),
                                                QStringLiteral("With --automatic, keep related shots consistent."));
+    const QCommandLineOption turn_option(QStringLiteral("turn"),
+                                         QStringLiteral("With --open-first, turn the photo: cw, ccw or flip (repeatable)."),
+                                         QStringLiteral("turn"));
+    const QCommandLineOption straighten_option(QStringLiteral("straighten"),
+                                               QStringLiteral("With --open-first, straighten by <degrees> (-45..45)."),
+                                               QStringLiteral("degrees"));
+    const QCommandLineOption crop_option(QStringLiteral("crop"),
+                                         QStringLiteral("With --open-first, crop to l,t,w,h (fractions of the "
+                                                        "straightened image)."),
+                                         QStringLiteral("l,t,w,h"));
+    const QCommandLineOption add_mask_option(QStringLiteral("add-mask"),
+                                             QStringLiteral("With --open-first, add a mask: brush, "
+                                                            "linear[:x1,y1,x2,y2[,feather]] or "
+                                                            "radial[:cx,cy,rx,ry[,angle[,feather]]] (repeatable)."),
+                                             QStringLiteral("spec"));
+    const QCommandLineOption mask_set_option(QStringLiteral("mask-set"),
+                                             QStringLiteral("A local control of the masks the automation adds: "
+                                                            "control=value (repeatable)."),
+                                             QStringLiteral("control=value"));
+    const QCommandLineOption mask_exposure_option(QStringLiteral("mask-exposure"),
+                                                  QStringLiteral("The exposure of the masks the automation adds, in EV."),
+                                                  QStringLiteral("ev"));
+    const QCommandLineOption brush_option(QStringLiteral("brush"),
+                                          QStringLiteral("With --open-first, paint a brush stroke through "
+                                                         "x1,y1;x2,y2;... (normalised; repeatable)."),
+                                          QStringLiteral("points"));
+    const QCommandLineOption brush_size_option(QStringLiteral("brush-size"),
+                                               QStringLiteral("The --brush size, percent of the long edge "
+                                                              "(default 3)."),
+                                               QStringLiteral("percent"));
+    const QCommandLineOption mask_overlay_option(QStringLiteral("mask-overlay"),
+                                                 QStringLiteral("With --open-first, show the selected mask's "
+                                                                "overlay before the screenshot."));
+    const QCommandLineOption tool_option(QStringLiteral("tool"),
+                                         QStringLiteral("With --open-first, open a tool before the screenshot: crop "
+                                                        "or masks."),
+                                         QStringLiteral("tool"));
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
@@ -273,7 +360,9 @@ CommandLine parse_command_line(const QStringList& arguments) {
                        quality_option, zoom_option, measure_option, dialog_option, data_root_option, set_option,
                        drag_option, drag_steps_option, compare_option, clipping_option, scroll_option,
                        batch_option, to_option, preset_option, batch_dialog_option, running_option, done_option,
-                       auto_option, automatic_option, consistent_option});
+                       auto_option, automatic_option, consistent_option, turn_option, straighten_option,
+                       crop_option, add_mask_option, mask_set_option, mask_exposure_option, brush_option,
+                       brush_size_option, mask_overlay_option, tool_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -423,11 +512,83 @@ CommandLine parse_command_line(const QStringList& arguments) {
         }
     }
     options.run_auto = parser.isSet(auto_option);
+    // W9 geometry and masks.
+    for (const QString& turn : parser.values(turn_option)) {
+        const QString value = turn.trimmed().toLower();
+        if (value != u"cw" && value != u"ccw" && value != u"flip") {
+            return fail(QStringLiteral("Unknown --turn '%1': use cw, ccw or flip.").arg(turn));
+        }
+        options.turns << value;
+    }
+    if (parser.isSet(straighten_option)) {
+        bool ok = false;
+        const double degrees = parser.value(straighten_option).toDouble(&ok);
+        if (!ok || !std::isfinite(degrees) || std::abs(degrees) > kMaxStraighten) {
+            return fail(QStringLiteral("--straighten needs degrees from -45 to 45."));
+        }
+        options.straighten = degrees;
+    }
+    if (parser.isSet(crop_option)) {
+        const std::optional<QList<double>> values = parse_numbers(parser.value(crop_option), 4, 4);
+        if (!values || (*values)[0] < 0.0 || (*values)[1] < 0.0 || (*values)[2] <= 0.0 || (*values)[3] <= 0.0 ||
+            (*values)[0] + (*values)[2] > 1.0 + 1e-9 || (*values)[1] + (*values)[3] > 1.0 + 1e-9) {
+            return fail(QStringLiteral("--crop needs l,t,w,h: fractions of the image that stay inside it."));
+        }
+        options.crop = std::array<double, 4>{(*values)[0], (*values)[1], (*values)[2], (*values)[3]};
+    }
+    for (const QString& spec : parser.values(add_mask_option)) {
+        if (!valid_mask_spec(spec.trimmed())) {
+            return fail(QStringLiteral("--add-mask needs brush, linear[:x1,y1,x2,y2[,feather]] or "
+                                       "radial[:cx,cy,rx,ry[,angle[,feather]]] (got '%1').")
+                            .arg(spec));
+        }
+        options.add_masks << spec.trimmed();
+    }
+    auto mask_values = parser.values(mask_set_option);
+    if (parser.isSet(mask_exposure_option)) {
+        mask_values << QStringLiteral("maskExposure=") + parser.value(mask_exposure_option);
+    }
+    for (const QString& entry : mask_values) {
+        const qsizetype equals = entry.indexOf(u'=');
+        const QString key = equals > 0 ? entry.first(equals).trimmed() : QString();
+        const QString value = equals > 0 ? entry.sliced(equals + 1).trimmed() : QString();
+        bool number = false;
+        QString(value).remove(u'+').toDouble(&number);
+        if (!key.startsWith(u"mask") || !EditSession::is_control(key) || !number) {
+            return fail(QStringLiteral("--mask-set needs maskExposure, maskContrast, ... = a number (got '%1').")
+                            .arg(entry));
+        }
+        options.mask_values.emplace_back(key, value);
+    }
+    for (const QString& stroke : parser.values(brush_option)) {
+        const std::optional<QList<QPointF>> points = parse_stroke(stroke);
+        if (!points) {
+            return fail(QStringLiteral("--brush needs x1,y1;x2,y2;... normalised positions (got '%1').").arg(stroke));
+        }
+        options.brushes.push_back(*points);
+    }
+    if (parser.isSet(brush_size_option)) {
+        bool ok = false;
+        options.brush_size = parser.value(brush_size_option).toDouble(&ok);
+        if (!ok || options.brush_size < 0.1 || options.brush_size > 25.0) {
+            return fail(QStringLiteral("--brush-size needs a percentage from 0.1 to 25."));
+        }
+    }
+    options.mask_overlay = parser.isSet(mask_overlay_option);
+    if (parser.isSet(tool_option)) {
+        options.tool = parser.value(tool_option).trimmed().toLower();
+        if (options.tool != u"crop" && options.tool != u"masks") {
+            return fail(QStringLiteral("Unknown --tool '%1': use crop or masks.").arg(options.tool));
+        }
+    }
+    const bool w9_editing = !options.turns.isEmpty() || options.straighten || options.crop ||
+                            !options.add_masks.isEmpty() || !options.mask_values.empty() || !options.brushes.empty() ||
+                            options.mask_overlay || !options.tool.isEmpty();
     if ((!options.edits.empty() || !options.drag.isEmpty() || !options.compare.isEmpty() || options.clipping ||
-         options.panel_scroll || options.run_auto) &&
+         options.panel_scroll || options.run_auto || w9_editing) &&
         !options.open_first) {
-        return fail(
-            QStringLiteral("--set, --drag, --compare, --clipping, --scroll-panel and --auto need --open-first."));
+        return fail(QStringLiteral("--set, --drag, --compare, --clipping, --scroll-panel, --auto and the geometry and "
+                                   "mask options need --open-first."));
     }
     if (parser.isSet(batch_option)) {
         options.batch_folder = parser.value(batch_option).trimmed();
@@ -1051,7 +1212,161 @@ void DeveloperAutomation::after_imports() {
 
 bool DeveloperAutomation::wants_editing() const {
     return !options_.edits.empty() || !options_.drag.isEmpty() || !options_.compare.isEmpty() || options_.clipping ||
-           options_.panel_scroll.has_value() || options_.run_auto;
+           options_.panel_scroll.has_value() || options_.run_auto || !options_.turns.isEmpty() ||
+           options_.straighten.has_value() || options_.crop.has_value() || !options_.add_masks.isEmpty() ||
+           !options_.brushes.empty() || options_.mask_overlay || !options_.tool.isEmpty();
+}
+
+std::deque<std::pair<QString, std::function<bool()>>> DeveloperAutomation::geometry_and_mask_steps() {
+    std::deque<std::pair<QString, std::function<bool()>>> steps;
+    EditSession& edit = *controller_.edit();
+    for (const QString& turn : options_.turns) {
+        steps.emplace_back(QStringLiteral("turn=") + turn, [&edit, turn] {
+            if (turn == u"cw") {
+                edit.crop()->rotateRight();
+            } else if (turn == u"ccw") {
+                edit.crop()->rotateLeft();
+            } else {
+                edit.crop()->flip();
+            }
+            return true;
+        });
+    }
+    if (options_.straighten) {
+        const double degrees = *options_.straighten;
+        steps.emplace_back(QStringLiteral("straighten=%1").arg(degrees), [&edit, degrees] {
+            return edit.setValueText(QStringLiteral("straighten"), QString::number(degrees, 'f', 2));
+        });
+    }
+    if (options_.crop) {
+        const std::array<double, 4> crop = *options_.crop;
+        steps.emplace_back(QStringLiteral("crop"), [&edit, crop] {
+            edit.crop()->setCrop(crop[0], crop[1], crop[2], crop[3]);
+            return true;
+        });
+    }
+    for (const QString& spec : options_.add_masks) {
+        steps.emplace_back(QStringLiteral("add-mask=") + spec, [this, spec] { return add_mask(spec); });
+        if (!options_.mask_values.empty()) {
+            steps.emplace_back(QStringLiteral("mask controls"), [this] { return apply_mask_values(); });
+        }
+    }
+    for (const QList<QPointF>& stroke : options_.brushes) {
+        steps.emplace_back(QStringLiteral("brush (%1 points)").arg(stroke.size()),
+                           [this, stroke] { return paint_brush(stroke); });
+        if (!options_.mask_values.empty()) {
+            steps.emplace_back(QStringLiteral("mask controls"), [this] { return apply_mask_values(); });
+        }
+    }
+    return steps;
+}
+
+bool DeveloperAutomation::add_mask(const QString& spec) {
+    EditSession& edit = *controller_.edit();
+    const QString kind = spec.section(u':', 0, 0).trimmed();
+    if (!edit.masks()->add(kind)) {
+        report(QStringLiteral("--add-mask %1: the mask could not be added").arg(spec));
+        return false;
+    }
+    const QString values_text = spec.section(u':', 1);
+    if (values_text.isEmpty()) {
+        return true;
+    }
+    const QList<double> values = parse_numbers(values_text, 4, 6).value_or(QList<double>{});
+    EditSettings next = edit.settings();
+    for (EditMask& mask : next.masks) {
+        if (mask.id != edit.selected_mask()) {
+            continue;
+        }
+        if (mask.kind == MaskKind::Radial) {
+            mask.center = QPointF(values[0], values[1]);
+            mask.radius_x = values[2];
+            mask.radius_y = values[3];
+            mask.angle_degrees = values.size() > 4 ? values[4] : 0.0;
+            mask.feather = values.size() > 5 ? values[5] : mask.feather;
+        } else if (mask.kind == MaskKind::Linear) {
+            mask.start = QPointF(values[0], values[1]);
+            mask.end = QPointF(values[2], values[3]);
+            mask.feather = values.size() > 4 ? values[4] : mask.feather;
+        }
+    }
+    edit.edit_settings(next);  // one more revision: the shape as given
+    return true;
+}
+
+bool DeveloperAutomation::apply_mask_values() {
+    EditSession& edit = *controller_.edit();
+    bool changed = false;
+    for (const auto& [key, value] : options_.mask_values) {
+        const double before = edit.value(key);
+        if (!edit.setValueText(key, value)) {
+            report(QStringLiteral("--mask-set %1=%2: not accepted").arg(key, value));
+        }
+        changed |= edit.value(key) != before;
+    }
+    return changed;
+}
+
+bool DeveloperAutomation::paint_brush(const QList<QPointF>& points) {
+    EditSession& edit = *controller_.edit();
+    MaskEditor& masks = *edit.masks();
+    masks.startBrush();
+    edit.setValue(QStringLiteral("brushSize"), options_.brush_size);
+    static_cast<void>(grab());  // lay the overlay out (a session that presents no frames)
+    QQuickItem* overlay = find_visible_item(window_.contentItem(), QStringLiteral("maskOverlay"));
+    if (!masks.brush_active() || overlay == nullptr) {
+        report(QStringLiteral("--brush: the masks tool cannot paint on this photo"));
+        return false;
+    }
+    // The stroke's corners on screen, then --drag-steps positions evenly along it.
+    const QRectF image = overlay->property("imageRect").toRectF();
+    QList<QPointF> corners;
+    for (const QPointF& point : points) {
+        const std::optional<QPointF> at = masks.displayed_at(point);
+        if (!at) {
+            return false;
+        }
+        corners << overlay->mapToScene(QPointF(image.x() + at->x() * image.width(), image.y() + at->y() * image.height()));
+    }
+    std::vector<double> lengths{0.0};
+    for (qsizetype i = 1; i < corners.size(); ++i) {
+        lengths.push_back(lengths.back() + std::hypot(corners[i].x() - corners[i - 1].x(),
+                                                      corners[i].y() - corners[i - 1].y()));
+    }
+    drag_path_.clear();
+    const int moves = options_.drag_steps;
+    for (int step = 0; step <= moves; ++step) {
+        const double at = lengths.back() * step / moves;
+        qsizetype segment = 1;
+        while (segment + 1 < corners.size() && lengths[static_cast<std::size_t>(segment)] < at) {
+            ++segment;
+        }
+        if (corners.size() == 1) {
+            drag_path_ << corners.front();
+            continue;
+        }
+        const double from = lengths[static_cast<std::size_t>(segment - 1)];
+        const double span = std::max(1e-9, lengths[static_cast<std::size_t>(segment)] - from);
+        const double t = std::clamp((at - from) / span, 0.0, 1.0);
+        drag_path_ << corners[segment - 1] + (corners[segment] - corners[segment - 1]) * t;
+    }
+    edit.reset_latencies();
+    finals_before_ = edit.final_frames();
+    drag_label_ = QStringLiteral("brush stroke");
+    drag_moves_ = moves;
+    drag_settings_ = edit.settings();
+    drag_gaps_ms_.clear();
+    last_tick_ms_ = -1;
+    drag_step_ = 0;
+    drag_active_ = true;
+    drag_measuring_ = true;
+    drag_start_ms_ = clock_.elapsed();
+    if (!probe_timer_.isActive()) {
+        probe_timer_.start();
+    }
+    send_mouse(QEvent::MouseButtonPress, drag_path_.front());
+    drag_timer_.start();
+    return false;  // the stroke's release waits for its final frame
 }
 
 bool DeveloperAutomation::auto_step() {
@@ -1167,6 +1482,17 @@ void DeveloperAutomation::edit_step() {
             if (options_.measure) {
                 report_drag();
             }
+            if (!drag_path_.isEmpty()) {
+                for (const EditMask& mask : edit.settings().masks) {
+                    if (mask.id == edit.selected_mask() && !mask.strokes.isEmpty()) {
+                        report(QStringLiteral("brush: %1 mouse moves became a stroke of %2 points (%3, %4 strokes)")
+                                   .arg(drag_moves_)
+                                   .arg(mask.strokes.back().points.size())
+                                   .arg(edit.masks()->selected_name())
+                                   .arg(mask.strokes.size()));
+                    }
+                }
+            }
         } else if (auto_started_ && edit_label_ == u"auto") {
             report_auto_summary();  // the automatic revision is shown
         } else {
@@ -1186,11 +1512,43 @@ void DeveloperAutomation::edit_step() {
         edit_waiting_ = key != u"lock";
         return;
     }
+    if (!steps_built_) {
+        steps_built_ = true;
+        steps_ = geometry_and_mask_steps();
+    }
+    if (!steps_.empty()) {
+        auto [label, step] = std::move(steps_.front());
+        steps_.pop_front();
+        edit.reset_latencies();
+        finals_before_ = edit.final_frames();
+        edit_label_ = label;
+        edit_waiting_ = step();
+        if (!edit.message().isEmpty()) {
+            report(QStringLiteral("edit message after %1: %2").arg(label, edit.message()));
+        }
+        return;
+    }
     if (!options_.drag.isEmpty() && !drag_done_) {
         start_drag();
         return;
     }
     if (auto_step()) {
+        return;
+    }
+    if (options_.mask_overlay && !edit.mask_overlay()) {
+        edit.reset_latencies();
+        finals_before_ = edit.final_frames();
+        edit_label_ = QStringLiteral("mask overlay");
+        edit.set_mask_overlay(true);
+        edit_waiting_ = edit.selected_mask() != 0;
+        return;
+    }
+    if (!options_.tool.isEmpty() && edit.tool() != options_.tool) {
+        edit.reset_latencies();
+        finals_before_ = edit.final_frames();
+        edit_label_ = QStringLiteral("tool=") + options_.tool;
+        edit.setTool(options_.tool);
+        edit_waiting_ = options_.tool == u"crop";  // the uncropped frame
         return;
     }
     if (options_.clipping) {
@@ -1255,13 +1613,29 @@ void DeveloperAutomation::start_drag() {
         report(QStringLiteral("--drag: the %1 slider is not available").arg(options_.drag));
         return;
     }
+    // The slider in view: the side panel scrolls it into its upper third (the W9 sliders sit below the
+    // tone curve).
+    if (auto* panel = window_.findChild<QQuickItem*>(QStringLiteral("editPanel")); panel != nullptr) {
+        if (auto* content = panel->property("contentItem").value<QQuickItem*>(); content != nullptr) {
+            const double top = slider->mapToItem(content, QPointF(0.0, 0.0)).y();
+            const double range = std::max(0.0, panel->property("contentHeight").toDouble() - panel->height());
+            const double visible_top = panel->property("contentY").toDouble();
+            if (top < visible_top || top + slider->height() > visible_top + panel->height()) {
+                panel->setProperty("contentY", std::clamp(top - panel->height() / 3.0, 0.0, range));
+            }
+        }
+    }
     // Lay the scene out first (a session that presents no frames, see --measure).
     static_cast<void>(grab());
     drag_from_ = handle->mapToScene(QPointF(handle->width() / 2.0, handle->height() / 2.0));
     const double travel = slider->property("availableWidth").toDouble() / 3.0;
     const bool rightwards = slider->property("visualPosition").toDouble() <= 0.5;
     drag_to_ = drag_from_ + QPointF(rightwards ? travel : -travel, 0.0);
+    drag_path_.clear();
+    drag_label_ = options_.drag;
+    drag_moves_ = options_.drag_steps;
     EditSession& edit = *controller_.edit();
+    drag_settings_ = edit.settings();
     edit.reset_latencies();
     finals_before_ = edit.final_frames();
     drag_gaps_ms_.clear();
@@ -1279,9 +1653,11 @@ void DeveloperAutomation::start_drag() {
 
 void DeveloperAutomation::drag_tick() {
     ++drag_step_;
-    const double t = std::min(1.0, double(drag_step_) / double(options_.drag_steps));
-    const QPointF at = drag_from_ + (drag_to_ - drag_from_) * t;
-    if (drag_step_ <= options_.drag_steps) {
+    const double t = std::min(1.0, double(drag_step_) / double(drag_moves_));
+    const QPointF at = drag_path_.isEmpty()
+                           ? drag_from_ + (drag_to_ - drag_from_) * t
+                           : drag_path_[std::min<qsizetype>(drag_step_, drag_path_.size() - 1)];
+    if (drag_step_ <= drag_moves_) {
         send_mouse(QEvent::MouseMove, at);
         return;
     }
@@ -1289,6 +1665,12 @@ void DeveloperAutomation::drag_tick() {
     drag_timer_.stop();
     drag_active_ = false;
     drag_release_ms_ = clock_.elapsed();
+    if (controller_.edit()->settings() == drag_settings_) {
+        // Nothing moved (the pointer missed the control): no revision, no frame to wait for.
+        report(QStringLiteral("--drag %1: the pointer changed nothing").arg(drag_label_));
+        drag_measuring_ = false;
+        return;
+    }
     edit_waiting_ = true;  // until the commit's final frame
 }
 
@@ -1307,8 +1689,8 @@ void DeveloperAutomation::report_drag() {
     const qint64 gap_max = gaps.empty() ? 0 : *std::max_element(gaps.begin(), gaps.end());
     report(QStringLiteral("measure: drag of %1: %2 mouse moves over %3 ms; %4 quick and %5 final frames published; "
                           "the photo is at revision %6")
-               .arg(options_.drag)
-               .arg(options_.drag_steps)
+               .arg(drag_label_)
+               .arg(drag_moves_)
                .arg(drag_release_ms_ - drag_start_ms_)
                .arg(edit.quick_frames())
                .arg(edit.final_frames() - finals_before_)

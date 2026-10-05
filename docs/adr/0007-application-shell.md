@@ -6,9 +6,10 @@
   2026-10-03 for the W6 editor (decisions 3, 4, 5 and 10 amended, decision 13 added); amended
   2026-10-04 for the W7 batch interface (decisions 3 and 10 amended, decision 14 added; decision 14
   revised by the W7 closing review: unfinished batches and paging, attentions outside the Exports
-  view, keyboard selection, single-export marker)
+  view, keyboard selection, single-export marker); amended 2026-10-05 for W9 part 2's editor
+  (decisions 4, 10 and 13 amended, decision 15 added)
 - **Workflow:** W3 (Application shell); W6 (Recipes and editor), phase 3; W7 (Durable batch),
-  phase 3
+  phase 3; W9 part 2 (Masks, geometry, chroma denoise), phase 3
 
 ## Context
 
@@ -120,6 +121,9 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
      renders it, an edited one gets Lucent's render of its recipe. The edit-session frames have
      their own staleness rule: every frame is a new URL (`image://frame/<item>/<sequence>`) and
      sequences only increase.
+     *W9 amendment.* Geometry revisions are part of the recipe (ADR 0015): a crop, an angle or a
+     quarter turn is a recipe change like any other, so thumbnails and frames follow it through the
+     recipe's identity; every frame carries the geometry its pixels were rendered with.
    - *Changed files.* When a file changes on disk after import, renders and exports fail with
      SourceChanged ("Add it again to update it"). Importing it again refreshes the item in
      place (`Library::refresh`, `LibraryChangeKind::Refreshed`): the preview service and the
@@ -196,8 +200,11 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
     screenshot; W7 adds `--export-batch <folder> --to <folder> [--preset jpeg|tiff]`, which starts a
     folder batch as the Export batch dialog does and reports its progress and outcome,
     `--show-batch-dialog` (open the dialog with those settings instead), `--screenshot-running
-    <file.png>` (a screenshot while the batch runs) and `--quit-when-done`). Screenshots wait for idle
-    services and two identical rendered frames. `--measure` reports start-up time, the first
+    <file.png>` (a screenshot while the batch runs) and `--quit-when-done`; W9 adds `--turn`,
+    `--straighten`, `--crop`, `--add-mask`, `--mask-set`/`--mask-exposure`, `--brush` with
+    `--brush-size` (a stroke of synthetic mouse events on the brush overlay, measured like `--drag`),
+    `--mask-overlay` and `--tool <crop|masks>`, and `--drag` scrolls the side panel to its slider).
+    Screenshots wait for idle services and two identical rendered frames. `--measure` reports start-up time, the first
     visible thumbnail, preview latency (visible, and the services' render and request-to-pixels
     times) and UI-thread responsiveness as gaps between ticks of a 5 ms timer, with window grabs
     excluded. In a session that presents no frames (headless or locked), layouts only happen
@@ -280,8 +287,9 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       library is read-only. Exports and other messages name the edit, not the file, as what cannot
       be read ("This photo's edit was made by a newer version of Lucent", "... is damaged").
     - *Copy and paste.* Ctrl+Shift+C opens a category dialog (white balance, exposure, tone,
-      colour, highlights and shadows); Ctrl+Shift+V pastes into the photo. The result message
-      (panel and status line) lists the categories pasted and, with the reason, anything not
+      colour, highlights and shadows; W9: "Highlights, shadows and masks", "Noise reduction" and
+      "Crop and rotation", the last unchecked by default); Ctrl+Shift+V pastes into the photo. The
+      result message (panel and status line) lists the categories pasted and, with the reason, anything not
       pasted: a camera-specific balance is never pasted to another camera model, a Kelvin balance
       never to a camera without a colour-temperature calibration. Auto is present but disabled
       until W8.
@@ -392,6 +400,80 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       over 100 ms). The adapter test runs a 24-photo batch through lucent-worker.exe and requires at
       most one application of events per 200 ms and no UI-thread gap of a second.
 
+15. **Crop and rotate, masks and noise reduction (W9 part 2, phase 3; ADR 0015).** The Edit view
+    edits DevelopSettings v2's geometry, masks and guided chroma denoising. `EditSettings` carries
+    them (`EditGeometry`, `EditMask` with `EditBrushStroke` and `EditLocalControls`, `EditDenoise`);
+    `EditService` gains `set_crop_editing()`, `set_mask_overlay()` and the engine's helpers
+    (`map_geometry()`: `GeometryMapping` as exact `QTransform`s, `crop_inside_image()`,
+    `largest_inside_crop()`, `turned()`, `mask_outline()`), so the view models never re-implement a
+    frame; every `EditFrame` carries the photo's full-resolution upright and output sizes, the geometry
+    of its pixels, whether it is uncropped, the outlines of its masks (`DevelopFrame::masks` as
+    fractions of the image) and, when asked, a mask's weight overlay. The history names the changed
+    parts ("Masks", "Crop and rotation", "Noise reduction"; `HistoryEntry::parts`). `EditSession`
+    owns two tool models, `CropTool` (`models/crop_tool.hpp`) and `MaskEditor` with `MaskListModel`
+    (`models/mask_editor.hpp`); one tool is open at a time (`EditSession.tool`).
+    - *Frames and coordinates.* Overlays and pointers work in fractions of the displayed image,
+      placed through `ZoomableImage.imageRect` (the image in view coordinates, following panning at
+      100 %); the view's box is the newest frame's full-resolution output size, so it follows a crop
+      or a quarter turn. Pointer positions become mask points, and mask points handles, through
+      `map_geometry()` of the newest frame's geometry at the photo's full-resolution upright size, the
+      engine's `GeometryMapping`: a handle sits where the engine puts that point at any crop, angle,
+      turn or mirror (tests compare the transforms with `GeometryMapping` itself).
+    - *Crop tool* (R; toolbar and panel "Crop"). While open, the photo's frames are rendered without
+      the crop (`set_crop_editing`: straighten, turns and mirror kept), and the crop is drawn over the
+      whole straightened image: the rest dimmed, eight handles and the inside to drag, the rule of
+      thirds while it moves. The crop math (`crop_math::drag`, `fit_aspect`, `level_angle`) runs in
+      the displayed pixels, where the aspect ratio is the one the photographer sees; the result goes
+      back to the straightened frame through the inverse of the same transform. Aspect ratios
+      Original, Free, 1:1, 4:5, 3:2, 16:9 and Custom, each landscape or portrait (choosing one fits the
+      largest crop of that ratio inside the current one, swapping keeps the area about the centre);
+      the straighten slider (`straighten` control, -45..45 degrees); levelling by drawing a horizon
+      (the Level button or Ctrl+drag: the line, mapped to the upright image, becomes level or upright,
+      whichever is nearer); quarter turns and the mirror as displayed (the engine's
+      `rotated_clockwise()` and the others); "Constrain to image" (on by default: handle drags stop
+      where the image ends, and a crop that is the whole image or the largest one inside follows the
+      angle as the engine's `largest_inside_crop()` of its aspect ratio, another shrinks about its
+      centre until `crop_inside_image()` holds); Reset. Enter closes the tool keeping the result; Esc
+      restores the geometry it was opened with (one revision when it changed) before Esc returns to
+      the library.
+    - *Masks* (panel "Masks"; B brush, G linear gradient, Shift+R radial gradient; R stays the crop
+      tool). The list shows every mask in the order they apply, named by kind and place ("Radial 2":
+      the recipe stores no names), with enable, invert, move up and down, duplicate and delete; the
+      selected mask's opacity, feather and local controls (exposure, contrast, highlights, shadows,
+      saturation, temperature, tint) are control keys of the existing slider component (`maskExposure`
+      and the others; no locks: Auto never changes masks, ADR 0015). Handles: a radial mask's centre,
+      its first semi-axis end (size and angle) and its second (size); a linear gradient's start, end
+      and middle. The selected mask's outline is the frame's own while it is still and the engine's
+      `mask_outline()` of the local settings while a handle or the brush moves it, clipped to the
+      image. Brush: size (percent of the long edge, logarithmic slider), feather (1 - hardness) and
+      flow, Erase or Alt to erase, a cursor circle of the brush's size on screen; a stroke into another
+      kind's selection starts a new brush mask in the same revision. Strokes are simplified as drawn
+      (a point is kept 0.15 brush radii from the previous one), continue as a new stroke at the
+      engine's 4096 points per stroke and stop at 65536 points per photo. O tints the selected mask's
+      weights over the photo (`set_mask_overlay`): `engine::mask_weights()` with the mask shown even
+      when switched off, at most 1024 pixels on the long edge, mapped through the frame's geometry with
+      `engine::apply_geometry()` and tinted on the edit adapter's conversion thread; it is re-sent for
+      the newest frame when switched on and follows the selection.
+    - *Detail.* "Colour noise reduction": Amount 0..100 (strength, 0 = off) and Radius in full-image
+      pixels (1..64, logarithmic slider, default 8), one revision per gesture like every slider.
+    - *Gestures and revisions.* A crop handle drag, a straighten drag, a mask handle drag and a brush
+      stroke are each ONE revision (`set_transient` per position, `commit` on release; the adapter and
+      the develop service coalesce positions latest-wins); levelling, a quarter turn, the mirror, an
+      aspect ratio, Reset, adding, duplicating, moving, enabling, inverting and deleting a mask are one
+      `apply` each. A gesture never outlives its tool (closing the tool ends it).
+    - *Before/after.* The as-shot render for before/after is rendered with the geometry shown (the
+      current crop and turns, or none while the crop tool is open), so the halves line up; it is
+      rendered again when that geometry changes.
+    - *Responsiveness.* Measured on the reference laptop with the 45 MP Canon EOS R5 fixture,
+      Lucent.exe `--measure`, 2026-10-05, one run each:
+
+      | What | Result |
+      |---|---|
+      | Brush stroke, 60 synthetic mouse moves over 1.17 s (`--brush`) | 29 quick frames; pointer to frame on screen median 69 ms, 90th percentile 94 ms, max 99 ms; develop service median 47 ms; final frame 128 ms after the release; UI thread largest gap 31 ms |
+      | Straighten drag over a third of the slider (`--drag straighten`, constrained crop following) | 24 quick frames; median 98 ms, 90th percentile 130 ms; develop service median 76 ms; UI thread largest gap 40 ms |
+      | Mask exposure drag with a radial mask and noise reduction 50 (`--drag maskExposure`) | 31 quick frames; median 96 ms, 90th percentile 116 ms; develop service median 60 ms; UI thread largest gap 50 ms |
+      | One-step edits to their final frame on screen | straighten 78 ms, crop 61 ms, add a mask 70 to 98 ms (two revisions with its shape), the crop tool's uncropped frame 64 ms, the mask overlay 129 to 137 ms, noise reduction 132 ms |
+
 ## Consequences
 
 - The shell is testable end to end offscreen against the real services with synthetic DNGs
@@ -420,6 +502,14 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
   camera preview after being opened in Edit.
 - At 100 % with the clipping overlay on, a 45 MP frame holds about 180 MB for the image and as
   much for the overlay (only while the overlay is on).
+- *W9 (decision 15):* the editor offers the seven copy categories; masks and a crop are pasted only
+  to photos of the same shape and the paste message says why not. The mask overlay costs one
+  rasterisation of the selected mask per frame on the conversion thread while it is shown (a brush
+  mask is rasterised again, the session's raster cache being the develop service's). Mask names are
+  the editor's (kind and place), not the recipe's. Service needs recorded for later phases: a
+  `DevelopFrame` weight plane for the selected mask would let the service reuse its brush raster
+  cache instead of the adapter calling `mask_weights()`; `docs/development/setup.md` should list the
+  W9 developer options.
 - *W7 (decision 14):* the Exports view lists the newest 100 batches and every unfinished one (every
   single export is a batch); older finished ones are paged in with "Show older exports". Report
   files exist for batches started from the dialog; single exports write none unless Open report is

@@ -3,7 +3,10 @@
 // revision, undo/redo/reset move through the history, a recipe made by a newer Lucent opens
 // read-only with its reason, paste never carries a camera-specific white balance to another camera
 // model and says so, before/after and the clipping overlay come from the session, and an edited
-// photo's library thumbnail becomes Lucent's render of its recipe with the Edited flag.
+// photo's library thumbnail becomes Lucent's render of its recipe with the Edited flag. W9: frames
+// carry their geometry and mask outlines, the crop tool's frames are uncropped, the mask overlay is
+// the selected mask's weights, and noise reduction, masks and the crop paste by category with the
+// masks and the crop kept off a photo of another shape (and said so).
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -72,9 +75,12 @@ protected:
         backend_.reset();
     }
 
-    ItemId import_file(const std::wstring& name, const std::string& model = "Synthetic DNG") {
+    ItemId import_file(const std::wstring& name, const std::string& model = "Synthetic DNG", std::uint32_t width = 64,
+                       std::uint32_t height = 48) {
         rts::SyntheticDngSpec spec = testing::dng_with_preview();
         spec.model = model;
+        spec.width = width;
+        spec.height = height;
         const std::filesystem::path path = write_dng(dir_, name, spec);
         const int before = imports_;
         library_->import_paths({QString::fromStdWString(path.wstring())}, false);
@@ -395,6 +401,158 @@ TEST_F(AppEditServiceTest, AnEditedPhotosThumbnailIsLucentsRenderOfItsRecipe) {
     ASSERT_TRUE(wait_state(id, reset));
     ASSERT_TRUE(QTest::qWaitFor([&] { return !library_->item(id)->edited; }, kAdapterWaitMs));
     EXPECT_GT(library_->item(id)->thumbnail_generation, edited.thumbnail_generation);
+}
+
+TEST_F(AppEditServiceTest, FramesCarryGeometryAndMasksAndTheCropToolSeesTheWholeImage) {
+    const ItemId id = import_file(L"geometry.dng");
+    edits_->open(id);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(id).has_value() && !frames_.isEmpty(); }, kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+    EXPECT_EQ(frames_.back()->full_upright_size, QSize(64, 48));
+    EXPECT_EQ(frames_.back()->full_output_size, QSize(64, 48));
+
+    EditSettings settings = state_for(id)->settings;
+    settings.geometry.crop = EditCrop{0.25, 0.0, 0.75, 1.0};
+    settings.geometry.quarter_turns = 1;
+    EditMask radial;
+    radial.id = 3;
+    radial.kind = MaskKind::Radial;
+    radial.center = QPointF(0.5, 0.5);
+    radial.radius_x = 0.2;
+    radial.radius_y = 0.2;
+    radial.controls.exposure_ev = 1.0;
+    settings.masks << radial;
+    settings.chroma_denoise.strength = 0.5;
+    const quint64 applied = edits_->apply(id, settings);
+    ASSERT_TRUE(wait_final_frame(id, applied)) << command_failures_.join('\n').toStdString();
+    ASSERT_TRUE(wait_idle());
+    const EditState state = *state_for(id);
+    EXPECT_EQ(state.committed.geometry, settings.geometry);
+    ASSERT_EQ(state.committed.masks.size(), 1);
+    EXPECT_EQ(state.committed.masks.front(), radial);
+    EXPECT_DOUBLE_EQ(state.committed.chroma_denoise.strength, 0.5);
+    ASSERT_FALSE(history_.isEmpty());
+    EXPECT_TRUE(history_.back().parts.contains(EditPart::Geometry));
+    EXPECT_TRUE(history_.back().parts.contains(EditPart::Masks));
+    EXPECT_TRUE(history_.back().parts.contains(EditPart::ChromaDenoise));
+
+    // The cropped, turned frame: 32 x 48 of the straightened image becomes 48 x 32.
+    const auto final_frame = [&](quint64 token) {
+        for (auto it = frames_.crbegin(); it != frames_.crend(); ++it) {
+            if ((*it)->token == token && !(*it)->before && (*it)->phase == FramePhase::Final) {
+                return *it;
+            }
+        }
+        return EditFramePtr();
+    };
+    const EditFramePtr cropped = final_frame(applied);
+    ASSERT_NE(cropped, nullptr);
+    EXPECT_EQ(cropped->image.size(), QSize(48, 32));
+    EXPECT_EQ(cropped->full_output_size, QSize(48, 32));
+    EXPECT_EQ(cropped->geometry, settings.geometry);
+    EXPECT_FALSE(cropped->uncropped);
+    ASSERT_EQ(cropped->masks.size(), 1);
+    EXPECT_EQ(cropped->masks.front().id, 3u);
+    EXPECT_EQ(cropped->masks.front().kind, MaskKind::Radial);
+    ASSERT_FALSE(cropped->masks.front().polylines.isEmpty());
+    // The ellipse's points, as fractions of the frame, agree with the engine's mapping.
+    const GeometryMap map = edits_->map_geometry(cropped->geometry, cropped->full_upright_size);
+    ASSERT_TRUE(map.valid);
+    const QPointF centre = map.normalized_to_output.map(QPointF(0.5, 0.5));
+    double mean_x = 0.0;
+    const QPolygonF& ellipse = cropped->masks.front().polylines.front();
+    for (qsizetype i = 0; i + 1 < ellipse.size(); ++i) {
+        mean_x += ellipse[i].x();
+    }
+    mean_x /= double(ellipse.size() - 1);
+    EXPECT_NEAR(mean_x, centre.x() / map.output_size.width(), 1e-3);
+
+    // The crop tool: the same settings rendered without the crop (turned, 48 x 64).
+    edits_->set_crop_editing(id, true);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return frames_.back()->uncropped && frames_.back()->phase == FramePhase::Final; },
+                                kAdapterWaitMs));
+    EXPECT_EQ(frames_.back()->image.size(), QSize(48, 64));
+    EXPECT_TRUE(frames_.back()->geometry.crop.is_full());
+    EXPECT_EQ(frames_.back()->geometry.quarter_turns, 1);
+    ASSERT_TRUE(wait_idle());
+    EXPECT_EQ(state_for(id)->committed.geometry, settings.geometry);  // the recipe keeps its crop
+    edits_->set_crop_editing(id, false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !frames_.back()->uncropped && frames_.back()->image.size() == QSize(48, 32); },
+                                kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+
+    // The mask overlay: the newest frame again, with the radial mask's weights (strongest inside).
+    edits_->set_mask_overlay(id, 3);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !frames_.back()->mask_overlay.isNull(); }, kAdapterWaitMs));
+    const EditFramePtr tinted = frames_.back();
+    EXPECT_EQ(tinted->mask_overlay_id, 3u);
+    EXPECT_EQ(tinted->mask_overlay.size(), tinted->image.size());
+    const QPoint middle(qRound(centre.x()), qRound(centre.y()));
+    EXPECT_GT(qAlpha(tinted->mask_overlay.pixel(middle)), 100);
+    EXPECT_EQ(qAlpha(tinted->mask_overlay.pixel(0, 0)), 0);
+    ASSERT_TRUE(wait_idle());
+}
+
+TEST_F(AppEditServiceTest, NoiseReductionMasksAndTheCropPasteByCategoryOnlyOntoTheSameShape) {
+    const ItemId source = import_file(L"shape-a.dng");
+    const ItemId same = import_file(L"shape-b.dng");
+    const ItemId square = import_file(L"shape-c.dng", "Synthetic DNG", 64, 64);
+    edits_->open(source);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(source).has_value(); }, kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+    EditSettings settings = state_for(source)->settings;
+    settings.chroma_denoise = EditDenoise{0.6, 6.0};
+    settings.geometry.crop = EditCrop{0.1, 0.1, 0.9, 0.9};
+    EditMask linear;
+    linear.id = 1;
+    linear.kind = MaskKind::Linear;
+    linear.feather = 1.0;
+    linear.controls.exposure_ev = -0.5;
+    settings.masks << linear;
+    settings.highlights = -0.4;
+    const quint64 applied = edits_->apply(source, settings);
+    ASSERT_TRUE(wait_state(source, applied));
+    ASSERT_TRUE(wait_idle());
+    ASSERT_EQ(state_for(source, applied)->revision_number, 1u) << command_failures_.join('\n').toStdString();
+
+    edits_->copy_settings(source, kAllCategoryBits);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return copies_ == 1; }, kAdapterWaitMs));
+    edits_->close(source);
+
+    // A photo of the same shape takes everything.
+    edits_->open(same);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(same).has_value(); }, kAdapterWaitMs));
+    edits_->paste_settings({same});
+    ASSERT_TRUE(QTest::qWaitFor([&] { return pastes_.size() == 1; }, kAdapterWaitMs));
+    EXPECT_TRUE(pastes_.back().skipped.isEmpty()) << pastes_.back().skipped.join('\n').toStdString();
+    for (const SettingsCategory category : {SettingsCategory::Local, SettingsCategory::Detail, SettingsCategory::Geometry}) {
+        EXPECT_TRUE(pastes_.back().applied.contains(category)) << int(category);
+    }
+    ASSERT_TRUE(wait_idle());
+    const EditState pasted = *state_for(same);
+    EXPECT_EQ(pasted.committed.chroma_denoise, settings.chroma_denoise);
+    EXPECT_EQ(pasted.committed.geometry, settings.geometry);
+    EXPECT_EQ(pasted.committed.masks, settings.masks);
+    edits_->close(same);
+
+    // A square photo: the masks and the crop would land elsewhere, so they stay off and the report
+    // says why; highlights and the noise reduction are pasted.
+    edits_->open(square);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(square).has_value(); }, kAdapterWaitMs));
+    edits_->paste_settings({square});
+    ASSERT_TRUE(QTest::qWaitFor([&] { return pastes_.size() == 2; }, kAdapterWaitMs));
+    const PasteReport& report = pastes_.back();
+    ASSERT_EQ(report.skipped.size(), 2) << report.skipped.join('\n').toStdString();
+    EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("masks were not pasted")))
+        << report.skipped.join('\n').toStdString();
+    EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("crop was not pasted")))
+        << report.skipped.join('\n').toStdString();
+    ASSERT_TRUE(wait_idle());
+    const EditState other = *state_for(square);
+    EXPECT_DOUBLE_EQ(other.committed.highlights, -0.4);
+    EXPECT_EQ(other.committed.chroma_denoise, settings.chroma_denoise);
+    EXPECT_TRUE(other.committed.masks.isEmpty());
+    EXPECT_TRUE(other.committed.geometry.is_identity());
 }
 
 }  // namespace

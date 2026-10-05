@@ -5,8 +5,10 @@
 
 #include <QColor>
 #include <QCoreApplication>
+#include <QPainter>
 #include <QTimer>
 
+#include "adapters/edit_conversions.hpp"
 #include "fakes/fake_services.hpp"
 
 namespace lucent::ui::fakes {
@@ -47,6 +49,48 @@ QList<EditControl> changed_controls(const EditSettings& a, const EditSettings& b
         changed << EditControl::Vibrance;
     }
     return changed;
+}
+
+QList<EditPart> changed_parts(const EditSettings& a, const EditSettings& b) {
+    QList<EditPart> parts;
+    if (a.chroma_denoise != b.chroma_denoise) {
+        parts << EditPart::ChromaDenoise;
+    }
+    if (a.masks != b.masks) {
+        parts << EditPart::Masks;
+    }
+    if (a.geometry != b.geometry) {
+        parts << EditPart::Geometry;
+    }
+    return parts;
+}
+
+// `image` (the whole upright scene) through `geometry`, approximately: straightening rotates it on
+// its canvas, then the crop, the mirror and the quarter turns.
+QImage apply_geometry(const QImage& image, const EditGeometry& geometry) {
+    QImage out = image;
+    if (geometry.straighten_degrees != 0.0) {
+        QImage canvas(out.size(), QImage::Format_RGB32);
+        canvas.fill(Qt::black);
+        QPainter painter(&canvas);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.translate(out.width() / 2.0, out.height() / 2.0);
+        painter.rotate(-geometry.straighten_degrees);  // counter-clockwise as displayed
+        painter.drawImage(QPointF(-out.width() / 2.0, -out.height() / 2.0), out);
+        painter.end();
+        out = canvas;
+    }
+    const EditCrop& crop = geometry.crop;
+    const QRect rect(qRound(crop.left * out.width()), qRound(crop.top * out.height()),
+                     std::max(1, qRound(crop.width() * out.width())), std::max(1, qRound(crop.height() * out.height())));
+    out = out.copy(rect);
+    if (geometry.flip_horizontal) {
+        out = out.flipped(Qt::Horizontal);
+    }
+    if (geometry.quarter_turns % 4 != 0) {
+        out = out.transformed(QTransform().rotate(90.0 * (geometry.quarter_turns % 4)));
+    }
+    return out.convertToFormat(QImage::Format_RGB32);
 }
 
 RenderInfoPtr analyse(const QImage& image) {
@@ -159,6 +203,7 @@ QList<EditHistoryEntry> FakeEditService::history_of(ItemId id) const {
         entry.origin = revision.origin;
         entry.created = revision.created;
         entry.changed = revision.changed;
+        entry.parts = revision.parts;
         entry.current = revision.id == item.current;
         entry.on_current_path = path.contains(revision.id);
         entry.auto_kind = revision.auto_kind;
@@ -180,6 +225,49 @@ void FakeEditService::later(std::function<void()> work) {
             emit busy_changed(false);
         }
     });
+}
+
+QSize FakeEditService::full_size(ItemId id) const {
+    if (std::optional<FakeCatalog::Entry> found = catalog_->find(id); found && found->width > 0 && found->height > 0) {
+        return QSize(found->width, found->height);
+    }
+    return QSize(6000, 4000);
+}
+
+void FakeEditService::describe(EditFrame& frame, ItemId id, const EditSettings& settings,
+                               const EditGeometry& geometry, quint32 mask_overlay) const {
+    const QSize full = full_size(id);
+    const GeometryMap map = adapters::geometry_map(geometry, full);
+    frame.full_upright_size = full;
+    frame.geometry = geometry;
+    if (!map.valid) {
+        return;
+    }
+    frame.full_output_size = map.output_size;
+    const double w = map.output_size.width();
+    const double h = map.output_size.height();
+    for (const EditMask& mask : settings.masks) {
+        FrameMaskOutline outline;
+        outline.id = mask.id;
+        outline.kind = mask.kind;
+        outline.enabled = mask.enabled;
+        outline.invert = mask.invert;
+        for (const QPolygonF& line : adapters::mask_outline_of(mask, full)) {
+            QPolygonF shown;
+            for (const QPointF& point : line) {
+                const QPointF output = map.normalized_to_output.map(point);
+                shown << QPointF(output.x() / w, output.y() / h);
+            }
+            outline.polylines << shown;
+        }
+        frame.masks << outline;
+        if (mask.id == mask_overlay) {
+            frame.mask_overlay = adapters::mask_overlay_image(adapters::to_local_adjustment(mask),
+                                                              adapters::to_geometry_setting(geometry),
+                                                              adapters::to_image_size(full), 256);
+            frame.mask_overlay_id = frame.mask_overlay.isNull() ? 0 : mask.id;
+        }
+    }
 }
 
 QImage FakeEditService::paint(ItemId id, const EditSettings& settings) const {
@@ -233,7 +321,13 @@ void FakeEditService::publish(ItemId id, quint64 token, bool history, bool frame
         out->transient_generation = state.transient ? state.transient_generation : 0;
         out->token = token;
         out->phase = settled ? FramePhase::Final : FramePhase::Quick;
-        out->image = paint(id, state.settings);
+        EditGeometry shown = state.settings.geometry;
+        if (found->second.crop_editing) {
+            shown.crop = EditCrop{};
+            out->uncropped = true;
+        }
+        out->image = apply_geometry(paint(id, state.settings), shown);
+        describe(*out, id, state.settings, shown, found->second.mask_overlay);
         if (clipping_) {
             out->clipping = overlay_of(out->image);
         }
@@ -245,7 +339,8 @@ void FakeEditService::publish(ItemId id, quint64 token, bool history, bool frame
             before->sequence = ++next_sequence_;
             before->before = true;
             before->phase = FramePhase::Quick;
-            before->image = paint(id, EditSettings{});
+            before->image = apply_geometry(paint(id, EditSettings{}), shown);
+            before->geometry = shown;
             before->info = analyse(before->image);
             emit frame_ready(before);
         }
@@ -268,6 +363,7 @@ quint64 FakeEditService::append(ItemId id, const EditSettings& settings, const Q
     revision.origin = origin;
     revision.created = QDateTime::currentDateTimeUtc();
     revision.changed = changed_controls(from, settings);
+    revision.parts = changed_parts(from, settings);
     item.revisions.push_back(revision);
     item.current = revision.id;
     publish(id, token, true, true, true);
@@ -310,6 +406,22 @@ void FakeEditService::set_comparison(ItemId id, bool wanted) {
     if (const auto found = items_.find(id); found != items_.end()) {
         found->second.before = wanted;
         if (wanted) {
+            publish(id, 0, false, true, true);
+        }
+    }
+}
+
+void FakeEditService::set_crop_editing(ItemId id, bool editing) {
+    if (const auto found = items_.find(id); found != items_.end() && found->second.crop_editing != editing) {
+        found->second.crop_editing = editing;
+        publish(id, 0, false, true, true);
+    }
+}
+
+void FakeEditService::set_mask_overlay(ItemId id, quint32 mask_id) {
+    if (const auto found = items_.find(id); found != items_.end() && found->second.mask_overlay != mask_id) {
+        found->second.mask_overlay = mask_id;
+        if (mask_id != 0) {
             publish(id, 0, false, true, true);
         }
     }
@@ -443,7 +555,20 @@ void FakeEditService::paste_settings(const QList<ItemId>& targets) {
         if (has(SettingsCategory::Local)) {
             settings.highlights = from.highlights;
             settings.shadows = from.shadows;
+            settings.masks = from.masks;
             report.applied << SettingsCategory::Local;
+        }
+        if (has(SettingsCategory::Detail)) {
+            settings.chroma_denoise = from.chroma_denoise;
+            report.applied << SettingsCategory::Detail;
+        }
+        if (has(SettingsCategory::Geometry)) {
+            if (!from.geometry.crop.is_full() && full_size(id) != full_size(clipboard_->source)) {
+                report.skipped << tr_fake("Crop and rotation: simulated photo of another shape.");
+            } else {
+                settings.geometry = from.geometry;
+                report.applied << SettingsCategory::Geometry;
+            }
         }
         if (settings != committed(items_[id])) {
             ++report.changed;
@@ -590,6 +715,26 @@ void FakeEditService::finish_auto(ItemId id, const AutoRun& run) {
                                              "kept in the history as revision %1.")
                                          .arg(effective.number);
     later([this, outcome] { emit auto_finished(outcome); });
+}
+
+GeometryMap FakeEditService::map_geometry(const EditGeometry& geometry, QSize upright_size) const {
+    return adapters::geometry_map(geometry, upright_size);
+}
+
+bool FakeEditService::crop_inside_image(const EditGeometry& geometry, QSize upright_size) const {
+    return adapters::geometry_crop_inside(geometry, upright_size);
+}
+
+EditCrop FakeEditService::largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect) const {
+    return adapters::geometry_largest_inside_crop(straighten_degrees, upright_size, aspect);
+}
+
+EditGeometry FakeEditService::turned(const EditGeometry& geometry, GeometryTurn turn) const {
+    return adapters::geometry_turned(geometry, turn);
+}
+
+QList<QPolygonF> FakeEditService::mask_outline(const EditMask& mask, QSize upright_size) const {
+    return adapters::mask_outline_of(mask, upright_size);
 }
 
 QList<double> FakeEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {

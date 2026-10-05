@@ -21,8 +21,16 @@
 //
 // Before/after. While set_comparison() wants it, an as-shot request (unsettled: the proxy corrected
 // in stage two, no refine) is made once the current settings are rendered, and its frame is marked
-// `before`; it stays valid for the session. A current request that supersedes it before it was
-// rendered makes it come again later.
+// `before`; it stays valid for the session while the geometry shown stays the same (it is rendered
+// with the current geometry, so before and after line up). A current request that supersedes it
+// before it was rendered makes it come again later.
+//
+// Crop tool and mask overlay (ADR 0015). While set_crop_editing() holds, every request of the
+// session renders the settings without their crop (EditFrame::uncropped). set_mask_overlay() adds
+// the chosen mask's weight tint to each frame on the conversion thread (engine::mask_weights() at
+// most 1024 pixels on the long edge, mapped through the frame's geometry), and re-sends the newest
+// frame with it. Frames carry their render's geometry and mask outlines (DevelopFrame::geometry,
+// ::masks) for the overlays; the geometry helpers are the engine's.
 //
 // Busy. is_busy() holds while commands are queued, or a session's newest settings (or its wanted
 // as-shot frame) have not been rendered. The render part is also published to the Backend's
@@ -79,6 +87,8 @@ public:
     void set_full_resolution(ItemId item, bool full) override;
     void set_comparison(ItemId item, bool wanted) override;
     void set_clipping(bool wanted) override;
+    void set_crop_editing(ItemId item, bool editing) override;
+    void set_mask_overlay(ItemId item, quint32 mask_id) override;
 
     quint64 set_transient(ItemId item, const EditSettings& settings) override;
     quint64 commit(ItemId item) override;
@@ -97,6 +107,12 @@ public:
     void cancel_auto(ItemId item) override;
     [[nodiscard]] bool is_auto_running(ItemId item = 0) const override;
 
+    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const override;
+    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const override;
+    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+                                               double aspect) const override;
+    [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
+    [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
     [[nodiscard]] bool is_busy() const override { return busy_; }
 

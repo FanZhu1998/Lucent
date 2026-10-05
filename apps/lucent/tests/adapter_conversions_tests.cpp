@@ -4,8 +4,11 @@
 
 #include <gtest/gtest.h>
 
+#include <lucent/engine/develop_geometry.hpp>
+
 #include "adapter_test_support.hpp"
 #include "adapters/conversions.hpp"
+#include "adapters/edit_conversions.hpp"
 
 namespace lucent::ui::adapters {
 namespace {
@@ -340,6 +343,120 @@ TEST(AdapterConversions, ImportSummariesCountAndExplainSkippedPaths) {
                                           R"(to the file.)"),
                            QStringLiteral(R"(C:\bad.dng was not added: its name contains characters Lucent )"
                                           R"(cannot store. Rename it and add it again.)")}));
+}
+
+// ---- W9: version-2 settings, geometry maps and mask overlays (edit_conversions.hpp) ---------------------
+
+TEST(AdapterConversions, VersionTwoSettingsRoundTripThroughTheEditor) {
+    engine::DevelopSettings settings;
+    settings.exposure_ev = 0.5;
+    settings.chroma_denoise = engine::ChromaDenoiseSetting{0.4, 6.0};
+    settings.geometry.straighten_degrees = 2.5;
+    settings.geometry.crop = engine::CropRect{0.1, 0.2, 0.9, 0.8};
+    settings.geometry.quarter_turns = 3;
+    settings.geometry.flip_horizontal = true;
+    engine::LocalAdjustment brush;
+    brush.id = 2;
+    brush.invert = true;
+    brush.opacity = 0.8;
+    engine::BrushStroke stroke;
+    stroke.mode = engine::BrushMode::Erase;
+    stroke.radius = 0.03;
+    stroke.hardness = 0.2;
+    stroke.flow = 0.7;
+    stroke.points = {{0.1, 0.2}, {0.3, 0.4}};
+    brush.shape = engine::BrushMask{{stroke}};
+    brush.controls.exposure_ev = -0.5;
+    engine::LocalAdjustment linear;
+    linear.id = 3;
+    linear.enabled = false;
+    linear.shape = engine::LinearGradientMask{{0.2, 0.1}, {0.4, 0.9}, 0.3};
+    linear.controls.tint = 0.25;
+    engine::LocalAdjustment radial;
+    radial.id = 4;
+    radial.shape = engine::RadialGradientMask{{0.6, 0.4}, 0.2, 0.1, -30.0, 0.7};
+    radial.controls.temperature = -0.4;
+    settings.local_adjustments = {brush, linear, radial};
+    ASSERT_TRUE(settings.validate());
+
+    const EditSettings edit = to_edit_settings(settings);
+    ASSERT_EQ(edit.masks.size(), 3);
+    EXPECT_EQ(edit.masks[0].kind, MaskKind::Brush);
+    EXPECT_EQ(edit.masks[0].strokes.front().mode, BrushMode::Erase);
+    EXPECT_EQ(edit.masks[1].kind, MaskKind::Linear);
+    EXPECT_EQ(edit.masks[2].kind, MaskKind::Radial);
+    EXPECT_DOUBLE_EQ(edit.masks[2].angle_degrees, -30.0);
+    EXPECT_EQ(edit.geometry.quarter_turns, 3);
+    EXPECT_FALSE(edit.renders_as_shot());
+    EXPECT_EQ(to_develop_settings(edit, engine::DevelopSettings{}), settings);
+
+    // A version-1 base (an item last edited before version 2) is upgraded under the editor's values.
+    engine::DevelopSettings old;
+    old.version = 1;
+    const engine::DevelopSettings upgraded = to_develop_settings(EditSettings{}, old);
+    EXPECT_EQ(upgraded.version, engine::kDevelopSettingsVersion);
+    EXPECT_TRUE(upgraded.validate());
+}
+
+TEST(AdapterConversions, GeometryMapsAreTheEnginesMappingAsExactTransforms) {
+    const EditGeometry geometry{3.0, EditCrop{0.1, 0.1, 0.9, 0.95}, 1, true};
+    const QSize upright(600, 400);
+    const GeometryMap map = geometry_map(geometry, upright);
+    auto mapping = engine::GeometryMapping::create(to_geometry_setting(geometry), image::Size{600, 400});
+    ASSERT_TRUE(mapping);
+    ASSERT_TRUE(map.valid);
+    EXPECT_EQ(map.output_size, QSize(mapping->output_size().width, mapping->output_size().height));
+    EXPECT_DOUBLE_EQ(map.pixels_per_unit_length, 600.0);
+    for (const QPointF point : {QPointF(0.0, 0.0), QPointF(0.5, 0.5), QPointF(0.83, 0.12), QPointF(-0.4, 1.7)}) {
+        const QPointF shown = map.normalized_to_output.map(point);
+        const image::PointD expected = mapping->output_from_normalized(engine::MaskPoint{point.x(), point.y()});
+        EXPECT_NEAR(shown.x(), expected.x, 1e-9);
+        EXPECT_NEAR(shown.y(), expected.y, 1e-9);
+    }
+    // The crop frame: the straightened canvas's crop corner is the output's corner (it is turned and
+    // mirrored, so the top-left crop corner lands on another corner of the output).
+    const QRectF crop = map.straightened_to_output.mapRect(QRectF(QPointF(0.1, 0.1), QPointF(0.9, 0.95)));
+    EXPECT_NEAR(crop.left(), 0.0, 1e-9);
+    EXPECT_NEAR(crop.top(), 0.0, 1e-9);
+    EXPECT_NEAR(crop.width(), map.output_size.width(), 1e-9);
+    EXPECT_NEAR(crop.height(), map.output_size.height(), 1e-9);
+    // Invalid geometry (a reversed crop) or no size: no map.
+    EXPECT_FALSE(geometry_map(EditGeometry{0.0, EditCrop{0.6, 0.0, 0.4, 1.0}, 0, false}, upright).valid);
+    EXPECT_FALSE(geometry_map(EditGeometry{}, QSize()).valid);
+    // The turn helpers are the engine's.
+    EXPECT_EQ(geometry_turned(EditGeometry{}, GeometryTurn::Clockwise).quarter_turns, 1);
+    EXPECT_EQ(geometry_turned(EditGeometry{}, GeometryTurn::CounterClockwise).quarter_turns, 3);
+    EXPECT_TRUE(geometry_turned(EditGeometry{}, GeometryTurn::FlipHorizontal).flip_horizontal);
+}
+
+TEST(AdapterConversions, AMaskOverlayIsTheMasksWeightsThroughTheGeometry) {
+    // A horizontal stroke of radius 20 px (0.1 of 200) through the middle of a 200 x 100 image.
+    EditMask mask;
+    mask.id = 5;
+    mask.kind = MaskKind::Brush;
+    EditBrushStroke stroke;
+    stroke.radius = 0.1;
+    stroke.hardness = 0.5;
+    stroke.points = {QPointF(0.25, 0.5), QPointF(0.75, 0.5)};
+    mask.strokes = {stroke};
+    mask.enabled = false;  // the overlay shows where a switched-off mask is too
+    const QImage overlay = mask_overlay_image(to_local_adjustment(mask), engine::GeometrySetting{},
+                                              image::Size{200, 100});
+    ASSERT_EQ(overlay.size(), QSize(200, 100));
+    // Full weight within half the radius, the smoothstep beyond, nothing past the radius.
+    EXPECT_EQ(qAlpha(overlay.pixel(100, 50)), 153);
+    EXPECT_EQ(qAlpha(overlay.pixel(100, 55)), 153);                      // d = 5.5
+    const double u = (12.5 - 10.0) / 10.0;                                // d = 12.5
+    EXPECT_NEAR(qAlpha(overlay.pixel(100, 62)), (1.0 - u * u * (3.0 - 2.0 * u)) * 153.0, 1.0);
+    EXPECT_EQ(qAlpha(overlay.pixel(100, 75)), 0);                          // d = 25.5
+    EXPECT_EQ(qAlpha(overlay.pixel(10, 50)), 0);                           // beyond the stroke's end
+    // A quarter turn turns the overlay with the image; a large image is reduced to the long edge given.
+    engine::GeometrySetting turned;
+    turned.quarter_turns = 1;
+    const QImage small = mask_overlay_image(to_local_adjustment(mask), turned, image::Size{2000, 1000}, 400);
+    ASSERT_EQ(small.size(), QSize(200, 400));
+    EXPECT_EQ(qAlpha(small.pixel(100, 200)), 153);  // the stroke runs down the middle
+    EXPECT_EQ(qAlpha(small.pixel(20, 200)), 0);
 }
 
 }  // namespace

@@ -31,6 +31,15 @@
 // the photo's own recipe is unreadable, moving to another revision (undo, redo, select, reset)
 // stays possible (EditState::history_available).
 //
+// Version 2 (W9 part 2; ADR 0015): chroma noise reduction, masks and geometry are part of the
+// settings like any control. Brush strokes and crop drags are gestures (set_transient() per
+// position, commit() at the end: one revision each). While the crop tool is open the frames are
+// rendered without the crop (set_crop_editing(): EditFrame::uncropped) so the whole straightened
+// image shows under the crop overlay; set_mask_overlay() adds a mask's weight tint to the frames.
+// The geometry helpers (map_geometry(), crop_inside_image(), largest_inside_crop(), turned(),
+// mask_outline()) are the engine's (develop_geometry.hpp, local_adjustments.hpp): the view maps
+// handles and pointer positions through them and never re-implements the frames.
+//
 // Automatic settings (W8; blueprint section 2: "Auto creates a new editable revision. The
 // photographer can lock controls before rerunning it. The optimizer may change only unlocked
 // controls and must report when the locks prevent its usual technical targets"; ADR 0013).
@@ -54,8 +63,12 @@
 #include <QList>
 #include <QObject>
 #include <QPointF>
+#include <QPolygonF>
+#include <QRect>
+#include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QTransform>
 
 #include "services/service_types.hpp"
 
@@ -80,14 +93,14 @@ enum class EditControl : std::uint8_t {
 }
 
 // Copy and paste categories (the recipe contract's RecipeCategory values; stable). The editor offers
-// the first five (kAllSettingsCategories); Detail and Geometry exist in the contract (recipe.hpp,
-// ADR 0015) and appear in paste reports, but have no controls in this editor yet.
+// all seven (kAllSettingsCategories); Geometry is not selected by default (a crop rarely belongs on
+// another photo: kDefaultCategoryBits, the recipe contract's kDefaultRecipeCategories).
 enum class SettingsCategory : std::uint8_t {
     WhiteBalance = 1,
     Exposure = 2,
     Tone = 3,      // contrast, tone curve, base look
     Color = 4,     // saturation, vibrance
-    Local = 5,     // highlights, shadows (and the recipe's masks)
+    Local = 5,     // highlights, shadows and the masks
     Detail = 6,    // chroma noise reduction
     Geometry = 7,  // crop, straighten, quarter turns
 };
@@ -96,14 +109,16 @@ enum class SettingsCategory : std::uint8_t {
     return quint32{1} << static_cast<unsigned>(category);
 }
 
-inline constexpr std::array<SettingsCategory, 5> kAllSettingsCategories = {
-    SettingsCategory::WhiteBalance, SettingsCategory::Exposure, SettingsCategory::Tone,
-    SettingsCategory::Color, SettingsCategory::Local};
+inline constexpr std::array<SettingsCategory, 7> kAllSettingsCategories = {
+    SettingsCategory::WhiteBalance, SettingsCategory::Exposure, SettingsCategory::Tone,  SettingsCategory::Color,
+    SettingsCategory::Local,        SettingsCategory::Detail,   SettingsCategory::Geometry};
 
-inline constexpr quint32 kAllCategoryBits =
+inline constexpr quint32 kDefaultCategoryBits =
     category_bit(SettingsCategory::WhiteBalance) | category_bit(SettingsCategory::Exposure) |
     category_bit(SettingsCategory::Tone) | category_bit(SettingsCategory::Color) |
-    category_bit(SettingsCategory::Local);
+    category_bit(SettingsCategory::Local) | category_bit(SettingsCategory::Detail);
+
+inline constexpr quint32 kAllCategoryBits = kDefaultCategoryBits | category_bit(SettingsCategory::Geometry);
 
 enum class WhiteBalanceMode : std::uint8_t {
     AsShot = 1,
@@ -111,7 +126,7 @@ enum class WhiteBalanceMode : std::uint8_t {
     CameraNeutral = 3,  // camera red, green, blue multipliers (relative to the native values)
 };
 
-// Ranges of the recipe contract ("lucent.develop" v1, engine/develop_settings.hpp).
+// Ranges of the recipe contract ("lucent.develop" v2, engine/develop_settings.hpp).
 inline constexpr double kExposureLimit = 5.0;     // exposure_ev in [-5, 5]
 inline constexpr double kAdjustmentLimit = 1.0;   // contrast .. vibrance in [-1, 1]
 inline constexpr double kMinTemperature = 2000.0;
@@ -120,8 +135,132 @@ inline constexpr double kTintLimit = 150.0;
 inline constexpr double kMaxMultiplierRatio = 64.0;
 inline constexpr int kMinCurvePoints = 2;
 inline constexpr int kMaxCurvePoints = 32;
+// Version 2 (ADR 0015).
+inline constexpr double kMinDenoiseRadius = 1.0;  // full-image pixels
+inline constexpr double kMaxDenoiseRadius = 64.0;
+inline constexpr double kDefaultDenoiseRadius = 8.0;
+inline constexpr double kMaxStraighten = 45.0;   // degrees
+inline constexpr double kMinCropExtent = 0.001;  // of the width and of the height
+inline constexpr int kMaxMasks = 32;
+inline constexpr int kMaxBrushStrokes = 256;
+inline constexpr int kMaxStrokePoints = 4096;
+inline constexpr int kMaxBrushPoints = 65536;    // all strokes of all masks
+inline constexpr double kMinBrushRadius = 1e-4;  // fractions of the upright long edge
+inline constexpr double kMaxBrushRadius = 0.5;
+inline constexpr double kMinRadialRadius = 1e-4;
+inline constexpr double kMaxRadialRadius = 2.0;
+inline constexpr double kMaskPositionMargin = 1.0;  // positions within [-1, 2]
+inline constexpr double kMinGradientLength = 1e-4;
+inline constexpr double kMaxLocalExposure = 4.0;  // EV; the other local controls in [-1, 1]
 
-// The photographic settings the editor shows and changes (DevelopSettings v1 without the parts the
+// Guided chroma noise reduction (engine ChromaDenoiseSetting): strength 0 (off) .. 1, radius in
+// full-image pixels.
+struct EditDenoise {
+    double strength = 0.0;
+    double radius = kDefaultDenoiseRadius;
+
+    friend bool operator==(const EditDenoise&, const EditDenoise&) = default;
+};
+
+// A crop normalised in the straightened frame (fractions of the width and height; the default keeps
+// the whole image).
+struct EditCrop {
+    double left = 0.0;
+    double top = 0.0;
+    double right = 1.0;
+    double bottom = 1.0;
+
+    [[nodiscard]] bool is_full() const noexcept { return left == 0.0 && top == 0.0 && right == 1.0 && bottom == 1.0; }
+    [[nodiscard]] double width() const noexcept { return right - left; }
+    [[nodiscard]] double height() const noexcept { return bottom - top; }
+
+    friend bool operator==(const EditCrop&, const EditCrop&) = default;
+};
+
+// Straighten (degrees; positive turns the content counter-clockwise as displayed), crop, quarter
+// turns clockwise and a left-right mirror, applied in that order after everything else (engine
+// GeometrySetting).
+struct EditGeometry {
+    double straighten_degrees = 0.0;
+    EditCrop crop;
+    int quarter_turns = 0;  // 0..3
+    bool flip_horizontal = false;
+
+    [[nodiscard]] bool is_identity() const noexcept {
+        return straighten_degrees == 0.0 && crop.is_full() && quarter_turns == 0 && !flip_horizontal;
+    }
+
+    friend bool operator==(const EditGeometry&, const EditGeometry&) = default;
+};
+
+// The engine's mask kinds and brush modes (stable values).
+enum class MaskKind : std::uint8_t {
+    Brush = 1,
+    Linear = 2,
+    Radial = 3,
+};
+
+enum class BrushMode : std::uint8_t {
+    Add = 1,
+    Erase = 2,
+};
+
+// One brush stroke: the polyline through `points` (normalised upright coordinates) painted with a
+// round brush of `radius` (fraction of the long edge), `hardness` (fraction of the radius at full
+// strength) and `flow`.
+struct EditBrushStroke {
+    BrushMode mode = BrushMode::Add;
+    double radius = 0.02;
+    double hardness = 0.5;
+    double flow = 1.0;
+    QList<QPointF> points;
+
+    friend bool operator==(const EditBrushStroke&, const EditBrushStroke&) = default;
+};
+
+// A mask's local controls (engine LocalControls): exposure in EV, the others -1..+1.
+struct EditLocalControls {
+    double exposure_ev = 0.0;
+    double contrast = 0.0;
+    double highlights = 0.0;
+    double shadows = 0.0;
+    double saturation = 0.0;
+    double temperature = 0.0;
+    double tint = 0.0;
+
+    [[nodiscard]] bool is_identity() const noexcept { return *this == EditLocalControls{}; }
+
+    friend bool operator==(const EditLocalControls&, const EditLocalControls&) = default;
+};
+
+// One mask and its controls (engine LocalAdjustment). Positions are normalised upright coordinates
+// (develop_settings.hpp, "Coordinates"); lengths are fractions of the upright long edge. Only the
+// members of `kind` are used: Linear start, end, feather; Radial center, radius_x, radius_y,
+// angle_degrees, feather; Brush strokes. The recipe stores no names: the editor names masks by
+// kind and order (MaskListModel).
+struct EditMask {
+    quint32 id = 1;  // >= 1, unique within the settings
+    bool enabled = true;
+    bool invert = false;
+    double opacity = 1.0;
+    MaskKind kind = MaskKind::Radial;
+    QPointF start{0.5, 0.25};
+    QPointF end{0.5, 0.75};
+    QPointF center{0.5, 0.5};
+    double radius_x = 0.25;
+    double radius_y = 0.25;
+    double angle_degrees = 0.0;
+    double feather = 0.5;  // linear: 1 by default; radial: 0.5
+    QList<EditBrushStroke> strokes;
+    EditLocalControls controls;
+
+    // Enabled, opacity above 0 and a control not 0 (engine LocalAdjustment::has_effect()).
+    [[nodiscard]] bool has_effect() const noexcept { return enabled && opacity > 0.0 && !controls.is_identity(); }
+
+    friend bool operator==(const EditMask&, const EditMask&) = default;
+};
+
+// The photographic settings the editor shows and changes (DevelopSettings v2 without the parts the
 // editor does not change: the base look and the operation versions are kept by the service).
 struct EditSettings {
     WhiteBalanceMode white_balance = WhiteBalanceMode::AsShot;
@@ -138,6 +277,10 @@ struct EditSettings {
     // in [0, 1], 2 to 32 points); {(0, 0), (1, 1)} is the identity.
     QList<QPointF> tone_curve{QPointF(0.0, 0.0), QPointF(1.0, 1.0)};
     quint32 locks = 0;  // control_bit() of the locked controls
+    // Version 2.
+    EditDenoise chroma_denoise;
+    QList<EditMask> masks;  // applied in this order
+    EditGeometry geometry;
 
     [[nodiscard]] bool locked(EditControl control) const noexcept { return (locks & control_bit(control)) != 0; }
     void set_locked(EditControl control, bool locked) noexcept {
@@ -191,11 +334,23 @@ struct EditState {
     bool settings_unknown = false;
 };
 
+// The version-2 parts of the settings a revision changed (the recipe contract's RecipePart values;
+// stable).
+enum class EditPart : std::uint8_t {
+    ChromaDenoise = 1,
+    Masks = 2,
+    Geometry = 3,
+};
+
 // User-facing names: "White balance", "Exposure", "Contrast", "Highlights", "Shadows", "Tone curve",
-// "Saturation", "Vibrance", "Base look"; and the categories "White balance", "Exposure", "Tone",
-// "Color", "Highlights and shadows", "Noise reduction", "Crop and rotation".
+// "Saturation", "Vibrance", "Base look"; the categories "White balance", "Exposure", "Tone",
+// "Color", "Highlights, shadows and masks", "Noise reduction", "Crop and rotation"; the parts
+// "Noise reduction", "Masks", "Crop and rotation"; the mask kinds "Brush", "Linear gradient",
+// "Radial gradient".
 [[nodiscard]] QString control_label(EditControl control);
 [[nodiscard]] QString category_label(SettingsCategory category);
+[[nodiscard]] QString part_label(EditPart part);
+[[nodiscard]] QString mask_kind_label(MaskKind kind);
 
 struct EditHistoryEntry {
     quint64 revision = 0;
@@ -206,6 +361,7 @@ struct EditHistoryEntry {
     QDateTime created;  // UTC
     QList<EditControl> changed;  // controls whose values changed in this revision
     QList<EditControl> locks;    // controls whose lock changed
+    QList<EditPart> parts;       // version-2 parts whose values changed (masks, crop, noise reduction)
     quint32 reverted_from = 0;   // a copy of this revision number (0: none)
     bool current = false;
     bool on_current_path = false;  // the current revision or one of its ancestors
@@ -268,6 +424,40 @@ struct AutoSummary {
     friend bool operator==(const AutoSummary&, const AutoSummary&) = default;
 };
 
+// ---- Geometry and masks of frames -----------------------------------------------------------------
+
+// The point mapping of a geometry for an upright image of `upright_size` pixels (the engine's
+// GeometryMapping, develop_geometry.hpp). Every step is affine, so the transforms are exact.
+struct GeometryMap {
+    bool valid = false;  // false: an empty size or an invalid geometry
+    QSize upright_size;
+    QSize output_size;
+    QRect crop_pixels;  // the crop in the straightened frame, whole pixels
+    // Normalised upright (mask) coordinates -> continuous output pixel coordinates.
+    QTransform normalized_to_output;
+    // Normalised straightened (crop) coordinates -> continuous output pixel coordinates.
+    QTransform straightened_to_output;
+    // Output (and upright) pixels per normalised length: max(W, H).
+    double pixels_per_unit_length = 0.0;
+};
+
+// What the user turns or mirrors as displayed (engine rotated_clockwise() and the others).
+enum class GeometryTurn : std::uint8_t {
+    Clockwise = 1,
+    CounterClockwise = 2,
+    FlipHorizontal = 3,
+};
+
+// A mask's outline in a frame (DevelopFrame::masks): engine::mask_outline() mapped to the frame and
+// expressed as fractions of the frame image's width and height (0..1 inside the image).
+struct FrameMaskOutline {
+    quint32 id = 0;
+    MaskKind kind = MaskKind::Radial;
+    bool enabled = true;
+    bool invert = false;
+    QList<QPolygonF> polylines;
+};
+
 enum class FramePhase : std::uint8_t {
     Quick = 1,  // the cached proxy; a Final frame of the same request may follow
     Final = 2,  // the settled result at the requested quality
@@ -289,6 +479,17 @@ struct EditFrame {
     // pixels transparent. Null unless the overlay was asked for (EditService::set_clipping).
     QImage clipping;
     RenderInfoPtr info;  // histogram and render facts of `image`
+    // Version 2 (ADR 0015). The photo's upright size at full resolution (before the geometry) and
+    // the image's size at full resolution (after it); empty when unknown.
+    QSize full_upright_size;
+    QSize full_output_size;
+    EditGeometry geometry;   // of the pixels (the crop is the whole image when `uncropped`)
+    bool uncropped = false;  // rendered without the crop for the crop tool (set_crop_editing)
+    QList<FrameMaskOutline> masks;  // every mask of the settings shown, in their order
+    // Weight overlay of mask `mask_overlay_id` (set_mask_overlay): premultiplied ARGB, the size of
+    // the image or smaller (stretched over it). Null unless asked for.
+    QImage mask_overlay;
+    quint32 mask_overlay_id = 0;
     double latency_seconds = 0.0;     // the service's request to frame ready
     double stage_two_seconds = 0.0;
     double display_seconds = 0.0;
@@ -330,6 +531,12 @@ public:
     // Frames carry clipping overlays (EditFrame::clipping) while wanted; turning it on re-sends the
     // newest frame with its overlay.
     virtual void set_clipping(bool wanted) = 0;
+    // While `editing`, frames of the photo are rendered without the crop (straighten, quarter turns
+    // and mirror kept; EditFrame::uncropped) so the crop tool shows the whole image.
+    virtual void set_crop_editing(ItemId item, bool editing) = 0;
+    // Frames carry the weight overlay of mask `mask_id` (EditFrame::mask_overlay; 0: none); a change
+    // re-sends the newest frame with it.
+    virtual void set_mask_overlay(ItemId item, quint32 mask_id) = 0;
 
     // ---- Editing (see the file comment) ----------------------------------------------------------
 
@@ -363,6 +570,18 @@ public:
     // The tone curve through `points` (EditSettings::tone_curve) at `count` evenly spaced x in
     // [0, 1], as the renderer evaluates it; empty for invalid points.
     [[nodiscard]] virtual QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const = 0;
+
+    // The engine's geometry and mask helpers (develop_geometry.hpp, local_adjustments.hpp; pure).
+    [[nodiscard]] virtual GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const = 0;
+    // The straightened image covers the whole crop (no black canvas in the output).
+    [[nodiscard]] virtual bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const = 0;
+    // The largest crop centred on the image with `aspect` (width / height in pixels before the
+    // quarter turns; <= 0: the image's own) that the straightened image covers.
+    [[nodiscard]] virtual EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+                                                       double aspect) const = 0;
+    [[nodiscard]] virtual EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const = 0;
+    // engine::mask_outline() of `mask` in normalised upright coordinates (empty for an invalid mask).
+    [[nodiscard]] virtual QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const = 0;
 
     // True while a command is pending or the newest settings have not been rendered (Final).
     [[nodiscard]] virtual bool is_busy() const = 0;
