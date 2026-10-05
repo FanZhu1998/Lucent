@@ -97,7 +97,22 @@
 //      (ConsistencyRecord). Locks and hard checks apply exactly as in the independent search: the
 //      term only ranks feasible candidates.
 //
-// Search coordinates and their mapping to DevelopSettings v1 (blueprint section 6 bounds):
+// Global controls only (DevelopSettings v2, ADR 0015). The search sets global controls; the current
+// settings' geometry (crop, straighten, quarter turns, flip) and local adjustments (masks) are the
+// photographer's and are set aside for the whole evaluation: the baseline, every candidate, the
+// recheck, the appearances (AutoSession::appearance_of) and the consistency stage render
+// evaluation_settings() of them (the identity geometry, no local adjustment). Native crops are
+// stage-one images of a sub-rectangle, so a crop or a rotation would not line up with them and a
+// mask (positioned relative to the image it is rendered on) would land on the wrong content; and a
+// crop would change the measured statistics, so the decision is the same whatever the crop is.
+// Chroma denoising is global and kept (it is never searched). Every settings value of a result
+// (AutoResult::settings, every CandidateRecord::settings, ConsistencyRecord::independent_settings)
+// carries the current geometry and local adjustments unchanged (and the chroma denoising, which the
+// search never changes), so the chosen settings render with them; AutoResult::set_aside_geometry /
+// set_aside_masks say whether there was anything to set aside. A full-resolution check of the
+// chosen settings with their geometry and masks is the application's (auto_develop.hpp).
+//
+// Search coordinates and their mapping to DevelopSettings (blueprint section 6 bounds):
 //   exposure    -1.5 .. +1.5 EV            exposure_ev (relative to the baseline's, 0 when unlocked)
 //   white bal.  red, blue gains 0.9 .. 1.1  CameraNeutralWhiteBalance{as_shot r x gr, g, as_shot b x gb}
 //               relative to the as-shot camera multipliers (the route's neutral representation);
@@ -360,7 +375,9 @@ struct AutoMemory {
 };
 
 struct AutoResult {
-    engine::DevelopSettings settings;  // the chosen settings (current locks kept)
+    // The chosen settings (current locks kept; the current geometry, local adjustments and chroma
+    // denoising carried unchanged, see the file comment).
+    engine::DevelopSettings settings;
     AutoVersions versions;
     double confidence = 0.0;
     ConfidenceBreakdown confidence_detail;
@@ -382,6 +399,10 @@ struct AutoResult {
     ShotFeatures shot;                  // what grouping compares (consistency.hpp)
     Appearance appearance;              // of the chosen settings at analysis resolution
     std::optional<ConsistencyRecord> consistency;  // regularise() only
+    // The current settings had a geometry other than the identity / local adjustments, which the
+    // evaluation set aside and the result carries unchanged (see the file comment).
+    bool set_aside_geometry = false;
+    bool set_aside_masks = false;
     AutoTiming timing;
     AutoMemory memory;
 
@@ -390,6 +411,10 @@ struct AutoResult {
 };
 
 // ---- Entry points ------------------------------------------------------------------------------
+
+// `settings` as the automatic settings evaluate them (see the file comment): the identity geometry
+// and no local adjustment; everything else (chroma denoising included) unchanged.
+[[nodiscard]] engine::DevelopSettings evaluation_settings(engine::DevelopSettings settings);
 
 // The automatic settings of `decoded` (consumed) for an item whose current settings are `current`
 // (its locks, locked values and the controls the search does not set).
@@ -458,13 +483,16 @@ public:
                                                   const core::CancellationToken& cancel = {});
 
     // The appearance of `settings` (valid DevelopSettings with the current locks' values) at
-    // analysis resolution: what an anchor contributes to its group's target.
+    // analysis resolution, evaluated as the candidates are (evaluation_settings(): without geometry
+    // and local adjustments): what an anchor contributes to its group's target.
     [[nodiscard]] Expected<Appearance> appearance_of(const engine::DevelopSettings& settings,
                                                      const core::CancellationToken& cancel = {});
 
     // A reduced preview of `settings`: stage two on the analysis image (the interactive path the
     // controller judged, not the export render), box-downscaled in display-linear light to
-    // `long_edge` (at most the analysis size). Display-linear Rec.2020.
+    // `long_edge` (at most the analysis size). Display-linear Rec.2020. The geometry and masks of
+    // `settings` are rendered (the analysis image is the whole upright image, so they land as in
+    // the export): the long edge applies to the cropped and turned output.
     [[nodiscard]] Expected<engine::ColorImage> preview(const engine::DevelopSettings& settings,
                                                        std::int32_t long_edge,
                                                        const core::CancellationToken& cancel = {});

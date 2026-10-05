@@ -4,7 +4,9 @@
 // sunset keeps its colour while a small tint is corrected; sensor-clipped highlights are not
 // worsened; locks are honoured, and a locked exposure is not brightened around; too little evidence
 // gives a restrained edit with a flag; the recheck pool includes an edit without local tone; the
-// conservative fallbacks step towards the baseline; the result is deterministic.
+// conservative fallbacks step towards the baseline; the result is deterministic; the current
+// geometry and masks are set aside for the evaluation and carried into the result unchanged (the
+// decision is the same with or without a crop or masks).
 //
 // Every result is summarised in the log ("[ AUTO     ]" lines). Run with
 // --gtest_also_run_disabled_tests to dump every evaluated candidate and its objective terms as well.
@@ -18,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <lucent/analysis/auto_settings.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/engine/develop_operations.hpp>
 
 #include "analysis_test_support.hpp"
@@ -585,6 +588,101 @@ TEST(AutoSettings, MonochromeSearchesNoColour) {
     EXPECT_EQ(r.diagnostic(MetricId::ColorGamut)->status, MetricStatus::NotApplicable);
     EXPECT_EQ(r.diagnostic(MetricId::WhiteBalance)->status, MetricStatus::NotApplicable);
     EXPECT_GT(r.settings.exposure_ev, 0.5);  // still brightened
+}
+
+// The photographer's geometry and masks (DevelopSettings v2): the global part of the settings.
+engine::DevelopSettings with_geometry_and_masks(engine::DevelopSettings s) {
+    s.geometry.straighten_degrees = 2.0;
+    s.geometry.crop = engine::largest_inside_crop(2.0, image::Size{960, 640});
+    s.geometry.quarter_turns = 1;
+    engine::LocalAdjustment radial;
+    radial.id = 1;
+    radial.shape = engine::RadialGradientMask{{0.5, 0.5}, 0.25, 0.2, 0.0, 0.5};
+    radial.controls.exposure_ev = 1.5;  // would brighten the centre: never seen by the evaluation
+    engine::LocalAdjustment brush;
+    brush.id = 2;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.05, 0.5, 1.0,
+                                                         {{0.1, 0.1}, {0.3, 0.2}}}}};
+    brush.controls.shadows = 1.0;
+    s.local_adjustments = {radial, brush};
+    return s;
+}
+
+TEST(AutoSettings, GeometryAndMasksAreSetAsideAndCarriedUnchanged) {
+    engine::DevelopSettings plain;
+    plain.chroma_denoise = engine::ChromaDenoiseSetting{0.3, 4.0};  // global: evaluated and kept
+    const engine::DevelopSettings edited = with_geometry_and_masks(plain);
+    EXPECT_EQ(evaluation_settings(edited), plain);
+    const AutoResult a = run(chart_scene(std::exp2(-2.5)), plain);
+    const AutoResult b = run(chart_scene(std::exp2(-2.5)), edited);
+    expect_well_formed(a);
+    expect_well_formed(b);
+    EXPECT_FALSE(a.set_aside_geometry);
+    EXPECT_FALSE(a.set_aside_masks);
+    EXPECT_TRUE(b.set_aside_geometry);
+    EXPECT_TRUE(b.set_aside_masks);
+    // The decision is identical: the same candidates, terms and choice; only the carried parts
+    // differ.
+    EXPECT_GE(b.settings.exposure_ev, 1.0);  // the underexposed chart is still brightened
+    EXPECT_EQ(evaluation_settings(b.settings), a.settings);
+    EXPECT_EQ(a.chosen, b.chosen);
+    EXPECT_EQ(a.confidence, b.confidence);
+    ASSERT_EQ(a.candidates.size(), b.candidates.size());
+    for (std::size_t i = 0; i < a.candidates.size(); ++i) {
+        EXPECT_EQ(evaluation_settings(b.candidates[i].settings), a.candidates[i].settings) << i;
+        EXPECT_EQ(a.candidates[i].proxy.terms, b.candidates[i].proxy.terms) << i;
+        EXPECT_EQ(a.candidates[i].analysis.terms, b.candidates[i].analysis.terms) << i;
+    }
+    ASSERT_EQ(a.diagnostics.size(), b.diagnostics.size());
+    for (std::size_t i = 0; i < a.diagnostics.size(); ++i) {
+        EXPECT_EQ(a.diagnostics[i], b.diagnostics[i]) << to_string(a.diagnostics[i].id);
+    }
+    EXPECT_EQ(a.crops.size(), b.crops.size());  // the native crops line up and are all used
+    // The photographer's geometry, masks and denoising are carried unchanged into every settings
+    // value of the result.
+    EXPECT_EQ(b.settings.geometry, edited.geometry);
+    EXPECT_EQ(b.settings.local_adjustments, edited.local_adjustments);
+    EXPECT_EQ(b.settings.chroma_denoise, edited.chroma_denoise);
+    for (const CandidateRecord& c : b.candidates) {
+        EXPECT_EQ(c.settings.geometry, edited.geometry) << c.note;
+        EXPECT_EQ(c.settings.local_adjustments, edited.local_adjustments) << c.note;
+        EXPECT_EQ(c.settings.chroma_denoise, edited.chroma_denoise) << c.note;
+    }
+    // The fallbacks of the choice keep them too (the application's final check walks them).
+    for (const engine::DevelopSettings& f : conservative_fallbacks(b.settings, b.candidates[0].settings)) {
+        EXPECT_EQ(f.geometry, edited.geometry);
+        EXPECT_EQ(f.local_adjustments, edited.local_adjustments);
+    }
+
+    // A crop alone changes nothing either; and the session's other entry points agree.
+    engine::DevelopSettings cropped = plain;
+    cropped.geometry.crop = engine::CropRect{0.0, 0.0, 0.5, 0.5};
+    auto session = AutoSession::open(make_scene(chart_scene(std::exp2(-2.5))), cropped);
+    ASSERT_TRUE(session) << session.error().describe();
+    EXPECT_EQ(evaluation_settings(session->independent().settings), a.settings);
+    EXPECT_EQ(session->independent().settings.geometry, cropped.geometry);
+    auto with_parts = session->appearance_of(edited);
+    auto without = session->appearance_of(plain);
+    ASSERT_TRUE(with_parts && without);
+    EXPECT_EQ(*with_parts, *without);  // appearances are of the global settings
+    ConsistencyTarget target;
+    target.group_id = "g";
+    target.lightness = a.appearance.lightness + 0.05;
+    target.weight = 1.0;
+    auto regularised = session->regularise(target);
+    ASSERT_TRUE(regularised) << regularised.error().describe();
+    EXPECT_EQ(regularised->settings.geometry, cropped.geometry);
+    ASSERT_TRUE(regularised->consistency);
+    EXPECT_EQ(regularised->consistency->independent_settings.geometry, cropped.geometry);
+    for (const CandidateRecord& c : regularised->candidates) {
+        EXPECT_EQ(c.settings.geometry, cropped.geometry) << c.note;
+    }
+    // A preview renders the photographer's crop (the analysis image is the whole upright image).
+    auto preview = session->preview(cropped, 256);
+    ASSERT_TRUE(preview) << preview.error().describe();
+    // A quarter of the frame (the top-left 3:2 quarter), 256 pixels on its long edge.
+    EXPECT_EQ(std::max(preview->pixels.width(), preview->pixels.height()), 256);
+    EXPECT_NEAR(static_cast<double>(preview->pixels.width()) / preview->pixels.height(), 1.5, 0.02);
 }
 
 TEST(AutoSettings, RejectsInvalidInput) {
