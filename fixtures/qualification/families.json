@@ -1,0 +1,108 @@
+{
+  "schema": "lucent.qualification-families",
+  "schema_version": 1,
+  "source": "docs/blueprint/lucent-desktop-raw-processing-blueprint.md, section 3, table 'Qualification family / Initial target samples / Required distinctions'",
+  "match_rules": "A fixture matches a target when every criterion given holds for its mode key (mode_key.hpp): make, model (any of), model_not (none of), container (any of), compression, lossiness, area, representation_prefix, view, subimage_count_min, subimage_count_max. A target without criteria (\"match\": null) is documented but cannot be matched yet.",
+  "families": [
+    {
+      "id": "canon",
+      "name": "Canon",
+      "blueprint_targets": "EOS R5 RAW and C-RAW; at least one additional CR2/CR3 model.",
+      "required_distinctions": "Compression, dimensions, bit depth, crop mode, lens, orientation; do not promise Dual Pixel processing merely because ordinary RAW decoding works.",
+      "targets": [
+        {"id": "canon-r5-raw-full", "description": "EOS R5 RAW (lossless CRX), full frame", "match": {"make": "canon", "model": "eos-r5", "compression": "canon-crx-lossless-raw", "area": "8191x5463", "subimage_count_max": 1}},
+        {"id": "canon-r5-craw-full", "description": "EOS R5 C-RAW (lossy CRX), full frame", "match": {"make": "canon", "model": "eos-r5", "compression": "canon-crx-lossy-c-raw", "area": "8191x5463", "subimage_count_max": 1}},
+        {"id": "canon-r5-raw-crop", "description": "EOS R5 RAW, 1.6x crop", "match": {"make": "canon", "model": "eos-r5", "compression": "canon-crx-lossless-raw", "area": "5087x3391", "subimage_count_max": 1}},
+        {"id": "canon-r5-craw-crop", "description": "EOS R5 C-RAW, 1.6x crop, without Dual Pixel", "match": {"make": "canon", "model": "eos-r5", "compression": "canon-crx-lossy-c-raw", "area": "5087x3391", "subimage_count_max": 1}},
+        {"id": "canon-r5-dual-pixel", "description": "EOS R5 Dual Pixel RAW recognised as two images (Dual Pixel processing not promised)", "match": {"make": "canon", "model": "eos-r5", "subimage_count_min": 2}},
+        {"id": "canon-r5-dual-pixel-full", "description": "EOS R5 Dual Pixel RAW, full frame", "match": {"make": "canon", "model": "eos-r5", "subimage_count_min": 2, "area": "8191x5463"}, "note": "CC0 sample 4693 exists in the archive but is not in the manifest"},
+        {"id": "canon-other-cr3", "description": "An additional CR3 model", "match": {"make": "canon", "model_not": ["eos-r5"], "container": ["cr3"]}},
+        {"id": "canon-other-cr2", "description": "An additional CR2 model", "match": {"make": "canon", "model_not": ["eos-r5"], "container": ["tiff"]}},
+        {"id": "canon-sraw", "description": "Canon sRAW / mRAW (YCbCr) mode", "match": {"make": "canon", "container": ["tiff"], "representation_prefix": "linear-rgb"}},
+        {"id": "canon-via-dng", "description": "Canon camera data in a converted DNG (Adobe DNG Converter, Lightroom)", "match": {"make": "canon", "container": ["dng"]}}
+      ]
+    },
+    {
+      "id": "sony",
+      "name": "Sony",
+      "blueprint_targets": "A7 IV and a representative A7R model.",
+      "required_distinctions": "ARW uncompressed, compressed, and available lossless sizes; any prior WB/color processing; unsupported combinations remain explicit.",
+      "targets": [
+        {"id": "sony-a7iv-uncompressed", "description": "A7 IV (ILCE-7M4) uncompressed, full frame", "match": {"make": "sony", "model": "ilce-7m4", "compression": "uncompressed", "area": "7028x4688"}},
+        {"id": "sony-a7iv-compressed", "description": "A7 IV compressed (lossy), full frame", "match": {"make": "sony", "model": "ilce-7m4", "compression": "sony-arw-compressed-lossy", "area": "7028x4688"}},
+        {"id": "sony-a7iv-lossless-l", "description": "A7 IV lossless compressed, size L", "match": {"make": "sony", "model": "ilce-7m4", "compression": "sony-arw-lossless-compressed"}},
+        {"id": "sony-a7iv-lossless-m", "description": "A7 IV lossless compressed, size M (YCbCr, white balance applied in camera)", "match": {"make": "sony", "model": "ilce-7m4", "representation_prefix": "linear-rgb", "area": "4624x3080"}},
+        {"id": "sony-a7iv-lossless-s", "description": "A7 IV lossless compressed, size S (YCbCr, white balance applied in camera)", "match": {"make": "sony", "model": "ilce-7m4", "representation_prefix": "linear-rgb", "area": "3516x2344"}},
+        {"id": "sony-a7iv-apsc-compressed", "description": "A7 IV APS-C crop, compressed", "match": {"make": "sony", "model": "ilce-7m4", "compression": "sony-arw-compressed-lossy", "area": "4692x3132"}},
+        {"id": "sony-a7iv-apsc-lossless", "description": "A7 IV APS-C crop, lossless M/S", "match": null, "note": "CC0 samples 6934 and 6935 exist in the archive but are not in the manifest; their visible areas are not yet known"},
+        {"id": "sony-a7r", "description": "A representative A7R model", "match": {"make": "sony", "model": ["ilce-7rm5", "ilce-7rm4", "ilce-7rm4a", "ilce-7rm3", "ilce-7rm3a"]}}
+      ]
+    },
+    {
+      "id": "dji",
+      "name": "DJI",
+      "blueprint_targets": "Mini 4 Pro and a representative Mavic camera.",
+      "required_distinctions": "DNG at each supported resolution, camera/lens module, metadata corrections, and any required DNG operations.",
+      "targets": [
+        {"id": "dji-mini-4-pro", "description": "Mini 4 Pro (FC8482) DNG", "match": {"make": "dji", "model": "fc8482"}, "note": "Absent from raw.pixls.us (fixtures/manifest.json gaps)"},
+        {"id": "dji-mini-series", "description": "Another Mini-series camera (Mini 2, FC7303)", "match": {"make": "dji", "model": "fc7303"}},
+        {"id": "dji-mavic-pro", "description": "Mavic Pro (FC220) DNG", "match": {"make": "dji", "model": "fc220"}},
+        {"id": "dji-mavic-3-hasselblad", "description": "Mavic 3 series Hasselblad camera (L2D-20c) DNG", "match": {"make": "hasselblad", "model": "l2d-20c"}},
+        {"id": "dji-mavic-3-pro-tele-12mp", "description": "Mavic 3 Pro 70 mm medium tele camera (FC4382), 12 MP DNG", "match": {"make": "dji", "model": "fc4382", "area": "4032x3024"}},
+        {"id": "dji-mavic-3-pro-tele-48mp", "description": "Mavic 3 Pro 70 mm medium tele camera (FC4382), 48 MP DNG", "match": {"make": "dji", "model": "fc4382", "area": "8064x6048"}, "note": "Second resolution of the same module; no sample in the manifest"}
+      ]
+    },
+    {
+      "id": "insta360",
+      "name": "Insta360",
+      "blueprint_targets": "Ace / Ace Pro / Ace Pro 2 DNG fixtures, starting with one exact model.",
+      "required_distinctions": "Ordinary single-view RAW development, lens geometry, resolution, and file mode; brand inclusion is not a promise to stitch every 360 file.",
+      "targets": [
+        {"id": "insta360-ace-planar", "description": "Ace-series planar single-view DNG", "match": {"make": "insta360", "model": ["ace", "ace-pro", "ace-pro-2"], "view": "single-view"}, "note": "Absent from raw.pixls.us (fixtures/manifest.json gaps)"},
+        {"id": "insta360-360-source", "description": "Unstitched dual-fisheye 360 source recognised and refused for planar export", "match": {"make": "insta360", "view": "dual-fisheye-360"}}
+      ]
+    },
+    {
+      "id": "nikon",
+      "name": "Nikon",
+      "blueprint_targets": "Representative NEF.",
+      "required_distinctions": "Standard versus high-efficiency compression and the actual enabled decoder capabilities.",
+      "targets": [
+        {"id": "nikon-lossless", "description": "NEF lossless compressed", "match": {"make": "nikon", "compression": "nikon-nef-lossless"}},
+        {"id": "nikon-lossy", "description": "NEF compressed (lossy)", "match": {"make": "nikon", "compression": "nikon-nef-lossy-type-2"}},
+        {"id": "nikon-he", "description": "NEF High Efficiency (HE)", "match": {"make": "nikon", "compression": "nikon-nef-high-efficiency-he"}},
+        {"id": "nikon-he-star", "description": "NEF High Efficiency* (HE*)", "match": {"make": "nikon", "compression": "nikon-nef-high-efficiency-he-star"}},
+        {"id": "nikon-uncompressed", "description": "NEF uncompressed", "match": {"make": "nikon", "compression": "uncompressed"}, "note": "No sample in the manifest"}
+      ]
+    },
+    {
+      "id": "fujifilm",
+      "name": "Fujifilm",
+      "blueprint_targets": "Representative X-Trans RAF and Bayer RAF.",
+      "required_distinctions": "CFA layout, compression, and separate handling of multi-shot/pixel-shift files.",
+      "targets": [
+        {"id": "fujifilm-xtrans", "description": "X-Trans RAF", "match": {"make": "fujifilm", "representation_prefix": "mosaic:GG"}},
+        {"id": "fujifilm-xtrans-lossless", "description": "X-Trans RAF, lossless compressed", "match": {"make": "fujifilm", "representation_prefix": "mosaic:GG", "lossiness": "lossless"}},
+        {"id": "fujifilm-xtrans-lossy", "description": "X-Trans RAF, compressed (lossy)", "match": {"make": "fujifilm", "representation_prefix": "mosaic:GG", "lossiness": "lossy"}},
+        {"id": "fujifilm-bayer", "description": "Bayer RAF (GFX)", "match": {"make": "fujifilm", "representation_prefix": "mosaic:RGGB"}},
+        {"id": "fujifilm-pixel-shift", "description": "Multi-shot / pixel-shift RAF", "match": {"make": "fujifilm", "subimage_count_min": 2}, "note": "Absent from raw.pixls.us (fixtures/manifest.json gaps)"}
+      ]
+    },
+    {
+      "id": "other",
+      "name": "Other brands / generic DNG",
+      "blueprint_targets": "Panasonic, OM System, Pentax, Leica, Hasselblad, and other upstream-supported fixtures as acquired.",
+      "required_distinctions": "Validate each model/mode rather than infer support from the brand or suffix.",
+      "targets": [
+        {"id": "panasonic", "description": "Panasonic RW2", "match": {"make": "panasonic"}},
+        {"id": "om-system", "description": "OM System ORF", "match": {"make": "om-system"}},
+        {"id": "pentax-pef", "description": "Pentax PEF", "match": {"make": "pentax", "container": ["tiff"]}},
+        {"id": "pentax-dng-monochrome", "description": "Pentax monochrome DNG", "match": {"make": "pentax", "container": ["dng"], "representation_prefix": "monochrome"}},
+        {"id": "leica-dng", "description": "Leica CFA DNG", "match": {"make": "leica", "representation_prefix": "mosaic"}},
+        {"id": "leica-monochrome", "description": "Leica monochrome DNG", "match": {"make": "leica", "representation_prefix": "monochrome"}},
+        {"id": "hasselblad-3fr", "description": "Hasselblad 3FR", "match": {"make": "hasselblad", "container": ["tiff"]}},
+        {"id": "pixel-shift-composites", "description": "Pixel-shift / high-resolution composites (Sony ARQ, Pentax, Panasonic, OM System)", "match": null, "note": "Deferred until a multi-image route exists (fixtures/manifest.json gaps)"}
+      ]
+    }
+  ]
+}

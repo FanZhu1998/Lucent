@@ -13,6 +13,10 @@
 # its full-resolution renders at once (about 1 GB each for a 45 MP file).
 #
 # Run just these with:  ctest -L fixtures
+#
+# qualification/ holds the camera qualification tests (W10, ADR 0016; label "qualification").
+
+add_subdirectory(qualification)
 
 if(NOT TARGET lucent_probe_report)
     message(STATUS "lucent_integration_tests skipped: it needs lucent-probe's report library (LUCENT_BUILD_TOOLS=ON)")
