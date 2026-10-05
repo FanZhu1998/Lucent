@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <exception>
 #include <format>
 #include <map>
 #include <mutex>
 #include <new>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -38,6 +40,30 @@ std::string join_controls(const std::vector<engine::DevelopControl>& controls) {
     return out;
 }
 
+std::string join_parts(const std::vector<RecipePart>& parts) {
+    std::string out;
+    for (const RecipePart part : parts) {
+        out += out.empty() ? "" : ",";
+        out += to_string(part);
+    }
+    return out;
+}
+
+std::vector<RecipePart> parse_parts(std::string_view text) {
+    std::vector<RecipePart> out;
+    while (!text.empty()) {
+        const std::size_t comma = text.find(',');
+        if (const auto part = parse_recipe_part(text.substr(0, comma))) {
+            out.push_back(*part);
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        text.remove_prefix(comma + 1);
+    }
+    return out;
+}
+
 std::vector<engine::DevelopControl> parse_controls(std::string_view text) {
     std::vector<engine::DevelopControl> out;
     while (!text.empty()) {
@@ -61,6 +87,9 @@ std::string make_note(const engine::DevelopSettings& from, const engine::Develop
     if (const auto locks = changed_locks(from, to); !locks.empty()) {
         note += ";locks=" + join_controls(locks);
     }
+    if (const auto parts = changed_parts(from, to); !parts.empty()) {
+        note += ";parts=" + join_parts(parts);
+    }
     if (reverted_from) {
         note += std::format(";from={}", *reverted_from);
     }
@@ -79,6 +108,8 @@ void parse_note(std::string_view note, HistoryEntry& entry) {
                 entry.changed = parse_controls(value);
             } else if (key == "locks") {
                 entry.locks = parse_controls(value);
+            } else if (key == "parts") {
+                entry.parts = parse_parts(value);
             } else if (key == "from") {
                 std::uint32_t number = 0;
                 if (std::from_chars(value.data(), value.data() + value.size(), number).ec == std::errc{}) {
@@ -142,7 +173,32 @@ std::string camera_name(const CameraCapabilities& camera) {
     return camera.make + " " + camera.model;
 }
 
+std::string size_name(image::Size size) {
+    return size.empty() ? std::string("unknown") : std::format("{} x {}", size.width, size.height);
+}
+
+// Why normalised positions of `source` would not keep their place on `target` (empty when they do).
+std::string shape_mismatch(const CameraCapabilities& source, const CameraCapabilities& target) {
+    if (same_upright_aspect(source.upright_size, target.upright_size)) {
+        return {};
+    }
+    if (source.upright_size.empty() || target.upright_size.empty()) {
+        return std::format("the {} photo's size is unknown", source.upright_size.empty() ? "copied" : "target");
+    }
+    return std::format("the photo is {} pixels upright and the copied one {}, another shape",
+                       size_name(target.upright_size), size_name(source.upright_size));
+}
+
 }  // namespace
+
+bool same_upright_aspect(image::Size a, image::Size b) noexcept {
+    if (a.empty() || b.empty()) {
+        return false;
+    }
+    const double ra = static_cast<double>(a.width) / static_cast<double>(a.height);
+    const double rb = static_cast<double>(b.width) / static_cast<double>(b.height);
+    return std::abs(ra / rb - 1.0) <= kPasteAspectTolerance;
+}
 
 CameraCapabilities camera_capabilities(const raw::RawMetadata& metadata) {
     CameraCapabilities caps;
@@ -150,6 +206,8 @@ CameraCapabilities camera_capabilities(const raw::RawMetadata& metadata) {
         metadata.camera.normalized_make.empty() ? metadata.camera.make : metadata.camera.normalized_make;
     caps.model =
         metadata.camera.normalized_model.empty() ? metadata.camera.model : metadata.camera.normalized_model;
+    caps.upright_size =
+        image::oriented_size(metadata.geometry.visible_area.size(), metadata.geometry.orientation);
     caps.probed = true;
     auto model = engine::WhiteBalanceModel::create(metadata);
     if (model) {
@@ -412,6 +470,7 @@ struct RecipeService::State {
         if (item->probe) {
             caps.make = item->probe->camera_make;
             caps.model = item->probe->camera_model;
+            caps.upright_size = item->probe->upright_size;
         }
         bool cacheable = false;
         if (options.registry) {
@@ -427,6 +486,9 @@ struct RecipeService::State {
                 }
                 if (probed.model.empty()) {
                     probed.model = caps.model;
+                }
+                if (probed.upright_size.empty()) {
+                    probed.upright_size = caps.upright_size;
                 }
                 caps = std::move(probed);
                 cacheable = true;
@@ -537,11 +599,17 @@ Expected<engine::DevelopSettings> RecipeService::revision_settings(ItemId item,
     }
 }
 
-Expected<RecipeState> RecipeService::set_transient(ItemId item, const engine::DevelopSettings& settings) {
+Expected<RecipeState> RecipeService::set_transient(ItemId item, const engine::DevelopSettings& given) {
     try {
-        if (auto valid = settings.validate(); !valid) {
+        if (auto valid = given.validate(); !valid) {
             return Unexpected(std::move(valid.error()));
         }
+        // Version-1 settings are kept as their conversion (what reading their recipe gives).
+        auto upgraded = engine::upgrade_develop_settings(given);
+        if (!upgraded) {
+            return Unexpected(std::move(upgraded.error()));
+        }
+        const engine::DevelopSettings& settings = *upgraded;
         if (engine::mode_of(settings.white_balance) == engine::WhiteBalanceMode::Kelvin) {
             auto caps = state_->camera(item);
             if (!caps) {
@@ -1090,12 +1158,34 @@ Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& 
                 outcomes.push_back(std::move(outcome));
                 continue;
             }
+            const std::string mismatch = shape_mismatch(clipboard.camera, *caps);
+            std::set<RecipePart> skipped_parts;
             for (const RecipeCategory category : clipboard.categories) {
+                if (category == RecipeCategory::Geometry && !clipboard.settings.geometry.crop.is_full() &&
+                    !mismatch.empty()) {
+                    skipped_parts.insert(RecipePart::Geometry);
+                    outcome.skipped.push_back(PasteSkip{
+                        category, RecipePart::Geometry,
+                        std::format("the crop is not pasted: it is placed relative to the image and {}, so it would "
+                                    "frame other content with another shape",
+                                    mismatch)});
+                    continue;
+                }
+                if (category == RecipeCategory::Local && !clipboard.settings.local_adjustments.empty() &&
+                    !mismatch.empty()) {
+                    // Highlights and shadows are pasted; the masks are not.
+                    skipped_parts.insert(RecipePart::LocalAdjustments);
+                    outcome.skipped.push_back(PasteSkip{
+                        category, RecipePart::LocalAdjustments,
+                        std::format("the masks are not pasted: they are placed relative to the image and {}, so "
+                                    "they would land on other content and their shapes would distort",
+                                    mismatch)});
+                }
                 if (category == RecipeCategory::WhiteBalance) {
                     if (mode == engine::WhiteBalanceMode::CameraNeutral &&
                         !clipboard.camera.same_camera(*caps)) {
                         outcome.skipped.push_back(PasteSkip{
-                            category,
+                            category, std::nullopt,
                             std::format("camera-neutral white balance belongs to {}; the photo is from {}",
                                         camera_name(clipboard.camera), camera_name(*caps))});
                         continue;
@@ -1103,7 +1193,7 @@ Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& 
                     if (mode == engine::WhiteBalanceMode::Kelvin &&
                         !(caps->probed && caps->kelvin_available)) {
                         outcome.skipped.push_back(PasteSkip{
-                            category,
+                            category, std::nullopt,
                             "Kelvin white balance is not available for this photo: " +
                                 (caps->kelvin_unavailable_reason.empty() ? std::string("unknown calibration")
                                                                          : caps->kelvin_unavailable_reason)});
@@ -1130,6 +1220,11 @@ Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& 
                                 settings.locks.insert(control);
                             } else {
                                 settings.locks.erase(control);
+                            }
+                        }
+                        for (const RecipePart part : parts_of(category)) {
+                            if (!skipped_parts.contains(part)) {
+                                copy_value(clipboard.settings, settings, part);
                             }
                         }
                     }
@@ -1172,6 +1267,9 @@ void RecipeService::note_camera(ItemId item, const raw::RawMetadata& metadata) {
             }
             if (caps.model.empty()) {
                 caps.model = found->probe->camera_model;
+            }
+            if (caps.upright_size.empty()) {
+                caps.upright_size = found->probe->upright_size;
             }
         }
         std::lock_guard lock(state_->camera_mutex);

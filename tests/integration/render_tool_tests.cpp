@@ -4,7 +4,9 @@
 //     test pairs (always runs);
 //   * the lucent-render executable: usage errors, missing input, side files that would name the
 //     input or the export (refused) or already exist (never replaced), strict reading of --develop
-//     recipes, the develop pipeline by default with its recipe identity in the result and report,
+//     recipes (version 1, upgraded, and version 2 with masks, geometry and chroma denoising), the
+//     develop pipeline by default with its recipe identity and every operation record in the result
+//     and report,
 //     the W2 path (--legacy-neutral-v0) with report and dump, output directories beyond MAX_PATH,
 //     and no-clobber on a second run (the render cases skip when dji-fc4382-dng, the smallest
 //     smoke fixture, is not downloaded).
@@ -28,6 +30,7 @@
 #include <lucent/application/recipe.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/core/text.hpp>
+#include <lucent/engine/develop_geometry.hpp>
 #include <lucent/engine/develop_settings.hpp>
 
 #include "color_difference.hpp"
@@ -407,13 +410,22 @@ TEST(LucentRender, DevelopFilesAreReadStrictlyBeforeAnythingIsRendered) {
     Json unknown = Json::parse(canonical->json);
     unknown["sharpening"] = 0.5;
     Json newer = Json::parse(canonical->json);
-    newer["version"] = 2;
+    newer["version"] = app::kRecipeSchemaVersion + 1;
     Json newer_operation = Json::parse(canonical->json);
     newer_operation["operations"]["exposure"] = 2;
+    Json newer_masks = Json::parse(canonical->json);
+    newer_masks["operations"]["local_adjustments"] = 2;
+    Json without_geometry = Json::parse(canonical->json);  // a version-2 document lacks a member
+    without_geometry.erase("geometry");
+    Json version1_with_masks = Json::parse(canonical->json);  // a version-1 document has no masks
+    version1_with_masks["version"] = 1;
     const std::vector<std::pair<Json, std::string>> cases = {
         {unknown, "invalid_argument"},
         {newer, "version_mismatch"},
         {newer_operation, "version_mismatch"},
+        {newer_masks, "version_mismatch"},
+        {without_geometry, "invalid_argument"},
+        {version1_with_masks, "invalid_argument"},
     };
     for (std::size_t i = 0; i < cases.size(); ++i) {
         const std::filesystem::path settings = dir / (L"settings" + std::to_wstring(i) + L".json");
@@ -467,22 +479,33 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     EXPECT_EQ(report["schema_version"], 2);
     EXPECT_EQ(report["pipeline"], "develop");
     EXPECT_EQ(report["recipe"]["schema"], "lucent.develop");
-    EXPECT_EQ(report["recipe"]["version"], 1);
+    EXPECT_EQ(report["recipe"]["version"], app::kRecipeSchemaVersion);
     EXPECT_EQ(report["recipe"]["sha256"], result["settings_sha256"]);
     EXPECT_EQ(report["recipe"]["document"], Json::parse(as_shot->json));
+    EXPECT_TRUE(report["recipe"]["file_version"].is_null());  // no --develop file
     const Json& render = report["render"];
     EXPECT_EQ(render["settings"], report["recipe"]["document"]);
     EXPECT_EQ(render["stage_one"]["kind"], "export");
     EXPECT_EQ(render["base_look"]["id"], "neutral");
     EXPECT_EQ(render["base_look"]["version"], 1);
-    const std::vector<std::string> operations = {"white_balance", "camera_color", "working_space",
-                                                 "exposure",      "local_tone",   "contrast",
-                                                 "tone_curve",    "color",        "base_look"};
+    // Every operation of the pipeline, in its order (ADR 0015), applied or not.
+    const std::vector<std::string> operations = {
+        "white_balance", "camera_color", "working_space", "exposure", "chroma_denoise", "local_tone",
+        "local_adjustments", "contrast", "tone_curve", "color", "base_look", "geometry"};
     ASSERT_EQ(render["operations"].size(), operations.size());
     for (std::size_t i = 0; i < operations.size(); ++i) {
         EXPECT_EQ(render["operations"][i]["operation"], operations[i]);
     }
-    EXPECT_FALSE(render["operations"][4]["applied"].get<bool>());  // no highlights/shadows as shot
+    EXPECT_FALSE(render["operations"][5]["applied"].get<bool>());  // no highlights/shadows as shot
+    for (const std::size_t i : {std::size_t{4}, std::size_t{6}, std::size_t{11}}) {
+        EXPECT_FALSE(render["operations"][i]["applied"].get<bool>()) << operations[i];
+    }
+    // As shot, the version-2 records are null and the output is the upright image.
+    EXPECT_TRUE(render["chroma_denoise"].is_null());
+    EXPECT_TRUE(render["local_adjustments"].is_null());
+    EXPECT_TRUE(render["geometry"].is_null());
+    EXPECT_EQ(render["upright_size"], render["full_size"]);
+    EXPECT_EQ(render["output_size"], render["upright_size"]);
     EXPECT_EQ(render["color"]["path"], "dng_color_matrix");
     EXPECT_FALSE(report["metadata"].is_null());
 
@@ -504,14 +527,111 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     EXPECT_NE(edit_result["sha256"], result["sha256"]);
     const Json edit_report = read_json(dir / L"edit-report.json");
     EXPECT_EQ(edit_report["recipe"]["file"], core::path_to_utf8_lossy(settings));
-    EXPECT_TRUE(edit_report["render"]["operations"][4]["applied"].get<bool>());
+    EXPECT_EQ(edit_report["recipe"]["file_version"], app::kRecipeSchemaVersion);
+    EXPECT_TRUE(edit_report["render"]["operations"][5]["applied"].get<bool>());
     EXPECT_FALSE(edit_report["render"]["white_balance"]["target_temperature"].is_null());
+
+    // The same recipe as a version-1 document reads as its upgrade: same identity, same pixels.
+    Json version1 = Json::parse(document->json);
+    version1["version"] = 1;
+    version1.erase("chroma_denoise");
+    version1.erase("local_adjustments");
+    version1.erase("geometry");
+    version1["operations"].erase("chroma_denoise");
+    version1["operations"].erase("local_adjustments");
+    version1["operations"].erase("geometry");
+    const std::filesystem::path settings_v1 = dir / L"edit-v1.json";
+    write_text(settings_v1, version1.dump());
+    const RunResult developed_v1 =
+        run_tool({input->wstring(), L"--out", (dir / L"v1").wstring(), L"--develop", settings_v1.wstring(),
+                  L"--report", (dir / L"v1-report.json").wstring()});
+    ASSERT_EQ(developed_v1.exit_code, 0u) << developed_v1.out;
+    EXPECT_EQ(last_line(developed_v1.out)["settings_sha256"], edit_result["settings_sha256"]);
+    EXPECT_EQ(last_line(developed_v1.out)["sha256"], edit_result["sha256"]);
+    const Json v1_report = read_json(dir / L"v1-report.json");
+    EXPECT_EQ(v1_report["recipe"]["file_version"], 1);
+    EXPECT_EQ(v1_report["recipe"]["version"], app::kRecipeSchemaVersion);
+    EXPECT_EQ(v1_report["recipe"]["document"], Json::parse(document->json));
 
     // Renders are deterministic: the same recipe gives the same file.
     const RunResult again =
         run_tool({input->wstring(), L"--out", (dir / L"c").wstring(), L"--develop", settings.wstring()});
     ASSERT_EQ(again.exit_code, 0u) << again.out;
     EXPECT_EQ(last_line(again.out)["sha256"], edit_result["sha256"]);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// A version-2 recipe with masks, geometry and chroma denoising: the report holds the three records
+// and the stage-one size, and the export is the cropped, turned image.
+TEST(LucentRender, MasksGeometryAndDenoisingAreRenderedAndReported) {
+    const std::optional<std::filesystem::path> input = small_fixture();
+    if (!input) {
+        GTEST_SKIP() << "fixture 'dji-fc4382-dng' is not downloaded; run tools\\fetch-fixtures.ps1";
+    }
+    const std::filesystem::path dir = scratch_dir("develop-v2");
+    engine::DevelopSettings settings;
+    settings.exposure_ev = 0.2;
+    settings.chroma_denoise = engine::ChromaDenoiseSetting{0.6, 6.0};
+    engine::LocalAdjustment radial;
+    radial.id = 1;
+    radial.shape = engine::RadialGradientMask{{0.5, 0.5}, 0.3, 0.2, 15.0, 0.5};
+    radial.controls.exposure_ev = 0.8;
+    engine::LocalAdjustment brush;
+    brush.id = 2;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.03, 0.5, 1.0,
+                                                         {{0.2, 0.7}, {0.4, 0.75}, {0.6, 0.7}}}}};
+    brush.controls.shadows = 0.5;
+    settings.local_adjustments = {radial, brush};
+    settings.geometry.crop = engine::CropRect{0.1, 0.05, 0.85, 0.9};
+    settings.geometry.quarter_turns = 1;
+    const auto document = app::write_recipe(settings);
+    ASSERT_TRUE(document) << document.error().describe();
+    const std::filesystem::path recipe = dir / L"masks.json";
+    write_text(recipe, document->json);
+    const std::filesystem::path report_path = dir / L"report.json";
+    const RunResult r = run_tool({input->wstring(), L"--out", (dir / L"out").wstring(), L"--develop",
+                                  recipe.wstring(), L"--report", report_path.wstring()});
+    ASSERT_EQ(r.exit_code, 0u) << r.out;
+    const Json result = last_line(r.out);
+    EXPECT_EQ(result["settings_sha256"], core::to_hex(document->sha256));
+    const Json report = read_json(report_path);
+    EXPECT_EQ(report["recipe"]["file_version"], 2);
+    const Json& render = report["render"];
+    EXPECT_EQ(render["settings"], Json::parse(document->json));
+    // The records of the three operations.
+    ASSERT_FALSE(render["chroma_denoise"].is_null());
+    EXPECT_EQ(render["chroma_denoise"]["strength"], 0.6);
+    EXPECT_EQ(render["chroma_denoise"]["radius"], 6);  // full resolution: the radius itself
+    ASSERT_FALSE(render["local_adjustments"].is_null());
+    EXPECT_EQ(render["local_adjustments"]["masks"], 2);
+    EXPECT_EQ(render["local_adjustments"]["rasterized"], 1);  // the brush
+    EXPECT_GT(render["local_adjustments"]["changed_pixels"].get<std::uint64_t>(), 0u);
+    EXPECT_GT(render["local_adjustments"]["tone_radius"].get<std::int32_t>(), 0);  // the brush's shadows
+    ASSERT_FALSE(render["geometry"].is_null());
+    EXPECT_FALSE(render["geometry"]["resampled"].get<bool>());
+    EXPECT_EQ(render["geometry"]["uncovered_pixels"], 0);
+    EXPECT_EQ(render["geometry"]["orientation"], "rotate-90-cw");
+    for (const char* operation : {"chroma_denoise", "local_adjustments", "geometry"}) {
+        bool applied = false;
+        for (const Json& op : render["operations"]) {
+            if (op["operation"] == operation) {
+                applied = op["applied"].get<bool>();
+            }
+        }
+        EXPECT_TRUE(applied) << operation;
+    }
+    // The output: the upright image cropped and turned, and the export has its size.
+    const image::Size upright{render["upright_size"]["width"].get<std::int32_t>(),
+                              render["upright_size"]["height"].get<std::int32_t>()};
+    EXPECT_EQ(render["upright_size"], render["full_size"]);
+    auto mapping = engine::GeometryMapping::create(settings.geometry, upright);
+    ASSERT_TRUE(mapping);
+    EXPECT_EQ(render["output_size"]["width"], mapping->output_size().width);
+    EXPECT_EQ(render["output_size"]["height"], mapping->output_size().height);
+    EXPECT_EQ(render["geometry"]["output_size"], render["output_size"]);
+    EXPECT_EQ(result["width"], mapping->output_size().width);
+    EXPECT_EQ(result["height"], mapping->output_size().height);
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }

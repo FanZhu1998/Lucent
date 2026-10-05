@@ -45,6 +45,24 @@ public:
         return engine::estimate_develop_memory(selection->probe.metadata, request, develop_options());
     }
 
+    Expected<engine::DevelopMemoryEstimate> estimate_for(const SourceItem& item,
+                                                         const engine::StageOneRequest& request,
+                                                         const engine::DevelopSettings& settings,
+                                                         const core::CancellationToken& cancel) const override {
+        raw::ProbeOptions probe_options;
+        probe_options.subimage = item.subimage;
+        probe_options.limits = options_.decode_limits;
+        probe_options.describe_subimages = false;
+        auto selection = registry_->select(item.path, probe_options, cancel);
+        if (!selection) {
+            return Unexpected(std::move(selection.error()));
+        }
+        if (auto same = require_identity(item, selection->probe.metadata.source.identity); !same) {
+            return Unexpected(std::move(same.error()));
+        }
+        return engine::estimate_develop_memory(selection->probe.metadata, request, settings, develop_options());
+    }
+
     Expected<engine::StageOneImage> render_stage_one(const SourceItem& item,
                                                      const engine::StageOneRequest& request,
                                                      const core::CancellationToken& cancel) const override {
@@ -63,6 +81,16 @@ public:
                                                      const engine::DevelopSettings& settings,
                                                      const core::CancellationToken& cancel) const override {
         return engine::render_stage_two(stage_one, settings, develop_options(), cancel);
+    }
+
+    Expected<engine::DevelopResult> render_stage_two_cached(const engine::StageOneImage& stage_one,
+                                                            const engine::DevelopSettings& settings,
+                                                            const StageTwoCaches& caches,
+                                                            const core::CancellationToken& cancel) const override {
+        engine::DevelopOptions options = develop_options();
+        options.mask_cache = caches.masks;
+        options.stage_two_cache = caches.stage_two;
+        return engine::render_stage_two(stage_one, settings, options, cancel);
     }
 
     Expected<DevelopRender> render(const SourceItem& item, const engine::DevelopSettings& settings,

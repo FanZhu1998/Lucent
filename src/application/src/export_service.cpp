@@ -128,7 +128,7 @@ Expected<RecipeIdentity> recipe_identity(const engine::DevelopSettings& settings
     identity.revision = revision;
     identity.revision_number = revision ? revision_number : 0;
     identity.schema = std::string(kRecipeSchema);
-    identity.schema_version = settings.version;
+    identity.schema_version = kRecipeSchemaVersion;  // the canonical document's (version-1 settings are upgraded)
     identity.settings_json = std::move(document->json);
     identity.settings_sha256 = document->sha256;
     identity.operations = settings.operations;
@@ -302,7 +302,7 @@ Expected<ExportRecord> export_item(const SourceItem& item, const ExportRequest& 
     engine::StageOneRequest export_request;
     export_request.kind = engine::StageOneKind::Export;
     export_request.white_balance = settings.white_balance;
-    auto estimate = renderer.estimate(item, export_request, cancel);
+    auto estimate = renderer.estimate_for(item, export_request, settings, cancel);
     if (!estimate) {
         return Unexpected(std::move(estimate.error()));
     }

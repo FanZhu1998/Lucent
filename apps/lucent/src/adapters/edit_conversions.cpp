@@ -448,6 +448,14 @@ AutoOutcome to_auto_outcome(ItemId item, const app::AutoTaskResult& result) {
 QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboard& clipboard,
                             const std::optional<app::CameraCapabilities>& target) {
     const QString category = category_label(to_settings_category(skip.category));
+    if (skip.part == app::RecipePart::LocalAdjustments) {
+        return tr_text("%1: the masks were not pasted because this photo has another shape, so they would land "
+                       "on other parts of the picture.")
+            .arg(category);
+    }
+    if (skip.part == app::RecipePart::Geometry) {
+        return tr_text("%1: the crop was not pasted because this photo has another shape.").arg(category);
+    }
     if (skip.category == app::RecipeCategory::WhiteBalance) {
         switch (engine::mode_of(clipboard.settings.white_balance)) {
             case engine::WhiteBalanceMode::CameraNeutral:

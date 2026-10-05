@@ -1,8 +1,8 @@
 #pragma once
 
 // The seam between the application services and the engine's develop pipeline (develop.hpp, ADR
-// 0010): renders library items. The preview, edit-session and export services use it; tests
-// substitute a scripted implementation to control timing.
+// 0010, ADR 0015): renders library items. The preview, edit-session and export services use it;
+// tests substitute a scripted implementation to control timing.
 //
 // Every render of an item checks that the file still has the item's identity (the one captured
 // when it was imported): SourceChanged ("app.render.source") otherwise.
@@ -33,6 +33,13 @@ namespace lucent::app {
 // Called on the rendering thread with the fraction of a render that is done (0..1, increasing).
 using RenderProgress = std::function<void(double fraction)>;
 
+// The caches an edit session keeps for its proxy renders (engine::DevelopOptions::mask_cache and
+// stage_two_cache; ADR 0015 decisions 5 and 7). Either may be null.
+struct StageTwoCaches {
+    std::shared_ptr<engine::MaskRasterCache> masks;
+    std::shared_ptr<engine::StageTwoCache> stage_two;
+};
+
 // The result of an export render.
 struct DevelopRender {
     engine::ColorImage display;          // display_linear_rec2020(), upright: the exporter's input
@@ -53,6 +60,17 @@ public:
         const SourceItem& item, const engine::StageOneRequest& request,
         const core::CancellationToken& cancel) const = 0;
 
+    // The estimate for known settings (engine::estimate_develop_memory with `settings`: their
+    // denoising radius, brush masks and highlight/shadow masks), which renders of settings with
+    // local adjustments or denoising should admit. The default returns estimate() (an
+    // implementation without settings-aware estimates).
+    [[nodiscard]] virtual Expected<engine::DevelopMemoryEstimate> estimate_for(
+        const SourceItem& item, const engine::StageOneRequest& request, const engine::DevelopSettings& settings,
+        const core::CancellationToken& cancel) const {
+        (void)settings;
+        return estimate(item, request, cancel);
+    }
+
     // Stage one of image item.subimage of item.path (engine::render_stage_one_file).
     [[nodiscard]] virtual Expected<engine::StageOneImage> render_stage_one(
         const SourceItem& item, const engine::StageOneRequest& request,
@@ -62,6 +80,15 @@ public:
     [[nodiscard]] virtual Expected<engine::DevelopResult> render_stage_two(
         const engine::StageOneImage& stage_one, const engine::DevelopSettings& settings,
         const core::CancellationToken& cancel) const = 0;
+
+    // render_stage_two() reusing an edit session's caches (the pixels are the same as without
+    // them). The default ignores the caches.
+    [[nodiscard]] virtual Expected<engine::DevelopResult> render_stage_two_cached(
+        const engine::StageOneImage& stage_one, const engine::DevelopSettings& settings, const StageTwoCaches& caches,
+        const core::CancellationToken& cancel) const {
+        (void)caches;
+        return render_stage_two(stage_one, settings, cancel);
+    }
 
     // The export render (see the file comment). `progress` may be empty.
     [[nodiscard]] virtual Expected<DevelopRender> render(const SourceItem& item,

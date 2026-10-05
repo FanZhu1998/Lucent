@@ -33,8 +33,14 @@
 //
 // Notes. Revisions written by the service carry a note of ';'-separated key=value fields:
 // "changed=<controls>" (DevelopControl names, recipe.hpp, comma separated) and, for revert_to(),
-// "from=<revision number>"; "locks=<controls>" lists the controls whose lock changed. Readers
-// ignore keys they do not know.
+// "from=<revision number>"; "locks=<controls>" lists the controls whose lock changed and
+// "parts=<parts>" the version-2 parts that changed (RecipePart names: "chroma_denoise", "masks",
+// "geometry"; written only when one did). Readers ignore keys they do not know.
+//
+// Masks and geometry are edited like any control: a brush stroke or a crop drag is a gesture whose
+// positions are set_transient() calls (each adds points to the stroke or moves the crop) and whose
+// end is commit(), so a stroke or a drag is exactly one revision ("parts=masks" or
+// "parts=geometry").
 //
 // Locks. set_lock() records a lock change as a revision (locks are part of the settings, which are
 // immutable per revision). Locks are the optimiser's instructions (auto_develop.hpp): it changes only
@@ -52,18 +58,31 @@
 //
 // Copy and paste by category (recipe.hpp, RecipeCategory). copy() takes the item's current
 // settings and its camera; paste() applies the chosen categories to each target as ONE Paste
-// revision per target that changes. Camera-specific values never cross camera models:
+// revision per target that changes: every value of a pasted category becomes the copied one (the
+// Local category replaces the target's masks by the copied list, also by an empty one).
+// Camera-specific values never cross camera models:
 //   * white balance "camera_neutral" (multipliers relative to one camera's sensor) is pasted only
 //     to a target of the same camera make and model;
 //   * white balance "kelvin" is pasted only to a target whose calibration supports Kelvin
 //     (engine::WhiteBalanceModel::kelvin_available());
 //   * "as_shot" and every other category are camera independent.
+// Positions normalised to the image keep their place only on an image of the same shape (masks
+// and the crop are normalised per axis to the upright image, develop_settings.hpp):
+//   * the masks of the Local category are pasted only when the source and the target have the same
+//     upright aspect ratio (same_upright_aspect()); otherwise the rest of the category
+//     (highlights, shadows) is pasted and the masks are skipped (PasteSkip::part
+//     LocalAdjustments), since they would land on other content and their shapes would distort;
+//   * the Geometry category (not pasted unless chosen: kDefaultRecipeCategories) is pasted when
+//     its crop is the whole image (a straighten angle and quarter turns fit any photo) or the
+//     upright aspect ratios are the same; otherwise it is skipped as a whole;
+//   * an unknown upright size (no probe) counts as a different shape.
 // Whatever is not pasted is reported per target (PasteOutcome::skipped) with the reason, never
 // dropped silently; the locks of pasted controls travel with them. Kelvin edits by set_transient()
 // and apply() are refused (Unsupported) for an item whose calibration does not support Kelvin.
 //
-// Camera capabilities. Paste and the Kelvin check need the camera make/model and whether Kelvin is
-// available. They come from the item's probe (make, model) and from a probe of its file
+// Camera capabilities. Paste and the Kelvin check need the camera make/model, the upright image size
+// and whether Kelvin is available. They come from the item's probe (make, model, size) and from a
+// probe of its file
 // (RecipeServiceOptions::registry) the first time they are needed, cached per item until its file
 // changes (LibraryChangeKind::Refreshed). An edit session that has decoded the file reports its
 // metadata with note_camera() so no extra probe is needed. Without a registry, Kelvin availability
@@ -107,6 +126,7 @@
 #include <lucent/core/error.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/image/geometry.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 #include <lucent/raw/decoder_registry.hpp>
 
@@ -126,12 +146,25 @@ struct CameraCapabilities {
     bool kelvin_available = false;
     bool monochrome = false;
     std::string kelvin_unavailable_reason;  // developer-facing English
+    // The full-resolution upright size (the visible area after the camera orientation); 0 x 0 when
+    // unknown. What mask and crop positions are normalised to (see same_upright_aspect()).
+    image::Size upright_size;
 
     // Same make and model, both known.
     [[nodiscard]] bool same_camera(const CameraCapabilities& other) const noexcept {
         return !make.empty() && !model.empty() && make == other.make && model == other.model;
     }
 };
+
+// Relative tolerance of same_upright_aspect(): 3:2 sensors of different pixel counts (6000 x 4000,
+// 8192 x 5464, 6048 x 4024) agree within 0.25 %, while 4:3 against 3:2 differs by 12 % and portrait
+// against landscape by far more. A normalised position then lands within half the tolerance of the
+// image size of the same relative place (15 pixels of 6000).
+inline constexpr double kPasteAspectTolerance = 0.005;
+
+// True when both sizes are known (not empty) and their aspect ratios (width / height) agree within
+// kPasteAspectTolerance (relative).
+[[nodiscard]] bool same_upright_aspect(image::Size a, image::Size b) noexcept;
 
 struct RecipeState {
     ItemId item;
@@ -182,6 +215,7 @@ struct HistoryEntry {
     bool on_current_path = false;                 // the current revision or one of its ancestors
     std::vector<engine::DevelopControl> changed;  // from the note ("changed=")
     std::vector<engine::DevelopControl> locks;    // from the note ("locks=")
+    std::vector<RecipePart> parts;                // from the note ("parts="): masks, geometry, denoising
     std::optional<std::uint32_t> reverted_from;   // from the note ("from="): a revert_to() copy
 };
 
@@ -201,12 +235,17 @@ struct RecipeClipboard {
 
 struct PasteSkip {
     RecipeCategory category = RecipeCategory::WhiteBalance;
+    // The part of the category that was not pasted (the masks of Local: the rest of the category
+    // was pasted, and the category is also listed in PasteOutcome::applied; Geometry: the whole
+    // category); std::nullopt for a category whose controls were not pasted (white balance).
+    std::optional<RecipePart> part;
     std::string reason;  // developer-facing English
 };
 
 struct PasteOutcome {
     ItemId item;
-    std::vector<RecipeCategory> applied;          // categories whose values were pasted (changed or not)
+    // Categories whose values were pasted (changed or not), wholly or but for a skipped part.
+    std::vector<RecipeCategory> applied;
     std::vector<PasteSkip> skipped;               // categories not pasted, with the reason
     std::optional<catalog::RevisionId> revision;  // the Paste revision (std::nullopt: nothing changed)
     std::optional<Error> error;  // the target could not be pasted into (read-only, unknown, a store error)
@@ -251,6 +290,7 @@ public:
 
     // ---- Editing (see the file comment) --------------------------------------------------------
 
+    // Version-1 settings are kept as their version-2 conversion (engine::upgrade_develop_settings).
     // Errors: those of state(); the read-only reason; settings.validate()'s; Unsupported for Kelvin
     // white balance on a camera without a Kelvin calibration.
     [[nodiscard]] Expected<RecipeState> set_transient(ItemId item, const engine::DevelopSettings& settings);

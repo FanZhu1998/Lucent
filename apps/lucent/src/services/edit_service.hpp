@@ -79,13 +79,17 @@ enum class EditControl : std::uint8_t {
     return quint32{1} << static_cast<unsigned>(control);
 }
 
-// Copy and paste categories (the recipe contract's RecipeCategory values; stable).
+// Copy and paste categories (the recipe contract's RecipeCategory values; stable). The editor offers
+// the first five (kAllSettingsCategories); Detail and Geometry exist in the contract (recipe.hpp,
+// ADR 0015) and appear in paste reports, but have no controls in this editor yet.
 enum class SettingsCategory : std::uint8_t {
     WhiteBalance = 1,
     Exposure = 2,
-    Tone = 3,    // contrast, tone curve, base look
-    Color = 4,   // saturation, vibrance
-    Local = 5,   // highlights, shadows
+    Tone = 3,      // contrast, tone curve, base look
+    Color = 4,     // saturation, vibrance
+    Local = 5,     // highlights, shadows (and the recipe's masks)
+    Detail = 6,    // chroma noise reduction
+    Geometry = 7,  // crop, straighten, quarter turns
 };
 
 [[nodiscard]] constexpr quint32 category_bit(SettingsCategory category) noexcept {
@@ -189,7 +193,7 @@ struct EditState {
 
 // User-facing names: "White balance", "Exposure", "Contrast", "Highlights", "Shadows", "Tone curve",
 // "Saturation", "Vibrance", "Base look"; and the categories "White balance", "Exposure", "Tone",
-// "Color", "Highlights and shadows".
+// "Color", "Highlights and shadows", "Noise reduction", "Crop and rotation".
 [[nodiscard]] QString control_label(EditControl control);
 [[nodiscard]] QString category_label(SettingsCategory category);
 

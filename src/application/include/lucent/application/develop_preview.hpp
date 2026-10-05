@@ -45,12 +45,31 @@
 // is newer than what is shown: the preview keeps following the slider). Failed events are sent for
 // the newest generation only.
 //
+// Overlays (ADR 0015). Every frame carries the geometry of its render (DevelopFrame::geometry: the
+// engine::GeometryMapping of the settings' geometry for the upright size of the stage one it was
+// rendered from, i.e. at the frame's scale), which maps normalised mask points and upright pixels to
+// the frame's pixels and back (pointer positions to brush points), and the outlines of its masks
+// (engine::mask_outline()) already mapped to the frame's pixels.
+//
+// Caches (ADR 0015 decisions 5 and 7). Each session owns an engine::MaskRasterCache (brush rasters
+// at the proxy's size; a brush raster is made again only when its shape changes) and an
+// engine::StageTwoCache (the proxy's scene-linear image after chroma denoising, reused while the
+// controls after the denoising move), passed to its proxy renders (Quick and the Fit Final);
+// full-resolution renders use neither. The proxy's rebuild drops the denoised image (another stage
+// one); a changed file or close() drops both.
+//
 // Memory (MemoryAdmission, task_executor.hpp). Building a stage one is a full-resolution render
 // (TaskContext::admit, Interactive lane, the engine's stage_one_peak). The kept stage one becomes a
 // retained claim of its own bytes (the proxy: 2048 x 1366 x 3 floats, about 34 MB; the 45 MP full
 // resolution: about 540 MB), so exports see it but it holds no render place. A proxy stage-two
-// render claims its working memory as retained memory too: it never waits for a running export. A
-// full-resolution stage-two render is a render claim. stats() reports each session's memory.
+// render claims its working memory as retained memory too: it never waits for a running export.
+// Its claim is the engine's settings-aware stage-two estimate (engine::estimate_develop_memory with
+// the settings: denoising radius, brush rasters, masks' base layer) plus the 8-bit image and the
+// clipping mask, and, when the settings use a cache (denoising applied or a brush mask with an
+// effect), room for the caches to fill up to their capacities; after the render the caches' bytes
+// stay claimed as retained memory of the session (DevelopSessionStats::cache_bytes) and the rest is
+// returned. A full-resolution stage-two render is a render claim of the same estimate at full
+// resolution. stats() reports each session's memory.
 //
 // Unedited photos keep the W3 route (PreviewService: camera preview first, then a Lucent render);
 // a session is for the photo in the Edit view.
@@ -79,6 +98,8 @@
 #include <lucent/core/hash.hpp>
 #include <lucent/engine/develop.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/local_adjustments.hpp>
+#include <lucent/image/geometry.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 
 namespace lucent::app {
@@ -108,6 +129,17 @@ struct DevelopView {
     PreviewQuality quality = PreviewQuality::fit(kDefaultProxyLongEdge);
 };
 
+// A mask of the frame's settings for an overlay.
+struct MaskOverlay {
+    std::uint32_t id = 0;  // engine::LocalAdjustment::id
+    engine::MaskKind kind = engine::MaskKind::RadialGradient;
+    bool enabled = true;
+    bool invert = false;
+    // engine::mask_outline() of the shape mapped to the frame: continuous pixel coordinates of
+    // DevelopFrame::image (pixel (i, j) covers [i, i + 1) x [j, j + 1)).
+    std::vector<std::vector<image::PointD>> polylines;
+};
+
 struct DevelopFrame {
     ItemId item;
     std::uint64_t generation = 0;
@@ -122,6 +154,11 @@ struct DevelopFrame {
     ClippingMask clipping;           // of `image`
     RenderSummary summary;
     std::shared_ptr<const engine::DevelopReport> report;
+    // The geometry of this render: GeometryMapping::create(settings.geometry, the upright size of the
+    // stage one it was rendered from); its output_size() is the image's size. std::nullopt only when
+    // the mapping cannot be made (never for a successful engine render).
+    std::optional<engine::GeometryMapping> geometry;
+    std::vector<MaskOverlay> masks;  // in the settings' order (disabled ones included)
     double latency_seconds = 0.0;    // request() to frame ready (before the sink is called)
     double stage_two_seconds = 0.0;  // the engine's stage two
     double display_seconds = 0.0;    // 8-bit encoding, histogram and clipping mask
@@ -147,7 +184,12 @@ struct DevelopSessionStats {
     image::Size full_size;             // of the cached full-resolution stage one (0 x 0: none)
     std::uint64_t proxy_bytes = 0;     // the cached proxy stage one
     std::uint64_t full_bytes = 0;      // the cached full-resolution stage one
-    std::uint64_t retained_bytes = 0;  // claimed by the session's retained leases (proxy + full)
+    std::uint64_t cache_bytes = 0;     // the proxy caches: brush rasters and the denoised image
+    // Claimed by the session's retained leases: proxy + full + the caches' claim (which equals
+    // cache_bytes once no render is running).
+    std::uint64_t retained_bytes = 0;
+    std::uint64_t mask_cache_hits = 0;       // brush rasters reused
+    std::uint64_t stage_two_cache_hits = 0;  // denoised images reused
     std::uint64_t requests = 0;
     std::uint64_t stage_one_builds = 0;
     std::uint64_t proxy_renders = 0;
@@ -157,9 +199,16 @@ struct DevelopSessionStats {
     std::uint64_t requests_coalesced = 0;  // replaced before they were rendered
 };
 
+inline constexpr std::uint64_t kDefaultSessionMaskCacheBytes = std::uint64_t{64} << 20;
+inline constexpr std::uint64_t kDefaultSessionStageTwoCacheBytes = std::uint64_t{64} << 20;
+
 struct DevelopPreviewOptions {
     std::int32_t proxy_long_edge = kDefaultProxyLongEdge;  // 64 .. 16384
     double refine_tolerance = kDefaultRefineTolerance;     // >= 0
+    // Capacities of a session's proxy caches (see the file comment); 0 disables a cache. The
+    // denoised image of a 2048-pixel proxy is 32 MiB, one brush raster at most 11 MiB.
+    std::uint64_t mask_cache_bytes = kDefaultSessionMaskCacheBytes;
+    std::uint64_t stage_two_cache_bytes = kDefaultSessionStageTwoCacheBytes;
     bool parallel = true;                                  // display encoding (results do not depend on it)
     // Called (on a worker thread) with the metadata of every stage one built, for example to tell
     // RecipeService::note_camera() what the file's calibration supports. Must not throw.

@@ -1,13 +1,17 @@
-// RecipeService (recipe_service.hpp): gesture coalescing, undo/redo with branches, reset and
-// revert, locks, paste rules across cameras, read-only recipes, persistence across a restart and
-// observers. Items are synthetic DNGs imported into a session library (memory store) or a catalog.
+// RecipeService (recipe_service.hpp): gesture coalescing (also of mask strokes and crop drags),
+// undo/redo with branches, reset and revert, locks, paste rules across cameras and image shapes
+// (masks, geometry, denoising), read-only recipes, persistence across a restart (version-2 members
+// and version-1 revisions) and observers. Items are synthetic DNGs imported into a session library
+// (memory store) or a catalog.
 
+#include <algorithm>
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -37,6 +41,33 @@ rts::SyntheticDngSpec camera(const std::string& model, rts::SyntheticKind kind =
     spec.model = model;
     spec.kind = kind;
     return spec;
+}
+
+// A radial mask (id `id`) brightening the centre.
+engine::LocalAdjustment radial_mask(std::uint32_t id, double x = 0.5, double y = 0.5) {
+    engine::LocalAdjustment a;
+    a.id = id;
+    a.shape = engine::RadialGradientMask{{x, y}, 0.2, 0.15, 10.0, 0.5};
+    a.controls.exposure_ev = 0.6;
+    return a;
+}
+
+// Settings with every version-2 member: highlights and shadows, a radial and a brush mask, chroma
+// denoising and a crop with a quarter turn.
+engine::DevelopSettings local_edit() {
+    engine::DevelopSettings s;
+    s.highlights = -0.3;
+    s.shadows = 0.2;
+    engine::LocalAdjustment brush;
+    brush.id = 2;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.05, 0.5, 1.0,
+                                                         {{0.2, 0.3}, {0.3, 0.35}, {0.4, 0.3}}}}};
+    brush.controls.shadows = 0.5;
+    s.local_adjustments = {radial_mask(1), brush};
+    s.chroma_denoise = engine::ChromaDenoiseSetting{0.4, 6.0};
+    s.geometry.crop = engine::CropRect{0.1, 0.05, 0.9, 0.95};
+    s.geometry.quarter_turns = 1;
+    return s;
 }
 
 std::vector<ItemId> import_files(Library& library, const raw::DecoderRegistry& registry,
@@ -350,6 +381,192 @@ TEST_F(RecipeServiceTest, PasteNeverCarriesCameraSpecificValuesAcrossModels) {
     EXPECT_EQ(service_->copy(a(), {}).error().code, ErrorCode::InvalidArgument);
 }
 
+TEST(PasteShapes, SameUprightAspectWithinTheTolerance) {
+    EXPECT_TRUE(same_upright_aspect({6000, 4000}, {6000, 4000}));
+    EXPECT_TRUE(same_upright_aspect({6000, 4000}, {8192, 5464}));  // 3:2 sensors of other sizes
+    EXPECT_TRUE(same_upright_aspect({6000, 4000}, {6048, 4024}));
+    EXPECT_FALSE(same_upright_aspect({6000, 4000}, {4000, 3000}));  // 4:3
+    EXPECT_FALSE(same_upright_aspect({6000, 4000}, {4000, 6000}));  // portrait
+    EXPECT_FALSE(same_upright_aspect({6000, 4000}, {}));            // unknown
+    EXPECT_FALSE(same_upright_aspect({}, {}));
+}
+
+TEST_F(RecipeServiceTest, MasksAndCropsArePastedOnlyToPhotosOfTheSameShape) {
+    // A portrait photo (EXIF orientation 6: 48 x 64 upright) and a wide one (96 x 48) beside the
+    // 64 x 48 landscape ones; the wide one has a mask of its own.
+    rts::SyntheticDngSpec portrait_spec = camera("Alpha");
+    portrait_spec.orientation = 6;
+    rts::SyntheticDngSpec wide_spec = camera("Alpha");
+    wide_spec.width = 96;
+    const std::vector<ItemId> more = import_files(
+        library_, *registry_,
+        {ts::write_dng(dir_, L"portrait.dng", portrait_spec), ts::write_dng(dir_, L"wide.dng", wide_spec)});
+    ASSERT_EQ(more.size(), 2u);
+    const ItemId portrait = more[0];
+    const ItemId wide = more[1];
+    EXPECT_EQ(service_->camera(a())->upright_size, (image::Size{64, 48}));
+    EXPECT_EQ(service_->camera(portrait)->upright_size, (image::Size{48, 64}));
+    engine::DevelopSettings own;
+    own.local_adjustments = {radial_mask(5, 0.25, 0.25)};
+    ASSERT_TRUE(service_->apply(wide, own));
+
+    const engine::DevelopSettings source = local_edit();
+    ASSERT_TRUE(service_->apply(a(), source));
+    // The default categories: everything but geometry.
+    const std::set<RecipeCategory> defaults(kDefaultRecipeCategories.begin(), kDefaultRecipeCategories.end());
+    auto clipboard = service_->copy(a(), defaults);
+    ASSERT_TRUE(clipboard) << clipboard.error().describe();
+    EXPECT_EQ(clipboard->camera.upright_size, (image::Size{64, 48}));
+    const std::vector<ItemId> targets = {b(), portrait, wide};
+    auto outcomes = service_->paste(*clipboard, targets);
+    ASSERT_TRUE(outcomes) << outcomes.error().describe();
+    ASSERT_EQ(outcomes->size(), 3u);
+
+    // Same shape: masks and denoising with the rest of their categories; never the crop.
+    const PasteOutcome& same = (*outcomes)[0];
+    EXPECT_FALSE(same.error);
+    EXPECT_TRUE(same.skipped.empty());
+    ASSERT_TRUE(same.revision);
+    engine::DevelopSettings expected = source;
+    expected.geometry = engine::GeometrySetting{};
+    EXPECT_EQ(state(b()).settings, expected);
+    const HistoryEntry pasted = service_->history(b())->entries.back();
+    EXPECT_EQ(pasted.info.origin, catalog::RevisionOrigin::Paste);
+    EXPECT_EQ(pasted.parts, (std::vector<RecipePart>{RecipePart::ChromaDenoise, RecipePart::LocalAdjustments}));
+    EXPECT_EQ(pasted.changed, (std::vector<DevelopControl>{DevelopControl::Highlights, DevelopControl::Shadows}));
+    EXPECT_NE(pasted.info.note.find(";parts=chroma_denoise,masks"), std::string::npos) << pasted.info.note;
+
+    // Another shape: highlights, shadows and denoising are pasted, the masks are not (reported),
+    // and the target's own masks stay.
+    for (const std::size_t i : {std::size_t{1}, std::size_t{2}}) {
+        const PasteOutcome& other = (*outcomes)[i];
+        EXPECT_FALSE(other.error);
+        ASSERT_EQ(other.skipped.size(), 1u);
+        EXPECT_EQ(other.skipped[0].category, RecipeCategory::Local);
+        EXPECT_EQ(other.skipped[0].part, RecipePart::LocalAdjustments);
+        EXPECT_NE(other.skipped[0].reason.find("masks are not pasted"), std::string::npos) << other.skipped[0].reason;
+        EXPECT_NE(std::find(other.applied.begin(), other.applied.end(), RecipeCategory::Local), other.applied.end());
+        const engine::DevelopSettings got = state(other.item).settings;
+        EXPECT_EQ(got.highlights, source.highlights);
+        EXPECT_EQ(got.shadows, source.shadows);
+        EXPECT_EQ(got.chroma_denoise, source.chroma_denoise);
+        EXPECT_EQ(got.local_adjustments,
+                  other.item == wide ? own.local_adjustments : std::vector<engine::LocalAdjustment>{});
+        EXPECT_TRUE(got.geometry.is_identity());
+    }
+
+    // Geometry is pasted only when chosen, and its crop only to the same shape.
+    auto crop = service_->copy(a(), {RecipeCategory::Geometry});
+    ASSERT_TRUE(crop);
+    auto cropped = service_->paste(*crop, targets);
+    ASSERT_TRUE(cropped);
+    EXPECT_TRUE((*cropped)[0].skipped.empty());
+    EXPECT_EQ(state(b()).settings.geometry, source.geometry);
+    EXPECT_EQ(service_->history(b())->entries.back().parts, std::vector<RecipePart>{RecipePart::Geometry});
+    for (const std::size_t i : {std::size_t{1}, std::size_t{2}}) {
+        const PasteOutcome& other = (*cropped)[i];
+        ASSERT_EQ(other.skipped.size(), 1u);
+        EXPECT_EQ(other.skipped[0].category, RecipeCategory::Geometry);
+        EXPECT_EQ(other.skipped[0].part, RecipePart::Geometry);
+        EXPECT_TRUE(other.applied.empty());
+        EXPECT_FALSE(other.revision);
+        EXPECT_TRUE(state(other.item).settings.geometry.is_identity());
+    }
+    // A geometry without a crop (a quarter turn and a straighten angle) fits any photo.
+    engine::DevelopSettings turned = source;
+    turned.geometry = engine::GeometrySetting{};
+    turned.geometry.quarter_turns = 3;
+    turned.geometry.straighten_degrees = 1.5;
+    ASSERT_TRUE(service_->apply(a(), turned));
+    auto turn = service_->copy(a(), {RecipeCategory::Geometry});
+    ASSERT_TRUE(turn);
+    auto turned_outcomes = service_->paste(*turn, std::vector<ItemId>{portrait});
+    ASSERT_TRUE(turned_outcomes);
+    EXPECT_TRUE((*turned_outcomes)[0].skipped.empty());
+    EXPECT_EQ(state(portrait).settings.geometry, turned.geometry);
+
+    // Pasting the local category of a photo without masks removes the target's masks (same shape),
+    // like any value of a pasted category.
+    ASSERT_TRUE(service_->apply(c(), local_edit()));
+    auto plain = service_->copy(m(), {RecipeCategory::Local});
+    ASSERT_TRUE(plain);
+    auto cleared = service_->paste(*plain, std::vector<ItemId>{c()});
+    ASSERT_TRUE(cleared);
+    EXPECT_TRUE((*cleared)[0].skipped.empty());
+    EXPECT_TRUE(state(c()).settings.local_adjustments.empty());
+    EXPECT_EQ(state(c()).settings.chroma_denoise, local_edit().chroma_denoise);  // detail was not copied
+}
+
+TEST_F(RecipeServiceTest, AMaskStrokeAndACropDragAreOneRevisionEach) {
+    ASSERT_TRUE(service_->apply(a(), with_exposure(0.2)));
+    const std::size_t before = service_->history(a())->entries.size();
+    // A brush stroke: every pointer position adds a point to the stroke (a transient edit).
+    engine::DevelopSettings s = with_exposure(0.2);
+    engine::LocalAdjustment brush;
+    brush.id = 1;
+    brush.controls.exposure_ev = 0.4;
+    brush.shape = engine::BrushMask{{engine::BrushStroke{}}};
+    s.local_adjustments = {brush};
+    auto& points = std::get<engine::BrushMask>(s.local_adjustments[0].shape).strokes[0].points;
+    std::uint64_t generation = 0;
+    for (int step = 0; step < 60; ++step) {
+        points.push_back(engine::MaskPoint{0.1 + 0.01 * step, 0.5 + 0.002 * step});
+        auto t = service_->set_transient(a(), s);
+        ASSERT_TRUE(t) << t.error().describe();
+        EXPECT_GT(t->transient_generation, generation);
+        generation = t->transient_generation;
+    }
+    EXPECT_EQ(service_->history(a())->entries.size(), before);  // nothing written during the stroke
+    auto stroke = service_->commit(a());
+    ASSERT_TRUE(stroke) << stroke.error().describe();
+    EXPECT_EQ(stroke->settings, s);
+    auto history = service_->history(a());
+    ASSERT_EQ(history->entries.size(), before + 1);
+    EXPECT_TRUE(history->entries.back().changed.empty());
+    EXPECT_EQ(history->entries.back().parts, std::vector<RecipePart>{RecipePart::LocalAdjustments});
+
+    // A crop drag: one revision as well.
+    for (int step = 1; step <= 25; ++step) {
+        s.geometry.crop = engine::CropRect{0.004 * step, 0.0, 1.0, 1.0 - 0.004 * step};
+        ASSERT_TRUE(service_->set_transient(a(), s));
+    }
+    ASSERT_TRUE(service_->commit(a()));
+    history = service_->history(a());
+    ASSERT_EQ(history->entries.size(), before + 2);
+    EXPECT_EQ(history->entries.back().parts, std::vector<RecipePart>{RecipePart::Geometry});
+    EXPECT_EQ(state(a()).settings.geometry.crop, (engine::CropRect{0.004 * 25, 0.0, 1.0, 1.0 - 0.004 * 25}));
+
+    // Undo takes back the whole drag, then the whole stroke.
+    ASSERT_TRUE(service_->undo(a()));
+    EXPECT_TRUE(state(a()).settings.geometry.is_identity());
+    EXPECT_EQ(state(a()).settings.local_adjustments, s.local_adjustments);
+    ASSERT_TRUE(service_->undo(a()));
+    EXPECT_EQ(state(a()).settings, with_exposure(0.2));
+
+    // A stroke beyond the bounds of the contract is refused, not truncated.
+    engine::DevelopSettings huge = s;
+    auto& many = std::get<engine::BrushMask>(huge.local_adjustments[0].shape).strokes[0].points;
+    many.assign(engine::kMaxStrokePoints + 1, engine::MaskPoint{0.5, 0.5});
+    EXPECT_EQ(service_->set_transient(a(), huge).error().code, ErrorCode::InvalidArgument);
+}
+
+TEST_F(RecipeServiceTest, Version1SettingsAreKeptAsTheirConversion) {
+    engine::DevelopSettings old = with_exposure(0.3);
+    old.version = 1;
+    auto transient = service_->set_transient(a(), old);
+    ASSERT_TRUE(transient) << transient.error().describe();
+    EXPECT_EQ(transient->settings, with_exposure(0.3));  // version 2
+    auto committed = service_->commit(a());
+    ASSERT_TRUE(committed);
+    EXPECT_EQ(committed->committed, with_exposure(0.3));
+    EXPECT_EQ(committed->committed_sha256, write_recipe(with_exposure(0.3))->sha256);
+    // The same values as version 2 are no change.
+    auto again = service_->apply(a(), with_exposure(0.3));
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->revision, committed->revision);
+    EXPECT_EQ(service_->history(a())->entries.size(), 1u);
+}
+
 TEST_F(RecipeServiceTest, WithoutCalibrationKnowledgeKelvinIsNotPasted) {
     RecipeService blind(library_, create_memory_recipe_store());  // no registry
     engine::DevelopSettings kelvin;
@@ -581,6 +798,95 @@ TEST_F(CatalogRecipeTest, EditsAndHistorySurviveARestart) {
     auto redo_target = service_->revision_settings(item, history_after.entries[1].info.id);
     ASSERT_TRUE(redo_target);
     EXPECT_EQ(*redo_target, second);
+    close();
+}
+
+TEST_F(CatalogRecipeTest, MasksGeometryAndDenoisingSurviveARestart) {
+    open();
+    const std::vector<ItemId> items =
+        import_files(*fixture_.library, *registry_, {ts::write_dng(dir_, L"photos\\a.dng")});
+    ASSERT_EQ(items.size(), 1u);
+    const ItemId item = items[0];
+    ASSERT_TRUE(service_->apply(item, local_edit()));
+    engine::DevelopSettings moved = local_edit();
+    moved.local_adjustments[0] = radial_mask(1, 0.6, 0.4);  // the mask dragged elsewhere
+    ASSERT_TRUE(service_->apply(item, moved));
+    const RecipeState before = *service_->state(item);
+    close();
+
+    open();
+    const RecipeState after = *service_->state(item);
+    EXPECT_FALSE(after.read_only);
+    EXPECT_EQ(after.settings, moved);
+    EXPECT_EQ(after.committed_sha256, before.committed_sha256);
+    EXPECT_EQ(after.committed_sha256, write_recipe(moved)->sha256);
+    auto history = service_->history(item);
+    ASSERT_TRUE(history);
+    ASSERT_EQ(history->entries.size(), 2u);
+    EXPECT_EQ(history->entries[0].parts,
+              (std::vector<RecipePart>{RecipePart::ChromaDenoise, RecipePart::LocalAdjustments, RecipePart::Geometry}));
+    EXPECT_EQ(history->entries[1].parts, std::vector<RecipePart>{RecipePart::LocalAdjustments});
+    EXPECT_EQ(history->entries[1].info.schema_version, kRecipeSchemaVersion);
+    auto first = service_->revision_settings(item, history->entries[0].info.id);
+    ASSERT_TRUE(first);
+    EXPECT_EQ(*first, local_edit());
+    close();
+}
+
+TEST_F(CatalogRecipeTest, AVersion1RevisionIsReadAsItsUpgrade) {
+    open();
+    const std::vector<ItemId> items =
+        import_files(*fixture_.library, *registry_, {ts::write_dng(dir_, L"photos\\a.dng")});
+    ASSERT_EQ(items.size(), 1u);
+    const ItemId item = items[0];
+    close();
+
+    // A revision a version-1 build wrote (its canonical version-1 text).
+    {
+        auto catalog = ts::open_catalog(catalog_path());
+        ASSERT_TRUE(catalog);
+        catalog::NewRevision revision;
+        revision.schema_name = "lucent.develop";
+        revision.schema_version = 1;
+        revision.settings_json =
+            R"({"base_look":{"id":"neutral","version":1},"contrast":0,"exposure_ev":0.5,"highlights":0,)"
+            R"("locks":["exposure"],"operations":{"color":1,"contrast":1,"exposure":1,"local_tone":1,)"
+            R"("tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop","shadows":0,)"
+            R"("tone_curve":[[0,0],[1,1]],"version":1,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
+        revision.engine_version = "0.8.0";
+        revision.created_at = catalog::current_time();
+        ASSERT_TRUE(catalog->write([&](catalog::WriteTransaction& tx) -> Status {
+            auto appended = tx.append_revision(catalog::ItemId{static_cast<std::int64_t>(item.value)}, revision);
+            if (!appended) {
+                return Unexpected(appended.error());
+            }
+            return ok();
+        }));
+    }
+
+    open();
+    engine::DevelopSettings expected = with_exposure(0.5);
+    expected.locks = {DevelopControl::Exposure};
+    const RecipeState s = *service_->state(item);
+    EXPECT_FALSE(s.read_only);
+    EXPECT_EQ(s.settings, expected);
+    EXPECT_EQ(s.settings.version, engine::kDevelopSettingsVersion);
+    // Its identity is the version-2 one of the same settings (previews and exports agree with it).
+    EXPECT_EQ(s.committed_sha256, write_recipe(expected)->sha256);
+    auto current = service_->current_settings(item);
+    ASSERT_TRUE(current);
+    EXPECT_NE(current->document.json.find(R"("version":2)"), std::string::npos);
+    // An edit on top of it is a version-2 revision with a mask.
+    engine::DevelopSettings masked = expected;
+    masked.local_adjustments = {radial_mask(1)};
+    auto edited = service_->apply(item, masked);
+    ASSERT_TRUE(edited) << edited.error().describe();
+    auto history = service_->history(item);
+    ASSERT_TRUE(history);
+    ASSERT_EQ(history->entries.size(), 2u);
+    EXPECT_EQ(history->entries[0].info.schema_version, 1u);
+    EXPECT_EQ(history->entries[1].info.schema_version, 2u);
+    EXPECT_EQ(history->entries[1].parts, std::vector<RecipePart>{RecipePart::LocalAdjustments});
     close();
 }
 

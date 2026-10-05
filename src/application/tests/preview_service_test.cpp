@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -404,7 +405,18 @@ TEST_F(PreviewEngineTest, RendersASyntheticDngUprightAtFitAndFullQuality) {
         EXPECT_EQ(p.summary.look_version, 1u);
         EXPECT_FALSE(p.summary.demosaic.empty());
         ASSERT_TRUE(p.report);
-        EXPECT_EQ(p.report->operations.size(), 9u);
+        // Every operation of the pipeline is recorded, applied or not: version 2's chroma
+        // denoising, local adjustments and geometry included (none applied as shot).
+        ASSERT_EQ(p.report->operations.size(), 12u);
+        for (const engine::OperationRecord& operation : p.report->operations) {
+            if (operation.operation == engine::DevelopOperation::ChromaDenoise ||
+                operation.operation == engine::DevelopOperation::LocalAdjustments ||
+                operation.operation == engine::DevelopOperation::Geometry) {
+                EXPECT_FALSE(operation.applied) << engine::to_string(operation.operation);
+            }
+        }
+        EXPECT_EQ(p.report->operations.back().operation, engine::DevelopOperation::Geometry);
+        EXPECT_EQ(p.report->upright_size, (image::Size{48, 64}));
         EXPECT_EQ(p.report->stage_one_kind, engine::StageOneKind::Export);
         if (r.quality.kind == PreviewQualityKind::Fit) {
             EXPECT_EQ(p.image.width, 24);
@@ -656,8 +668,8 @@ TEST(PreviewRecipes, RequestsWithoutSettingsRenderTheCurrentRecipe) {
     // A recipe from a newer Lucent is refused, never rendered as something else.
     catalog::NewRevision newer;
     newer.schema_name = "lucent.develop";
-    newer.schema_version = 2;
-    newer.settings_json = R"({"schema":"lucent.develop","version":2})";
+    newer.schema_version = kRecipeSchemaVersion + 1;
+    newer.settings_json = std::format(R"({{"schema":"lucent.develop","version":{}}})", kRecipeSchemaVersion + 1);
     newer.created_at = catalog::current_time();
     ASSERT_TRUE(store->append(item, newer, edited->revision));
     RecipeService fresh(library, store);  // loads the store's state
