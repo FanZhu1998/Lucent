@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -232,12 +233,31 @@ TEST(TiffInspector, ReferenceDngLittleEndian) {
     expect_opcode(4, DngOpcodeListId::List3, 1, "WarpRectilinear", true, false);
     expect_opcode(5, DngOpcodeListId::List3, 2, "FixVignetteRadial", true, true);
     EXPECT_EQ(raw.opcodes[3].min_dng_version, (DngVersion{{1, 6, 0, 0}}));
-    EXPECT_EQ(raw.opcodes[1].parameter_bytes, 76u);
+    EXPECT_EQ(raw.opcodes[1].parameter_bytes, 92u);
     EXPECT_TRUE(raw.opcodes[4].follows_optional_warp_rectilinear2);
     EXPECT_TRUE(raw.has_mandatory_opcodes());
     // Parameters are addressable in the file: list offset + parameter offset.
     const DngOpcode& gain_map = raw.opcodes[1];
-    EXPECT_EQ(built.bytes.at(raw.opcode_lists[1]->offset + gain_map.parameter_offset), ts::filler(76)[0]);
+    EXPECT_EQ(slice(built, TiffValueLocation{7, 92, raw.opcode_lists[1]->offset + gain_map.parameter_offset, 92}),
+              ts::dng::gain_map());
+    // Parameters are decoded: the mandatory opcodes' exactly; the optional ones with malformed
+    // parameters keep std::monostate and say why.
+    const auto* gains = std::get_if<DngGainMap>(&gain_map.parameters);
+    ASSERT_NE(gains, nullptr);
+    EXPECT_EQ(gains->points_v, 2u);
+    EXPECT_EQ(gains->area.rect.bottom, ts::dng::kRawHeight - 12);
+    EXPECT_EQ(gains->gains, (std::vector<float>{1.25f, 1.0f, 1.0f, 1.5f}));
+    EXPECT_TRUE(std::holds_alternative<DngFixBadPixelsConstant>(raw.opcodes[0].parameters));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(raw.opcodes[2].parameters));
+    EXPECT_NE(raw.opcodes[2].parameter_error.find("MapPolynomial"), std::string::npos) << raw.opcodes[2].parameter_error;
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(raw.opcodes[3].parameters));
+    EXPECT_FALSE(raw.opcodes[3].parameter_error.empty());
+    const auto* warp = std::get_if<DngWarpRectilinear>(&raw.opcodes[4].parameters);
+    ASSERT_NE(warp, nullptr);
+    EXPECT_EQ(warp->planes.size(), 1u);
+    EXPECT_EQ(warp->planes[0].radial[2], -0.01);
+    EXPECT_TRUE(std::holds_alternative<DngFixVignetteRadial>(raw.opcodes[5].parameters));
+    EXPECT_TRUE(raw.opcodes[5].parameter_error.empty());
 
     const TiffIfdSummary& preview = s.ifds[2];
     EXPECT_EQ(preview.new_subfile_type, dng_subfile_type::kPreview);

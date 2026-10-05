@@ -3,9 +3,9 @@
 // For every fixture of fixtures/manifest.json that is cached and has committed reference
 // statistics (tests/integration/data/render_reference.json, written by
 // research/tools/render_reference.py --write-stats from rawpy renderings):
-//   * the file is rendered through engine::render_file with the default settings (a file that
-//     the reference decoder refuses is recorded as "refused" and must fail with the recorded
-//     error code);
+//   * the file is rendered through engine::render_file with the default settings but without DNG
+//     opcodes, which the reference decoder does not apply either (a file that the reference
+//     decoder refuses is recorded as "refused" and must fail with the recorded error code);
 //   * the result must be upright with the reference's dimensions and orientation (rawpy applies
 //     the file's orientation itself, so neither value comes from Lucent), finite,
 //     display-referred with max(R, G, B) <= 1, and every stage edge must match;
@@ -370,7 +370,12 @@ TEST_P(RenderFixture, RendersWithinGatesAndDisplaysAsDefined) {
     ASSERT_TRUE(registry);
     engine::RenderOptions options;
     options.keep_scene_linear = true;
-    auto result = engine::render_file(*registry, file, 0u, engine::RenderSettings{}, options, {});
+    // The reference decoder (LibRaw) applies no DNG opcodes, so the comparison renders without
+    // them (ADR 0014); the drone DNGs' opcodes are checked against an independent reference by
+    // the engine's DngOpcodeFixtures tests and tests/tools/dng_opcode_reference.py.
+    engine::RenderSettings settings;
+    settings.apply_dng_opcodes = false;
+    auto result = engine::render_file(*registry, file, 0u, settings, options, {});
     if (ref.contains("refused")) {
         // The reference decoder refuses this file too: Lucent must refuse it with the same code.
         ASSERT_FALSE(result) << fixture.id << " rendered although the reference records a refusal";
@@ -383,9 +388,22 @@ TEST_P(RenderFixture, RendersWithinGatesAndDisplaysAsDefined) {
 
     // ---- Structure ---------------------------------------------------------------------------
     const engine::RenderReport& report = result->report;
-    ASSERT_EQ(report.stages.size(), 8u);
+    // The eight stages of the W2 path, plus one record per opcode list the file has (every
+    // opcode recorded as disabled, and the render then never reported as complete).
+    std::size_t opcode_stages = 0;
+    for (const engine::StageRecord& s : report.stages) {
+        if (s.stage == engine::RenderStage::DngOpcodeList1 || s.stage == engine::RenderStage::DngOpcodeList2 ||
+            s.stage == engine::RenderStage::DngOpcodeList3) {
+            ++opcode_stages;
+        }
+    }
+    ASSERT_EQ(report.stages.size(), 8u + opcode_stages);
     EXPECT_EQ(report.stages.front().stage, engine::RenderStage::Decode);
     EXPECT_EQ(report.stages.back().stage, engine::RenderStage::Orientation);
+    if (!report.dng_opcodes.opcodes.empty()) {
+        EXPECT_FALSE(report.dng_opcodes.any_applied());
+        EXPECT_NE(report.interpretation.status, raw::InterpretationStatus::Complete);
+    }
     EXPECT_EQ(result->display.encoding, engine::display_linear_rec2020());
     ASSERT_TRUE(result->scene_linear);
     EXPECT_EQ(result->scene_linear->encoding, image::ColorEncoding::scene_linear_rec2020_d65());

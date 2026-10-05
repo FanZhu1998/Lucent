@@ -20,6 +20,7 @@
 #include <lucent/engine/display_rendering.hpp>
 #include <lucent/engine/orientation.hpp>
 
+#include "opcode_stages.hpp"
 #include "parallel_rows.hpp"
 #include "render_warnings.hpp"
 
@@ -190,6 +191,7 @@ StageOneImage copy_records(const StageOneImage& source) {
     out.demosaic = source.demosaic;
     out.orientation = source.orientation;
     out.stages = source.stages;
+    out.dng_opcodes = source.dng_opcodes;
     out.downscale = source.downscale;
     out.warnings = source.warnings;
     out.seconds = source.seconds;
@@ -271,8 +273,28 @@ Expected<StageOneImage> run_stage_one(raw::DecodedRaw&& decoded, const StageOneR
         return Unexpected(std::move(cancelled.error()));
     }
 
-    // ---- normalise ---------------------------------------------------------------------------------
+    // ---- DNG OpcodeList1 on the stored samples -------------------------------------------------------
+    DngOpcodeOptions opcode_options;
+    opcode_options.limits = options.limits;
+    opcode_options.parallel = options.parallel;
+    DngOpcodeProcessor opcodes(decoded.metadata, opcode_options);
     auto t = Clock::now();
+    if (opcodes.has_list(raw::DngOpcodeListId::List1)) {
+        const image::Size size = size_of(decoded.image);
+        if (auto status = opcodes.run_list1(decoded.image, cancel); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        out.stages.push_back(detail::opcode_stage_record(raw::DngOpcodeListId::List1,
+                                                         opcodes.records_of(raw::DngOpcodeListId::List1),
+                                                         encoding_of(decoded.image), size, size_of(decoded.image),
+                                                         seconds_since(t)));
+        if (auto cancelled = cancel.check(kWhereStage); !cancelled) {
+            return Unexpected(std::move(cancelled.error()));
+        }
+    }
+
+    // ---- normalise ---------------------------------------------------------------------------------
+    t = Clock::now();
     const image::ColorEncoding raw_encoding = encoding_of(decoded.image);
     const image::Size raw_size = size_of(decoded.image);
     NormalizeOptions normalize_options;
@@ -304,6 +326,25 @@ Expected<StageOneImage> run_stage_one(raw::DecodedRaw&& decoded, const StageOneR
     }
     if (auto cancelled = cancel.check(kWhereStage); !cancelled) {
         return Unexpected(std::move(cancelled.error()));
+    }
+
+    // ---- DNG OpcodeList2 on the normalised samples --------------------------------------------------
+    if (opcodes.has_list(raw::DngOpcodeListId::List2)) {
+        t = Clock::now();
+        const image::Size size = sensor->pixels.size();
+        if (auto status = opcodes.run_list2(*sensor, cancel); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        StageRecord s = detail::opcode_stage_record(raw::DngOpcodeListId::List2,
+                                                    opcodes.records_of(raw::DngOpcodeListId::List2), sensor->encoding,
+                                                    size, sensor->pixels.size(), seconds_since(t));
+        s.parameters.push_back(
+            param("resaturated_samples", static_cast<std::int64_t>(opcodes.report().list2_resaturated_samples)));
+        out.normalization.source_area = sensor->normalization.source_area;
+        out.stages.push_back(std::move(s));
+        if (auto cancelled = cancel.check(kWhereStage); !cancelled) {
+            return Unexpected(std::move(cancelled.error()));
+        }
     }
 
     // ---- white balance -----------------------------------------------------------------------------
@@ -383,6 +424,28 @@ Expected<StageOneImage> run_stage_one(raw::DecodedRaw&& decoded, const StageOneR
     if (auto cancelled = cancel.check(kWhereStage); !cancelled) {
         return Unexpected(std::move(cancelled.error()));
     }
+
+    // ---- DNG OpcodeList3 on the demosaiced image ---------------------------------------------------
+    if (opcodes.has_list(raw::DngOpcodeListId::List3)) {
+        t = Clock::now();
+        const image::Size size = demosaiced->pixels.size();
+        const std::array<double, 3> multipliers =
+            detail::plane_multipliers(out.white_balance.applied.multipliers,
+                                      decoded.metadata.representation.channel_colors);
+        if (auto status = opcodes.run_list3(demosaiced->pixels, multipliers, cancel); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        StageRecord s = detail::opcode_stage_record(raw::DngOpcodeListId::List3,
+                                                    opcodes.records_of(raw::DngOpcodeListId::List3),
+                                                    demosaiced->encoding, size, demosaiced->pixels.size(),
+                                                    seconds_since(t));
+        s.parameters.push_back(param("plane_multipliers", std::vector<double>(multipliers.begin(), multipliers.end())));
+        out.stages.push_back(std::move(s));
+        if (auto cancelled = cancel.check(kWhereStage); !cancelled) {
+            return Unexpected(std::move(cancelled.error()));
+        }
+    }
+    out.dng_opcodes = opcodes.report();
 
     // ---- orientation -------------------------------------------------------------------------------
     t = Clock::now();
@@ -482,6 +545,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     report.demosaic = one.demosaic;
     report.orientation = one.orientation;
     report.stage_one_stages = one.stages;
+    report.dng_opcodes = one.dng_opcodes;
     report.downscale = one.downscale;
     report.warnings = one.warnings;
     report.stage_one_seconds = one.seconds;
@@ -981,7 +1045,8 @@ Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& 
         metadata.geometry.orientation);
     const std::int32_t channels = metadata.representation.kind == raw::RawRepresentation::Monochrome ? 1 : 3;
     const std::uint64_t full_bytes = plane_bytes(full, channels, options.limits);
-    std::uint64_t one_peak = std::max({r.decode_peak, r.normalize_peak, r.demosaic_peak, r.orientation_peak});
+    std::uint64_t one_peak =
+        std::max({r.decode_peak, r.normalize_peak, r.demosaic_peak, r.orientation_peak, r.opcode_peak});
     e.stage_one_bytes = full_bytes;
     if (request.proxy_long_edge > 0 && request.proxy_long_edge < long_edge(full)) {
         const image::Size proxy = proxy_size(full, request.proxy_long_edge);

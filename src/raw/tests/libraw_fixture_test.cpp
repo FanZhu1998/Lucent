@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -305,19 +306,47 @@ TEST_F(LibRawFixtures, UndecodableCompressionIsReportedAndRefused) {
     EXPECT_EQ(decoded.error().where, "raw.libraw.interpret");
 }
 
-TEST_F(LibRawFixtures, DngOpcodesMakeInterpretationIncomplete) {
-    LUCENT_REQUIRE_FIXTURE(path, "dji-fc7303-dng");
-    auto probe = decoder_->probe(path, {}, {});
-    ASSERT_TRUE(probe) << probe.error().describe();
-    const RawMetadata& m = probe->metadata;
-    EXPECT_EQ(m.interpretation.status, InterpretationStatus::RequiresUnsupportedOperation);
-    std::vector<std::string> names;
-    for (const RequiredOperation& op : m.required_operations) {
-        EXPECT_EQ(op.stage, OperationStage::AfterDemosaic);
-        EXPECT_FALSE(op.supported_by_lucent);
-        names.push_back(op.name);
+// The drone DNGs of the corpus carry mandatory opcodes (ADR 0014); Lucent applies every one of
+// them, so their interpretation is complete (W1 to W8 reported them as unsupported).
+TEST_F(LibRawFixtures, DroneDngOpcodesAreSupported) {
+    struct Expected {
+        const char* id;
+        std::vector<std::pair<OperationStage, std::string>> opcodes;
+    };
+    const std::vector<Expected> cases = {
+        {"dji-fc7303-dng",
+         {{OperationStage::AfterDemosaic, "FixVignetteRadial"},
+          {OperationStage::AfterDemosaic, "WarpRectilinear"},
+          {OperationStage::AfterDemosaic, "GainMap"}}},
+        {"dji-fc4382-dng", {{OperationStage::AfterDemosaic, "WarpRectilinear"}}},
+        {"dji-fc220-dng",
+         {{OperationStage::StoredRaw, "FixBadPixelsList"}, {OperationStage::AfterDemosaic, "FixVignetteRadial"}}},
+        {"hasselblad-l2d-20c-dng",
+         {{OperationStage::AfterDemosaic, "GainMap"}, {OperationStage::AfterDemosaic, "WarpRectilinear"}}},
+    };
+    int checked = 0;
+    for (const Expected& expected : cases) {
+        SCOPED_TRACE(expected.id);
+        const auto path = test_support::fixture_file(expected.id);
+        if (!path) {
+            continue;
+        }
+        auto probe = decoder_->probe(*path, {}, {});
+        ASSERT_TRUE(probe) << probe.error().describe();
+        const RawMetadata& m = probe->metadata;
+        EXPECT_EQ(m.interpretation.status, InterpretationStatus::Complete);
+        std::vector<std::pair<OperationStage, std::string>> found;
+        for (const RequiredOperation& op : m.required_operations) {
+            EXPECT_TRUE(op.mandatory) << op.name;
+            EXPECT_TRUE(op.supported_by_lucent) << op.name << ": " << op.lucent_note;
+            found.emplace_back(op.stage, op.name);
+        }
+        EXPECT_EQ(found, expected.opcodes);
+        ++checked;
     }
-    EXPECT_EQ(names, (std::vector<std::string>{"FixVignetteRadial", "WarpRectilinear", "GainMap"}));
+    if (checked == 0) {
+        GTEST_SKIP() << "no drone DNG fixture is downloaded; run tools\\fetch-fixtures.ps1 -Tier all";
+    }
 }
 
 TEST_F(LibRawFixtures, FullColourModesCarryTheirPriorProcessing) {

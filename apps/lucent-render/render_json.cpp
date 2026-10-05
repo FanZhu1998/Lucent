@@ -110,7 +110,8 @@ Json settings_json(const engine::RenderSettings& s) {
                 {"apply_baseline_exposure", s.apply_baseline_exposure},
                 {"rendering", std::string(engine::to_string(s.rendering))},
                 {"highlight_knee", number(s.highlight_knee)},
-                {"apply_orientation", s.apply_orientation}};
+                {"apply_orientation", s.apply_orientation},
+                {"apply_dng_opcodes", s.apply_dng_opcodes}};
 }
 
 Json stage_json(const engine::StageRecord& s) {

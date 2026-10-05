@@ -71,7 +71,14 @@ namespace lucent::raw {
 //        row_black_delta, delta_provenance), filled from DNG BlackLevelDeltaH/V. When they are
 //        filled, `black` no longer contains the decoder's folded mean of the deltas, and
 //        UnrepresentedBlackLevelCorrection is raised only when the deltas cannot be carried.
-inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 2};
+//   1.3: DNG opcodes carry their decoded parameters (DngOpcode::parameters, parameter_error, in
+//        DngMetadata::raw_ifd); RequiredOperation::supported_by_lucent is set for the opcodes
+//        Lucent's engine applies (ADR 0014) and RequiredOperation gains lucent_note and
+//        superseded_by_warp_rectilinear2. Supported operations raise no interpretation issue, so
+//        a DNG whose every mandatory opcode is supported can be Complete. Pixel values are
+//        unchanged: the decoder still delivers the stored samples, and the engine applies the
+//        opcodes (dng_opcode_frame() describes where).
+inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 3};
 
 // ---------------------------------------------------------------------------------------------
 // Enumerations (persisted values; append only)
@@ -439,7 +446,7 @@ struct PriorProcessingStep {
     std::string detail;  // developer-facing English
 };
 
-// One operation the file requires. W1 supports none, so supported_by_lucent is always false.
+// One operation the file requires.
 struct RequiredOperation {
     RequiredOperationKind kind = RequiredOperationKind::DngOpcode;
     OperationStage stage = OperationStage::StoredRaw;
@@ -453,11 +460,20 @@ struct RequiredOperation {
     // A WarpRectilinear/WarpFisheye that follows an optional WarpRectilinear2 (DNG 1.7.1.0 ch. 7):
     // skipped by readers that apply the WarpRectilinear2.
     bool follows_optional_warp_rectilinear2 = false;
+    // Lucent's engine applies this operation at its stage (raw::assess_dng_opcode; ADR 0014). A
+    // supported operation raises no interpretation issue. Never set together with
+    // applied_by_decoder or superseded_by_warp_rectilinear2.
     bool supported_by_lucent = false;
+    // follows_optional_warp_rectilinear2 and Lucent applies that WarpRectilinear2, so this opcode
+    // is skipped as the specification requires (no issue either).
+    bool superseded_by_warp_rectilinear2 = false;
     // The decoder applied this operation (or an approximation of it) while unpacking, e.g. LibRaw
     // applying MapPolynomial of a lossy DNG. Informational: it does not make the operation
-    // supported, because Lucent has not verified the decoder's implementation.
+    // supported, because Lucent has not verified the decoder's implementation, and Lucent never
+    // applies it a second time.
     bool applied_by_decoder = false;
+    // Developer-facing English: why Lucent does not apply the operation (empty when it does).
+    std::string lucent_note;
 };
 
 struct InterpretationIssue {
@@ -556,6 +572,50 @@ struct RawMetadata {
 // origin). Empty unless the representation is Mosaic.
 [[nodiscard]] image::CfaPattern cfa_at_visible_origin(const RawMetadata& metadata);
 
+// The BayerPhase (DNG 1.7.1.0, FixBadPixelsConstant) of `cfa` at its origin; std::nullopt
+// unless it is a 2 x 2 Bayer pattern.
+[[nodiscard]] std::optional<DngBayerPhase> bayer_phase_of(const image::CfaPattern& cfa) noexcept;
+
+// The image one opcode list of the decoded DNG raw IFD processes, and where Lucent's buffer for
+// that stage lies in it (ADR 0014):
+//   List 1: the whole stored raw image (raw IFD width x height); Lucent's buffer is the decoded
+//           raw frame, which must have the same size. Unavailable when the decoder linearised
+//           the stored values (LinearizationTable) or decoded a lossy DNG through its own tone
+//           curve, since the list must see the stored values.
+//   List 2: the ActiveArea (the whole image without one), after black and white mapping;
+//           Lucent's buffer is the normalised visible area, which must lie inside it.
+//           Unavailable when the decoder applied an opcode of this list while unpacking.
+//   List 3: the same rectangle after demosaicing, with the colour planes of the camera profile
+//           (3 for colour, 1 for monochrome), which must be red, green, blue in that order.
+// Without DNG metadata (metadata.dng empty) every list is unavailable.
+struct DngOpcodeFrame {
+    DngOpcodeImage image;
+    // Lucent's buffer pixel (0, 0) is stage-image pixel (offset_x, offset_y); >= 0.
+    std::int32_t offset_x = 0;
+    std::int32_t offset_y = 0;
+};
+[[nodiscard]] DngOpcodeFrame dng_opcode_frame(const RawMetadata& metadata, DngOpcodeListId list);
+
+// The pipeline stage of an opcode list (List1 StoredRaw, List2 LinearRaw, List3 AfterDemosaic).
+[[nodiscard]] OperationStage operation_stage_of(DngOpcodeListId list) noexcept;
+
+// The RequiredOperation (kind DngOpcode) describing `opcode`, before assessment: support flags,
+// applied_by_decoder and lucent_note are left for the decoder and assess_dng_opcode_operations.
+[[nodiscard]] RequiredOperation required_operation_for(const DngOpcode& opcode);
+
+// Decides, for every DNG-opcode entry of metadata.required_operations (matched by list, index and
+// ID to metadata.dng->raw_ifd.opcodes), whether Lucent's engine applies it (assess_dng_opcode on
+// the image dng_opcode_frame() describes, evaluated in processing order: a TrimBounds Lucent
+// applies makes its rectangle the stage image of the following opcodes of its list, and in List 2
+// of List 3, as the engine does, and one that keeps no pixel of the visible area is not
+// supported; never an operation applied_by_decoder), applies the
+// WarpRectilinear2 skip rule (DNG 1.7.1.0 chapter 7: an opcode that follows an optional
+// WarpRectilinear2 Lucent applies is superseded_by_warp_rectilinear2), fills lucent_note, appends
+// an interpretation issue (MandatoryOperationUnsupported or OptionalOperationUnsupported) for each
+// opcode that is neither applied by Lucent nor superseded, and re-derives interpretation.status.
+// Decoders call it once after filling metadata.dng and the representation.
+void assess_dng_opcode_operations(RawMetadata& metadata);
+
 // Summary of one image of a multi-image file, as listed by a probe.
 struct SubimageInfo {
     std::uint32_t index = 0;
@@ -634,8 +694,9 @@ struct PixelsShape {
 // representation; the buffer matches the geometry (raw_width x raw_height), channel count and
 // sample encoding; the visible area lies inside the frame; a mosaic has a non-empty CFA equal to
 // the metadata's, whose colours all appear in channel_colors; levels are finite with black below
-// white; black deltas are empty or match the visible area's width / height; the contract version
-// is readable. Fails with ErrorCode::Internal ("raw.contract") and a
+// white; black deltas are empty or match the visible area's width / height; every operation
+// marked supported_by_lucent is a decoded DNG opcode that assess_dng_opcode accepts at its stage;
+// the contract version is readable. Fails with ErrorCode::Internal ("raw.contract") and a
 // message naming the first violation. Adapters call it before returning; tests use it too.
 [[nodiscard]] Status check_consistency(const DecodedRaw& decoded);
 

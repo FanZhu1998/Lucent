@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -17,6 +19,7 @@
 #include <lucent/export/export.hpp>
 
 #include "app_test_support.hpp"
+#include "catalog_mapping.hpp"
 
 namespace lucent::app {
 namespace {
@@ -126,6 +129,96 @@ TEST_F(SourceMaintenanceTest, AFileChangedBeforeHashingIsMarkedChangedAndReRead)
     EXPECT_EQ(reread->unhashed_items, std::vector<ItemId>{before.id});
     EXPECT_EQ(hash_all().hashed, 1u);
     EXPECT_EQ(*named(L"a.dng").sha256, ts::file_sha256(path));
+}
+
+// Items catalogued by a build with an older decoded-RAW contract (before W9 made DNG opcodes
+// supported, the drone DNGs were stored "unsupported") are probed again by the presence check, in
+// place and once.
+TEST_F(SourceMaintenanceTest, OutdatedSupportStatusIsRenewedOnceInPlace) {
+    const auto path = ts::write_dng(dir_, L"in\\a.dng");
+    ts::write_dng(dir_, L"in\\b.dng", rts::SyntheticDngSpec{.model = "Synthetic DNA"});
+    import(dir_.path() / L"in");
+    hash_all();
+    const SourceItem current = named(L"a.dng");
+    ASSERT_EQ(current.support.status, SupportStatus::Supported);
+    ASSERT_FALSE(probe_outdated(current));
+    ASSERT_TRUE(library().set_flags(current.id, ItemFlags{PickFlag::Picked, 4}));
+
+    // Store what a build before W9 would have: no probe contract, and Unsupported.
+    SourceItem stale = named(L"a.dng");
+    stale.probe->contract.reset();
+    stale.support = assess_interpretation_status(raw::InterpretationStatus::RequiresUnsupportedOperation);
+    ASSERT_TRUE(fixture_.catalog->write([&](catalog::WriteTransaction& tx) -> Status {
+        auto record = tx.find_item(catalog::ItemId{static_cast<std::int64_t>(stale.id.value)});
+        if (!record) {
+            return Unexpected(std::move(record.error()));
+        }
+        if (!*record) {
+            return fail(ErrorCode::NotFound, "the item is not in the catalog", "test");
+        }
+        const catalog::ItemMetadata metadata = detail::to_metadata(stale, catalog::Timestamp{});
+        auto ids = tx.upsert_items((*record)->source_id, std::span(&metadata, 1));
+        if (!ids) {
+            return Unexpected(std::move(ids.error()));
+        }
+        return ok();
+    }));
+    const auto reopen = [&] {
+        fixture_.library.reset();
+        auto library = CatalogLibrary::open(fixture_.catalog);
+        ASSERT_TRUE(library) << library.error().describe();
+        fixture_.library = std::move(*library);
+    };
+    reopen();
+    const SourceItem before = named(L"a.dng");
+    EXPECT_EQ(before.support.status, SupportStatus::Unsupported);
+    EXPECT_TRUE(probe_outdated(before));
+    EXPECT_FALSE(probe_outdated(named(L"b.dng")));
+
+    const RefreshReport report = refresh_all();
+    EXPECT_EQ(report.present, 2u);
+    EXPECT_EQ(report.changed, 0u);
+    EXPECT_EQ(report.outdated, 1u);
+    EXPECT_EQ(report.reprobed_items, std::vector<ItemId>{before.id});
+    EXPECT_TRUE(report.unhashed_items.empty());  // the hash is kept: the file did not change
+    const SourceItem after = named(L"a.dng");
+    EXPECT_EQ(after.id, before.id);
+    EXPECT_EQ(after.support.status, SupportStatus::Supported);
+    EXPECT_FALSE(probe_outdated(after));
+    EXPECT_EQ(after.flags, (ItemFlags{PickFlag::Picked, 4}));
+    EXPECT_EQ(after.sha256, before.sha256);
+    EXPECT_EQ(after.identity, before.identity);
+    EXPECT_EQ(after.source_state, SourceState::Present);
+
+    // Renewed for good: the catalog stores the contract now, so the next check re-reads nothing.
+    reopen();
+    EXPECT_FALSE(probe_outdated(named(L"a.dng")));
+    EXPECT_EQ(named(L"a.dng").support.status, SupportStatus::Supported);
+    const RefreshReport again = refresh_all();
+    EXPECT_EQ(again.outdated, 0u);
+    EXPECT_TRUE(again.reprobed_items.empty());
+    EXPECT_EQ(ts::file_sha256(path), *after.sha256);  // the original is untouched
+
+    // With reprobe_outdated off, an outdated item is only checked.
+    SourceItem stale_b = named(L"b.dng");
+    stale_b.probe->contract.reset();
+    ASSERT_TRUE(fixture_.catalog->write([&](catalog::WriteTransaction& tx) -> Status {
+        auto record = tx.find_item(catalog::ItemId{static_cast<std::int64_t>(stale_b.id.value)});
+        if (!record || !*record) {
+            return fail(ErrorCode::NotFound, "the item is not in the catalog", "test");
+        }
+        const catalog::ItemMetadata metadata = detail::to_metadata(stale_b, catalog::Timestamp{});
+        auto ids = tx.upsert_items((*record)->source_id, std::span(&metadata, 1));
+        return ids ? ok() : Status(Unexpected(std::move(ids.error())));
+    }));
+    reopen();
+    RefreshOptions options;
+    options.reprobe_outdated = false;
+    auto unchanged = refresh_sources(library(), *registry_, {}, options);
+    ASSERT_TRUE(unchanged) << unchanged.error().describe();
+    EXPECT_EQ(unchanged->outdated, 0u);
+    EXPECT_TRUE(unchanged->reprobed_items.empty());
+    EXPECT_TRUE(probe_outdated(named(L"b.dng")));
 }
 
 TEST_F(SourceMaintenanceTest, ContentThatChangedUnderTheSameIdentityIsFoundByVerification) {

@@ -5,7 +5,10 @@
 // cached stage one and a fast stage two.
 //
 // Stage one (render_stage_one), done once per image and cached by the caller:
-//     decode -> normalise -> white balance -> demosaic -> orientation [-> proxy downscale]
+//     decode [-> DNG OpcodeList1] -> normalise [-> DNG OpcodeList2] -> white balance -> demosaic
+//     [-> DNG OpcodeList3] -> orientation [-> proxy downscale]
+// (the DNG opcode stages run when the file has those lists: dng_opcode_processing.hpp, ADR 0014;
+// every kind of stage one applies the same opcodes, so previews and exports agree)
 // producing white-balanced camera RGB (or monochrome), upright, at full resolution or as a proxy
 // (make_proxy: area-average box downscale in linear camera RGB to a requested long edge).
 // Two kinds (StageOneKind), both balanced with StageOneRequest::white_balance (as shot by
@@ -64,6 +67,7 @@
 #include <lucent/engine/demosaic.hpp>
 #include <lucent/engine/develop_operations.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/guided_filter.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/engine/sensor.hpp>
@@ -79,19 +83,21 @@ namespace lucent::engine {
 
 // Version of the develop pipeline's stage graph (bump when stages are added, removed or
 // reordered, or the split between the stages changes).
-inline constexpr std::uint32_t kDevelopPipelineVersion = 1;
+//   2: the DNG opcode stages (opcode processing version kDngOpcodeProcessingVersion 1).
+inline constexpr std::uint32_t kDevelopPipelineVersion = 2;
 // Version of the proxy downscale semantics.
 inline constexpr std::uint32_t kBoxDownscaleVersion = 1;
 
 // Every semantic version of the pipeline's own algorithms that a recipe does not carry (a recipe
 // carries its operation and base-look versions): the stage graph, sensor normalisation, white
-// balance, the demosaic routes, camera colour, the working space, the guided filter and the proxy
-// downscale. Pixels persisted under a recipe identity (rendered thumbnails) are keyed by these as
-// well, so a newer engine never shows an older engine's rendering. Append new versions here.
-inline constexpr std::array<std::uint32_t, 10> kDevelopEngineVersions{
+// balance, the demosaic routes, camera colour, the working space, the guided filter, the proxy
+// downscale and DNG opcode processing. Pixels persisted under a recipe identity (rendered
+// thumbnails) are keyed by these as well, so a newer engine never shows an older engine's
+// rendering. Append new versions here.
+inline constexpr std::array<std::uint32_t, 11> kDevelopEngineVersions{
     kDevelopPipelineVersion, kSensorNormalizationVersion, kWhiteBalanceVersion, kMalvarHeCutlerVersion,
     kXTransBaselineVersion,  kBypassVersion,              kCameraColorVersion,  kWorkingSpaceVersion,
-    kGuidedFilterVersion,    kBoxDownscaleVersion};
+    kGuidedFilterVersion,    kBoxDownscaleVersion,        kDngOpcodeProcessingVersion};
 
 // How stage one balanced its samples (persisted; append only).
 enum class StageOneKind : std::uint8_t {
@@ -143,6 +149,8 @@ struct StageOneImage {
     DemosaicRecord demosaic;
     image::Orientation orientation = image::Orientation::Normal;  // baked into the pixels
     std::vector<StageRecord> stages;                               // decode .. orientation
+    // Every DNG opcode and the geometry changes it made, in stored orientation (ADR 0014).
+    DngOpcodeReport dng_opcodes;
     std::optional<DownscaleRecord> downscale;                      // proxies only
     // Developer-facing English: everything that makes the result less than a faithful
     // interpretation (interpretation issues, baseline routes, unbalanced data, ...).
@@ -206,6 +214,7 @@ struct DevelopReport {
     DemosaicRecord demosaic;
     image::Orientation orientation = image::Orientation::Normal;
     std::vector<StageRecord> stage_one_stages;
+    DngOpcodeReport dng_opcodes;
     std::optional<DownscaleRecord> downscale;
     std::vector<std::string> warnings;
     double stage_one_seconds = 0.0;

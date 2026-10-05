@@ -453,9 +453,20 @@ Status Inspector::parse_opcode_list(const TagRef& tag, DngOpcodeListId list, Tif
         error.message = std::format("{}: {} (list at offset {})", tag.path, error.message, location->offset);
         return Unexpected(std::move(error));
     }
+    // The decoded parameters stay in the summary: charge about their size (at most the payload's)
+    // a second time, besides the payload read above.
+    if (auto budget = charge(tag, tag.entry.byte_count); !budget) {
+        return Unexpected(std::move(budget.error()));
+    }
+    if (auto decoded = decode_dng_opcode_parameters(*opcodes, *payload); !decoded) {
+        Error error = std::move(decoded.error());
+        error.message = std::format("{}: {} (list at offset {})", tag.path, error.message, location->offset);
+        return Unexpected(std::move(error));
+    }
     const auto index = static_cast<std::size_t>(list) - 1;
     summary.opcode_lists[index] = *location;
-    summary.opcodes.insert(summary.opcodes.end(), opcodes->begin(), opcodes->end());
+    summary.opcodes.insert(summary.opcodes.end(), std::make_move_iterator(opcodes->begin()),
+                           std::make_move_iterator(opcodes->end()));
     return ok();
 }
 

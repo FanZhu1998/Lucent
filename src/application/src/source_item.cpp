@@ -116,6 +116,7 @@ ProbeSummary summarize_probe(const raw::RawMetadata& metadata) {
     summary.extension_hint = metadata.format.extension_hint;
     summary.decoder = metadata.decoder.adapter_id;
     summary.decoder_version = metadata.decoder.library_version;
+    summary.contract = raw::kDecodedRawContractVersion;
     const raw::CameraIdentity& camera = metadata.camera;
     summary.camera_make = camera.normalized_make.empty() ? camera.make : camera.normalized_make;
     summary.camera_model = camera.normalized_model.empty() ? camera.model : camera.normalized_model;
@@ -148,6 +149,10 @@ Status ItemFlags::validate() const {
                     "app.library.flags");
     }
     return ok();
+}
+
+bool probe_outdated(const SourceItem& item) noexcept {
+    return item.probe && (!item.probe->contract || *item.probe->contract < raw::kDecodedRawContractVersion);
 }
 
 }  // namespace lucent::app

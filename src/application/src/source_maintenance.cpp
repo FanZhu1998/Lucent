@@ -37,6 +37,7 @@ struct FileGroup {
     std::vector<ItemId> items;  // library order
     std::vector<std::uint32_t> subimages;
     std::vector<bool> probed;  // the item has a probe summary (a thumbnail can be cached for it)
+    bool outdated = false;     // an item of the file has an outdated probe (probe_outdated())
 };
 
 Status require_maintenance(const Library& library, std::string_view where) {
@@ -70,6 +71,7 @@ std::vector<FileGroup> group_files(const Library& library, std::span<const ItemI
         group.items.push_back(item.id);
         group.subimages.push_back(item.subimage);
         group.probed.push_back(item.probe.has_value());
+        group.outdated = group.outdated || probe_outdated(item);
     };
     if (selection.empty()) {
         for (const SourceItem& item : library.items()) {
@@ -336,6 +338,7 @@ Expected<RefreshReport> refresh_sources(Library& library, const raw::DecoderRegi
             state.items_total += group.items.size();
         }
         std::vector<const FileGroup*> changed;
+        std::vector<const FileGroup*> outdated;  // present, with an outdated probe
         for (const FileGroup& group : groups) {
             if (cancel.is_cancelled()) {
                 report.cancelled = true;
@@ -369,33 +372,55 @@ Expected<RefreshReport> refresh_sources(Library& library, const raw::DecoderRegi
                 if (!group.sha256) {
                     append(report.unhashed_items, group.items);
                 }
+                if (group.outdated && options.reprobe_outdated) {
+                    ++report.outdated;
+                    outdated.push_back(&group);
+                }
                 continue;
             }
             ++report.changed;
             set_state(library, group, SourceState::Changed);
             changed.push_back(&group);
         }
-        if (options.reprobe_changed && !changed.empty() && !report.cancelled) {
+        std::vector<const FileGroup*> reread_files;
+        if (options.reprobe_changed) {
+            reread_files = changed;
+        }
+        reread_files.insert(reread_files.end(), outdated.begin(), outdated.end());
+        if (!reread_files.empty() && !report.cancelled) {
             state.phase = MaintenancePhase::Reprobing;
             state.files_done = 0;
-            state.files_total = changed.size();
+            state.files_total = reread_files.size();
             state.current.clear();
             report_progress(progress, state);
             ImportRequest request;
-            for (const FileGroup* group : changed) {
+            for (const FileGroup* group : reread_files) {
                 request.files.push_back(group->path);
             }
             request.probe_limits = options.probe_limits;
             request.record = false;
+            request.reprobe_known = !outdated.empty();
             auto reread = import_sources(library, registry, request, {}, cancel);
             if (!reread) {
                 return Unexpected(std::move(reread.error()));
             }
             append(report.reprobed_items, reread->refreshed);
-            append(report.unhashed_items, reread->refreshed);
-            append(report.unhashed_items, reread->added);  // images the new version added
+            // A file re-read for an outdated probe keeps its hash; its unhashed items are listed
+            // above already.
+            std::unordered_set<std::uint64_t> listed;
+            for (const ItemId id : report.unhashed_items) {
+                listed.insert(id.value);
+            }
+            for (const std::vector<ItemId>* ids : {&reread->refreshed, &reread->added}) {  // added: new images
+                for (const ItemId id : *ids) {
+                    const std::optional<SourceItem> item = library.find(id);
+                    if (item && !item->sha256 && listed.insert(id.value).second) {
+                        report.unhashed_items.push_back(id);
+                    }
+                }
+            }
             report.cancelled = report.cancelled || reread->cancelled;
-            state.files_done = changed.size();
+            state.files_done = reread_files.size();
             report_progress(progress, state);
         }
         return report;
