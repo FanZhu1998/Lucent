@@ -11,7 +11,9 @@
 #include <limits>
 #include <new>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include <lucent/analysis/objective.hpp>
 #include <lucent/analysis/proposals.hpp>
@@ -35,6 +37,8 @@ constexpr std::string_view kWhere = "app.auto";
 constexpr std::string_view kWhereSupport = "app.auto.support";
 constexpr std::string_view kWhereMemory = "app.auto.memory";
 constexpr std::size_t kMaxNoteReasonBytes = 240;
+// The analysis' share of the progress of a run with the final check (a 45 MP photo: 1.8 s of 7).
+constexpr double kAnalysisShare = 0.25;
 
 using Clock = std::chrono::steady_clock;
 
@@ -100,9 +104,10 @@ analysis::EditVector edit_of(const engine::DevelopSettings& s, const EditReferen
     return e;
 }
 
-// Probe, memory check against `needed(estimate)`, one decode.
+// Probe and decode; with the final check, the memory check of the whole run first (the decode is
+// kept for the check, so the file is decoded once).
 Expected<raw::DecodedRaw> decode_photo(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
-                                       std::uint32_t subimage, const AutoRunOptions& options, bool for_check,
+                                       std::uint32_t subimage, const AutoRunOptions& options, bool final_check,
                                        const core::CancellationToken& cancel) {
     raw::ProbeOptions probe_options;
     probe_options.subimage = subimage;
@@ -112,15 +117,15 @@ Expected<raw::DecodedRaw> decode_photo(const raw::DecoderRegistry& registry, con
     if (!selection) {
         return Unexpected(std::move(selection.error()));
     }
-    if (for_check) {
+    if (final_check) {
         auto estimate = estimate_automatic_memory(selection->probe.metadata, options);
         if (!estimate) {
             return Unexpected(std::move(estimate.error()));
         }
         if (*estimate > options.analysis.develop.memory_budget_bytes) {
             return fail(ErrorCode::LimitExceeded,
-                        std::format("the full-resolution check needs about {} MiB of pixel memory, above the budget "
-                                    "of {} MiB",
+                        std::format("the automatic settings with their full-resolution check need about {} MiB of "
+                                    "pixel memory, above the budget of {} MiB",
                                     *estimate >> 20, options.analysis.develop.memory_budget_bytes >> 20),
                         std::string(kWhereMemory));
         }
@@ -129,6 +134,86 @@ Expected<raw::DecodedRaw> decode_photo(const raw::DecoderRegistry& registry, con
     decode_options.subimage = subimage;
     decode_options.limits = options.analysis.develop.decode_limits;
     return selection->decoder->decode(path, decode_options, cancel);
+}
+
+// A deep copy of decoded samples (the final check's, kept while the analysis consumes the original).
+Expected<raw::RawPixels> clone_pixels(const raw::RawPixels& pixels) {
+    return std::visit(
+        [](const auto& buffer) -> Expected<raw::RawPixels> {
+            auto copy = buffer.clone();
+            if (!copy) {
+                return Unexpected(std::move(copy.error()));
+            }
+            return raw::RawPixels(std::move(*copy));
+        },
+        pixels);
+}
+
+Expected<raw::DecodedRaw> clone_decoded(const raw::DecodedRaw& source) {
+    raw::DecodedRaw out;
+    out.contract = source.contract;
+    out.metadata = source.metadata;
+    auto image = std::visit(
+        [](const auto& frame) -> Expected<raw::RawImage> {
+            using Frame = std::decay_t<decltype(frame)>;
+            auto pixels = clone_pixels(frame.pixels);
+            if (!pixels) {
+                return Unexpected(std::move(pixels.error()));
+            }
+            Frame copy;
+            copy.pixels = std::move(*pixels);
+            copy.encoding = frame.encoding;
+            if constexpr (std::is_same_v<Frame, raw::MosaicFrame>) {
+                copy.cfa = frame.cfa;
+            }
+            return raw::RawImage(std::move(copy));
+        },
+        source.image);
+    if (!image) {
+        return Unexpected(std::move(image.error()));
+    }
+    out.image = std::move(*image);
+    return out;
+}
+
+// The numerical validity of a full-resolution render (evaluate_candidate()'s NumericalValidity, the
+// only check a baseline can fail): non-finite samples and the finite pixels, as measure_render()
+// counts them.
+struct Validity {
+    std::uint64_t nonfinite_samples = 0;
+    std::uint64_t pixels = 0;
+};
+
+Validity scan_validity(const engine::ColorImage& display) {
+    Validity v;
+    const auto& px = display.pixels;
+    const std::int32_t channels = px.channels();
+    for (std::int32_t y = 0; y < px.height(); ++y) {
+        const float* row = px.row(y);
+        for (std::int32_t x = 0; x < px.width(); ++x, row += channels) {
+            std::uint64_t bad = 0;
+            for (std::int32_t c = 0; c < channels; ++c) {
+                bad += static_cast<std::uint64_t>(!std::isfinite(row[c]));
+            }
+            v.nonfinite_samples += bad;
+            v.pixels += static_cast<std::uint64_t>(bad == 0);
+        }
+    }
+    return v;
+}
+
+// evaluate_candidate()'s wording of a numerical-validity failure; empty when valid.
+std::string validity_failure(const Validity& v, bool curves_monotone) {
+    if (v.pixels == 0) {
+        return "numerical_validity: empty render";
+    }
+    if (v.nonfinite_samples > 0) {
+        return std::format("numerical_validity: {} non-finite output samples", v.nonfinite_samples);
+    }
+    if (!curves_monotone) {
+        return "numerical_validity: a contrast or tone curve is not non-decreasing";
+    }
+    return {};
 }
 
 Status check_support(const raw::DecodedRaw& decoded, const AutoRunOptions& options, const std::filesystem::path& path) {
@@ -176,9 +261,35 @@ std::vector<analysis::NamedValue> check_values(const analysis::RenderStats& s) {
             {"saturation_log_ratio", s.saturation_log_ratio}};
 }
 
-// Step 4 of the file comment: the attempts of the ladder in order, until one passes.
-Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
-                                               std::uint32_t subimage, const analysis::AutoResult& result,
+// The first attempt of a ladder: the optimiser's choice.
+Expected<AutoAttempt> first_attempt(const engine::DevelopSettings& chosen) {
+    AutoAttempt attempt;
+    attempt.index = 0;
+    attempt.kind = AutoAttemptKind::Chosen;
+    attempt.settings = chosen;
+    auto document = write_recipe(chosen);
+    if (!document) {
+        return Unexpected(std::move(document.error()));
+    }
+    attempt.settings_sha256 = document->sha256;
+    attempt.reason = "the optimiser's choice";
+    return attempt;
+}
+
+// Progress of the final check (fractions of the check, by measured cost on a 45 MP photo: the source
+// pass, stage one and context about a quarter, the baseline's render and measurement about 45 %, the
+// choice's render and measurement the rest).
+constexpr double kCheckAfterSource = 0.16;
+constexpr double kCheckAfterStageOne = 0.21;
+constexpr double kCheckAfterContext = 0.27;
+constexpr double kCheckAfterBaselineRender = 0.33;
+constexpr double kCheckAfterBaseline = 0.72;
+constexpr double kCheckAfterFirstRender = 0.78;
+constexpr double kCheckAfterFirstAttempt = 0.97;
+
+// Step 4 of the file comment: the attempts of the ladder in order, until one passes. `decoded` is
+// the run's decode (kept for the check).
+Expected<std::vector<AutoAttempt>> final_check(raw::DecodedRaw&& decoded, const analysis::AutoResult& result,
                                                const engine::DevelopSettings& chosen, const AutoRunRequest& request,
                                                const AutoRunOptions& options, const core::CancellationToken& cancel,
                                                const std::function<void(double)>& progress) {
@@ -187,30 +298,63 @@ Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& regis
         return fail(ErrorCode::Internal, "the analysis has no baseline candidate", std::string(kWhere));
     }
     const engine::DevelopSettings& baseline = result.candidates.front().settings;
-
-    auto decoded = decode_photo(registry, path, subimage, options, true, cancel);
-    if (!decoded) {
-        return Unexpected(std::move(decoded.error()));
-    }
-    if (Status supported = check_support(*decoded, options, path); !supported) {
-        return Unexpected(std::move(supported.error()));
-    }
-    progress(0.1);
-    const raw::RawMetadata& md = decoded->metadata;
-    const image::Size upright = image::oriented_size(md.geometry.visible_area.size(), md.geometry.orientation);
-    const std::array<image::Size, 1> grids{upright};
-    auto source = analysis::analyze_source(*decoded, grids, develop.parallel, cancel);
-    if (!source) {
-        return Unexpected(std::move(source.error()));
-    }
     engine::StageOneRequest stage_request;
     stage_request.kind = engine::StageOneKind::Interactive;
     stage_request.white_balance = engine::AsShotWhiteBalance{};
-    auto stage_one = engine::render_stage_one(std::move(*decoded), stage_request, develop, cancel);
+
+    // The choice is the baseline (the camera's rendering for the controls the optimiser sets, or
+    // every one of them locked): the ladder is that one rung, and evaluate_candidate() can fail a
+    // baseline on numerical validity only. Its full-resolution render is scanned for it: the same
+    // outcome by construction, without the measurements.
+    if (chosen == baseline) {
+        const auto started = Clock::now();
+        auto stage_one = engine::render_stage_one(std::move(decoded), stage_request, develop, cancel);
+        if (!stage_one) {
+            return Unexpected(std::move(stage_one.error()));
+        }
+        progress(0.4);
+        auto attempt = first_attempt(chosen);
+        if (!attempt) {
+            return Unexpected(std::move(attempt.error()));
+        }
+        auto rendered = engine::render_stage_two(*stage_one, chosen, develop, cancel);
+        if (!rendered) {
+            if (rendered.error().code == ErrorCode::Cancelled || rendered.error().code == ErrorCode::OutOfMemory) {
+                return Unexpected(std::move(rendered.error()));
+            }
+            attempt->check.failures.push_back("render: " + rendered.error().describe());
+        } else {
+            progress(0.9);
+            const std::string failure = validity_failure(scan_validity(rendered->display), curves_monotone(chosen));
+            if (!failure.empty()) {
+                attempt->check.failures.push_back(failure);
+            }
+        }
+        bool passed = attempt->check.failures.empty();
+        if (request.fail_final_checks > 0) {
+            passed = false;
+            attempt->check.forced = true;
+            attempt->check.failures.push_back("failed on request (test hook fail-final-check)");
+        }
+        attempt->check.outcome = passed ? catalog::AutoCheckOutcome::Passed : catalog::AutoCheckOutcome::Failed;
+        attempt->check.seconds = seconds_since(started);
+        progress(1.0);
+        return std::vector<AutoAttempt>{std::move(*attempt)};
+    }
+
+    const raw::RawMetadata& md = decoded.metadata;
+    const image::Size upright = image::oriented_size(md.geometry.visible_area.size(), md.geometry.orientation);
+    const std::array<image::Size, 1> grids{upright};
+    auto source = analysis::analyze_source(decoded, grids, develop.parallel, cancel);
+    if (!source) {
+        return Unexpected(std::move(source.error()));
+    }
+    progress(kCheckAfterSource);
+    auto stage_one = engine::render_stage_one(std::move(decoded), stage_request, develop, cancel);
     if (!stage_one) {
         return Unexpected(std::move(stage_one.error()));
     }
-    progress(0.35);
+    progress(kCheckAfterStageOne);
     const bool coverage_ok = stage_one->full_size == upright && stage_one->pixels.size() == upright &&
                              !source->coverage.empty() && source->coverage[0].size == upright;
     auto context = analysis::make_image_context(*stage_one, coverage_ok ? &source->coverage[0] : nullptr,
@@ -257,8 +401,11 @@ Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& regis
         reference.baseline_multipliers = *multipliers;
         reference.model = std::move(*model);
     }
+    progress(kCheckAfterContext);
 
-    // The baseline at full resolution: the reference of every relative check.
+    // The baseline at full resolution: the reference of every relative check. When it is itself
+    // numerically invalid nothing can be judged against it: the choice fails with that reason and,
+    // the baseline being the last resort, no attempt passes (check_failed()).
     analysis::BaselineFeatures features;
     analysis::RenderStats base;
     {
@@ -266,20 +413,29 @@ Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& regis
         if (!rendered) {
             return Unexpected(std::move(rendered.error()));
         }
+        progress(kCheckAfterBaselineRender);
         auto measured = analysis::measure_render(rendered->display, *context, nullptr, &features, develop.parallel,
                                                  cancel);
         if (!measured) {
             return Unexpected(std::move(measured.error()));
         }
-        if (measured->nonfinite_samples > 0 || measured->pixels == 0) {
-            return fail(ErrorCode::Internal,
-                        std::format("the full-resolution baseline render has {} non-finite samples ({} pixels)",
-                                    measured->nonfinite_samples, measured->pixels),
-                        std::string(kWhere));
+        if (measured->nonfinite_samples > 0 || measured->pixels == 0 || options.test_invalid_baseline) {
+            auto attempt = first_attempt(chosen);
+            if (!attempt) {
+                return Unexpected(std::move(attempt.error()));
+            }
+            attempt->check.outcome = catalog::AutoCheckOutcome::Failed;
+            attempt->check.forced = options.test_invalid_baseline;
+            attempt->check.failures.push_back(
+                std::format("numerical_validity: the full-resolution as-shot baseline render has {} non-finite "
+                            "samples ({} valid pixels){}, so no attempt can be judged",
+                            measured->nonfinite_samples, measured->pixels,
+                            options.test_invalid_baseline ? " (declared invalid by the test hook)" : ""));
+            return std::vector<AutoAttempt>{std::move(*attempt)};
         }
         base = *measured;
     }
-    progress(0.55);
+    progress(kCheckAfterBaseline);
 
     // The ladder: the choice, its conservative fallbacks, the baseline.
     std::vector<Rung> ladder;
@@ -291,10 +447,14 @@ Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& regis
     for (engine::DevelopSettings& fallback : fallbacks) {
         ladder.push_back(Rung{AutoAttemptKind::Fallback, std::move(fallback)});
     }
-    if (!(chosen == baseline)) {
-        ladder.push_back(Rung{AutoAttemptKind::Baseline, baseline});
-    }
+    ladder.push_back(Rung{AutoAttemptKind::Baseline, baseline});
 
+    // After attempt i (the first takes the rest of the estimate; later ones, rare, the last percent).
+    const auto attempt_done = [&](std::size_t i) {
+        return i == 0 ? kCheckAfterFirstAttempt
+                      : kCheckAfterFirstAttempt + (0.995 - kCheckAfterFirstAttempt) * static_cast<double>(i) /
+                                                      static_cast<double>(ladder.size() - 1);
+    };
     std::vector<AutoAttempt> attempts;
     for (std::size_t i = 0; i < ladder.size(); ++i) {
         if (Status c = cancel.check(kWhere); !c) {
@@ -333,7 +493,11 @@ Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& regis
                 attempt.check.failures.push_back("render: " + rendered.error().describe());
                 attempt.check.seconds = seconds_since(started);
                 attempts.push_back(std::move(attempt));
+                progress(attempt_done(i));
                 continue;
+            }
+            if (i == 0) {
+                progress(kCheckAfterFirstRender);
             }
             auto measured = analysis::measure_render(rendered->display, *context, &features, nullptr,
                                                      develop.parallel, cancel);
@@ -356,7 +520,7 @@ Expected<std::vector<AutoAttempt>> final_check(const raw::DecoderRegistry& regis
         attempt.check.outcome = passed ? catalog::AutoCheckOutcome::Passed : catalog::AutoCheckOutcome::Failed;
         attempt.check.seconds = seconds_since(started);
         attempts.push_back(std::move(attempt));
-        progress(0.55 + 0.45 * static_cast<double>(i + 1) / static_cast<double>(ladder.size()));
+        progress(attempt_done(i));
         if (passed) {
             break;
         }
@@ -414,7 +578,7 @@ AutoLocks locks_report(const engine::DevelopSettings& current, const analysis::A
     }
     locks.prevented_targets = !locks.reasons.empty();
     if (manual) {
-        locks.reasons.push_back("Every control Lucent sets automatically is locked, so nothing was changed.");
+        locks.reasons.emplace_back(kEveryControlLockedNote);
     }
     return locks;
 }
@@ -458,6 +622,8 @@ std::string_view to_string(AutoAttemptKind kind) noexcept {
             return "fallback";
         case AutoAttemptKind::Baseline:
             return "baseline";
+        case AutoAttemptKind::Anchor:
+            return "anchor";
     }
     return "invalid";
 }
@@ -525,7 +691,8 @@ std::string describe_auto_flag(const AutoFlag& flag) {
         case kFlagFinalCheckFallback:
             return "The first automatic edit failed a quality check, so a more conservative one was used.";
         case kFlagLocksPreventedTargets:
-            return flag.reason;
+            // The specifics are the locks report's (AutoLocks::reasons), listed once beside it.
+            return "Locked controls kept Auto from its usual targets.";
         default:
             return flag.reason;
     }
@@ -614,9 +781,11 @@ Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metada
     // Decode and stage one with the full-resolution saturation coverage (4 bytes per pixel); then
     // the stage one kept, the image context (saturation, signal, neutral mask: 9 bytes per pixel),
     // the baseline's features (lightness, a, b, chroma, flags: 17 bytes per pixel) and one stage two.
+    // The analysis runs beside the copy of the decoded samples the check reuses.
+    const std::uint64_t analysis_with_copy = *analysis_bytes + develop->render.raw_frame_bytes;
     const std::uint64_t first = develop->stage_one_peak + pixels * 4;
     const std::uint64_t second = develop->stage_one_bytes + pixels * (9 + 17) + develop->stage_two_bytes;
-    return std::max({*analysis_bytes, first, second});
+    return std::max({analysis_with_copy, first, second});
 }
 
 Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
@@ -630,10 +799,13 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
         }
         AutoRun run;
         run.start = current;
-        report(progress, AutoRunStage::Analysing, 0.0);
+        // The analysis' share of the progress (about a quarter of a 45 MP run with the check).
+        const double analysis_share = request.final_check ? kAnalysisShare : 1.0;
+        const auto analysing = [&](double f) { report(progress, AutoRunStage::Analysing, analysis_share * f); };
+        analysing(0.0);
 
-        // 1-2. Decode once; the independent analysis.
-        auto decoded = decode_photo(registry, path, subimage, options, false, cancel);
+        // 1-2. Decode once (a copy is kept for the final check); the independent analysis.
+        auto decoded = decode_photo(registry, path, subimage, options, request.final_check, cancel);
         if (!decoded) {
             return Unexpected(std::move(decoded.error()));
         }
@@ -644,7 +816,15 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
         if (auto estimate = estimate_automatic_memory(decoded->metadata, options)) {
             run.estimated_peak_bytes = *estimate;
         }
-        report(progress, AutoRunStage::Analysing, 0.1);
+        std::optional<raw::DecodedRaw> kept;
+        if (request.final_check) {
+            auto copy = clone_decoded(*decoded);
+            if (!copy) {
+                return Unexpected(std::move(copy.error()));
+            }
+            kept = std::move(*copy);
+        }
+        analysing(0.3);
         std::optional<analysis::AutoResult> result;
         {
             auto session = analysis::AutoSession::open(std::move(*decoded), current, options.analysis, cancel);
@@ -654,7 +834,7 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
             const analysis::AutoResult& independent = session->independent();
             run.appearance = independent.appearance;
             run.analysis_seconds = seconds_since(started);
-            report(progress, AutoRunStage::Analysing, request.final_check ? 0.45 : 0.8);
+            analysing(0.9);
             if (request.anchor) {
                 auto appearance = session->appearance_of(current, cancel);
                 if (!appearance) {
@@ -684,7 +864,7 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
                 result = independent;
             }
         }  // the session's images are released before the final check
-        report(progress, AutoRunStage::Analysing, request.final_check ? 0.5 : 1.0);
+        analysing(1.0);
 
         run.versions = result->versions;
         run.chosen = result->settings;
@@ -716,8 +896,10 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
         // 4. The full-resolution final check.
         if (request.final_check) {
             const auto t = Clock::now();
-            auto attempts = final_check(registry, path, subimage, *result, run.chosen, request, options, cancel,
-                                        [&](double f) { report(progress, AutoRunStage::Checking, 0.5 + 0.5 * f); });
+            auto attempts = final_check(std::move(*kept), *result, run.chosen, request, options, cancel, [&](double f) {
+                report(progress, AutoRunStage::Checking, analysis_share + (1.0 - analysis_share) * f);
+            });
+            kept.reset();
             if (!attempts) {
                 return Unexpected(std::move(attempts.error()));
             }
@@ -742,21 +924,65 @@ Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std:
                 run.flags.push_back(make_flag(kFlagFinalCheckFallback, std::nullopt, std::move(reason)));
             }
         } else {
-            AutoAttempt attempt;
-            attempt.index = 0;
-            attempt.kind = AutoAttemptKind::Chosen;
-            attempt.settings = run.chosen;
-            auto document = write_recipe(attempt.settings);
-            if (!document) {
-                return Unexpected(std::move(document.error()));
+            auto attempt = first_attempt(run.chosen);
+            if (!attempt) {
+                return Unexpected(std::move(attempt.error()));
             }
-            attempt.settings_sha256 = document->sha256;
-            attempt.reason = "the optimiser's choice";
-            run.attempts.push_back(std::move(attempt));
+            run.attempts.push_back(std::move(*attempt));
             run.effective = 0;
         }
         run.total_seconds = seconds_since(started);
         report(progress, request.final_check ? AutoRunStage::Checking : AutoRunStage::Analysing, 1.0);
+        return run;
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "out of memory during the automatic settings", std::string(kWhere));
+    }
+}
+
+// ---- Related-shot anchors -----------------------------------------------------------------------
+
+Expected<AutoRun> anchor_run(const AutoRun& analysed, std::optional<analysis::ConsistencyTarget> group) {
+    if (!analysed.anchor_appearance || analysed.attempts.empty()) {
+        return fail(ErrorCode::InvalidArgument, "the analysis is not an anchor's (no anchor appearance)",
+                    std::string(kWhere));
+    }
+    try {
+        AutoRun run = analysed;
+        run.chosen = analysed.start;
+        run.confidence = 1.0;  // nothing automatic was decided
+        run.confidence_detail = analysis::ConfidenceBreakdown{};
+        run.restrained = false;
+        run.analysis_fallback = false;
+        // Only what describes the photo itself; the independent choice's findings do not apply.
+        std::erase_if(run.flags, [](const AutoFlag& flag) {
+            return flag.code != static_cast<std::uint16_t>(analysis::ReviewFlagCode::InterpretationLimited);
+        });
+        run.diagnostics.clear();
+        run.locks.prevented_targets = false;
+        run.locks.reasons.clear();
+        run.consistency.reset();
+        if (group) {
+            AutoConsistency consistency;
+            consistency.target = std::move(*group);
+            run.consistency = std::move(consistency);
+        }
+        auto attempt = first_attempt(run.start);
+        if (!attempt) {
+            return Unexpected(std::move(attempt.error()));
+        }
+        attempt->kind = AutoAttemptKind::Anchor;
+        attempt->reason =
+            run.consistency
+                ? std::format("the anchor of related-shot group {}: the photographer's settings are kept and set "
+                              "the group's look (not optimised or checked)",
+                              run.consistency->target.group_id)
+                : std::string("a related-shot anchor: the photographer's settings are kept (not optimised or "
+                              "checked)");
+        attempt->check.outcome = catalog::AutoCheckOutcome::NotRun;
+        run.attempts.assign(1, std::move(*attempt));
+        run.effective = 0;
+        run.consistency_seconds = 0.0;
+        run.check_seconds = 0.0;
         return run;
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "out of memory during the automatic settings", std::string(kWhere));

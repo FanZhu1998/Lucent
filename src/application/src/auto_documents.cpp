@@ -503,7 +503,8 @@ catalog::AutoCheckOutcome outcome_of(const std::string& text) {
 }
 
 AutoAttemptKind kind_of(const std::string& text) {
-    for (const auto kind : {AutoAttemptKind::Chosen, AutoAttemptKind::Fallback, AutoAttemptKind::Baseline}) {
+    for (const auto kind : {AutoAttemptKind::Chosen, AutoAttemptKind::Fallback, AutoAttemptKind::Baseline,
+                            AutoAttemptKind::Anchor}) {
         if (to_string(kind) == text) {
             return kind;
         }

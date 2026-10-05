@@ -46,6 +46,9 @@ struct ConsistencyPlan {
     std::uint64_t analysed = 0;                                   // analysis documents it was computed from
     std::map<std::int64_t, analysis::ConsistencyTarget> targets;  // by job id (regularised members)
     std::map<std::int64_t, std::string> groups;                   // group id by job id (groups of two or more)
+    // The group target an anchor's look sets, by the anchor's job id (anchors in a group of two or
+    // more): what its record names; anchors keep their settings (Attempt::automatic_stage).
+    std::map<std::int64_t, analysis::ConsistencyTarget> anchors;
 };
 
 // A batch's documents, parsed once (immutable after load, except the folder's identity, which
@@ -326,6 +329,11 @@ inline constexpr std::string_view kWhereDestination = "app.batch.destination";
 inline constexpr std::string_view kWhereDestinationReplaced = "app.batch.destination.replaced";
 inline constexpr std::string_view kWhereMemory = "app.batch.memory";
 inline constexpr std::string_view kWhereAutoCheck = "app.batch.auto.check";
+// The review note of an automatic job whose revisions were kept as a branch (the photo was edited
+// while the batch ran; recipe_store.hpp, kAutomaticBranchNote).
+inline constexpr std::string_view kEditedMeanwhileNote =
+    "The photo was edited while the batch ran; the automatic settings are kept in its history and were not "
+    "applied to it.";
 inline constexpr std::string_view kWhereAutoDocument = "app.batch.auto.document";
 inline constexpr std::string_view kWhereAutoSupport = "app.auto.support";
 

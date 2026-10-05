@@ -48,6 +48,15 @@ Status check_automatic(std::span<const AutomaticRevision> revisions) {
     return ok();
 }
 
+// An automatic revision written as a branch: its note says so (kAutomaticBranchNote).
+catalog::NewRevision as_branch(const catalog::NewRevision& revision) {
+    catalog::NewRevision out = revision;
+    if (!is_automatic_branch_note(out.note)) {
+        out.note += out.note.empty() ? std::string(kAutomaticBranchNote) : ";" + std::string(kAutomaticBranchNote);
+    }
+    return out;
+}
+
 Error conflict(ItemId item, std::optional<catalog::RevisionId> found,
                std::optional<catalog::RevisionId> expected) {
     return Error{ErrorCode::AlreadyExists,
@@ -257,9 +266,11 @@ public:
             Item& entry = items_[item.value];
             AutomaticAppend result;
             const std::optional<catalog::RevisionId> found_current = entry.current;
-            const bool shows_parent = found_current == parent;
+            result.made_current = make_current && found_current == parent;
             for (std::size_t i = 0; i < revisions.size(); ++i) {
-                auto stored = store_locked(item, entry, revisions[i].revision, digests[i], parent);
+                auto stored = result.made_current
+                                  ? store_locked(item, entry, revisions[i].revision, digests[i], parent)
+                                  : store_locked(item, entry, as_branch(revisions[i].revision), digests[i], parent);
                 if (!stored) {
                     return Unexpected(std::move(stored.error()));
                 }
@@ -288,7 +299,6 @@ public:
                 }
                 result.revisions.push_back(*stored);
             }
-            result.made_current = make_current && shows_parent;
             entry.current = result.made_current ? std::optional(result.revisions.back().id) : found_current;
             return result;
         } catch (const std::bad_alloc&) {
@@ -414,6 +424,20 @@ private:
 
 }  // namespace
 
+bool is_automatic_branch_note(std::string_view note) noexcept {
+    while (!note.empty()) {
+        const std::size_t end = note.find(';');
+        if (note.substr(0, end) == kAutomaticBranchNote) {
+            return true;
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        note.remove_prefix(end + 1);
+    }
+    return false;
+}
+
 Expected<AutomaticAppend> RecipeStore::append_automatic(ItemId item, std::optional<catalog::RevisionId>,
                                                         std::span<const AutomaticRevision>, bool) {
     return fail(ErrorCode::Unsupported, std::format("this store keeps no automatic revisions (item {})", item.value),
@@ -441,12 +465,14 @@ Expected<AutomaticAppend> append_automatic_revisions(catalog::WriteTransaction& 
     }
     const std::optional<catalog::RevisionId> found = (*record)->current_revision;
     AutomaticAppend result;
+    result.made_current = make_current && found == parent;
     for (const AutomaticRevision& entry : revisions) {
         // Each revision is derived from `parent`: siblings, not a chain.
         if (Status moved = tx.set_current_revision(item, parent); !moved) {
             return Unexpected(std::move(moved.error()));
         }
-        auto info = tx.append_revision(item, entry.revision);
+        auto info = result.made_current ? tx.append_revision(item, entry.revision)
+                                        : tx.append_revision(item, as_branch(entry.revision));
         if (!info) {
             return Unexpected(std::move(info.error()));
         }
@@ -459,7 +485,6 @@ Expected<AutomaticAppend> append_automatic_revisions(catalog::WriteTransaction& 
         }
         result.revisions.push_back(std::move(*info));
     }
-    result.made_current = make_current && found == parent;
     if (Status moved = tx.set_current_revision(item, result.made_current ? std::optional(result.revisions.back().id)
                                                                          : found);
         !moved) {

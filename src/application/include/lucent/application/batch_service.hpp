@@ -479,9 +479,14 @@ struct AutomaticReport {
     std::uint32_t attempts = 0;    // automatic revisions written (failed attempts included)
     bool review = false;           // the record recommends a review
     std::vector<std::string> flags;  // user-facing English, one per flag
-    std::optional<std::string> group;    // the related-shot group it was regularised in
+    std::optional<std::string> group;    // the related-shot group it was regularised in (or, for an anchor, set)
     bool locks_prevented_targets = false;
     std::vector<std::string> locks;      // user-facing English: what the locks did
+    // The photo was edited while the batch ran: its automatic revisions are a branch of its history,
+    // not its current recipe (recipe_store.hpp, kAutomaticBranchNote).
+    bool branch = false;
+    // A caller-marked related-shot anchor: its own settings were kept (AutoAttemptKind::Anchor).
+    bool anchor = false;
 };
 
 struct ReportEntry {
@@ -574,8 +579,9 @@ struct BatchTestHooks {
     std::vector<std::vector<std::string>> worker_hooks_by_start;
     // Called on the slot thread at the named points of the publication protocol: "reserved",
     // "temp_written", "verified", "before_rename", "after_rename", "published", "receipt",
-    // "complete"; and of automatic jobs: "analysed" (the pre-pass recorded a job's analysis),
-    // "frozen". A test coordinator process ends itself here to simulate a crash.
+    // "complete"; and of automatic jobs: "answered" (the worker's analysis arrived; nothing of it is
+    // written yet), "analysed" (the pre-pass recorded a job's analysis), "frozen". A test coordinator
+    // process ends itself here to simulate a crash.
     std::function<void(std::string_view point, catalog::JobId job)> on_point;
     // Replaces the free-space query of destination folders (bytes available; std::nullopt:
     // unknown).

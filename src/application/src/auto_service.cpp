@@ -10,6 +10,7 @@
 #include <new>
 #include <utility>
 
+#include <lucent/core/file.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
 
@@ -37,6 +38,8 @@ std::string_view to_string(AutoTaskStage stage) noexcept {
             return "saving";
         case AutoTaskStage::Finished:
             return "finished";
+        case AutoTaskStage::WaitingForMemory:
+            return "waiting_for_memory";
     }
     return "invalid";
 }
@@ -60,7 +63,8 @@ struct AutoService::Impl {
 
     mutable std::mutex mutex;
     mutable std::condition_variable finished_cv;
-    std::map<std::uint64_t, Task> tasks;  // (mutex) every run of this service
+    // (mutex) the runs in progress and the last kKeptAutoResults finished ones (for status() and wait())
+    std::map<std::uint64_t, Task> tasks;
     std::uint64_t next_ticket = 1;        // (mutex)
     bool closing = false;                 // (mutex)
 
@@ -73,9 +77,10 @@ struct AutoService::Impl {
                 return;
             }
             Task& task = found->second;
+            const bool new_stage = task.status.stage != stage;
             task.status.stage = stage;
             task.status.fraction = std::max(task.status.fraction, std::clamp(fraction, 0.0, 1.0));
-            if (task.status.fraction < task.last_reported + 0.01 && task.status.fraction < 1.0) {
+            if (!new_stage && task.status.fraction < task.last_reported + 0.01 && task.status.fraction < 1.0) {
                 return;
             }
             task.last_reported = task.status.fraction;
@@ -98,6 +103,21 @@ struct AutoService::Impl {
             task.status.fraction = 1.0;
             task.result = result;
             event.status = task.status;
+            // Forget the oldest finished runs beyond the ones kept for status() and wait().
+            std::size_t finished = 0;
+            for (auto it = tasks.rbegin(); it != tasks.rend(); ++it) {
+                if (it->second.status.stage == AutoTaskStage::Finished) {
+                    ++finished;
+                }
+            }
+            for (auto it = tasks.begin(); it != tasks.end() && finished > kKeptAutoResults;) {
+                if (it->second.status.stage == AutoTaskStage::Finished && it->first != ticket) {
+                    it = tasks.erase(it);
+                    --finished;
+                } else {
+                    ++it;
+                }
+            }
         }
         event.kind = AutoEvent::Kind::Finished;
         event.result = std::move(result);
@@ -152,10 +172,31 @@ struct AutoService::Impl {
         if (!estimate) {
             return failed(estimate.error());
         }
+        {
+            std::lock_guard lock(mutex);
+            if (auto found = tasks.find(ticket); found != tasks.end()) {
+                found->second.status.memory_bytes = *estimate;
+            }
+        }
+        // Waiting for memory: say so, and ask once for memory that is rebuilt on demand (the
+        // editor's cached full-resolution images) to be released.
+        const MemoryAdmission& admission = context.admission();
+        if (const AdmissionStats held = admission.stats();
+            *estimate <= admission.options().budget_bytes &&
+            (held.active_bytes + *estimate > admission.options().budget_bytes ||
+             held.active >= admission.options().max_concurrent)) {
+            progress(ticket, AutoTaskStage::WaitingForMemory, 0.0);
+            if (held.active_bytes + *estimate > admission.options().budget_bytes && options.make_room) {
+                options.make_room(item_id);
+            }
+        }
         auto lease = context.admit(*estimate);
         if (!lease) {
             return failed(lease.error());
         }
+        // The run keeps its bytes but not the render place (task_executor.hpp, retained memory): the
+        // editor's stage-one builds, refines and 100 % views render beside it within the budget.
+        lease->retain_only(*estimate);
 
         AutoRunRequest request;
         request.final_check = true;
@@ -174,6 +215,14 @@ struct AutoService::Impl {
         result.run = std::move(*run);
         if (Status c = cancel.check(kWhere); !c) {
             return failed(c.error());
+        }
+        // The file must not have changed while it was decoded and analysed (blueprint: stable reads
+        // before and after decoding): otherwise the result describes another file.
+        if (auto after = core::stat_file(item->path); !after || !(*after == item->identity)) {
+            return failed(Error{ErrorCode::SourceChanged,
+                                std::format("'{}' changed while its automatic settings were chosen; nothing was saved",
+                                            core::path_to_utf8_lossy(item->path)),
+                                std::string(kWhere), 0});
         }
         if (result.run->check_failed()) {
             return failed(Error{ErrorCode::Internal,

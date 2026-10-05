@@ -16,8 +16,9 @@
 //   3. With a related-shot consistency target, the session's regularisation towards it (soft,
 //      revalidated; locks and hard checks unchanged). For a group anchor, the appearance of its
 //      current settings (what it contributes to its group's target).
-//   4. With final_check, the full-resolution final check (step 7): the file is decoded again, its
-//      source diagnostics measured at full resolution (saturation coverage, noise model), and one
+//   4. With final_check, the full-resolution final check (step 7): the decode of step 1 is reused
+//      (a copy of the decoded samples is kept through the analysis, so the file is decoded once),
+//      its source diagnostics measured at full resolution (saturation coverage, noise model), and one
 //      interactive stage one (as shot) rendered; the as-shot baseline (AutoResult::candidates[0])
 //      is rendered and measured with analysis::make_image_context() and measure_render(), then the
 //      chosen settings, judged by analysis::evaluate_candidate() against that baseline with the
@@ -26,15 +27,24 @@
 //      settings' analysis::conservative_fallbacks() (at most analysis::kMaxFallbackRechecks), then
 //      the baseline itself (as shot for unlocked controls, locked controls kept), each rendered once
 //      and checked; the first that passes is the effective attempt. The baseline only fails when it
-//      is numerically invalid: then no attempt is effective and the photo fails (never an endless
-//      loop). Every attempt is recorded with the reason it exists (the failures of the one before).
+//      is numerically invalid (non-finite samples, an empty render, a non-monotone curve): then no
+//      attempt is effective and the photo fails (check_failed(), never an endless loop), also when the
+//      baseline render that every attempt is judged against is itself invalid. Every attempt is
+//      recorded with the reason it exists (the failures of the one before). When the choice IS the
+//      baseline (the analysis kept the camera's rendering, or every searched control is locked) the
+//      ladder has that one rung, which evaluate_candidate() can fail on numerical validity only: the
+//      check then renders it once at full resolution and scans it for validity (same outcome by
+//      construction, without the measurements; its check values are not recorded).
 //      The check's stage one is the interactive kind the analysis judged (highlights clipped after
 //      demosaicing); the export render clips before it, which differs within two pixels of
 //      saturated sites only (ADR 0010).
 //   5. The locks report: the controls the optimiser sets that are locked, and whether they kept it
 //      from its usual targets (a brightness deficit or excess of more than kLockedTargetEv left with
-//      exposure, shadows or highlights locked; locked settings that clip; every searched control
-//      locked), each with a user-facing reason.
+//      exposure, shadows or highlights locked; locked settings that clip), each with a user-facing
+//      reason; every searched control locked is noted (kEveryControlLockedNote) but is not a missed
+//      target. The brightness findings are measured on the optimiser's choice at analysis
+//      resolution. A locked white balance is listed but cannot be judged: the analysis makes no
+//      white-balance proposal for it (analysis::AutoResult::white_balance).
 //
 // Documents (JSON, versioned, read strictly: schema and version must match, every member is
 // required, unknown members are refused; numbers are written in shortest round-trip form so a
@@ -78,6 +88,10 @@ inline constexpr std::uint32_t kAutoDocumentVersion = 1;
 // The brightness deficit or excess (EV of display luminance) left by the chosen settings above which
 // locked exposure, shadows or highlights count as having prevented the usual target.
 inline constexpr double kLockedTargetEv = 0.25;
+// The locks report's note when every control the optimiser sets is locked (information, not a missed
+// target).
+inline constexpr std::string_view kEveryControlLockedNote =
+    "Every control Lucent sets automatically is locked, so nothing was changed.";
 
 // ---- Requests ---------------------------------------------------------------------------------
 
@@ -103,9 +117,15 @@ struct AutoRunOptions {
     analysis::AutoOptions analysis;  // its develop options carry the decode limits and memory budget
     // Analyse a photo whose decoded interpretation is Unsupported (recorded by the caller).
     bool allow_unsupported = false;
+    // Test only: the final check treats the full-resolution baseline render as numerically invalid
+    // (the path no real render takes; see check_failed()).
+    bool test_invalid_baseline = false;
 };
 
 // Progress: the stage (analysing, checking) and the fraction of the whole run.
+// The fraction reflects measured cost (a 45 MP photo: the analysis about a quarter of the run, the
+// final check the rest, with steps after its stage one, source pass, baseline render and
+// measurement and each attempt).
 enum class AutoRunStage : std::uint8_t {
     Analysing = 1,
     Checking = 2,
@@ -119,9 +139,11 @@ enum class AutoAttemptKind : std::uint8_t {
     Chosen = 1,    // the optimiser's choice
     Fallback = 2,  // a conservative fallback of the choice (analysis::conservative_fallbacks)
     Baseline = 3,  // the as-shot baseline (locked controls kept): the last resort
+    Anchor = 4,    // a related-shot anchor's own settings, kept (anchor_run(); not checked)
 };
 
-[[nodiscard]] std::string_view to_string(AutoAttemptKind kind) noexcept;  // "chosen", "fallback", "baseline"
+// "chosen", "fallback", "baseline", "anchor".
+[[nodiscard]] std::string_view to_string(AutoAttemptKind kind) noexcept;
 
 struct AutoCheck {
     catalog::AutoCheckOutcome outcome = catalog::AutoCheckOutcome::NotRun;
@@ -230,10 +252,10 @@ struct AutoRun {
 
 // See the file comment. Errors: the registry's and decoder's (NotFound, SourceChanged, Unsupported,
 // Corrupt, ...); Unsupported ("app.auto.support") for an unsupported interpretation; LimitExceeded
-// when the analysis or the final check would exceed options.analysis.develop.memory_budget_bytes;
-// InvalidArgument for invalid settings, options or target; Internal for a numerically invalid
-// baseline; Cancelled; OutOfMemory. A final check in which no attempt passes is NOT an error: the
-// run reports it (check_failed()).
+// ("app.auto.memory") when the analysis or the final check would exceed
+// options.analysis.develop.memory_budget_bytes (checked before the analysis); InvalidArgument for
+// invalid settings, options or target; Cancelled; OutOfMemory. A final check in which no attempt
+// passes (a numerically invalid baseline) is NOT an error: the run reports it (check_failed()).
 [[nodiscard]] Expected<AutoRun> run_automatic(const raw::DecoderRegistry& registry, const std::filesystem::path& path,
                                               std::uint32_t subimage, const engine::DevelopSettings& current,
                                               const AutoRunRequest& request, const AutoRunOptions& options = {},
@@ -241,8 +263,9 @@ struct AutoRun {
                                               const AutoRunProgress& progress = {});
 
 // Estimated peak pixel memory of run_automatic for `metadata` (probe metadata): the analysis'
-// (analysis::estimate_auto_memory) or the final check's (stage one, the full-resolution context and
-// baseline features, one stage two), the larger.
+// (analysis::estimate_auto_memory) with the copy of the decoded samples kept for the check, or the
+// final check's (stage one, the full-resolution context and baseline features, one stage two), the
+// larger.
 [[nodiscard]] Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata,
                                                                 const AutoRunOptions& options = {});
 
@@ -274,5 +297,17 @@ struct AutoRun {
                                                                            std::optional<catalog::JobId> job,
                                                                            catalog::Timestamp now,
                                                                            std::string_view engine_version);
+
+// ---- Related-shot anchors -----------------------------------------------------------------------
+
+// The run of a caller-marked anchor of a related-shot group (an automatic batch that keeps related
+// shots consistent; related_shots.hpp: "anchors keep their current settings"): `analysed`, the
+// anchor's pre-pass analysis (with its anchor appearance), whose starting settings become the one
+// effective attempt (kind Anchor, final check NotRun: the photographer's look is kept, never
+// optimised or replaced by a fallback); confidence 1 (nothing automatic was decided), no
+// diagnostics of the independent choice, only the flags that describe the photo itself (a limited
+// interpretation), and `group` (the target of the group its look sets; none when it stands alone)
+// as its consistency record. InvalidArgument when `analysed` has no anchor appearance or no attempt.
+[[nodiscard]] Expected<AutoRun> anchor_run(const AutoRun& analysed, std::optional<analysis::ConsistencyTarget> group);
 
 }  // namespace lucent::app

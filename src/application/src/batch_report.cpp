@@ -81,6 +81,7 @@ AutomaticReport automatic_report(const catalog::Catalog& catalog, const catalog:
     auto revision = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_revision(*job.revision); });
     if (revision && *revision) {
         report.revision_number = (*revision)->info.revision_number;
+        report.branch = is_automatic_branch_note((*revision)->info.note);
     }
     auto record = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_auto_analysis(*job.revision); });
     if (!record || !*record) {
@@ -112,6 +113,8 @@ AutomaticReport automatic_report(const catalog::Catalog& catalog, const catalog:
     }
     const Json doc = Json::parse((*record)->record_json, nullptr, false);
     if (doc.is_object()) {
+        report.anchor = doc.contains("attempt") && doc["attempt"].is_object() && doc["attempt"].contains("kind") &&
+                        doc["attempt"]["kind"] == std::string(to_string(AutoAttemptKind::Anchor));
         if (doc.contains("consistency") && doc["consistency"].is_object() &&
             doc["consistency"].contains("target") && doc["consistency"]["target"].contains("group_id") &&
             doc["consistency"]["target"]["group_id"].is_string()) {
@@ -134,11 +137,16 @@ AutomaticReport automatic_report(const catalog::Catalog& catalog, const catalog:
     return report;
 }
 
-// The review notes of an automatic result: its flags that recommend a review.
+// The review notes of an automatic result: its flags that recommend a review, and whether its
+// revisions were kept as a branch because the photo was edited meanwhile.
 std::vector<std::string> automatic_review(const catalog::Catalog& catalog, const catalog::JobRecord& job) {
     std::vector<std::string> notes;
     if (!job.revision) {
         return notes;
+    }
+    if (auto revision = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_revision(*job.revision); });
+        revision && *revision && is_automatic_branch_note((*revision)->info.note)) {
+        notes.emplace_back(detail::kEditedMeanwhileNote);
     }
     auto record = catalog.query([&](catalog::ReadTransaction& tx) { return tx.find_auto_analysis(*job.revision); });
     if (!record || !*record) {
@@ -148,6 +156,7 @@ std::vector<std::string> automatic_review(const catalog::Catalog& catalog, const
     if (!flags.is_array()) {
         return notes;
     }
+    const std::size_t before = notes.size();
     for (const Json& entry : flags) {
         if (!entry.is_object() || !entry.contains("code") || !entry["code"].is_number_unsigned() ||
             !entry.contains("review") || !entry["review"].is_boolean() || !entry["review"].get<bool>()) {
@@ -159,7 +168,7 @@ std::vector<std::string> automatic_review(const catalog::Catalog& catalog, const
                                                                               : std::string();
         notes.push_back(describe_auto_flag(flag));
     }
-    if (notes.empty() && (*record)->review) {
+    if (notes.size() == before && (*record)->review) {
         notes.push_back("The first automatic edit failed a quality check, so a more conservative one was used.");
     }
     return notes;
@@ -181,6 +190,8 @@ Json automatic_json(const AutomaticReport& a) {
     out["flags"] = std::move(flags);
     out["group"] = a.group ? Json(core::sanitize_utf8(*a.group)) : Json();
     out["locks_prevented_targets"] = a.locks_prevented_targets;
+    out["branch"] = a.branch;
+    out["anchor"] = a.anchor;
     Json locks = Json::array();
     for (const std::string& lock : a.locks) {
         locks.push_back(core::sanitize_utf8(lock));
@@ -369,10 +380,17 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
                     if (ctx.automatic == catalog::AutoMode::AnalyzeOnly) {
                         entry.outcome = ReportOutcome::Analysed;
                         entry.error.reset();
-                        entry.reason = entry.automatic && entry.automatic->revision_number > 0
-                                           ? std::format("Analysed: automatic settings saved as revision {}.",
-                                                         entry.automatic->revision_number)
-                                           : std::string("Analysed.");
+                        if (!entry.automatic || entry.automatic->revision_number == 0) {
+                            entry.reason = "Analysed.";
+                        } else if (entry.automatic->branch) {
+                            entry.reason = std::format(
+                                "Analysed: automatic settings saved as revision {}, kept in the history (the photo "
+                                "was edited meanwhile, so they were not applied).",
+                                entry.automatic->revision_number);
+                        } else {
+                            entry.reason = std::format("Analysed: automatic settings saved as revision {}.",
+                                                       entry.automatic->revision_number);
+                        }
                         entry.review = automatic_review(*catalog, job);
                         break;
                     }
@@ -612,27 +630,36 @@ std::string report_html(const BatchReport& report) {
         html += "<td>" + (entry.output ? "<code>" + html_escape(core::path_to_utf8_lossy(entry.output->filename())) + "</code>"
                                        : std::string()) +
                 "</td><td>";
+        // Lines of the details cell, separated (never led) by a line break.
+        std::vector<std::string> lines;
         if (!entry.reason.empty() && entry.outcome != ReportOutcome::Exported) {
-            html += html_escape(entry.reason);
+            lines.push_back(html_escape(entry.reason));
         }
         if (!entry.action.empty()) {
-            html += "<br><em>" + html_escape(entry.action) + "</em>";
+            lines.push_back("<em>" + html_escape(entry.action) + "</em>");
         }
         if (entry.automatic && entry.automatic->revision) {
-            html += std::format("<br>Automatic settings: revision {}, confidence {:.0f} %{}{}",
-                                entry.automatic->revision_number, 100.0 * entry.automatic->confidence,
-                                entry.automatic->attempt > 0 ? ", conservative fallback" : "",
-                                entry.automatic->group ? ", kept consistent with related photos" : "");
-            for (const std::string& lock : entry.automatic->locks) {
-                html += "<br><em>" + html_escape(lock) + "</em>";
+            const AutomaticReport& a = *entry.automatic;
+            lines.push_back(a.anchor ? std::format("Automatic settings: revision {}, your settings kept as the "
+                                                   "anchor of its related photos",
+                                                   a.revision_number)
+                                     : std::format("Automatic settings: revision {}, confidence {:.0f} %{}{}",
+                                                   a.revision_number, 100.0 * a.confidence,
+                                                   a.attempt > 0 ? ", conservative fallback" : "",
+                                                   a.group ? ", kept consistent with related photos" : ""));
+            for (const std::string& lock : a.locks) {
+                lines.push_back("<em>" + html_escape(lock) + "</em>");
             }
         }
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            html += (i > 0 ? "<br>" : "") + lines[i];
+        }
         if (!entry.review.empty()) {
-            html += "<strong>Review recommended:</strong><ul>";
+            html += "<div><strong>Review recommended:</strong><ul>";
             for (const std::string& note : entry.review) {
                 html += "<li>" + html_escape(note) + "</li>";
             }
-            html += "</ul>";
+            html += "</ul></div>";
         }
         html += "</td></tr>\n";
     }

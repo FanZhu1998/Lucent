@@ -336,10 +336,12 @@ MemorySnapshot current_process_memory() noexcept {
     counters.cb = sizeof(counters);
     if (::GetProcessMemoryInfo(::GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
                                sizeof(counters))) {
+        // The counters are not read atomically: a page faulted in by another thread can make the
+        // current value exceed the peak sampled with it. A peak is never below the current value.
         snapshot.working_set = counters.WorkingSetSize;
-        snapshot.peak_working_set = counters.PeakWorkingSetSize;
+        snapshot.peak_working_set = std::max<std::uint64_t>(counters.PeakWorkingSetSize, counters.WorkingSetSize);
         snapshot.commit = counters.PrivateUsage;
-        snapshot.peak_commit = counters.PeakPagefileUsage;
+        snapshot.peak_commit = std::max<std::uint64_t>(counters.PeakPagefileUsage, counters.PrivateUsage);
     }
     return snapshot;
 }

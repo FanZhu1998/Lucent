@@ -6,8 +6,10 @@
 // dark (a high white level) so that the optimiser brightens them, and large enough for every metric's
 // evidence minimum.
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <format>
 #include <span>
 #include <memory>
@@ -84,7 +86,11 @@ protected:
         AutoServiceOptions options;
         options.registry = registry_;
         options.fail_final_checks = fail_final_checks;
-        auto created = AutoService::create(*fixture_.library, *recipes_, *executor_, options);
+        return service_with(std::move(options));
+    }
+
+    AutoService& service_with(AutoServiceOptions options) {
+        auto created = AutoService::create(*fixture_.library, *recipes_, *executor_, std::move(options));
         EXPECT_TRUE(created);
         service_ = std::move(*created);
         return *service_;
@@ -341,6 +347,232 @@ TEST_F(AutoServiceTest, RevisionsOfAPhotoEditedMeanwhileStayABranch) {
     EXPECT_EQ(selected->committed, run->effective_settings());
 }
 
+// Auto holds its memory but not the executor's one render place (task_executor.hpp): the editor's
+// stage-one builds, refines and 100 % views render beside it, within the budget that counts Auto's
+// bytes.
+TEST_F(AutoServiceTest, TheRunHoldsItsMemoryButNotTheRenderPlace) {
+    AutoService& auto_service = service();
+    std::mutex mutex;
+    std::optional<AdmissionStats> during;
+    std::uint64_t claim = 0;
+    Subscription subscription = auto_service.subscribe([&](const AutoEvent& event) {
+        if (event.kind == AutoEvent::Kind::Progress && event.status.stage == AutoTaskStage::Checking) {
+            std::lock_guard lock(mutex);
+            if (!during) {
+                during = executor_->admission().stats();
+                claim = event.status.memory_bytes;
+            }
+        }
+    });
+    const AutoTaskResult result = run(auto_service);
+    ASSERT_FALSE(result.error) << result.error->describe();
+    std::lock_guard lock(mutex);
+    ASSERT_TRUE(during.has_value());
+    EXPECT_GT(claim, 0u);
+    EXPECT_EQ(during->active, 0u) << "no render place is held while Auto runs";
+    EXPECT_EQ(during->retained, 1u);
+    EXPECT_EQ(during->retained_bytes, claim) << "its memory still counts against the budget";
+    EXPECT_EQ(executor_->admission().stats().active_bytes, 0u) << "everything is returned afterwards";
+}
+
+// A run whose claim does not fit says so (WaitingForMemory) and asks once for memory that is
+// rebuilt on demand (the editor's cached 100 % stage one) to be released; then it runs.
+TEST_F(AutoServiceTest, ARunWaitingForMemoryAsksForRoomOnce) {
+    MemoryAdmission& admission = executor_->admission();
+    auto held = admission.retain(admission.options().budget_bytes - 4096, {});
+    ASSERT_TRUE(held);
+    std::atomic<int> asked{0};
+    AutoServiceOptions options;
+    options.registry = registry_;
+    options.make_room = [&](ItemId item) {
+        EXPECT_EQ(item, item_);
+        ++asked;
+        held->release();  // the cached image is dropped (rebuilt when needed)
+    };
+    AutoService& auto_service = service_with(std::move(options));
+    std::mutex mutex;
+    std::vector<AutoTaskStage> stages;
+    Subscription subscription = auto_service.subscribe([&](const AutoEvent& event) {
+        std::lock_guard lock(mutex);
+        if (stages.empty() || stages.back() != event.status.stage) {
+            stages.push_back(event.status.stage);
+        }
+    });
+    const AutoTaskResult result = run(auto_service);
+    ASSERT_FALSE(result.error) << result.error->describe();
+    EXPECT_EQ(asked.load(), 1);
+    std::lock_guard lock(mutex);
+    ASSERT_GE(stages.size(), 2u);
+    EXPECT_EQ(stages.front(), AutoTaskStage::WaitingForMemory);
+    EXPECT_EQ(to_string(AutoTaskStage::WaitingForMemory), "waiting_for_memory");
+}
+
+// The file is checked again after the run (blueprint: stable reads around decoding): a file that
+// changed while it was analysed gets no revision describing it.
+TEST_F(AutoServiceTest, AFileThatChangesDuringTheRunGetsNoRevision) {
+    AutoService& auto_service = service();
+    const std::filesystem::path path = fixture_.library->find(item_)->path;
+    std::atomic<bool> touched{false};
+    Subscription subscription = auto_service.subscribe([&](const AutoEvent& event) {
+        if (event.kind == AutoEvent::Kind::Progress && event.status.stage == AutoTaskStage::Checking &&
+            !touched.exchange(true)) {
+            std::error_code ec;
+            std::filesystem::last_write_time(path, std::filesystem::last_write_time(path, ec) + std::chrono::hours(1),
+                                             ec);
+            EXPECT_FALSE(ec) << ec.message();
+        }
+    });
+    const AutoTaskResult result = run(auto_service);
+    ASSERT_TRUE(touched.load());
+    ASSERT_TRUE(result.error);
+    EXPECT_EQ(result.error->code, ErrorCode::SourceChanged);
+    EXPECT_TRUE(result.revisions.empty());
+    EXPECT_FALSE(state().revision.has_value());
+    EXPECT_TRUE(records().empty());
+}
+
+// A numerically invalid full-resolution baseline (nothing can be judged against it) is the final
+// check's failure, "app.auto.check", not an internal error of the run.
+TEST_F(AutoServiceTest, AnInvalidBaselineFailsTheCheckNotTheRun) {
+    const auto file = fixture_.library->find(item_)->path;
+    AutoRunOptions options;
+    options.test_invalid_baseline = true;
+    auto direct = run_automatic(*registry_, file, 0, engine::DevelopSettings{}, AutoRunRequest{}, options);
+    ASSERT_TRUE(direct) << direct.error().describe();
+    EXPECT_TRUE(direct->check_failed());
+    ASSERT_EQ(direct->attempts.size(), 1u);
+    EXPECT_EQ(direct->attempts[0].check.outcome, catalog::AutoCheckOutcome::Failed);
+    ASSERT_FALSE(direct->attempts[0].check.failures.empty());
+    EXPECT_NE(direct->attempts[0].check.failures[0].find("numerical_validity"), std::string::npos);
+    EXPECT_TRUE(direct->review_recommended());
+
+    AutoServiceOptions service_options;
+    service_options.registry = registry_;
+    service_options.run.test_invalid_baseline = true;
+    const AutoTaskResult result = run(service_with(std::move(service_options)));
+    ASSERT_TRUE(result.error);
+    EXPECT_EQ(result.error->where, "app.auto.check");
+    EXPECT_TRUE(result.revisions.empty());
+    EXPECT_TRUE(records().empty());
+}
+
+// When the choice is the baseline (here: every control the optimiser sets is locked) the check can
+// only fail it on numerical validity: it renders it once and scans it, without measurements.
+TEST_F(AutoServiceTest, AChoiceThatIsTheBaselineIsCheckedForValidityOnly) {
+    const auto file = fixture_.library->find(item_)->path;
+    engine::DevelopSettings locked;
+    locked.exposure_ev = 0.3;
+    locked.locks = {DevelopControl::WhiteBalance, DevelopControl::Exposure,   DevelopControl::Contrast,
+                    DevelopControl::Highlights,   DevelopControl::Shadows,    DevelopControl::Saturation};
+    auto run = run_automatic(*registry_, file, 0, locked, AutoRunRequest{});
+    ASSERT_TRUE(run) << run.error().describe();
+    EXPECT_TRUE(run->manual);
+    EXPECT_EQ(run->chosen, locked) << "nothing to change";
+    ASSERT_EQ(run->attempts.size(), 1u);
+    const AutoAttempt& attempt = run->attempts[0];
+    EXPECT_EQ(attempt.check.outcome, catalog::AutoCheckOutcome::Passed);
+    EXPECT_TRUE(attempt.check.failures.empty());
+    EXPECT_TRUE(attempt.check.values.empty()) << "validity only: no measurements";
+    ASSERT_TRUE(run->effective);
+    EXPECT_EQ(run->effective_settings(), locked);
+    // Everything locked is information, not a missed target.
+    ASSERT_FALSE(run->locks.reasons.empty());
+    EXPECT_EQ(run->locks.reasons.back(), kEveryControlLockedNote);
+    // The test hook still fails the only rung: nothing passes.
+    AutoRunRequest forced;
+    forced.fail_final_checks = 1;
+    auto failed = run_automatic(*registry_, file, 0, locked, forced);
+    ASSERT_TRUE(failed);
+    EXPECT_TRUE(failed->check_failed());
+}
+
+// The service keeps the results of its last kKeptAutoResults finished runs, not every run's.
+TEST_F(AutoServiceTest, OnlyTheLastResultsAreKept) {
+    AutoService& auto_service = service();
+    std::vector<std::uint64_t> tickets;
+    for (std::size_t i = 0; i < kKeptAutoResults + 2; ++i) {
+        auto ticket = auto_service.run(item_);
+        ASSERT_TRUE(ticket) << ticket.error().describe();
+        ASSERT_TRUE(auto_service.wait(*ticket, 120s).has_value());
+        tickets.push_back(*ticket);
+    }
+    EXPECT_FALSE(auto_service.status(tickets[0]).has_value());
+    EXPECT_FALSE(auto_service.status(tickets[1]).has_value());
+    for (std::size_t i = 2; i < tickets.size(); ++i) {
+        ASSERT_TRUE(auto_service.status(tickets[i]).has_value()) << i;
+        EXPECT_EQ(auto_service.status(tickets[i])->stage, AutoTaskStage::Finished);
+    }
+}
+
+// A gesture in progress when automatic revisions arrive keeps its own base: the revisions are a
+// branch, and committing the gesture appends the photographer's edit (nothing is reverted or lost).
+TEST_F(AutoServiceTest, AGestureInProgressKeepsItsBaseWhenAutomaticRevisionsArrive) {
+    auto run = run_automatic(*registry_, fixture_.library->find(item_)->path, 0, engine::DevelopSettings{},
+                             AutoRunRequest{});
+    ASSERT_TRUE(run) << run.error().describe();
+    auto revisions = automatic_revisions(*run, std::nullopt, recipes_->now(), recipes_->engine_version());
+    ASSERT_TRUE(revisions);
+    engine::DevelopSettings gesture;
+    gesture.contrast = 0.25;
+    ASSERT_TRUE(recipes_->set_transient(item_, gesture));
+    bool make_current_offered = true;
+    auto applied = recipes_->write_automatic(item_, std::nullopt, [&](bool make_current) {
+        make_current_offered = make_current;
+        return store_->append_automatic(item_, std::nullopt, *revisions, make_current);
+    });
+    ASSERT_TRUE(applied) << applied.error().describe();
+    EXPECT_FALSE(make_current_offered) << "a pending gesture keeps the automatic revisions off the current pointer";
+    EXPECT_FALSE(applied->made_current);
+    EXPECT_TRUE(applied->state.transient) << "the gesture is still in progress";
+    EXPECT_TRUE(is_automatic_branch_note(applied->revisions[0].note)) << applied->revisions[0].note;
+    auto committed = recipes_->commit(item_);
+    ASSERT_TRUE(committed) << committed.error().describe();
+    EXPECT_EQ(committed->committed, gesture) << "the photographer's edit is applied, not reverted";
+    auto history = recipes_->history(item_);
+    ASSERT_TRUE(history);
+    ASSERT_EQ(history->entries.size(), 2u);
+    EXPECT_FALSE(history->entries[1].info.parent.has_value()) << "derived from the recipe the gesture started on";
+}
+
+// Redo follows the path the photographer came from: after an automatic result kept as a branch,
+// undoing the photographer's edit and redoing returns to that edit (also after a restart, when the
+// branch's note says it is one), never silently to the branch.
+TEST_F(AutoServiceTest, RedoReturnsToThePhotographersEditNotToAnAutomaticBranch) {
+    auto run = run_automatic(*registry_, fixture_.library->find(item_)->path, 0, engine::DevelopSettings{},
+                             AutoRunRequest{});
+    ASSERT_TRUE(run) << run.error().describe();
+    auto revisions = automatic_revisions(*run, std::nullopt, recipes_->now(), recipes_->engine_version());
+    ASSERT_TRUE(revisions);
+    engine::DevelopSettings edit;
+    edit.exposure_ev = -0.5;
+    auto edited = recipes_->apply(item_, edit);  // made while Auto ran
+    ASSERT_TRUE(edited);
+    auto applied = recipes_->apply_automatic(item_, std::nullopt, *revisions);
+    ASSERT_TRUE(applied);
+    ASSERT_FALSE(applied->made_current);
+    ASSERT_TRUE(recipes_->undo(item_));
+    auto redone = recipes_->redo(item_);
+    ASSERT_TRUE(redone);
+    EXPECT_EQ(redone->revision, edited->revision);
+    EXPECT_EQ(redone->committed, edit);
+
+    // After a restart nothing is remembered: the branch's note keeps redo on the edit.
+    ASSERT_TRUE(recipes_->undo(item_));
+    RecipeServiceOptions options;
+    options.registry = registry_;
+    RecipeService restarted(*fixture_.library, store_, options);
+    auto again = restarted.redo(item_);
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->revision, edited->revision);
+
+    // A branch the photographer chose stays the way back: select it, undo, redo returns to it.
+    ASSERT_TRUE(restarted.select_revision(item_, applied->revisions[0].id));
+    ASSERT_TRUE(restarted.undo(item_));
+    auto back = restarted.redo(item_);
+    ASSERT_TRUE(back);
+    EXPECT_EQ(back->revision, applied->revisions[0].id);
+}
+
 // The memory store (session libraries) keeps automatic revisions and records like the catalog.
 TEST(AutoRevisionStores, TheMemoryStoreAppendsSiblingsWithTheirRecords) {
     std::shared_ptr<RecipeStore> store = create_memory_recipe_store();
@@ -383,6 +615,8 @@ TEST(AutoRevisionStores, TheMemoryStoreAppendsSiblingsWithTheirRecords) {
     ASSERT_TRUE(branch);
     EXPECT_FALSE(branch->made_current);
     EXPECT_EQ((*store->current(item))->info.id, appended->revisions[1].id);
+    EXPECT_TRUE(is_automatic_branch_note(branch->revisions[0].note)) << "a branch says so in its note";
+    EXPECT_FALSE(is_automatic_branch_note(appended->revisions[1].note));
     // Only automatic revisions.
     std::vector<AutomaticRevision> wrong(1);
     wrong[0].revision = user;

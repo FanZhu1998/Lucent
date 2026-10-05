@@ -19,7 +19,10 @@
 // from (siblings, so undoing the automatic edit returns to the recipe before it, and an earlier
 // failed attempt stays in the history with its reason) and carries its analysis record. The last
 // becomes current only when the item still shows the starting revision; otherwise the user changed
-// it meanwhile, the current pointer is left alone and the revisions are kept as another branch.
+// it meanwhile, the current pointer is left alone and the revisions are kept as another branch:
+// their notes then end with the field kAutomaticBranchNote, so the outcome stays known after a
+// restart (batch reports and receipts) and redo does not prefer such a branch over the
+// photographer's own edits (recipe_service.hpp).
 //
 // Thread-safety: implementations are safe to call concurrently; each call is atomic.
 
@@ -27,6 +30,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include <lucent/application/source_item.hpp>
@@ -47,6 +51,12 @@ struct AutomaticAppend {
     std::vector<catalog::RevisionInfo> revisions;  // in the order given
     bool made_current = false;                     // the last one is now the item's current revision
 };
+
+// The ';'-separated note field of an automatic revision written as a branch (AutomaticAppend::
+// made_current false), appended by the stores.
+inline constexpr std::string_view kAutomaticBranchNote = "branch=kept";
+// True when `note` has the field kAutomaticBranchNote.
+[[nodiscard]] bool is_automatic_branch_note(std::string_view note) noexcept;
 
 class RecipeStore {
 public:

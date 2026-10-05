@@ -9,10 +9,15 @@
 //   1. reads the item's committed settings (current_settings: its revision, locks and locked
 //      values; a pending gesture is not included) and probes its file, which must still be the
 //      file the library knows (SourceChanged otherwise);
-//   2. waits for memory admission with estimate_automatic_memory() (a full-resolution render
-//      lease: one at a time beside interactive previews, executor's budget);
+//   2. waits for memory admission of estimate_automatic_memory() (stage WaitingForMemory while
+//      the claim does not fit beside the claims already held; AutoServiceOptions::make_room is
+//      then asked once to release what can be rebuilt). The run holds its bytes as RETAINED
+//      memory (task_executor.hpp): it takes the render place only to be admitted and gives it
+//      back at once, so the editor's stage-one builds, refines and 100 % views keep rendering
+//      beside it within the budget, which still counts the run's bytes;
 //   3. runs run_automatic() (auto_develop.hpp) in process: the analysis of those settings, the
-//      full-resolution final check and its bounded conservative fallbacks;
+//      full-resolution final check and its bounded conservative fallbacks; then checks that the
+//      file is still the library's (SourceChanged, nothing written, when it changed during the run);
 //   4. writes one automatic revision per attempt up to the effective one (origin Auto, derived from
 //      the starting revision, each with its analysis record: RecipeService::apply_automatic), so
 //      the earlier attempt stays in the history with the reason it was replaced; the effective one
@@ -22,9 +27,11 @@
 // Nothing is written after a cancellation or an error. A final check in which no attempt passes
 // (only a numerically invalid baseline) writes nothing and ends with "app.auto.check".
 //
-// Progress (AutoEvent::Progress) is reported as the run advances (about every percent), and
-// completion (AutoEvent::Finished) once, with the result; observers run on an executor thread and
-// must return promptly (library.hpp contract). status() and wait() poll and block.
+// Progress (AutoEvent::Progress) is reported as the run advances (about every percent, and at every
+// change of stage), and completion (AutoEvent::Finished) once, with the result; observers run on an
+// executor thread and must return promptly (library.hpp contract). status() and wait() poll and
+// block; the results of the last kKeptAutoResults finished runs are kept for them (older ones are
+// forgotten: status() and wait() then return std::nullopt).
 //
 // One run per item at a time: run() for an item with a run in progress fails with AlreadyExists
 // ("app.auto.busy"). The destructor cancels the runs in progress and waits for them.
@@ -49,28 +56,38 @@
 
 namespace lucent::app {
 
+// Finished runs whose results status() and wait() still return.
+inline constexpr std::size_t kKeptAutoResults = 16;
+
 struct AutoServiceOptions {
     std::shared_ptr<const raw::DecoderRegistry> registry;  // required
     AutoRunOptions run;
+    // Called once (on an executor thread) when a run's memory claim does not fit beside the claims
+    // already held, with the item: release memory that is rebuilt on demand (the editor's cached
+    // full-resolution stage ones). Must return promptly and must not wait for executor tasks.
+    std::function<void(ItemId)> make_room;
     // Test only: the first n attempts of every final check fail (AutoRunRequest::fail_final_checks).
     std::uint32_t fail_final_checks = 0;
 };
 
 enum class AutoTaskStage : std::uint8_t {
-    Queued = 1,     // waiting for a thread or for memory admission
+    Queued = 1,     // waiting for a thread
     Analysing = 2,  // decode and analysis
     Checking = 3,   // the full-resolution final check
     Saving = 4,     // writing the revisions and records
     Finished = 5,
+    WaitingForMemory = 6,  // admitted only when other work releases memory (step 2)
 };
 
-[[nodiscard]] std::string_view to_string(AutoTaskStage stage) noexcept;  // "queued", ...
+// "queued", "analysing", "checking", "saving", "finished", "waiting_for_memory".
+[[nodiscard]] std::string_view to_string(AutoTaskStage stage) noexcept;
 
 struct AutoTaskStatus {
     std::uint64_t ticket = 0;
     ItemId item;
     AutoTaskStage stage = AutoTaskStage::Queued;
     double fraction = 0.0;  // of the whole run, 0..1, non-decreasing
+    std::uint64_t memory_bytes = 0;  // the run's memory claim, once estimated
 };
 
 struct AutoTaskResult {

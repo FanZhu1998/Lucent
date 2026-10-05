@@ -487,13 +487,17 @@ Expected<std::shared_ptr<const detail::ConsistencyPlan>> BatchService::Impl::con
             return context.consistency;
         }
     }
-    // Every job's recorded analysis, in ordinal order (jobs whose analysis failed have none).
+    // Every job's recorded analysis, in ordinal order (jobs whose analysis failed have none). A
+    // document this build cannot read (another document version, after an update between the
+    // pre-pass and now) leaves its job out of the plan: it is then developed on its own, without a
+    // related-shot target, rather than failing the batch.
     struct Member {
         catalog::JobId job;
         std::uint32_t ordinal = 0;
         AutoRun run;
     };
     std::vector<Member> members;
+    std::uint64_t documents = 0;
     catalog::JobQuery query;
     query.batch = context.id;
     query.limit = 500;
@@ -507,11 +511,12 @@ Expected<std::shared_ptr<const detail::ConsistencyPlan>> BatchService::Impl::con
             if (!job.analysis_json) {
                 continue;
             }
+            ++documents;
             auto run = read_auto_run(*job.analysis_json);
             if (!run) {
-                Error error = std::move(run.error());
-                error.where = std::string(detail::kWhereAutoDocument);
-                return Unexpected(std::move(error));
+                core::log_warn(kWhere, "batch {}: the analysis of job {} cannot be read, so it is left out of the "
+                               "related-shot plan: {}", context.id.value, job.id.value, run.error().describe());
+                continue;
             }
             members.push_back(Member{job.id, job.ordinal, std::move(*run)});
         }
@@ -539,7 +544,7 @@ Expected<std::shared_ptr<const detail::ConsistencyPlan>> BatchService::Impl::con
     const std::vector<std::optional<analysis::ConsistencyTarget>> targets =
         analysis::consistency_targets(grouping, consistency);
     auto plan = std::make_shared<detail::ConsistencyPlan>();
-    plan->analysed = members.size();
+    plan->analysed = documents;
     for (std::size_t i = 0; i < members.size(); ++i) {
         if (i < targets.size() && targets[i]) {
             plan->targets.emplace(members[i].job.value, *targets[i]);
@@ -550,6 +555,34 @@ Expected<std::shared_ptr<const detail::ConsistencyPlan>> BatchService::Impl::con
                 plan->groups.emplace(members[i].job.value, group.id);
             }
         }
+    }
+    // The anchors keep their settings: what they record is the target of the group their look sets
+    // (a member's of the same calibration domain when there is one), or the group alone.
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        if (!consistency[i].anchor) {
+            continue;
+        }
+        const auto group = plan->groups.find(members[i].job.value);
+        if (group == plan->groups.end()) {
+            continue;  // alone: no group to record
+        }
+        std::optional<analysis::ConsistencyTarget> chosen;
+        for (const auto& [job, target] : plan->targets) {
+            const auto member_group = plan->groups.find(job);
+            if (member_group == plan->groups.end() || member_group->second != group->second) {
+                continue;
+            }
+            if (!chosen || (target.domain == members[i].run.shot.calibration_domain &&
+                            chosen->domain != members[i].run.shot.calibration_domain)) {
+                chosen = target;
+            }
+        }
+        if (!chosen) {
+            chosen.emplace();
+            chosen->group_id = group->second;
+            chosen->anchored = true;
+        }
+        plan->anchors.emplace(members[i].job.value, std::move(*chosen));
     }
     core::log_info(kWhere, "batch {}: {} analysed photos in {} related groups, {} regularised", context.id.value,
                    members.size(), grouping.groups.size(), plan->targets.size());
@@ -822,8 +855,10 @@ bool BatchService::Impl::reconcile_job(const catalog::JobRecord& job, std::vecto
         return false;
     };
     // An output folder out of reach (a drive not plugged in yet, a share not reconnected, another
-    // folder at its path) says nothing about the outputs in it: decide once it is back.
-    if (context && reach_destination(**context) != detail::Reach::Reachable) {
+    // folder at its path) says nothing about the outputs in it: decide once it is back. An
+    // AnalyzeOnly batch publishes nothing there (only its report), so its jobs never wait for it.
+    if (context && (*context)->automatic != catalog::AutoMode::AnalyzeOnly &&
+        reach_destination(**context) != detail::Reach::Reachable) {
         return defer("its output folder cannot be reached");
     }
 

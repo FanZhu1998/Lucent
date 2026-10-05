@@ -1284,6 +1284,27 @@ bool Attempt::automatic_stage() {
         if (const auto found = (*plan)->targets.find(job_.id.value); found != (*plan)->targets.end()) {
             auto_request.target = found->second;
         }
+        // A caller-marked anchor keeps its starting recipe: its look sets its group's target, so it
+        // is neither optimised nor replaced (related_shots.hpp). One automatic revision with those
+        // settings records its role; the export identity is unchanged.
+        if (consistent && context_.policy.automatic.anchors.contains(job_.ordinal) && job_.analysis_json) {
+            if (auto analysed = read_auto_run(*job_.analysis_json); analysed && analysed->anchor_appearance) {
+                std::optional<analysis::ConsistencyTarget> group;
+                if (const auto found = (*plan)->anchors.find(job_.id.value); found != (*plan)->anchors.end()) {
+                    group = found->second;
+                }
+                auto kept = anchor_run(*analysed, std::move(group));
+                if (!kept) {
+                    fail_job(catalog::FailureClass::Deterministic, std::move(kept.error()), false);
+                    return false;
+                }
+                if (token_.is_cancelled() || stop_reason() != detail::StopReason::None) {
+                    stop_here();
+                    return false;
+                }
+                return freeze(*kept, std::nullopt);
+            }
+        }
     }
     auto request_text = write_auto_request(auto_request);
     if (!request_text) {
@@ -1310,6 +1331,13 @@ bool Attempt::automatic_stage() {
     }
     if (!outcome.succeeded()) {
         worker_failed(*outcome.failure);
+        return false;
+    }
+    point("answered");
+    // Nothing is written after a cancellation (ADR 0013 item 3), also when the answer arrived just
+    // before it: the recorded analysis, the revisions and the freeze all wait for a running batch.
+    if (token_.is_cancelled() || stop_reason() != detail::StopReason::None) {
+        stop_here();
         return false;
     }
     calibrate(outcome.metrics, &outcome.result->memory, fresh_process, true);
@@ -1370,29 +1398,34 @@ bool Attempt::freeze(const AutoRun& run, const std::optional<std::string>& analy
     }
     const catalog::ItemId item{job_.item->value};
     const bool analyze_only = context_.automatic == catalog::AutoMode::AnalyzeOnly;
-    auto frozen = s_.catalog->transact([&](catalog::WriteTransaction& tx) -> Expected<AutomaticAppend> {
-        if (analysis_document) {
-            if (Status recorded = tx.record_job_analysis(lease_, *analysis_document, s_.now()); !recorded) {
-                return Unexpected(std::move(recorded.error()));
+    // Through the recipe service, under its lock: the effective revision becomes current only when
+    // the photo still shows the job's starting revision and no gesture is pending in the editor
+    // (ADR 0013 item 3), and no commit can interleave with the write.
+    auto frozen = s_.recipes.write_automatic(item_->id, job_.revision, [&](bool make_current) {
+        return s_.catalog->transact([&](catalog::WriteTransaction& tx) -> Expected<AutomaticAppend> {
+            if (analysis_document) {
+                if (Status recorded = tx.record_job_analysis(lease_, *analysis_document, s_.now()); !recorded) {
+                    return Unexpected(std::move(recorded.error()));
+                }
             }
-        }
-        auto appended = append_automatic_revisions(tx, item, job_.revision, *revisions, true);
-        if (!appended) {
-            return Unexpected(std::move(appended.error()));
-        }
-        const catalog::RevisionInfo& effective = appended->revisions.back();
-        catalog::AutoFreeze bind;
-        bind.revision = effective.id;
-        bind.settings_sha256 = effective.settings_sha256;
-        if (auto identity = tx.freeze_auto_job(lease_, bind, s_.now()); !identity) {
-            return Unexpected(std::move(identity.error()));
-        }
-        if (analyze_only) {
-            if (Status done = tx.complete_without_output(lease_, s_.now()); !done) {
-                return Unexpected(std::move(done.error()));
+            auto appended = append_automatic_revisions(tx, item, job_.revision, *revisions, make_current);
+            if (!appended) {
+                return Unexpected(std::move(appended.error()));
             }
-        }
-        return appended;
+            const catalog::RevisionInfo& effective = appended->revisions.back();
+            catalog::AutoFreeze bind;
+            bind.revision = effective.id;
+            bind.settings_sha256 = effective.settings_sha256;
+            if (auto identity = tx.freeze_auto_job(lease_, bind, s_.now()); !identity) {
+                return Unexpected(std::move(identity.error()));
+            }
+            if (analyze_only) {
+                if (Status done = tx.complete_without_output(lease_, s_.now()); !done) {
+                    return Unexpected(std::move(done.error()));
+                }
+            }
+            return appended;
+        });
     });
     if (!frozen) {
         if (frozen.error().where == "catalog.job.lease_lost") {
@@ -1403,10 +1436,6 @@ bool Attempt::freeze(const AutoRun& run, const std::optional<std::string>& analy
         return false;
     }
     const catalog::RevisionInfo& effective = frozen->revisions.back();
-    if (auto refreshed = s_.recipes.refresh(item_->id); !refreshed) {
-        core::log_warn(kWhere, "cannot refresh the recipe of item {}: {}", item_->id.value,
-                       refreshed.error().describe());
-    }
     point("frozen");
     core::log_info(kWhere, "job {}: automatic revision {} of item {} ({} attempt(s), confidence {:.2f}){}",
                    job_.id.value, effective.revision_number, item_->id.value, frozen->revisions.size(),
@@ -1423,8 +1452,7 @@ bool Attempt::freeze(const AutoRun& run, const std::optional<std::string>& analy
         }
     }
     if (!frozen->made_current) {
-        automatic_notes_.push_back(
-            "The photo was edited while the batch ran; the automatic settings are kept in its history.");
+        automatic_notes_.emplace_back(detail::kEditedMeanwhileNote);
     }
     if (analyze_only) {
         {
@@ -1457,6 +1485,11 @@ void Attempt::complete_analysed() {
 void Attempt::load_automatic_notes() {
     if (!revision_) {
         return;
+    }
+    // Kept as a branch (the photo was edited meanwhile): the revision's note says so, durably.
+    if (auto revision = s_.catalog->query([&](catalog::ReadTransaction& tx) { return tx.find_revision(*revision_); });
+        revision && *revision && is_automatic_branch_note((*revision)->info.note)) {
+        automatic_notes_.emplace_back(detail::kEditedMeanwhileNote);
     }
     auto record = s_.catalog->query([&](catalog::ReadTransaction& tx) { return tx.find_auto_analysis(*revision_); });
     if (!record || !*record) {

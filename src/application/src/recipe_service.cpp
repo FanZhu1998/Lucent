@@ -178,6 +178,8 @@ struct RecipeService::State {
         std::optional<engine::DevelopSettings> transient;
         RecipeDocument transient_document;
         std::uint64_t transient_generation = 0;
+        // The revision undo() last left: redo() returns to it while it is a child of the current one.
+        std::optional<catalog::RevisionId> redo_target;
     };
 
     struct CameraEntry {
@@ -650,6 +652,13 @@ Expected<RecipeState> RecipeService::apply(ItemId item, const engine::DevelopSet
 
 Expected<AutomaticOutcome> RecipeService::apply_automatic(ItemId item, std::optional<catalog::RevisionId> base,
                                                           std::span<const AutomaticRevision> revisions) {
+    return write_automatic(item, base, [&](bool make_current) {
+        return state_->store->append_automatic(item, base, revisions, make_current);
+    });
+}
+
+Expected<AutomaticOutcome> RecipeService::write_automatic(ItemId item, std::optional<catalog::RevisionId> base,
+                                                          const AutomaticWrite& write) {
     try {
         std::vector<RecipeChange> changes;
         AutomaticOutcome outcome;
@@ -663,8 +672,12 @@ Expected<AutomaticOutcome> RecipeService::apply_automatic(ItemId item, std::opti
             if (auto status = state_->check_writable(); !status) {
                 return Unexpected(std::move(status.error()));
             }
+            // The item's committed state may have been changed by another writer since it was loaded.
+            if (auto status = state_->reload_locked(item, e); !status) {
+                return Unexpected(std::move(status.error()));
+            }
             const bool make_current = e.revision == base && !e.transient;
-            auto appended = state_->store->append_automatic(item, base, revisions, make_current);
+            auto appended = write(make_current);
             if (!appended) {
                 (void)state_->reload_locked(item, e);
                 return Unexpected(std::move(appended.error()));
@@ -739,6 +752,7 @@ Expected<RecipeState> RecipeService::undo(ItemId item) {
                             std::format("item {} shows its as-shot settings: nothing to undo", item.value),
                             "app.recipe.nothing_to_undo");
             }
+            const std::optional<catalog::RevisionId> left = e.revision;
             auto moved = state_->store->undo(item);
             if (!moved) {
                 (void)state_->reload_locked(item, e);
@@ -747,6 +761,7 @@ Expected<RecipeState> RecipeService::undo(ItemId item) {
             if (auto status = state_->reload_locked(item, e); !status) {
                 return Unexpected(std::move(status.error()));
             }
+            e.redo_target = left;
             changes.push_back(state_->change_locked(RecipeChangeKind::Moved, item, e));
             result = changes.back().state;
         }
@@ -779,7 +794,35 @@ Expected<RecipeState> RecipeService::redo(ItemId item) {
                                 item.value),
                     "app.recipe.nothing_to_redo");
             }
-            auto moved = state_->store->redo(item);
+            // The child undo() left, else the newest child that is not an automatic branch, else the
+            // newest child (the history lists revisions oldest first).
+            std::optional<catalog::RevisionId> target;
+            std::optional<catalog::RevisionId> newest;
+            bool remembered = false;
+            for (const catalog::RevisionInfo& info : e.history.revisions) {
+                if (info.parent != e.revision) {
+                    continue;
+                }
+                newest = info.id;
+                if (e.redo_target == info.id) {
+                    remembered = true;
+                }
+                if (!is_automatic_branch_note(info.note)) {
+                    target = info.id;
+                }
+            }
+            if (remembered) {
+                target = e.redo_target;
+            } else if (!target) {
+                target = newest;
+            }
+            if (!target) {  // can_redo above: the item has a child of its current revision
+                return fail(ErrorCode::InvalidArgument,
+                            std::format("item {} has no revision derived from its current one: nothing to redo",
+                                        item.value),
+                            "app.recipe.nothing_to_redo");
+            }
+            Status moved = state_->store->set_current(item, target);
             if (!moved) {
                 (void)state_->reload_locked(item, e);
                 return Unexpected(std::move(moved.error()));
