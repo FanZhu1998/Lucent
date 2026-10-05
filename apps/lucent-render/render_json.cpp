@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -20,6 +21,53 @@ namespace {
 
 Json size_json(const image::Size& size) {
     return Json{{"width", size.width}, {"height", size.height}};
+}
+
+Json rect_json(const image::PixelRect& rect) {
+    return Json{{"x", rect.x}, {"y", rect.y}, {"width", rect.width}, {"height", rect.height}};
+}
+
+Json chroma_denoise_json(const std::optional<engine::ChromaDenoiseRecord>& r) {
+    if (!r) {
+        return nullptr;
+    }
+    return Json{{"version", r->version},
+                {"strength", number(r->strength)},
+                {"radius", r->radius},
+                {"epsilon", number(r->epsilon)},
+                {"band_rows", r->band_rows},
+                {"halo_rows", r->halo_rows},
+                {"bands", r->bands},
+                {"working_bytes", r->working_bytes}};
+}
+
+Json local_adjustments_json(const std::optional<engine::LocalAdjustmentsRecord>& r) {
+    if (!r) {
+        return nullptr;
+    }
+    return Json{{"version", r->version},
+                {"masks", r->masks},
+                {"rasterized", r->rasterized},
+                {"cache_hits", r->cache_hits},
+                {"raster_bytes", r->raster_bytes},
+                {"tone_radius", r->tone_radius},
+                {"tone_region", rect_json(r->tone_region)},
+                {"changed_pixels", r->changed_pixels}};
+}
+
+Json geometry_json(const std::optional<engine::GeometryRecord>& r) {
+    if (!r) {
+        return nullptr;
+    }
+    return Json{{"version", r->version},
+                {"straighten_degrees", number(r->straighten_degrees)},
+                {"crop", rect_json(r->crop)},
+                {"orientation", std::string(image::to_string(r->orientation))},
+                {"orientation_exif", image::to_exif(r->orientation)},
+                {"input_size", size_json(r->input_size)},
+                {"output_size", size_json(r->output_size)},
+                {"resampled", r->resampled},
+                {"uncovered_pixels", r->uncovered_pixels}};
 }
 
 template <class Array>
@@ -274,6 +322,7 @@ Json develop_report_json(const engine::DevelopReport& r) {
     return Json{{"pipeline_version", r.pipeline_version},
                 {"settings", std::move(settings)},
                 {"full_size", size_json(r.full_size)},
+                {"upright_size", size_json(r.upright_size)},
                 {"output_size", size_json(r.output_size)},
                 {"scale", number(r.scale)},
                 {"stage_one", std::move(stage_one)},
@@ -284,8 +333,11 @@ Json develop_report_json(const engine::DevelopReport& r) {
                 {"gain", number(r.gain)},
                 {"scene_white", number(r.scene_white)},
                 {"white", number(r.white)},
+                {"chroma_denoise", chroma_denoise_json(r.chroma_denoise)},
                 {"local_tone", std::move(local_tone)},
+                {"local_adjustments", local_adjustments_json(r.local_adjustments)},
                 {"base_look", std::move(base_look)},
+                {"geometry", geometry_json(r.geometry)},
                 {"operations", std::move(operations)},
                 {"warnings", r.warnings},
                 {"stage_two_seconds", number(r.stage_two_seconds)}};

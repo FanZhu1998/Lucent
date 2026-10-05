@@ -8,13 +8,18 @@
 //      "warnings", "error"}. settings_sha256 is the recipe identity (develop pipeline; null for
 //      neutral-v0).
 //   lucent.render-report (schema_version 2): the --report file, holding the generator, source,
-//     "pipeline", the recipe ("recipe": schema, version, sha256 of the canonical document, the
-//     document itself and the --develop file it came from; null for neutral-v0), the decoded
+//     "pipeline", the recipe ("recipe": schema, version (of the canonical document: always the
+//     current recipe version), sha256 of the canonical document, the document itself, the
+//     --develop file it came from and that file's own version ("file_version": 1 or 2; a
+//     version-1 file is upgraded on read, recipe.hpp); null for neutral-v0), the decoded
 //     metadata (lucent-probe's "metadata" object), the render record ("render": the develop
 //     pipeline's DevelopReport, develop_report_json, or the W2 RenderReport for
 //     --legacy-neutral-v0), the export receipt ("export"), the --dump-linear file ("dump_linear"),
 //     process memory ("process") and "status"/"error".
-//   Version 1 (W2) had no "pipeline" and "recipe" and always held a RenderReport.
+//   Version 1 (W2) had no "pipeline" and "recipe" and always held a RenderReport. W9 (ADR 0015)
+//     added, within version 2, the develop report's "upright_size" (the stage-one image, before
+//     the geometry; "output_size" is after it) and its "chroma_denoise", "local_adjustments" and
+//     "geometry" records (null when the operation was not applied).
 //
 // Numbers: finite doubles are written as JSON numbers; non-finite values as the strings "nan",
 // "inf", "-inf" (as lucent-probe does). Enumerations use the modules' stable to_string() names.
