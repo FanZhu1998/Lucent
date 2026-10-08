@@ -152,9 +152,13 @@ std::uint64_t plane_bytes(image::Size size, std::int32_t channels, const image::
 // bands), local adjustments (brush rasters over their extents and their base layer) and the
 // geometry's output image. Without settings: chroma denoising at its largest radius, local tone, a
 // base layer and a full-size geometry output.
+// `frame` is the geometry's frame at `size` (geometry_mapping(); the camera's image area for
+// geometry version 2), the whole image when null: with an area, even the identity geometry writes
+// a new output image.
 std::uint64_t stage_two_working_bytes(image::Size size, double scale, std::int32_t tone_radius,
                                       std::int32_t channels_out, const DevelopSettings* settings,
-                                      const image::AllocationLimits& limits) {
+                                      const image::AllocationLimits& limits,
+                                      const image::PixelRect* frame = nullptr) {
     const std::uint64_t one = plane_bytes(size, 1, limits);
     if (settings == nullptr) {
         const std::uint64_t denoise =
@@ -170,7 +174,9 @@ std::uint64_t stage_two_working_bytes(image::Size size, double scale, std::int32
                                     size, chroma_denoise_radius(settings->chroma_denoise.radius, scale)));
     }
     bytes = std::max(bytes, local_adjustments_working_bytes(settings->local_adjustments, size, tone_radius));
-    if (auto mapping = GeometryMapping::create(settings->geometry, size); mapping && !mapping->identity()) {
+    if (auto mapping = GeometryMapping::create(settings->geometry, size,
+                                               frame != nullptr ? *frame : image::PixelRect::from_size(size));
+        mapping && !mapping->identity()) {
         bytes = std::max(bytes, plane_bytes(mapping->output_size(), channels_out, limits));
     }
     return bytes;
@@ -228,6 +234,7 @@ StageOneImage copy_records(const StageOneImage& source) {
     out.orientation = source.orientation;
     out.stages = source.stages;
     out.dng_opcodes = source.dng_opcodes;
+    out.image_area = source.image_area;
     out.downscale = source.downscale;
     out.warnings = source.warnings;
     out.seconds = source.seconds;
@@ -482,6 +489,9 @@ Expected<StageOneImage> run_stage_one(raw::DecodedRaw&& decoded, const StageOneR
         }
     }
     out.dng_opcodes = opcodes.report();
+    // The camera's image area in the image the opcodes left (stage-3 frame, stored orientation).
+    std::optional<ImageAreaPlacement> area =
+        place_image_area(decoded.metadata, demosaiced->pixels.size(), &opcodes.stage3_frame());
 
     // ---- orientation -------------------------------------------------------------------------------
     t = Clock::now();
@@ -508,6 +518,14 @@ Expected<StageOneImage> run_stage_one(raw::DecodedRaw&& decoded, const StageOneR
         s.parameters = {param("orientation", std::string(image::to_string(orientation)))};
         s.seconds = seconds_since(t);
         out.stages.push_back(std::move(s));
+    }
+    if (area && area->applicable()) {
+        out.image_area = oriented_placement(std::move(*area), stored_size, orientation);
+    } else if (area) {
+        out.warnings.push_back(
+            std::format("the camera's image area ({}: {}) lies outside the decoded image and "
+                        "cannot be applied",
+                        raw::to_string(area->source), area->basis));
     }
 
     // ---- proxy -------------------------------------------------------------------------------------
@@ -560,13 +578,14 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     const image::Size size = one.pixels.size();
     const raw::RawMetadata& metadata = one.metadata;
     const bool local_tone = settings.highlights != 0.0 || settings.shadows != 0.0;
-    auto mapping = GeometryMapping::create(settings.geometry, size);
+    auto mapping = geometry_mapping(settings, one);
     if (!mapping) {
         return Unexpected(std::move(mapping.error()));
     }
     {
-        std::uint64_t bytes = stage_two_working_bytes(size, one.scale, local_tone_radius(one.full_size, one.scale), 3,
-                                                      &settings, options.limits);
+        std::uint64_t bytes =
+            stage_two_working_bytes(size, one.scale, local_tone_radius(one.full_size, one.scale), 3,
+                                    &settings, options.limits, &mapping->frame());
         if (reuse == nullptr || mono) {
             bytes += plane_bytes(size, 3, options.limits);
         }
@@ -592,6 +611,16 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     report.downscale = one.downscale;
     report.warnings = one.warnings;
     report.stage_one_seconds = one.seconds;
+    report.geometry_version = geometry_operation_version(settings);
+    report.geometry_frame = mapping->frame();
+    report.image_area = one.image_area;
+    if (report.geometry_version < 2 && one.image_area) {
+        const image::PixelRect& a = one.image_area->rect;
+        report.warnings.push_back(std::format(
+            "geometry version {}: the camera's image area {}x{}+{}+{} ({}) is not "
+            "applied; the whole visible area is the frame",
+            report.geometry_version, a.width, a.height, a.x, a.y, raw::to_string(one.image_area->source)));
+    }
 
     // ---- 1. white balance, camera colour, working space, exposure (fused) -----------------------
     auto t = Clock::now();
@@ -1053,7 +1082,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         OperationRecord r;
         r.operation = DevelopOperation::Geometry;
         r.algorithm = "straighten-catmull-rom-crop-orient";
-        r.version = kGeometryOperationVersion;
+        r.version = report.geometry_version;
         r.applied = !mapping->identity();
         r.parameters = {
             param("straighten_degrees", g.straighten_degrees),
@@ -1061,12 +1090,22 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             param("quarter_turns", static_cast<std::int64_t>(g.quarter_turns)),
             param("flip_horizontal", g.flip_horizontal),
         };
+        if (report.geometry_version >= 2) {
+            const image::PixelRect& f = mapping->frame();
+            r.parameters.push_back(param(
+                "frame", std::vector<double>{static_cast<double>(f.x), static_cast<double>(f.y),
+                                             static_cast<double>(f.width), static_cast<double>(f.height)}));
+            r.parameters.push_back(param(
+                "frame_source", std::string(raw::to_string(one.image_area ? one.image_area->source
+                                                                          : raw::ImageAreaSource::Unknown))));
+        }
         if (r.applied) {
             t = Clock::now();
             auto applied = apply_geometry(image, *mapping, options.limits, cancel, options.parallel);
             if (!applied) {
                 return Unexpected(std::move(applied.error()));
             }
+            applied->version = report.geometry_version;
             report.geometry = *applied;
             const image::PixelRect& c = applied->crop;
             r.parameters.push_back(param("crop_pixels", std::vector<double>{static_cast<double>(c.x),
@@ -1088,6 +1127,28 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
 }  // namespace
 
 // ---- Public functions -----------------------------------------------------------------------------
+
+Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings, image::Size render_size,
+                                           image::Size full_size,
+                                           const std::optional<ImageAreaPlacement>& area) {
+    image::PixelRect frame = image::PixelRect::from_size(render_size);
+    if (geometry_operation_version(settings) >= 2 && area && area->applicable() && !render_size.empty()) {
+        if (full_size.empty() || proxy_size(full_size, long_edge(render_size)) != render_size) {
+            return fail(
+                ErrorCode::InvalidArgument,
+                std::format("a {} x {} image is not the whole {} x {} frame at any scale, so the camera's "
+                            "image area cannot be placed in it",
+                            render_size.width, render_size.height, full_size.width, full_size.height),
+                "engine.develop.geometry");
+        }
+        frame = scale_area(area->rect, full_size, render_size);
+    }
+    return GeometryMapping::create(settings.geometry, render_size, frame);
+}
+
+Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings, const StageOneImage& image) {
+    return geometry_mapping(settings, image.pixels.size(), image.full_size, image.image_area);
+}
 
 std::shared_ptr<const StageTwoCache::Entry> StageTwoCache::find(const Key& key) {
     const std::lock_guard lock(mutex_);
@@ -1285,8 +1346,19 @@ Expected<DevelopMemoryEstimate> estimate_memory(const raw::RawMetadata& metadata
     const image::Size kept = proxy_size(full, request.proxy_long_edge);
     const double scale =
         static_cast<double>(long_edge(kept)) / static_cast<double>(std::max(1, long_edge(full)));
-    const std::uint64_t working =
-        stage_two_working_bytes(kept, scale, local_tone_radius(full, scale), 3, settings, options.limits);
+    // The geometry's frame as stage two will place it (geometry version 2: the camera's image area,
+    // placed without the opcodes' trims, which only shrink it).
+    image::PixelRect frame = image::PixelRect::from_size(kept);
+    if (settings != nullptr && geometry_operation_version(*settings) >= 2) {
+        const image::Size stored = metadata.geometry.visible_area.size();
+        if (auto placed = place_image_area(metadata, stored); placed && placed->applicable()) {
+            frame =
+                scale_area(oriented_placement(std::move(*placed), stored, metadata.geometry.orientation).rect,
+                           full, kept);
+        }
+    }
+    const std::uint64_t working = stage_two_working_bytes(kept, scale, local_tone_radius(full, scale), 3,
+                                                          settings, options.limits, &frame);
     e.stage_two_bytes = plane_bytes(kept, 3, options.limits) + working;
     // The export path consumes stage one: RGB is reused in place, monochrome expands to RGB.
     const std::uint64_t in_place = (channels == 1 ? plane_bytes(kept, 3, options.limits) : 0) + working;

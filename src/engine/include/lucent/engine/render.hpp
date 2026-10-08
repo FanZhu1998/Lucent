@@ -14,12 +14,15 @@
 //   3. white_balance     resolve/apply_white_balance              -> camera-native, balanced
 //   4. demosaic          demosaic (demosaic.hpp)                  -> camera-native linear RGB / mono
 //      dng_opcode_list3  DNG OpcodeList3                          -> same encoding
+//      camera_area       the camera's image area (image_area.hpp) -> same encoding, cut to the area
 //   5. camera_color      resolve/apply_camera_color               -> CIE XYZ (D50 or D65)
 //   6. working_space     convert_to_working_space                 -> scene-linear Rec.2020 / D65
 //   7. display_rendering render_neutral_v0 (provisional)          -> display-referred linear Rec.2020
 //   8. orientation       apply_orientation                        -> same encoding, upright
 // An opcode stage is present only when the file has that opcode list (ADR 0014); it records every
-// opcode of the list, applied or not.
+// opcode of the list, applied or not. The camera_area stage is present when the file declares an
+// image area smaller than the image the opcodes left and RenderSettings::apply_camera_area is set
+// (ADR 0017); every later stage is per pixel, so cutting there equals cutting the final image.
 // The hand-off to lucent::exporter::encode_for_output is display_linear_rec2020(). Values are
 // limited in three places: stage 3 clips raw highlights to the lowest white-balanced saturation
 // level (default highlight policy), stage 7 limits max(R, G, B) to 1, and the exporter clips per
@@ -28,8 +31,7 @@
 //
 // Not yet part of the path (reported, never silently assumed): DNG opcodes Lucent does not
 // implement and other required operations (the metadata's Interpretation says what is missing),
-// DNG DefaultCrop, lens-profile corrections, non-square pixels, noise reduction, sharpening,
-// resizing.
+// lens-profile corrections, non-square pixels, noise reduction, sharpening, resizing.
 //
 // Memory: before decoding (from the probe) and again before normalising, the pipeline estimates
 // the peak of its own pixel buffers (estimate_render_memory) and refuses with LimitExceeded
@@ -60,6 +62,7 @@
 #include <lucent/engine/demosaic.hpp>
 #include <lucent/engine/display_rendering.hpp>
 #include <lucent/engine/dng_opcode_processing.hpp>
+#include <lucent/engine/image_area.hpp>
 #include <lucent/engine/sensor.hpp>
 #include <lucent/image/color_encoding.hpp>
 #include <lucent/image/color_math.hpp>
@@ -74,11 +77,13 @@ namespace lucent::engine {
 // Schema of RenderSettings, the seed of the W6 recipe. Persisted with every render record.
 //   1.0: W2 initial settings.
 //   1.1: apply_dng_opcodes.
-inline constexpr core::ContractVersion kRenderSettingsVersion{1, 1};
+//   1.2: apply_camera_area.
+inline constexpr core::ContractVersion kRenderSettingsVersion{1, 2};
 
 // Version of the ordered stage graph (bump when stages are added, removed or reordered).
 //   2: the DNG opcode stages (dng_opcode_list1..3).
-inline constexpr std::uint32_t kRenderPipelineVersion = 2;
+//   3: the camera_area stage (ADR 0017).
+inline constexpr std::uint32_t kRenderPipelineVersion = 3;
 
 // Default bound on the pipeline's own pixel memory (4 GiB): a 45 MP render with a retained
 // scene-linear copy and a rotation needs about 2 GB. Process-wide admission control is W7's.
@@ -112,6 +117,11 @@ struct RenderSettings {
     // applied is then recorded as disabled and becomes an interpretation issue of the report, so
     // such a render is never reported as complete.
     bool apply_dng_opcodes = true;
+    // Cut the image to the camera's intended image area (raw::ImageArea, image_area.hpp; ADR
+    // 0017). false renders the decoder's whole visible area, for reference comparisons with
+    // decoders that render it (LibRaw / rawpy); the area is then recorded but not applied, with a
+    // warning.
+    bool apply_camera_area = true;
 
     // VersionMismatch (engine.render.settings) when `schema` is not readable by this build
     // (core::check_readable); InvalidArgument for unknown enum values, a non-finite or
@@ -151,6 +161,7 @@ enum class RenderStage : std::uint8_t {
     DngOpcodeList1 = 9,   // DNG OpcodeList1 on the stored samples
     DngOpcodeList2 = 10,  // DNG OpcodeList2 on the normalised samples
     DngOpcodeList3 = 11,  // DNG OpcodeList3 on the demosaiced image
+    CameraArea = 12,      // the camera's image area (ADR 0017)
 };
 
 [[nodiscard]] std::string_view to_string(RenderStage stage) noexcept;  // "decode", "white_balance", ...
@@ -198,6 +209,8 @@ struct MemoryEstimate {
     // DNG opcodes: a List 2 TrimBounds copies the sensor image and mask, a List 3 warp or
     // TrimBounds one RGB image (0 without such opcodes or when opcode processing is off).
     std::uint64_t opcode_peak = 0;
+    // The camera_area stage: the RGB image and its cut copy (0 when no area is applied).
+    std::uint64_t camera_area_peak = 0;
     std::uint64_t peak_bytes = 0;        // maximum of the peaks above
     RenderStage peak_stage = RenderStage::Decode;
     std::uint64_t budget_bytes = 0;  // RenderOptions::memory_budget_bytes
@@ -223,6 +236,11 @@ struct RenderReport {
     NeutralV0Record rendering;
     image::Orientation orientation = image::Orientation::Normal;  // baked into the pixels
     DngOpcodeReport dng_opcodes;  // every DNG opcode and geometry change (ADR 0014)
+    // The camera's image area placed in the image the opcodes left (stored orientation, before
+    // the orientation stage); std::nullopt when the file declares none. camera_area_applied says
+    // whether the camera_area stage cut the image to it.
+    std::optional<ImageAreaPlacement> image_area;
+    bool camera_area_applied = false;
     image::Size output_size;
     double total_seconds = 0.0;
 };

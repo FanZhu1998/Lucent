@@ -1308,6 +1308,11 @@ Status DngOpcodeProcessor::run_list3(image::ImageBuffer<float>& pixels, const st
         record.seconds = seconds_since(start);
         report_.opcodes.push_back(std::move(record));
     }
+    // The stage image after List 3 (a TrimBounds re-based it), where the DNG default crop applies.
+    list3_frame_.image.width = static_cast<std::uint32_t>(f.stage_width);
+    list3_frame_.image.height = static_cast<std::uint32_t>(f.stage_height);
+    list3_frame_.offset_x = static_cast<std::int32_t>(f.offset_x);
+    list3_frame_.offset_y = static_cast<std::int32_t>(f.offset_y);
     return ok();
 }
 

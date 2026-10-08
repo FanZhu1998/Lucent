@@ -375,7 +375,9 @@ TEST(RenderSettings, RejectsNewerSchemasAndInvalidValues) {
     EXPECT_TRUE(s.validate());
     s.schema = core::ContractVersion{1, 0};  // an older minor version is readable
     EXPECT_TRUE(s.validate());
-    s.schema = core::ContractVersion{1, 2};
+    s.schema = core::ContractVersion{1, 1};
+    EXPECT_TRUE(s.validate());
+    s.schema = core::ContractVersion{1, 3};
     ts::expect_error(s.validate(), ErrorCode::VersionMismatch, "engine.render.settings");
     s.schema = core::ContractVersion{2, 0};
     ts::expect_error(s.validate(), ErrorCode::VersionMismatch, "engine.render.settings");
