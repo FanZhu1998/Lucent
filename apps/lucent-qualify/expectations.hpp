@@ -8,9 +8,11 @@
 // produce:
 //   * camera identity (file make/model, product, qualification family);
 //   * the expected mode key (mode_key.hpp) and the compression mode;
-//   * dimensions: the upright size Lucent renders (the decoder's visible area), the camera's own
-//     image area (manufacturer specification, or the file's declared default crop), and how the
-//     two relate;
+//   * dimensions: the upright size Lucent's default develop render outputs (the camera's image
+//     area the file declares, ADR 0017, or the decoder's visible area when it declares none), the
+//     camera's own image area (manufacturer specification, or the file's declared default crop),
+//     how the two relate, and where Lucent's area comes from ("image_area_source": the decoded-RAW
+//     contract's ImageAreaSource name, optional);
 //   * orientation (EXIF value) and representation (CFA at the visible-area origin, linear or
 //     monochrome);
 //   * mandatory interpretation steps (DNG opcodes Lucent applies, steps the decoder performs,
@@ -130,6 +132,9 @@ struct FixtureExpectation {
     std::optional<Size2> camera_image_area;  // the camera's own image size for this mode
     Fact camera_image_area_fact;
     std::string dimensions_note;
+    // raw::to_string(ImageAreaSource) the decoder reports ("dng_default_crop", "decoder_inset_crop",
+    // "dng_default_whole_image", "unknown"); absent: not asserted.
+    std::optional<std::string> image_area_source;
     // Orientation.
     int orientation_exif = 1;
     Fact orientation;

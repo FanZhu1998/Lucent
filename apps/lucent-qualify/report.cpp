@@ -318,7 +318,9 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
                           {"decoded_raw_contract", raw::kDecodedRawContractVersion.to_string()},
                           {"render_pipeline", engine::kRenderPipelineVersion},
                           {"develop_pipeline", engine::kDevelopPipelineVersion},
-                          {"dng_opcode_processing", engine::kDngOpcodeProcessingVersion}};
+                          {"dng_opcode_processing", engine::kDngOpcodeProcessingVersion},
+                          {"geometry_operation", engine::kGeometryOperationVersion},
+                          {"image_area_placement", engine::kImageAreaPlacementVersion}};
     const auto input = [](const std::filesystem::path& path, const std::filesystem::path& root) {
         std::error_code ec;
         const std::filesystem::path relative = std::filesystem::relative(path, root, ec);
@@ -367,9 +369,13 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
         const auto& group = by_mode.at(key);
         const OrderedJson* worst = group.front();
         std::set<std::string> limitations;
+        std::set<std::string> lookup_keys;
         std::vector<std::string> ids;
         std::vector<std::string> gaps;
         for (const OrderedJson* f : group) {
+            if (f->contains("lookup_key") && f->at("lookup_key").is_string()) {
+                lookup_keys.insert(f->at("lookup_key").get<std::string>());
+            }
             if (state_severity(f->value("proposed_state", std::string())) <
                 state_severity(worst->value("proposed_state", std::string()))) {
                 worst = f;
@@ -384,6 +390,7 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
         }
         table.push_back(
             {{"mode_key", key},
+             {"lookup_keys", std::vector<std::string>(lookup_keys.begin(), lookup_keys.end())},
              {"model_key",
               worst->at("mode_key").is_object() ? worst->at("mode_key").at("model_key") : OrderedJson("")},
              {"family", worst->value("family", std::string())},
@@ -450,7 +457,9 @@ std::string support_table_markdown(const OrderedJson& report) {
        << ", state rules " << report.at("versions").at("state_rules") << "; render pipeline "
        << report.at("versions").at("render_pipeline") << ", develop pipeline "
        << report.at("versions").at("develop_pipeline") << ", DNG opcode processing "
-       << report.at("versions").at("dng_opcode_processing") << " (ADR 0016).\n\n";
+       << report.at("versions").at("dng_opcode_processing") << ", geometry operation "
+       << report.at("versions").value("geometry_operation", 1) << ", image area placement "
+       << report.at("versions").value("image_area_placement", 0) << " (ADR 0016, ADR 0017).\n\n";
     md << "These states are **proposals from Lucent's qualification harness** for the exact camera model and "
           "capture "
           "mode of each corpus fixture. They are not a claim about other modes of the same camera, other "
@@ -461,7 +470,9 @@ std::string support_table_markdown(const OrderedJson& report) {
           "Lens-profile corrections (Lensfun) are not available for any camera yet; they are optional by the "
           "blueprint and are not listed per mode. A Verified state holds for the decoder, contract and "
           "pipeline "
-          "versions above.\n\n";
+          "versions above. Lucent shows these states to the photographer through the camera support database "
+          "exported from this report (`assets/camera-support`, ADR 0018), combined with each file's own "
+          "interpretation: a photo of a mode not listed here is Compatible, unverified at best.\n\n";
 
     md << "| State | Meaning (blueprint section 3) |\n|---|---|\n";
     md << "| Verified | Exact model and capture mode passed Lucent's decoding, colour, geometry and export "
@@ -535,6 +546,42 @@ std::string support_table_markdown(const OrderedJson& report) {
            << (f.at("mode_key").is_object() ? f.at("mode_key").at("text").get<std::string>()
                                             : std::string("(not identified)"))
            << "` |\n";
+    }
+
+    md << "\n## Camera image area\n\n";
+    md << "The image area each file declares (decoded-RAW contract 1.4, ADR 0017) and what the default "
+          "develop render (geometry version 2) outputs. *Declared* is in raw-frame pixels as the source "
+          "states it (DNG: ActiveArea origin plus DefaultCrop; other files: the decoder's reading of the "
+          "camera's crop tags); *Frame* is where it was applied in the upright image; files that declare "
+          "no area the decoder reads keep the decoder's visible area.\n\n";
+    md << "| Fixture | Source | Declared | Frame (upright) | Output |\n|---|---|---|---|---|\n";
+    for (const OrderedJson& f : report.at("fixtures")) {
+        const OrderedJson area = f.contains("camera_area") ? f.at("camera_area") : OrderedJson(nullptr);
+        const auto rect_text = [](const OrderedJson& r) -> std::string {
+            if (!r.is_object()) {
+                return "-";
+            }
+            const auto num = [](const OrderedJson& v) {
+                std::ostringstream o;
+                o << v.get<double>();
+                return o.str();
+            };
+            return num(r.at("width")) + "x" + num(r.at("height")) + " at (" + num(r.at("x")) + ", " +
+                   num(r.at("y")) + ")";
+        };
+        // The frame and the output only for a fixture the develop render ran on.
+        std::string frame = "-";
+        std::string output = "-";
+        if (area.is_object() && area.at("output").is_array()) {
+            frame =
+                area.at("applied").is_object() ? rect_text(area.at("applied")) : std::string("whole image");
+            output = std::to_string(area.at("output").at(0).get<std::int64_t>()) + "x" +
+                     std::to_string(area.at("output").at(1).get<std::int64_t>());
+        }
+        md << "| `" << f.at("id").get<std::string>() << "` | "
+           << (area.is_object() ? escape_cell(area.value("source", std::string())) : std::string("-"))
+           << " | " << (area.is_object() ? rect_text(area.at("declared")) : std::string("-")) << " | "
+           << frame << " | " << output << " |\n";
     }
 
     md << "\n## Reasons, limitations and evidence gaps\n\n";

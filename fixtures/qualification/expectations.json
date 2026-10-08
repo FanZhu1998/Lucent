@@ -2,7 +2,7 @@
  "schema": "lucent.qualification-expectations",
  "schema_version": 1,
  "mode_key_version": 1,
- "reviewed": "2026-10-05",
+ "reviewed": "2026-10-07",
  "evidence_rule": "A 'verified' fact cites at least one independent source: manufacturer_spec, file_tag (tests/qualification/tools/file_facts.py), independent_decoder (RawSpeed cameras.xml) or reviewer_visual. decoder_reference (LibRaw/rawpy) and archive_metadata are recorded but never suffice (ADR 0016).",
  "sources": {
   "spec-canon-eos-r5": {
@@ -447,12 +447,13 @@
    },
    "dimensions": {
     "rendered": [8191, 5463],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [8192, 5464],
      "status": "verified",
      "sources": ["spec-canon-eos-r5"]
     },
-    "note": "LibRaw's visible area (8191x5463, from Canon's sensor borders) is one column and one row smaller than Canon's recorded size; within the permissible 1-pixel shortfall (ADR 0016)."
+    "note": "LibRaw's crop reading (8192x5464 at (144, 112)) is Canon's recorded size and lies one column and one row beyond LibRaw's visible area (8191x5463), so the area applied is the whole visible area: within the permissible 1-pixel shortfall (ADR 0016, ADR 0017)."
    },
    "orientation": {
     "exif": 1,
@@ -510,13 +511,14 @@
     }
    },
    "dimensions": {
-    "rendered": [7028, 4688],
+    "rendered": [7008, 4672],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [7008, 4672],
      "status": "verified",
      "sources": ["file-sony-ilce-7m4-arw-compressed", "spec-sony-ilce-7m4-image-size"]
     },
-    "note": "ARW DefaultCropSize 7008x4672 at (12, 8) equals Sony's L size; LibRaw's visible area is 7028x4688 (RawSpeed 7032x4688)."
+    "note": "ARW DefaultCropSize 7008x4672 at (12, 8) equals Sony's L size; LibRaw reads it (raw_inset_crops) and Lucent renders it from LibRaw's 7028x4688 visible area (RawSpeed 7032x4688)."
    },
    "orientation": {
     "exif": 1,
@@ -532,7 +534,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -549,7 +551,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -575,14 +577,15 @@
     }
    },
    "dimensions": {
-    "rendered": [4032, 3024],
+    "rendered": [4024, 3016],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [4024, 3016],
      "status": "verified",
      "sources": ["file-dji-fc4382-dng"],
      "note": "DNG DefaultCropSize 4024x3016 at (4, 4); DJI publishes only the 48 MP size (8064x6048) and says the camera also shoots 12 MP"
     },
-    "note": "The 12 MP DNG is 4032x3024 (half of 8064x6048 in each direction); the DefaultCrop removes 4 pixels per side and is not applied."
+    "note": "The 12 MP DNG is 4032x3024 (half of 8064x6048 in each direction); Lucent renders its DefaultCrop, 4 pixels inside per side."
    },
    "orientation": {
     "exif": 1,
@@ -604,7 +607,7 @@
     }
    ],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -621,7 +624,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    },
    "notes": "Colour evidence is weak (DNG camera profile versus LibRaw's matrix)."
   },
@@ -647,14 +650,15 @@
     }
    },
    "dimensions": {
-    "rendered": [6246, 4170],
+    "rendered": [6240, 4160],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [6240, 4160],
      "status": "verified",
      "sources": ["file-fujifilm-x-t4-raf-lossless", "spec-fujifilm-x-t4"],
      "note": "RAF RawImageCroppedSize 6240x4160 equals Fujifilm's L 3:2 size"
     },
-    "note": "LibRaw's visible area 6246x4170 exceeds the RAF's declared crop 6240x4160."
+    "note": "Lucent renders the RAF's declared crop 6240x4160 at (6, 13) (RawImageCropTopLeft / RawImageCroppedSize, read by Lucent: LibRaw reports top 18 after moving the edge to its X-Trans period of 6) from LibRaw's 6246x4170 visible area."
    },
    "orientation": {
     "exif": 1,
@@ -687,7 +691,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied", "xtrans_baseline_demosaic"]
+    "limitations": ["xtrans_baseline_demosaic"]
    }
   },
   {
@@ -712,13 +716,14 @@
     }
    },
    "dimensions": {
-    "rendered": [6064, 4040],
+    "rendered": [6048, 4024],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [6048, 4024],
      "status": "verified",
      "sources": ["spec-nikon-z-6"]
     },
-    "note": "LibRaw's visible area 6064x4040 (the whole stored frame; RawSpeed crops nothing either) exceeds Nikon's 6048x4024 by 16 pixels each way."
+    "note": "LibRaw's reading of the NEF's crop (6048x4024 at (8, 8)) equals Nikon's recorded size; Lucent renders it from the 6064x4040 stored frame, LibRaw's visible area (RawSpeed crops nothing)."
    },
    "orientation": {
     "exif": 1,
@@ -734,7 +739,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -751,7 +756,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -777,12 +782,13 @@
    },
    "dimensions": {
     "rendered": [8191, 5463],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [8192, 5464],
      "status": "verified",
      "sources": ["spec-canon-eos-r5"]
     },
-    "note": "As canon-eos-r5-cr3-raw: one column and one row less than Canon's recorded size."
+    "note": "As canon-eos-r5-cr3-raw: the camera's area 8192x5464 lies one column and one row beyond the visible area 8191x5463, which is rendered."
    },
    "orientation": {
     "exif": 1,
@@ -841,12 +847,13 @@
    },
    "dimensions": {
     "rendered": [5087, 3391],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [5088, 3392],
      "status": "verified",
      "sources": ["spec-canon-eos-r5"]
     },
-    "note": "LibRaw's visible area 5087x3391 is one column and one row smaller than Canon's 1.6x recorded size 5088x3392."
+    "note": "LibRaw's crop reading (5088x3392 at (144, 108)) is Canon's 1.6x recorded size, one column and one row beyond LibRaw's visible area 5087x3391, which is rendered (1-pixel shortfall)."
    },
    "orientation": {
     "exif": 1,
@@ -905,6 +912,7 @@
    },
    "dimensions": {
     "rendered": [5087, 3391],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [5088, 3392],
      "status": "verified",
@@ -975,14 +983,15 @@
     }
    },
    "dimensions": {
-    "rendered": [6744, 4502],
+    "rendered": [6720, 4480],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [6720, 4480],
      "status": "verified",
      "sources": ["spec-canon-eos-5d-mark-iv", "file-canon-eos-5d-mark-iv-cr2-raw"],
      "note": "the embedded full-size JPEG is also 6720x4480"
     },
-    "note": "LibRaw's visible area 6744x4502 exceeds Canon's recorded 6720x4480 by 24x22 pixels (RawSpeed: 6744x4500); Lucent shows the whole decoder area."
+    "note": "LibRaw's crop reading (Canon's sensor information, 6720x4480 at (148, 54)) equals Canon's recorded size and the embedded JPEG's; Lucent renders it from LibRaw's 6744x4502 visible area (RawSpeed: 6744x4500)."
    },
    "orientation": {
     "exif": 1,
@@ -998,7 +1007,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1015,7 +1024,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1041,12 +1050,13 @@
    },
    "dimensions": {
     "rendered": [3360, 2240],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [3360, 2240],
      "status": "verified",
      "sources": ["spec-canon-eos-5d-mark-iv", "file-canon-eos-5d-mark-iv-cr2-sraw"]
     },
-    "note": "Rendered size equals Canon's S-RAW recorded size."
+    "note": "Rendered size equals Canon's S-RAW recorded size (LibRaw's crop reading is the whole 3360x2240 image)."
    },
    "orientation": {
     "exif": 1,
@@ -1110,13 +1120,14 @@
     }
    },
    "dimensions": {
-    "rendered": [7028, 4688],
+    "rendered": [7008, 4672],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [7008, 4672],
      "status": "verified",
      "sources": ["file-sony-ilce-7m4-arw-uncompressed", "spec-sony-ilce-7m4-image-size"]
     },
-    "note": "As the compressed mode: ARW DefaultCropSize 7008x4672; LibRaw 7028x4688."
+    "note": "As the compressed mode: the ARW DefaultCrop 7008x4672 at (12, 8) is rendered from LibRaw's 7028x4688."
    },
    "orientation": {
     "exif": 1,
@@ -1132,7 +1143,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1149,7 +1160,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1174,13 +1185,14 @@
     }
    },
    "dimensions": {
-    "rendered": [7028, 4688],
+    "rendered": [7008, 4672],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [7008, 4672],
      "status": "verified",
      "sources": ["file-sony-ilce-7m4-arw-lossless-l", "spec-sony-ilce-7m4-image-size"]
     },
-    "note": "ARW DefaultCropSize 7008x4672 at (12, 8); the stored frame is 7168x5120 and LibRaw's visible area 7028x4688."
+    "note": "ARW DefaultCropSize 7008x4672 at (12, 8); the stored frame is 7168x5120 and LibRaw's visible area 7028x4688; Lucent renders the DefaultCrop."
    },
    "orientation": {
     "exif": 1,
@@ -1196,7 +1208,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1213,7 +1225,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1238,13 +1250,14 @@
     }
    },
    "dimensions": {
-    "rendered": [4624, 3080],
+    "rendered": [4608, 3072],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [4608, 3072],
      "status": "verified",
      "sources": ["file-sony-ilce-7m4-arw-lossless-m", "spec-sony-ilce-7m4-image-size", "spec-sony-ilce-7m4-raw-file-type"]
     },
-    "note": "ARW DefaultCropSize 4608x3072 at (8, 4) equals Sony's M size; LibRaw's visible area is 4624x3080."
+    "note": "ARW DefaultCropSize 4608x3072 at (8, 4) equals Sony's M size; Lucent renders it from LibRaw's 4624x3080 visible area."
    },
    "orientation": {
     "exif": 1,
@@ -1266,7 +1279,7 @@
     }
    ],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1283,7 +1296,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1308,13 +1321,14 @@
     }
    },
    "dimensions": {
-    "rendered": [3516, 2344],
+    "rendered": [3504, 2336],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [3504, 2336],
      "status": "verified",
      "sources": ["file-sony-ilce-7m4-arw-lossless-s", "spec-sony-ilce-7m4-image-size", "spec-sony-ilce-7m4-raw-file-type"]
     },
-    "note": "ARW DefaultCropSize 3504x2336 at (6, 4) equals Sony's S size; LibRaw's visible area is 3516x2344."
+    "note": "ARW DefaultCropSize 3504x2336 at (6, 4) equals Sony's S size; Lucent renders it from LibRaw's 3516x2344 visible area."
    },
    "orientation": {
     "exif": 1,
@@ -1336,7 +1350,7 @@
     }
    ],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1353,7 +1367,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1378,13 +1392,14 @@
     }
    },
    "dimensions": {
-    "rendered": [4692, 3132],
+    "rendered": [4608, 3072],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [4608, 3072],
      "status": "verified",
      "sources": ["file-sony-ilce-7m4-arw-compressed-apsc", "spec-sony-ilce-7m4-image-size"]
     },
-    "note": "ARW DefaultCropSize 4608x3072 at (44, 30); Sony: the L size cannot be selected in APS-C, M is 4608x3072. LibRaw's visible area 4692x3132 is 1.8 % wider and 2.0 % taller."
+    "note": "ARW DefaultCropSize 4608x3072 at (44, 30); Sony: the L size cannot be selected in APS-C, M is 4608x3072. Lucent renders the DefaultCrop from LibRaw's 4692x3132 visible area (1.8 % wider and 2.0 % taller)."
    },
    "orientation": {
     "exif": 1,
@@ -1400,7 +1415,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1417,7 +1432,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1442,13 +1457,14 @@
     }
    },
    "dimensions": {
-    "rendered": [9564, 6376],
+    "rendered": [9504, 6336],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [9504, 6336],
      "status": "verified",
      "sources": ["file-sony-ilce-7rm5-arw-compressed", "spec-sony-ilce-7rm5-image-size"]
     },
-    "note": "ARW DefaultCropSize 9504x6336 at (32, 20) equals Sony's L size; LibRaw's visible area is 9564x6376."
+    "note": "ARW DefaultCropSize 9504x6336 at (32, 20) equals Sony's L size; Lucent renders it from LibRaw's 9564x6376 visible area."
    },
    "orientation": {
     "exif": 1,
@@ -1464,7 +1480,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1481,7 +1497,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1507,14 +1523,15 @@
     }
    },
    "dimensions": {
-    "rendered": [4000, 3000],
+    "rendered": [3992, 2992],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [3992, 2992],
      "status": "verified",
      "sources": ["file-dji-fc220-dng", "spec-dji-mavic-pro"],
      "note": "DNG DefaultCropSize 3992x2992 at (4, 4); DJI's image size is 4000x3000"
     },
-    "note": "Rendered 4000x3000 equals DJI's image size; the DNG DefaultCrop (3992x2992) is not applied."
+    "note": "DJI's image size 4000x3000 is the DNG's whole image; Lucent renders the DefaultCrop 3992x2992 at (4, 4)."
    },
    "orientation": {
     "exif": 1,
@@ -1541,7 +1558,7 @@
     }
    ],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1558,7 +1575,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1584,14 +1601,15 @@
     }
    },
    "dimensions": {
-    "rendered": [5280, 3956],
+    "rendered": [5272, 3948],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [5272, 3948],
      "status": "verified",
      "sources": ["file-hasselblad-l2d-20c-dng", "spec-dji-mavic-3"],
      "note": "DNG DefaultCropSize 5272x3948 at (4, 4) inside the ActiveArea 5280x3956, which equals DJI's maximum image size"
     },
-    "note": "Rendered 5280x3956 (the ActiveArea, DJI's image size); the DefaultCrop is not applied."
+    "note": "The ActiveArea 5280x3956 equals DJI's maximum image size; Lucent renders the DefaultCrop 5272x3948 at (4, 4) inside it."
    },
    "orientation": {
     "exif": 1,
@@ -1618,7 +1636,7 @@
     }
    ],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1635,7 +1653,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -1662,13 +1680,14 @@
    },
    "dimensions": {
     "rendered": [4000, 3000],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [4000, 3000],
      "status": "verified",
      "sources": ["file-dji-fc7303-dng", "spec-dji-mini-2"],
      "note": "DNG DefaultCrop 4000x3000 at (0, 0) equals DJI's 4:3 image size"
     },
-    "note": "Rendered size equals the DefaultCrop and DJI's image size."
+    "note": "Rendered size equals the DefaultCrop (4000x3000 at (0, 0), the whole image) and DJI's image size."
    },
    "orientation": {
     "exif": 1,
@@ -1745,13 +1764,14 @@
    },
    "dimensions": {
     "rendered": [3040, 6080],
+    "image_area_source": "dng_default_whole_image",
     "camera_image_area": {
      "size": null,
      "status": "unverified",
      "sources": [],
      "note": "No manufacturer page could be retrieved (insta360.com answered 403); the frame holds two fisheye circles, not a planar image"
     },
-    "note": "Rendered 3040x6080: both fisheye circles stacked vertically."
+    "note": "Rendered 3040x6080: both fisheye circles stacked vertically; the DNG has no DefaultCrop tags (the specification's default: the whole image)."
    },
    "orientation": {
     "exif": 1,
@@ -1817,12 +1837,13 @@
    },
    "dimensions": {
     "rendered": null,
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [8256, 5504],
      "status": "verified",
      "sources": ["spec-nikon-z-8"]
     },
-    "note": "Not rendered: LibRaw 0.22.2 cannot decode HE/HE* data (the stored frame is 8280x5520)."
+    "note": "Not rendered: LibRaw 0.22.2 cannot decode HE/HE* data (the stored frame is 8280x5520; LibRaw's crop reading is 8256x5504 at (12, 8))."
    },
    "orientation": {
     "exif": 1,
@@ -1887,12 +1908,13 @@
    },
    "dimensions": {
     "rendered": null,
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [8256, 5504],
      "status": "verified",
      "sources": ["spec-nikon-z-8"]
     },
-    "note": "Not rendered: LibRaw 0.22.2 cannot decode HE/HE* data (the stored frame is 8280x5520)."
+    "note": "Not rendered: LibRaw 0.22.2 cannot decode HE/HE* data (the stored frame is 8280x5520; LibRaw's crop reading is 8256x5504 at (12, 8))."
    },
    "orientation": {
     "exif": 1,
@@ -1956,7 +1978,8 @@
     }
    },
    "dimensions": {
-    "rendered": [6064, 4040],
+    "rendered": [6048, 4024],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [6048, 4024],
      "status": "verified",
@@ -1978,7 +2001,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -1995,7 +2018,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -2020,14 +2043,15 @@
     }
    },
    "dimensions": {
-    "rendered": [6246, 4170],
+    "rendered": [6240, 4160],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [6240, 4160],
      "status": "verified",
      "sources": ["file-fujifilm-x-t4-raf-compressed", "spec-fujifilm-x-t4"],
      "note": "RAF RawImageCroppedSize 6240x4160 equals Fujifilm's L 3:2 size"
     },
-    "note": "LibRaw's visible area 6246x4170 exceeds the RAF's declared crop 6240x4160."
+    "note": "As fujifilm-x-t4-raf-lossless."
    },
    "orientation": {
     "exif": 1,
@@ -2060,7 +2084,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied", "xtrans_baseline_demosaic"]
+    "limitations": ["xtrans_baseline_demosaic"]
    }
   },
   {
@@ -2085,14 +2109,15 @@
     }
    },
    "dimensions": {
-    "rendered": [8280, 6208],
+    "rendered": [8256, 6192],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [8256, 6192],
      "status": "verified",
      "sources": ["file-fujifilm-gfx-50s-ii-raf-compressed", "spec-fujifilm-gfx50s-ii"],
      "note": "RAF RawImageCroppedSize 8256x6192 equals Fujifilm's L 4:3 size"
     },
-    "note": "LibRaw's visible area 8280x6208 exceeds the declared crop."
+    "note": "The RAF's declared crop 8256x6192 at (12, 8) (LibRaw's reading equals it) is rendered from LibRaw's 8280x6208 visible area."
    },
    "orientation": {
     "exif": 1,
@@ -2108,7 +2133,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -2125,7 +2150,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -2150,14 +2175,15 @@
     }
    },
    "dimensions": {
-    "rendered": [6008, 4008],
+    "rendered": [6000, 4000],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [6000, 4000],
      "status": "verified",
      "sources": ["file-panasonic-dc-s5m2-rw2", "spec-panasonic-dc-s5m2"],
      "note": "RW2 sensor borders (4, 4)-(6004, 4004) give 6000x4000, Panasonic's L 3:2 size"
     },
-    "note": "LibRaw's visible area 6008x4008 is the whole sensor; the RW2 borders are not applied."
+    "note": "The RW2 sensor borders give 6000x4000 at (4, 4), Panasonic's L 3:2 size; Lucent renders them from LibRaw's 6008x4008 visible area (the whole sensor)."
    },
    "orientation": {
     "exif": 1,
@@ -2173,7 +2199,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -2190,7 +2216,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -2216,13 +2242,14 @@
     }
    },
    "dimensions": {
-    "rendered": [5220, 3912],
+    "rendered": [5184, 3888],
+    "image_area_source": "decoder_inset_crop",
     "camera_image_area": {
      "size": [5184, 3888],
      "status": "verified",
      "sources": ["spec-om-system-om-1"]
     },
-    "note": "LibRaw's visible area 5220x3912 exceeds OM System's 5184x3888 (RawSpeed crops 12 columns on the right)."
+    "note": "LibRaw's reading of the ORF's crop (5184x3888 at (12, 12)) equals OM System's size; Lucent renders it from LibRaw's 5220x3912 visible area (RawSpeed crops 12 columns on the right)."
    },
    "orientation": {
     "exif": 1,
@@ -2238,7 +2265,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -2255,7 +2282,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -2282,13 +2309,14 @@
    },
    "dimensions": {
     "rendered": [6224, 4160],
+    "image_area_source": "unknown",
     "camera_image_area": {
      "size": [6192, 4128],
      "status": "verified",
      "sources": ["spec-pentax-k-3-mark-iii", "file-pentax-k-3-mark-iii-pef"],
      "note": "the embedded full-size JPEG is 6192x4128 as well"
     },
-    "note": "LibRaw's visible area 6224x4160 exceeds Pentax's 6192x4128."
+    "note": "LibRaw 0.22.2 reads no crop for this PEF (raw_inset_crops not set), so the area is unknown and Lucent renders the 6224x4160 visible area, which exceeds Pentax's 6192x4128."
    },
    "orientation": {
     "exif": 1,
@@ -2347,14 +2375,15 @@
     }
    },
    "dimensions": {
-    "rendered": [6224, 4160],
+    "rendered": [6192, 4128],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [6192, 4128],
      "status": "verified",
      "sources": ["file-pentax-k-3-mark-iii-monochrome-dng", "spec-pentax-k-3-mark-iii-monochrome"],
      "note": "DNG DefaultCropSize 6192x4128 at (28, 24) equals Pentax's L size"
     },
-    "note": "LibRaw's visible area is the ActiveArea 6224x4160; the DefaultCrop is not applied."
+    "note": "DNG DefaultCropSize 6192x4128 at (28, 24) of the ActiveArea equals Pentax's L size; Lucent renders it (LibRaw's visible area is the ActiveArea 6224x4160)."
    },
    "orientation": {
     "exif": 1,
@@ -2370,7 +2399,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -2387,7 +2416,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -2413,14 +2442,15 @@
     }
    },
    "dimensions": {
-    "rendered": [5984, 3992],
+    "rendered": [5976, 3984],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [5976, 3984],
      "status": "verified",
      "sources": ["file-leica-m10-dng"],
      "note": "DNG DefaultCropSize 5976x3984 at (4, 4). Leica's technical data could not be retrieved on 2026-10-05 (HTTP 502); a search engine quotes it as 'DNG 5976 x 3992', which this file's DefaultCrop does not match"
     },
-    "note": "LibRaw's visible area is the whole 5984x3992 frame; the DefaultCrop is not applied."
+    "note": "Lucent renders the DNG DefaultCrop 5976x3984 at (4, 4) of the 5984x3992 frame (LibRaw's visible area)."
    },
    "orientation": {
     "exif": 1,
@@ -2436,7 +2466,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "compatible_unverified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -2453,7 +2483,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    },
    "notes": "The file declares WhiteLevel 15000 while 5.2 % of its samples lie above it (up to 16383); Lucent, like LibRaw and the DNG specification, treats them as saturated. Colour evidence is weak (DNG profile versus LibRaw's matrix)."
   },
@@ -2480,14 +2510,15 @@
     }
    },
    "dimensions": {
-    "rendered": [5984, 4000],
+    "rendered": [5976, 3992],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [5976, 3992],
      "status": "verified",
      "sources": ["file-leica-m-monochrom-typ-246-dng"],
      "note": "DNG DefaultCropSize 5976x3992 at (4, 4); Leica's technical data could not be retrieved (a search engine quotes 'DNG 5976 x 3992')"
     },
-    "note": "LibRaw's visible area is the whole 5984x4000 frame; the DefaultCrop is not applied."
+    "note": "Lucent renders the DNG DefaultCrop 5976x3992 at (4, 4) of the 5984x4000 frame (LibRaw's visible area)."
    },
    "orientation": {
     "exif": 1,
@@ -2503,7 +2534,7 @@
    },
    "mandatory_steps": [],
    "expected": {
-    "state": "limited",
+    "state": "verified",
     "checks": {
      "fixture_integrity": "pass",
      "decode_parity": "pass",
@@ -2520,7 +2551,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied"]
+    "limitations": []
    }
   },
   {
@@ -2546,13 +2577,14 @@
    },
    "dimensions": {
     "rendered": [8278, 6208],
+    "image_area_source": "unknown",
     "camera_image_area": {
      "size": [8272, 6200],
      "status": "verified",
      "sources": ["file-hasselblad-x1d-ii-50c-3fr", "spec-hasselblad-x1d-ii-50c"],
      "note": "3FR raw IFD DefaultCropSize 8272x6200 at (50, 100) equals the data sheet's 8272 x 6200"
     },
-    "note": "LibRaw's visible area 8278x6208 exceeds the declared crop."
+    "note": "The 3FR raw IFD declares the crop, but LibRaw 0.22.2 reads DefaultCrop tags outside DNG files only for Sony (src/metadata/tiff.cpp), so the area is unknown and Lucent renders LibRaw's 8278x6208 visible area."
    },
    "orientation": {
     "exif": 1,
@@ -2612,13 +2644,14 @@
    },
    "dimensions": {
     "rendered": [3960, 2640],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [3960, 2640],
      "status": "verified",
      "sources": ["file-adobe-dng-canon-eos-5d-mark-iii-linear-dng", "spec-canon-eos-5d-mark-iii"],
      "note": "DNG DefaultCrop 3960x2640 at (0, 0) equals Canon's M-RAW size"
     },
-    "note": "Rendered size equals the DefaultCrop and Canon's M-RAW size."
+    "note": "Rendered size equals the DefaultCrop (3960x2640 at (0, 0), the whole image) and Canon's M-RAW size."
    },
    "orientation": {
     "exif": 1,
@@ -2678,14 +2711,15 @@
     }
    },
    "dimensions": {
-    "rendered": [5496, 3670],
+    "rendered": [5472, 3648],
+    "image_area_source": "dng_default_crop",
     "camera_image_area": {
      "size": [5472, 3648],
      "status": "verified",
      "sources": ["file-canon-eos-7d-mark-ii-dng-jxl", "spec-canon-eos-7d-mark-ii"],
      "note": "DNG DefaultCropSize 5472x3648 at (12, 12) equals Canon's recorded RAW size"
     },
-    "note": "LibRaw's visible area is the DNG ActiveArea (5496x3670); the DefaultCrop is not applied."
+    "note": "DNG DefaultCropSize 5472x3648 at (12, 12) of the ActiveArea equals Canon's recorded RAW size; Lucent renders it (LibRaw's visible area is the ActiveArea 5496x3670)."
    },
    "orientation": {
     "exif": 1,
@@ -2718,7 +2752,7 @@
      "export_round_trip": "pass",
      "determinism": "pass"
     },
-    "limitations": ["default_crop_not_applied", "dng_enhanced_image_not_offered"]
+    "limitations": ["dng_enhanced_image_not_offered"]
    }
   }
  ]

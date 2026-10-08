@@ -1,6 +1,6 @@
 # lucent-qualify: developer CLI that runs the camera qualification harness over the fixture corpus
-# and writes the versioned qualification report and the support table (W10, ADR 0016). See
-# main.cpp for usage.
+# and writes the versioned qualification report and the support table (W10, ADR 0016), and exports
+# the camera support database asset from a report (W10 phase 3, ADR 0018). See main.cpp for usage.
 #
 # The check suite, mode keys, expectations, state rules and report writers live in the static
 # library lucent_qualify so that the GTest wrapper (tests/qualification) asserts exactly what the
@@ -17,8 +17,9 @@ find_package(TIFF REQUIRED)
 add_library(lucent_qualify STATIC
     expectations.cpp
     expectations.hpp
-    mode_key.cpp
     mode_key.hpp
+    support_export.cpp
+    support_export.hpp
     qualification.cpp
     qualification.hpp
     readback.cpp
@@ -34,6 +35,7 @@ target_include_directories(lucent_qualify
 target_link_libraries(lucent_qualify
     PUBLIC
         Lucent::core
+        Lucent::assets
         Lucent::raw
         Lucent::engine
         Lucent::export

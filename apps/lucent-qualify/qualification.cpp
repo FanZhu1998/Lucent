@@ -820,6 +820,8 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
     if (selection) {
         metadata = selection->probe.metadata;
         subimages = selection->probe.subimages;
+        // The application's view of the mode: its import probes, it does not decode (ADR 0018).
+        result.lookup_key = derive_mode_key(selection->probe.metadata).to_string();
     }
 
     const Json reference_report = [&]() -> Json {
@@ -911,6 +913,28 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         return finish();
     }
     const raw::RawMetadata& meta = *metadata;
+    {
+        const raw::ImageArea& a = meta.image_area;
+        OrderedJson declared = nullptr;
+        if (a.rect) {
+            declared = {
+                {"x", a.rect->x}, {"y", a.rect->y}, {"width", a.rect->width}, {"height", a.rect->height}};
+        }
+        OrderedJson user = nullptr;
+        if (a.user_crop) {
+            user = {{"top", a.user_crop->top},
+                    {"left", a.user_crop->left},
+                    {"bottom", a.user_crop->bottom},
+                    {"right", a.user_crop->right}};
+        }
+        result.camera_area = {{"source", std::string(raw::to_string(a.source))},
+                              {"provenance", std::string(raw::to_string(a.provenance))},
+                              {"declared", std::move(declared)},
+                              {"user_crop", std::move(user)},
+                              {"basis", a.basis},
+                              {"applied", nullptr},
+                              {"output", nullptr}};
+    }
     result.camera_make = meta.camera.make;
     result.camera_model = meta.camera.model;
     result.firmware = meta.camera.software;
@@ -928,6 +952,9 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         const std::string derived = result.mode_key->to_string();
         c.details["derived"] = derived;
         c.details["stage"] = result.mode_key->stage;
+        if (result.lookup_key && *result.lookup_key != derived) {
+            c.details["probe_key"] = *result.lookup_key;
+        }
         c.details["bits_provenance"] = result.mode_key->bits_provenance;
         if (expectation == nullptr) {
             set_check(c, CheckStatus::NotRun, Evidence::None, "no expectation to compare with");
@@ -1147,13 +1174,14 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         return finish();
     }
 
-    // ---- colour (W2 path without opcodes, like the reference decoder) ------------------------------
+    // ---- colour (W2 path without opcodes or the camera area, like the reference decoder) ------------
     {
         CheckResult& c = check_of(result, kCheckColour);
         CheckResult& numerical = check_of(result, kCheckNumericalValidity);
         const Clock::time_point t0 = Clock::now();
         engine::RenderSettings settings;
         settings.apply_dng_opcodes = false;
+        settings.apply_camera_area = false;  // rawpy renders LibRaw's whole visible area (ADR 0017)
         engine::RenderOptions render_options;
         render_options.keep_scene_linear = true;
         auto render = engine::render_file(*registry, file, 0u, settings, render_options, {});
@@ -1283,6 +1311,14 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
             const engine::DevelopReport& report = developed->report;
             const engine::ColorImage& display = developed->display;
             const image::Size actual = display.pixels.size();
+            if (result.camera_area.is_object()) {
+                const image::PixelRect& f = report.geometry_frame;
+                const bool whole = f == image::PixelRect::from_size(report.upright_size);
+                result.camera_area["applied"] =
+                    whole ? OrderedJson(nullptr)
+                          : OrderedJson{{"x", f.x}, {"y", f.y}, {"width", f.width}, {"height", f.height}};
+                result.camera_area["output"] = {actual.width, actual.height};
+            }
 
             // dimensions
             {
@@ -1310,18 +1346,29 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
                                            " by more than the permissible 3 %");
                     } else if (actual.width > area.width + kAreaShortfallTolerancePx ||
                                actual.height > area.height + kAreaShortfallTolerancePx) {
-                        add_limitation(result, kLimitDefaultCrop,
-                                       "the camera's image area is " + size_text(area.width, area.height) +
-                                           "; Lucent renders the decoder's visible area " +
-                                           size_text(actual.width, actual.height) + " (no default crop)");
+                        add_limitation(
+                            result, kLimitDefaultCrop,
+                            "the camera's image area is " + size_text(area.width, area.height) +
+                                "; Lucent renders " + size_text(actual.width, actual.height) +
+                                (meta.image_area.source == raw::ImageAreaSource::Unknown
+                                     ? ", the decoder's visible area: the file declares no image "
+                                       "area the decoder reads (" +
+                                           meta.image_area.basis + ")"
+                                     : ", the area the file declares (" +
+                                           std::string(raw::to_string(meta.image_area.source)) + ")"));
                     }
                 }
                 if (meta.dng && meta.dng->raw_ifd.default_crop_size) {
+                    // Applied when the output (the identity geometry of version 2) has its size, in
+                    // the upright orientation.
                     const auto& crop = *meta.dng->raw_ifd.default_crop_size;
-                    const image::Size visible = meta.geometry.visible_area.size();
+                    const image::Size declared =
+                        image::oriented_size(image::Size{static_cast<std::int32_t>(std::lround(crop[0])),
+                                                         static_cast<std::int32_t>(std::lround(crop[1]))},
+                                             meta.geometry.orientation);
                     dims.details["dng_default_crop_size"] = {crop[0], crop[1]};
-                    if (crop[0] + kAreaShortfallTolerancePx < visible.width ||
-                        crop[1] + kAreaShortfallTolerancePx < visible.height) {
+                    if (declared.width + kAreaShortfallTolerancePx < actual.width ||
+                        declared.height + kAreaShortfallTolerancePx < actual.height) {
                         add_limitation(result, kLimitDefaultCrop,
                                        "DNG DefaultCropSize " +
                                            size_text(static_cast<std::int32_t>(crop[0]),
@@ -1329,6 +1376,10 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
                                            " is not applied");
                     }
                 }
+                dims.details["image_area_source"] = std::string(raw::to_string(meta.image_area.source));
+                dims.details["geometry_frame"] = {report.geometry_frame.x, report.geometry_frame.y,
+                                                  report.geometry_frame.width, report.geometry_frame.height};
+                dims.details["upright_size"] = {report.upright_size.width, report.upright_size.height};
                 OrderedJson bands = OrderedJson::array();
                 // A multi-view frame (two fisheye circles) is dark outside its image circles by
                 // construction: its borders say nothing about the decoder's visible area.
@@ -1378,8 +1429,10 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
                     problem = "orientation " + std::to_string(decoded_exif) + ", expected " +
                               std::to_string(expectation->orientation_exif);
                 } else if (image::oriented_size(meta.geometry.visible_area.size(),
-                                                meta.geometry.orientation) != actual) {
-                    problem = "output size does not follow the orientation";
+                                                meta.geometry.orientation) != report.upright_size) {
+                    problem = "the stage-one image does not follow the orientation";
+                } else if (report.geometry_frame.size() != actual) {
+                    problem = "the output is not the geometry's frame";
                 }
                 if (!problem.empty()) {
                     set_check(orient, CheckStatus::Fail, Evidence::Strong, problem);
@@ -1602,6 +1655,12 @@ void compare_with_expectation(FixtureResult& result, const FixtureExpectation* e
         result.expectation_mismatches.push_back("mode key " + result.mode_key->to_string() + ", expected " +
                                                 expectation->mode_key);
     }
+    if (expectation->image_area_source && result.camera_area.is_object() &&
+        result.camera_area.value("source", std::string()) != *expectation->image_area_source) {
+        result.expectation_mismatches.push_back("image area source " +
+                                                result.camera_area.value("source", std::string()) +
+                                                ", expected " + *expectation->image_area_source);
+    }
 }
 
 }  // namespace
@@ -1725,6 +1784,7 @@ OrderedJson FixtureResult::to_json() const {
     } else {
         j["mode_key"] = nullptr;
     }
+    j["lookup_key"] = lookup_key ? OrderedJson(*lookup_key) : OrderedJson(nullptr);
     j["decoder"] = decoder;
     j["decoded"] = decoded;
     j["decode_error"] = decode_error.empty() ? OrderedJson(nullptr) : OrderedJson(decode_error);
@@ -1744,6 +1804,7 @@ OrderedJson FixtureResult::to_json() const {
         limits.push_back({{"id", l.id}, {"detail", l.detail}});
     }
     j["limitations"] = std::move(limits);
+    j["camera_area"] = camera_area;
     j["proposed_state"] = to_string(state);
     j["expected_state"] = expected_state ? OrderedJson(*expected_state) : OrderedJson(nullptr);
     j["state_reasons"] = state_reasons;

@@ -4,8 +4,9 @@
 // statistics (tests/integration/data/render_reference.json, written by
 // research/tools/render_reference.py --write-stats from rawpy renderings):
 //   * the file is rendered through engine::render_file with the default settings but without DNG
-//     opcodes, which the reference decoder does not apply either (a file that the reference
-//     decoder refuses is recorded as "refused" and must fail with the recorded error code);
+//     opcodes and without the camera's image area, which the reference decoder does not apply
+//     either (a file that the reference decoder refuses is recorded as "refused" and must fail with
+//     the recorded error code);
 //   * the result must be upright with the reference's dimensions and orientation (rawpy applies
 //     the file's orientation itself, so neither value comes from Lucent), finite,
 //     display-referred with max(R, G, B) <= 1, and every stage edge must match;
@@ -372,9 +373,11 @@ TEST_P(RenderFixture, RendersWithinGatesAndDisplaysAsDefined) {
     options.keep_scene_linear = true;
     // The reference decoder (LibRaw) applies no DNG opcodes, so the comparison renders without
     // them (ADR 0014); the drone DNGs' opcodes are checked against an independent reference by
-    // the engine's DngOpcodeFixtures tests and tests/tools/dng_opcode_reference.py.
+    // the engine's DngOpcodeFixtures tests and tests/tools/dng_opcode_reference.py. Nor does it
+    // cut its visible area to the camera's image area, so neither does this render (ADR 0017).
     engine::RenderSettings settings;
     settings.apply_dng_opcodes = false;
+    settings.apply_camera_area = false;
     auto result = engine::render_file(*registry, file, 0u, settings, options, {});
     if (ref.contains("refused")) {
         // The reference decoder refuses this file too: Lucent must refuse it with the same code.

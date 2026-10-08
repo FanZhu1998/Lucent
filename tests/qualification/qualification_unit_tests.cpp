@@ -1,9 +1,13 @@
 // Unit tests of the qualification harness (label "qualification"; ADR 0016): mode keys, the
 // expectations schema and its evidence rule, the state rules, family matching and the report
 // writers, on synthetic data; plus the validity of the committed expectations and families files.
+// W10 phase 3 (ADR 0018): the camera support database export, and that the committed asset
+// (assets/camera-support) is exactly the export of the committed report.
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -18,6 +22,7 @@
 #include "mode_key.hpp"
 #include "qualification.hpp"
 #include "report.hpp"
+#include "support_export.hpp"
 
 namespace lucent::qualify {
 namespace {
@@ -196,6 +201,25 @@ TEST(Expectations, ParsesAValidDocument) {
     EXPECT_EQ(f.expected_checks.size(), check_ids().size());
     EXPECT_NE(parsed->find("cam-a"), nullptr);
     EXPECT_EQ(parsed->find("cam-b"), nullptr);
+}
+
+TEST(Expectations, TheImageAreaSourceIsOptionalAndChecked) {
+    Json doc = minimal_expectations();
+    auto plain = parse_expectations(doc);
+    ASSERT_TRUE(plain) << plain.error().describe();
+    EXPECT_FALSE(plain->fixtures.front().image_area_source);  // absent: not asserted
+    for (const char* source :
+         {"dng_default_crop", "dng_default_whole_image", "decoder_inset_crop", "unknown"}) {
+        doc["fixtures"][0]["dimensions"]["image_area_source"] = source;
+        auto parsed = parse_expectations(doc);
+        ASSERT_TRUE(parsed) << parsed.error().describe();
+        EXPECT_EQ(parsed->fixtures.front().image_area_source, std::optional<std::string>(source));
+    }
+    doc["fixtures"][0]["dimensions"]["image_area_source"] = "default_crop";
+    auto bad = parse_expectations(doc);
+    ASSERT_FALSE(bad);
+    EXPECT_EQ(bad.error().code, ErrorCode::InvalidArgument);
+    EXPECT_NE(bad.error().message.find("image_area_source"), std::string::npos) << bad.error().message;
 }
 
 TEST(Expectations, AVerifiedFactNeedsAnIndependentSource) {
@@ -451,6 +475,34 @@ TEST(Report, SupportTableTakesTheWorstStatePerModeAndListsGaps) {
     EXPECT_NE(md.find("mk1|sony|ilce-7m4"), std::string::npos);
 }
 
+TEST(Report, TheCameraImageAreaTableShowsTheDeclaredAndAppliedAreas) {
+    std::vector<OrderedJson> fixtures{fixture_json("a", "verified", "full"),
+                                      fixture_json("b", "unsupported", "full"),
+                                      fixture_json("c", "limited", "full")};
+    const OrderedJson declared = {{"x", 12}, {"y", 8}, {"width", 7008}, {"height", 4672}};
+    fixtures[0]["camera_area"] = {{"source", "decoder_inset_crop"},
+                                  {"provenance", "decoder"},
+                                  {"declared", declared},
+                                  {"user_crop", nullptr},
+                                  {"basis", "b"},
+                                  {"applied", declared},
+                                  {"output", {7008, 4672}}};
+    fixtures[1]["camera_area"] = fixtures[0]["camera_area"];
+    fixtures[1]["camera_area"]["applied"] = nullptr;  // not rendered
+    fixtures[1]["camera_area"]["output"] = nullptr;
+    // "c" has no camera_area (a report of check suite 1).
+    ReportInputs inputs{CorpusPaths{std::filesystem::path(LUCENT_SOURCE_DIR)}, "ids", {"a", "b", "c"}, false};
+    const std::string md = support_table_markdown(build_report(fixtures, inputs, {}, Json::object()));
+    EXPECT_NE(md.find("## Camera image area"), std::string::npos);
+    EXPECT_NE(
+        md.find("| `a` | decoder_inset_crop | 7008x4672 at (12, 8) | 7008x4672 at (12, 8) | 7008x4672 |"),
+        std::string::npos)
+        << md;
+    EXPECT_NE(md.find("| `b` | decoder_inset_crop | 7008x4672 at (12, 8) | - | - |"), std::string::npos)
+        << md;
+    EXPECT_NE(md.find("| `c` | - | - | - | - |"), std::string::npos) << md;
+}
+
 TEST(Report, CoverageStatusNeedsEveryMatchingFixtureVerified) {
     EXPECT_EQ(coverage_status({}), "absent");
     EXPECT_EQ(coverage_status({"verified", "verified"}), "verified");
@@ -548,6 +600,163 @@ TEST(CommittedData, FamiliesFileLoads) {
     }
     // The six blueprint families plus "other brands".
     EXPECT_EQ(families->size(), 7u);
+}
+
+// ---- Camera support database export (ADR 0018) --------------------------------------------------
+
+std::string file_text(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+core::SemanticVersion semver(const char* text) {
+    auto parsed = core::SemanticVersion::parse(text);
+    EXPECT_TRUE(parsed.has_value()) << text;
+    return parsed ? *parsed : core::SemanticVersion{};
+}
+
+// A complete-run report with two modes, as build_report() writes it.
+OrderedJson export_report() {
+    return OrderedJson::parse(R"({
+     "schema": "lucent.qualification-report", "schema_version": 1, "generated": "2026-10-08T03:13:58Z",
+     "tool": {"name": "lucent-qualify", "lucent_version": "0.1.0", "git_commit": "abc123"},
+     "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
+     "versions": {"mode_key": 1, "check_suite": 2, "state_rules": 1, "decoded_raw_contract": "1.4",
+                  "render_pipeline": 3, "develop_pipeline": 3, "dng_opcode_processing": 1,
+                  "geometry_operation": 2, "image_area_placement": 1},
+     "selection": {"tier": "all", "ids": ["a", "b"], "isolated_processes": true},
+     "summary": {"fixtures": 2, "by_state": {}, "expectation_mismatches": 0, "harness_errors": 0},
+     "fixtures": [
+      {"id": "a", "limitations": []},
+      {"id": "b", "limitations": [{"id": "xtrans_baseline_demosaic", "detail": "baseline route"}]}],
+     "support_table": [
+      {"mode_key": "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+       "lookup_keys": ["mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"],
+       "model_key": "sony|ilce-7m4", "family": "sony", "camera": "Sony ILCE-7M4", "product": "Sony A7 IV",
+       "mode_label": "ARW uncompressed", "fixtures": ["a"], "proposed_state": "verified",
+       "evidence": "13 of 13 checks strong", "limitations": [], "evidence_gaps": []},
+      {"mode_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+       "lookup_keys": ["mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|15bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1"],
+       "model_key": "fujifilm|x-t4", "family": "fujifilm", "camera": "Fujifilm X-T4", "product": "",
+       "mode_label": "RAF lossless", "fixtures": ["b"], "proposed_state": "limited",
+       "evidence": "13 of 13 checks strong", "limitations": ["xtrans_baseline_demosaic"], "evidence_gaps": []}]
+    })");
+}
+
+SupportExportOptions export_options() {
+    SupportExportOptions options;
+    options.asset_version = semver("1.0.0");
+    options.minimum_app_version = semver("0.1.0");
+    return options;
+}
+
+TEST(SupportExport, MapsTheSupportTableToTheDatabase) {
+    auto exported = export_camera_support(export_report(), export_options());
+    ASSERT_TRUE(exported) << exported.error().describe();
+    const assets::CameraSupportDatabase& db = exported->database;
+    EXPECT_EQ(db.date, "2026-10-08");
+    EXPECT_EQ(db.tool, "lucent-qualify 0.1.0 (abc123)");
+    EXPECT_EQ(db.basis.decoder, "LibRaw 0.22.2-Release");
+    EXPECT_EQ(db.basis.decoded_raw_contract, "1.4");
+    EXPECT_EQ(db.basis.check_suite, 2u);
+    EXPECT_EQ(db.summary.modes, 2u);
+    EXPECT_EQ(db.summary.verified, 1u);
+    EXPECT_EQ(db.summary.limited, 1u);
+    ASSERT_EQ(db.entries.size(), 2u);
+    const auto fuji = db.lookup(db.entries[0].match);  // sorted: fujifilm first
+    ASSERT_TRUE(fuji.has_value());
+    EXPECT_EQ(fuji->state, assets::SupportState::Limited);
+    // Found under its probe's key (here a provisional 15 bits), recorded with its decoded key.
+    EXPECT_NE(fuji->entry->match.find("|15bit|"), std::string::npos);
+    EXPECT_NE(fuji->entry->qualified_key.find("|14bit|"), std::string::npos);
+    EXPECT_FALSE(db.lookup(fuji->entry->qualified_key).has_value());
+    EXPECT_EQ(fuji->entry->camera, "Fujifilm X-T4");  // the product is empty: the camera's name
+    ASSERT_EQ(fuji->entry->limitations.size(), 1u);
+    EXPECT_EQ(fuji->entry->limitations[0].detail, "baseline route");
+    ASSERT_NE(db.limitation("xtrans_baseline_demosaic"), nullptr);
+    EXPECT_EQ(db.entries[1].camera, "Sony A7 IV");
+    // The manifest lists the database with its hash.
+    auto manifest = assets::parse_asset_manifest(exported->manifest_text);
+    ASSERT_TRUE(manifest) << manifest.error().describe();
+    EXPECT_EQ(manifest->id, "camera-support");
+    ASSERT_EQ(manifest->files.size(), 1u);
+    EXPECT_EQ(manifest->files[0].size, exported->database_text.size());
+    // Deterministic.
+    auto again = export_camera_support(export_report(), export_options());
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->database_text, exported->database_text);
+    EXPECT_EQ(again->manifest_text, exported->manifest_text);
+}
+
+TEST(SupportExport, RefusesReportsThatCannotBeTheShippedDatabase) {
+    const auto refused = [](const OrderedJson& report, const char* why) {
+        auto exported = export_camera_support(report, export_options());
+        EXPECT_FALSE(exported.has_value()) << why;
+        if (!exported) {
+            EXPECT_EQ(exported.error().code, ErrorCode::InvalidArgument) << why;
+            EXPECT_EQ(exported.error().where, "qualify.export") << why;
+        }
+    };
+    OrderedJson partial = export_report();
+    partial["selection"]["tier"] = "smoke";
+    refused(partial, "a partial run");
+    OrderedJson mismatched = export_report();
+    mismatched["summary"]["expectation_mismatches"] = 1;
+    refused(mismatched, "a run with mismatches");
+    OrderedJson unqualified = export_report();
+    unqualified["support_table"][0]["proposed_state"] = "not_qualified";
+    refused(unqualified, "a mode the harness could not qualify");
+    OrderedJson unknown = export_report();
+    unknown["support_table"][1]["limitations"] = OrderedJson::array({"brand_new_code"});
+    refused(unknown, "a limitation without wording");
+    OrderedJson decoder = export_report();
+    decoder["decoder"] = "LibRaw 0.22.2-Release; decoded-RAW 1.3";
+    refused(decoder, "a decoder string that disagrees with the versions");
+    OrderedJson no_probe = export_report();
+    no_probe["support_table"][0]["lookup_keys"] = OrderedJson::array();
+    refused(no_probe, "a mode without a probe key");
+    OrderedJson shared = export_report();
+    shared["support_table"][1]["lookup_keys"] = shared["support_table"][0]["lookup_keys"];
+    refused(shared, "two modes under one probe key");
+    refused(OrderedJson::parse(R"({"schema": "something-else"})"), "another document");
+}
+
+TEST(SupportExport, EveryLimitationCodeHasWording) {
+    for (const std::string_view code : limitation_ids()) {
+        const auto text = limitation_text(code);
+        ASSERT_TRUE(text.has_value()) << code;
+        EXPECT_FALSE(text->summary.empty());
+        EXPECT_FALSE(text->meaning.empty());
+    }
+    EXPECT_FALSE(limitation_text("not_a_code").has_value());
+}
+
+TEST(CommittedData, TheCameraSupportAssetIsTheExportOfTheReport) {
+    const std::filesystem::path root(LUCENT_SOURCE_DIR);
+    auto report = read_json_file(root / "docs" / "qualification" / "qualification-report.json");
+    ASSERT_TRUE(report) << report.error().describe();
+    const std::filesystem::path folder = root / "assets" / "camera-support";
+    const std::string manifest_text = file_text(folder / "manifest.json");
+    auto manifest = assets::parse_asset_manifest(manifest_text);
+    ASSERT_TRUE(manifest) << manifest.error().describe();
+    SupportExportOptions options;
+    options.asset_version = manifest->version;
+    options.minimum_app_version = manifest->minimum_app_version;
+    auto exported = export_camera_support(OrderedJson::parse(report->dump()), options);
+    ASSERT_TRUE(exported) << exported.error().describe();
+    EXPECT_EQ(exported->database_text, file_text(folder / "camera-support.json"))
+        << "assets/camera-support/camera-support.json is not the export of the committed report; re-export "
+           "it "
+           "(docs/qualification/README.md)";
+    EXPECT_EQ(exported->manifest_text, manifest_text);
+    // The database's states are the report's, found under each mode's probe key.
+    for (const Json& row : report->at("support_table")) {
+        ASSERT_EQ(row.at("lookup_keys").size(), 1u) << row.at("mode_key");
+        const auto match = exported->database.lookup(row.at("lookup_keys").at(0).get<std::string>());
+        ASSERT_TRUE(match.has_value());
+        EXPECT_EQ(match->entry->qualified_key, row.at("mode_key").get<std::string>());
+        EXPECT_EQ(std::string(assets::to_string(match->state)), row.at("proposed_state").get<std::string>());
+    }
 }
 
 }  // namespace

@@ -8,8 +8,10 @@
 //   schema, schema_version, generated (UTC), tool (Lucent build), decoder, versions (mode key,
 //   check suite, state rules, pipelines), inputs (paths and SHA-256 of the manifest,
 //   expectations, render reference and families files), selection, summary (counts by state,
-//   expectation mismatches, harness errors), fixtures (the per-fixture results), support_table
-//   (one row per mode key: the worst state of its fixtures), coverage (the blueprint section 3
+//   expectation mismatches, harness errors), fixtures (the per-fixture results, each with the
+//   lookup_key its probe gives, ADR 0018), support_table (one row per mode key: the worst state of
+//   its fixtures, and lookup_keys: the keys of their probes, under which the camera support
+//   database lists the mode, support_export.hpp), coverage (the blueprint section 3
 //   families with each target covered or absent, and the manifest's corpus gaps).
 // support_table_markdown() renders docs/qualification/support-table.md from a report.
 

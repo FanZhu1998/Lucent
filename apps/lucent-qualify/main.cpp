@@ -5,6 +5,8 @@
 //   lucent-qualify [--root DIR] [--tier smoke|qualification|all] [--id ID]... [--out-json FILE]
 //                  [--out-md FILE] [--previews DIR] [--work-dir DIR] [--keep-exports] [--in-process]
 //   lucent-qualify --from-report FILE --out-md FILE
+//   lucent-qualify --from-report FILE --export-support DIR --asset-version X.Y.Z
+//                  [--min-app-version X.Y.Z] [--check]
 //
 //   --root DIR       repository root (default: the source tree this tool was built from)
 //   --tier T         fixtures of this manifest tier, or all (default: smoke); ignored with --id
@@ -17,7 +19,13 @@
 //   --in-process     run every fixture in this process (default: one child process per fixture,
 //                    so that each fixture's peak memory is measured on its own and a crash in one
 //                    fixture cannot end the run)
-//   --from-report F  do not qualify anything: read the report F and write --out-md from it
+//   --from-report F  do not qualify anything: read the report F and write --out-md from it, or
+//                    export the camera support database asset from it (ADR 0018):
+//   --export-support DIR   write DIR/camera-support.json and DIR/manifest.json (support_export.hpp)
+//   --asset-version V      the asset's version (SemVer; required with --export-support)
+//   --min-app-version V    the oldest Lucent that may use it (default: this build's version)
+//   --check                compare with the files in DIR instead of writing them (exit 3 when they
+//                          differ)
 //
 // Fixtures run one after another (each needs about 1 to 1.5 GB at its peak).
 //
@@ -29,6 +37,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -37,9 +46,11 @@
 #include <windows.h>
 
 #include <lucent/core/text.hpp>
+#include <lucent/core/version.hpp>
 
 #include "qualification.hpp"
 #include "report.hpp"
+#include "support_export.hpp"
 
 namespace {
 
@@ -61,6 +72,10 @@ struct Arguments {
     bool keep_exports = false;
     bool in_process = false;
     std::optional<std::filesystem::path> from_report;
+    std::optional<std::filesystem::path> export_support;
+    std::string asset_version;
+    std::string min_app_version;
+    bool check = false;
     // Internal: run one fixture and write its result.
     bool child = false;
     std::optional<std::filesystem::path> result_file;
@@ -78,7 +93,9 @@ void usage() {
         "usage: lucent-qualify [--root DIR] [--tier smoke|qualification|all] [--id ID]... [--out-json FILE]\n"
         "                      [--out-md FILE] [--previews DIR] [--work-dir DIR] [--keep-exports] "
         "[--in-process]\n"
-        "       lucent-qualify --from-report FILE --out-md FILE\n",
+        "       lucent-qualify --from-report FILE --out-md FILE\n"
+        "       lucent-qualify --from-report FILE --export-support DIR --asset-version X.Y.Z\n"
+        "                      [--min-app-version X.Y.Z] [--check]\n",
         stderr);
 }
 
@@ -104,6 +121,14 @@ std::optional<Arguments> parse(int argc, wchar_t** argv) {
             args.keep_exports = true;
         } else if (arg == L"--in-process") {
             args.in_process = true;
+        } else if (arg == L"--check") {
+            args.check = true;
+        } else if (arg == L"--export-support" && (v = value())) {
+            args.export_support = std::filesystem::path(*v);
+        } else if (arg == L"--asset-version" && (v = value())) {
+            args.asset_version = utf8(*v);
+        } else if (arg == L"--min-app-version" && (v = value())) {
+            args.min_app_version = utf8(*v);
         } else if (arg == L"--child") {
             args.child = true;
         } else if (arg == L"--root" && (v = value())) {
@@ -254,6 +279,79 @@ OrderedJson failed_result(const lucent::qualify::ManifestFixture& fixture, const
     return r.to_json();
 }
 
+// The report's path as the database records it: relative to --root with '/' separators when it is
+// inside the repository, otherwise its file name.
+std::string report_name(const Arguments& args) {
+    std::error_code ec;
+    const std::filesystem::path report = std::filesystem::weakly_canonical(*args.from_report, ec);
+    const std::filesystem::path root = std::filesystem::weakly_canonical(args.root, ec);
+    const std::filesystem::path relative = report.lexically_relative(root);
+    if (!relative.empty() && !relative.is_absolute() && *relative.begin() != L"..") {
+        return utf8(relative.generic_wstring());
+    }
+    return utf8(args.from_report->filename());
+}
+
+bool same_text(const std::filesystem::path& path, const std::string& text) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    const std::string existing((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return existing == text;
+}
+
+// --export-support: writes (or with --check compares) the camera support database asset.
+int export_support(const Arguments& args, const OrderedJson& report) {
+    auto asset_version = lucent::core::SemanticVersion::parse(args.asset_version);
+    if (!asset_version) {
+        std::fprintf(stderr, "lucent-qualify: --export-support needs --asset-version X.Y.Z (%s)\n",
+                     asset_version.error().message.c_str());
+        return kExitUsage;
+    }
+    const std::string minimum_text =
+        args.min_app_version.empty() ? std::string(lucent::core::build_info().version) : args.min_app_version;
+    auto minimum = lucent::core::SemanticVersion::parse(minimum_text);
+    if (!minimum) {
+        std::fprintf(stderr, "lucent-qualify: --min-app-version: %s\n", minimum.error().message.c_str());
+        return kExitUsage;
+    }
+    lucent::qualify::SupportExportOptions options;
+    options.asset_version = std::move(*asset_version);
+    options.minimum_app_version = std::move(*minimum);
+    options.report_path = report_name(args);
+    auto exported = lucent::qualify::export_camera_support(report, options);
+    if (!exported) {
+        std::fprintf(stderr, "lucent-qualify: %s\n", exported.error().describe().c_str());
+        return kExitUsage;
+    }
+    const std::filesystem::path database_path =
+        *args.export_support / std::filesystem::path(lucent::assets::kCameraSupportFileName);
+    const std::filesystem::path manifest_path =
+        *args.export_support / std::filesystem::path(lucent::assets::kAssetManifestFileName);
+    const lucent::assets::SupportSummary& summary = exported->database.summary;
+    if (args.check) {
+        const bool same = same_text(database_path, exported->database_text) &&
+                          same_text(manifest_path, exported->manifest_text);
+        std::fprintf(stderr, "lucent-qualify: %s %s the export of %s\n", utf8(*args.export_support).c_str(),
+                     same ? "equals" : "DIFFERS FROM", utf8(*args.from_report).c_str());
+        return same ? kExitOk : kExitMismatch;
+    }
+    if (!write_text(database_path, exported->database_text) ||
+        !write_text(manifest_path, exported->manifest_text)) {
+        std::fprintf(stderr, "lucent-qualify: cannot write %s\n", utf8(*args.export_support).c_str());
+        return kExitUsage;
+    }
+    std::fprintf(
+        stderr,
+        "lucent-qualify: camera support database %s: %u modes (%u verified, %u compatible unverified, "
+        "%u limited, %u unsupported) in %s\n",
+        options.asset_version.to_string().c_str(), summary.modes, summary.verified,
+        summary.compatible_unverified, summary.limited, summary.unsupported,
+        utf8(*args.export_support).c_str());
+    return kExitOk;
+}
+
 lucent::qualify::QualifyOptions options_of(const Arguments& args) {
     lucent::qualify::QualifyOptions options;
     options.work_dir = args.work_dir;
@@ -272,8 +370,8 @@ int wmain(int argc, wchar_t** argv) {
     }
     const Arguments& args = *parsed;
     if (args.from_report) {
-        if (!args.out_md) {
-            std::fprintf(stderr, "lucent-qualify: --from-report needs --out-md\n");
+        if (!args.out_md && !args.export_support) {
+            std::fprintf(stderr, "lucent-qualify: --from-report needs --out-md or --export-support\n");
             return kExitUsage;
         }
         auto document = lucent::qualify::read_json_file(*args.from_report);
@@ -285,6 +383,9 @@ int wmain(int argc, wchar_t** argv) {
             return kExitUsage;
         }
         const OrderedJson report = OrderedJson::parse(document->dump());
+        if (args.export_support) {
+            return export_support(args, report);
+        }
         return write_text(*args.out_md, lucent::qualify::support_table_markdown(report)) ? kExitOk
                                                                                          : kExitUsage;
     }

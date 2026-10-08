@@ -74,7 +74,11 @@ namespace lucent::qualify {
 using OrderedJson = nlohmann::ordered_json;
 
 // Version of the check suite and of propose_state(); recorded in every report.
-inline constexpr std::uint32_t kCheckSuiteVersion = 1;
+//   2: the develop render applies the camera's image area (geometry version 2, ADR 0017): the
+//      dimensions check measures that output, a DNG DefaultCropSize counts as applied when the
+//      output has its size, the orientation check compares the stage-one image with the visible
+//      area, and the colour check renders without the area (like the rawpy reference).
+inline constexpr std::uint32_t kCheckSuiteVersion = 2;
 inline constexpr std::uint32_t kStateRulesVersion = 1;
 
 // Permissible geometry difference (ADR 0016): Lucent's upright output may be at most this many
@@ -133,6 +137,11 @@ struct FixtureResult {
     std::string firmware;
     std::string lens;
     std::optional<ModeKey> mode_key;
+    // The mode key of the file's probe (stage AfterOpen): the key the application derives when it
+    // imports the file and looks it up in the camera support database (ADR 0018). It equals the text
+    // of `mode_key` unless the probe sees a provisional value (the Canon S-RAW white level before
+    // unpacking); std::nullopt when the file could not be probed.
+    std::optional<std::string> lookup_key;
     // From the expectation (empty without one): product name, qualification family, mode label.
     std::string product;
     std::string family;
@@ -144,6 +153,10 @@ struct FixtureResult {
     std::string decoder;  // "LibRaw 0.22.2-Release; decoded-RAW 1.3"
     std::vector<CheckResult> checks;
     std::vector<Limitation> limitations;
+    // The camera's image area (ADR 0017): {"source", "provenance", "declared" ({x, y, width, height}
+    // in raw-frame pixels, or null), "user_crop", "basis", "applied" (the develop render's geometry
+    // frame in its upright image, or null when the whole image is the frame), "output" ([w, h])}.
+    OrderedJson camera_area = nullptr;
     // Filled by propose_state().
     SupportState state = SupportState::NotQualified;
     std::vector<std::string> state_reasons;

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <lucent/core/text.hpp>
+#include <lucent/raw/decoded_raw.hpp>
 
 #include "mode_key.hpp"
 
@@ -111,6 +112,17 @@ FixtureExpectation fixture_of(const Json& f, const std::map<std::string, Source>
     e.camera_image_area = size_of(area.at("size"), at + " dimensions.camera_image_area.size");
     e.camera_image_area_fact = fact_of(area, at + " dimensions.camera_image_area", sources);
     e.dimensions_note = text(dims, "note", false);
+    if (dims.contains("image_area_source")) {
+        e.image_area_source = text(dims, "image_area_source");
+        constexpr std::array kAreaSources{raw::ImageAreaSource::Unknown, raw::ImageAreaSource::DngDefaultCrop,
+                                          raw::ImageAreaSource::DngDefaultWholeImage,
+                                          raw::ImageAreaSource::DecoderInsetCrop};
+        if (std::none_of(kAreaSources.begin(), kAreaSources.end(),
+                         [&](raw::ImageAreaSource s) { return raw::to_string(s) == *e.image_area_source; })) {
+            invalid(at + ": dimensions.image_area_source '" + *e.image_area_source +
+                    "' is not an image area source");
+        }
+    }
 
     const Json& orientation = f.at("orientation");
     e.orientation_exif = orientation.at("exif").get<int>();
