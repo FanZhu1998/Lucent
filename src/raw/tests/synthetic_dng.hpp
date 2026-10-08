@@ -51,6 +51,11 @@ struct SyntheticDngSpec {
     Endian endian = Endian::Little;
     std::array<std::uint8_t, 4> cfa_pattern{0, 1, 1, 2};      // 2x2 CFAPattern, row-major (RGGB)
     std::optional<std::array<std::uint32_t, 4>> active_area;  // top, left, bottom, right
+    // DefaultCropOrigin / DefaultCropSize as RATIONAL numerator/denominator pairs {h, v}, and
+    // DefaultUserCrop {top, left, bottom, right}; absent when not set.
+    std::optional<std::array<std::pair<std::uint32_t, std::uint32_t>, 2>> default_crop_origin;
+    std::optional<std::array<std::pair<std::uint32_t, std::uint32_t>, 2>> default_crop_size;
+    std::optional<std::array<std::pair<std::uint32_t, std::uint32_t>, 4>> default_user_crop;
     std::uint16_t orientation = 1;
     std::uint32_t white_level = 16383;
     std::uint32_t black_level = 256;  // BlackLevel (1x1 repeat) as a RATIONAL n/1
@@ -181,6 +186,18 @@ inline std::vector<std::byte> build_synthetic_dng(const SyntheticDngSpec& spec) 
         if (spec.active_area) {
             const auto& a = *spec.active_area;
             entries.push_back(long_entry(t::kActiveArea, {a[0], a[1], a[2], a[3]}));
+        }
+        if (spec.default_crop_origin) {
+            const auto& o = *spec.default_crop_origin;
+            entries.push_back(rational_entry(t::kDefaultCropOrigin, {o[0], o[1]}));
+        }
+        if (spec.default_crop_size) {
+            const auto& z = *spec.default_crop_size;
+            entries.push_back(rational_entry(t::kDefaultCropSize, {z[0], z[1]}));
+        }
+        if (spec.default_user_crop) {
+            const auto& u = *spec.default_user_crop;
+            entries.push_back(rational_entry(t::kDefaultUserCrop, {u[0], u[1], u[2], u[3]}));
         }
         return entries;
     };

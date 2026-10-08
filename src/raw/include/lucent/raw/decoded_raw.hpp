@@ -78,7 +78,11 @@ namespace lucent::raw {
 //        a DNG whose every mandatory opcode is supported can be Complete. Pixel values are
 //        unchanged: the decoder still delivers the stored samples, and the engine applies the
 //        opcodes (dng_opcode_frame() describes where).
-inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 3};
+//   1.4: RawMetadata::image_area, the camera's intended image area (DNG DefaultCrop, the decoder's
+//        reading of the camera's own crop tags, or unknown) with its provenance, and the default
+//        user crop the file suggests (DNG DefaultUserCrop, the decoder's aspect-ratio crop). Pixel
+//        values and the visible area are unchanged: the engine applies the area (ADR 0017).
+inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 4};
 
 // ---------------------------------------------------------------------------------------------
 // Enumerations (persisted values; append only)
@@ -212,6 +216,22 @@ enum class InterpretationIssueKind : std::uint8_t {
     UnrepresentedBlackLevelCorrection = 13,
 };
 
+// Where the camera's intended image area (RawMetadata::image_area) comes from.
+enum class ImageAreaSource : std::uint8_t {
+    // No usable declaration: the file declares none, or what it declares cannot be placed (see
+    // ImageArea::basis). Consumers render the visible area.
+    Unknown = 1,
+    // DNG DefaultCropOrigin / DefaultCropSize (50719 / 50720) of the decoded raw IFD.
+    DngDefaultCrop = 2,
+    // A DNG without DefaultCrop tags: the specification's default, the whole ActiveArea (the whole
+    // image without one).
+    DngDefaultWholeImage = 3,
+    // The decoder's reading of the camera's own crop declaration (LibRaw
+    // imgdata.sizes.raw_inset_crops[0]: Sony DefaultCrop tags, Fujifilm RAF RawImageCroppedSize,
+    // Panasonic RW2 sensor borders or crop tags, Canon, Nikon, Olympus and Pentax maker-note crops).
+    DecoderInsetCrop = 4,
+};
+
 // Stable lowercase identifiers for reports and logs ("mosaic", "uint16", "cr3", ...).
 [[nodiscard]] std::string_view to_string(RawRepresentation value) noexcept;
 [[nodiscard]] std::string_view to_string(SampleEncoding value) noexcept;
@@ -225,6 +245,7 @@ enum class InterpretationIssueKind : std::uint8_t {
 [[nodiscard]] std::string_view to_string(OperationStage value) noexcept;
 [[nodiscard]] std::string_view to_string(InterpretationStatus value) noexcept;
 [[nodiscard]] std::string_view to_string(InterpretationIssueKind value) noexcept;
+[[nodiscard]] std::string_view to_string(ImageAreaSource value) noexcept;  // "dng_default_crop", ...
 
 // Recognises a container from the first bytes of a file (at least 16 bytes should be passed;
 // fewer simply recognise less). The result never depends on the file name. A TIFF-based file is
@@ -441,6 +462,80 @@ struct ProjectionInfo {
     std::string basis;  // developer-facing English; empty for the SingleView default
 };
 
+// A rectangle in continuous raw-frame coordinates (stored orientation, as SensorGeometry): columns
+// [x, x + width) and rows [y, y + height); values may be fractional (DNG rationals).
+struct AreaRect {
+    double x = 0.0;
+    double y = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+
+    friend bool operator==(const AreaRect&, const AreaRect&) = default;
+};
+
+// A crop normalised to the image area: fractions of its height (top, bottom) and width (left,
+// right), 0 <= top < bottom <= 1 and 0 <= left < right <= 1 (the DNG DefaultUserCrop convention:
+// (0, 0, 1, 1) is the whole area).
+struct NormalizedCrop {
+    double top = 0.0;
+    double left = 0.0;
+    double bottom = 1.0;
+    double right = 1.0;
+
+    friend bool operator==(const NormalizedCrop&, const NormalizedCrop&) = default;
+};
+
+// The camera's intended image area of the decoded image (its "default crop"): the part of the frame
+// the camera or the writing software declares to be the photograph. The decoder's visible area is
+// usually larger: it keeps border pixels that "help prevent interpolation artifacts near the edges
+// of the final image" (DNG 1.4.0.0, DefaultCropOrigin), some of which may be dark or unreliable.
+// Nothing here changes pixels or the visible area; the engine applies the area (ADR 0017).
+//
+// Frames. `rect` is in raw-frame coordinates and is declared relative to `reference`:
+//   * DNG (DngDefaultCrop, DngDefaultWholeImage): `reference` is the raw IFD's ActiveArea (the
+//     whole IFD without one), which is the stage image of OpcodeList2 and 3, and `rect` is its
+//     origin plus DefaultCropOrigin, with DefaultCropSize, exactly as stored (not rounded). The DNG
+//     SDK applies the crop to its stage-3 image, after the opcode lists (dng_negative::
+//     DefaultCropArea(): origin and size each rounded to whole pixels and, when the rectangle
+//     overruns the image, moved back inside it); a TrimBounds re-bases that image at the trim's
+//     origin (dng_simple_image::Trim). The engine therefore places the area relative to the stage
+//     image it holds after the opcodes. `rect` may extend beyond the visible area: LibRaw starts
+//     the visible area one row or column inside an odd ActiveArea margin (ADR 0005).
+//   * Decoder inset crops (DecoderInsetCrop): `reference` is the raw frame and `rect` holds the
+//     decoder's whole-pixel values. LibRaw 0.22 moves an inset crop's left or top edge that is not
+//     on its CFA period (2 for Bayer, 6 for X-Trans data) inward to the next multiple and shrinks
+//     the size by the same amount, keeping the right and bottom edges (src/utils/open.cpp, "adjust
+//     crop_inset margins"), so such an area can be up to one (Bayer) or five (X-Trans) pixels
+//     narrower or shorter than the camera's declaration.
+// Validity of decoder inset crops (LibRaw's changelog of 2021-02-04: they "may be fooled by
+// metadata (makernotes), use some correctness check before use"): both edges and both sizes
+// recorded (an edge of 0xffff means "not recorded"), inside the raw frame, and overlapping the
+// visible area by at least kMinInsetCropFraction of its width and of its height; anything else is
+// Unknown with the reason in `basis`.
+struct ImageArea {
+    ImageAreaSource source = ImageAreaSource::Unknown;
+    // DngTag for DNG DefaultCrop, LucentRule for the DNG default, Decoder for inset crops.
+    Provenance provenance = Provenance::LucentRule;
+    // Set unless `source` is Unknown.
+    std::optional<AreaRect> rect;
+    // See "Frames"; empty when `source` is Unknown.
+    image::PixelRect reference;
+    // A default user crop the file suggests, normalised to `rect`. Never applied by the engine: it
+    // is the initial value of a photographer's crop, which can be widened back to the whole area.
+    // DNG: DefaultUserCrop (51125, added in DNG 1.4.0.0) when it is not the whole area. Other
+    // files: the decoder's aspect-ratio crop (LibRaw raw_inset_crops[1], filled from an in-camera
+    // aspect-ratio setting that differs from the area's ratio by more than 2 %).
+    std::optional<NormalizedCrop> user_crop;
+    Provenance user_crop_provenance = Provenance::DngTag;
+    // Developer-facing English: the tags and values the area was derived from, or why it is
+    // unknown.
+    std::string basis;
+};
+
+// Smallest fraction of the visible area's width and height a decoder inset crop must keep (LibRaw's
+// own bound for applying inset crops: LibRaw::adjust_to_raw_inset_crop's default maxcrop).
+inline constexpr double kMinInsetCropFraction = 0.55;
+
 struct PriorProcessingStep {
     PriorProcessingKind kind = PriorProcessingKind::Demosaiced;
     std::string detail;  // developer-facing English
@@ -555,6 +650,8 @@ struct RawMetadata {
     SensorGeometry geometry;
     // Layout of optical views; anything but SingleView comes with a MultiViewSource issue.
     ProjectionInfo projection;
+    // The camera's intended image area (contract 1.4).
+    ImageArea image_area;
     RepresentationInfo representation;
     SensorLevels levels;
     CameraColorData color;
@@ -615,6 +712,13 @@ struct DngOpcodeFrame {
 // opcode that is neither applied by Lucent nor superseded, and re-derives interpretation.status.
 // Decoders call it once after filling metadata.dng and the representation.
 void assess_dng_opcode_operations(RawMetadata& metadata);
+
+// The image area a DNG raw IFD declares, in the frames ImageArea describes: DngDefaultCrop from
+// DefaultCropOrigin and DefaultCropSize (both needed; a lone tag is reported as Unknown), or
+// DngDefaultWholeImage without either (the ActiveArea, or the whole IFD), with DefaultUserCrop as
+// the user crop when it is not (0, 0, 1, 1). `raw_frame` is the decoded raw frame's size: an IFD of
+// another size cannot be placed (Unknown). Decoders call it for DNG files whose raw IFD they matched.
+[[nodiscard]] ImageArea dng_image_area(const TiffIfdSummary& raw_ifd, image::Size raw_frame);
 
 // Summary of one image of a multi-image file, as listed by a probe.
 struct SubimageInfo {
@@ -694,7 +798,10 @@ struct PixelsShape {
 // representation; the buffer matches the geometry (raw_width x raw_height), channel count and
 // sample encoding; the visible area lies inside the frame; a mosaic has a non-empty CFA equal to
 // the metadata's, whose colours all appear in channel_colors; levels are finite with black below
-// white; black deltas are empty or match the visible area's width / height; every operation
+// white; black deltas are empty or match the visible area's width / height; the image area agrees
+// with its source (a finite rectangle of positive size and a non-empty reference rectangle inside
+// the frame exactly when the source is known, a decoder inset crop inside the frame, a user crop
+// ordered inside [0, 1]); every operation
 // marked supported_by_lucent is a decoded DNG opcode that assess_dng_opcode accepts at its stage;
 // the contract version is readable. Fails with ErrorCode::Internal ("raw.contract") and a
 // message naming the first violation. Adapters call it before returning; tests use it too.

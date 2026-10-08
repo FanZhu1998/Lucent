@@ -130,6 +130,7 @@ inline constexpr std::uint16_t kOpcodeList1 = 51008;
 inline constexpr std::uint16_t kOpcodeList2 = 51009;
 inline constexpr std::uint16_t kOpcodeList3 = 51022;
 inline constexpr std::uint16_t kNoiseProfile = 51041;
+inline constexpr std::uint16_t kDefaultUserCrop = 51125;         // DNG 1.4, raw IFD
 inline constexpr std::uint16_t kProfileGainTableMap = 52525;     // DNG 1.6, raw IFD
 inline constexpr std::uint16_t kCalibrationIlluminant3 = 52529;  // DNG 1.6
 inline constexpr std::uint16_t kCameraCalibration3 = 52530;      // DNG 1.6

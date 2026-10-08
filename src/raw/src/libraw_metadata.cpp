@@ -891,6 +891,131 @@ SubimageClassification classify_subimage(const SubimageFacts& facts) {
     return result;
 }
 
+namespace {
+
+bool recorded(const InsetCrop& c) noexcept {
+    return c.left < 0xffff && c.top < 0xffff && c.width > 0 && c.height > 0;
+}
+
+bool inside_frame(const InsetCrop& c, image::Size frame) noexcept {
+    return std::int64_t{c.left} + c.width <= frame.width && std::int64_t{c.top} + c.height <= frame.height;
+}
+
+std::string describe(const InsetCrop& c) {
+    const auto edge = [](std::uint32_t v) {
+        return v == 0xffff ? std::string("not recorded") : std::to_string(v);
+    };
+    return std::format("{} x {} at left {}, top {}", c.width, c.height, edge(c.left), edge(c.top));
+}
+
+bool same(const InsetCrop& a, const InsetCrop& b) noexcept {
+    return a.left == b.left && a.top == b.top && a.width == b.width && a.height == b.height;
+}
+
+}  // namespace
+
+InsetCrop libraw_adjusted_inset_crop(InsetCrop c, std::uint32_t period) noexcept {
+    if (period < 2) {
+        return c;
+    }
+    // src/utils/open.cpp, LibRaw 0.22.2: "if(adjust_margins) // adjust crop_inset margins".
+    if (c.left != 0 && c.left < 0xffff && c.width != 0 && c.width < 0xffff && c.left % period != 0 &&
+        c.width > period) {
+        const std::uint32_t moved = (c.left / period + 1) * period;
+        c.width -= moved - c.left;
+        c.left = moved;
+    }
+    if (c.top != 0 && c.top < 0xffff && c.height != 0 && c.height < 0xffff && c.top % period != 0 &&
+        c.height > period) {
+        const std::uint32_t moved = (c.top / period + 1) * period;
+        c.height -= moved - c.top;
+        c.top = moved;
+    }
+    return c;
+}
+
+ImageArea image_area_from_inset_crops(const InsetCropFacts& facts) {
+    ImageArea area;
+    InsetCrop c = facts.crop;
+    std::string restored;
+    if (facts.declared && recorded(*facts.declared) && !same(*facts.declared, c) &&
+        same(libraw_adjusted_inset_crop(*facts.declared, facts.margin_period), c)) {
+        // LibRaw moved an edge of the file's own declaration to its CFA period: restore it.
+        restored = std::format(
+            "; the file declares {} ({}), which LibRaw moved to its CFA period of {}: the "
+            "declaration is used",
+            describe(*facts.declared), facts.declared_name, facts.margin_period);
+        c = *facts.declared;
+    }
+    if (c.left == 0xffff && c.top == 0xffff && c.width == 0 && c.height == 0) {
+        area.basis = "the decoder found no crop declaration (LibRaw raw_inset_crops[0] is not set)";
+        return area;
+    }
+    if (!recorded(c)) {
+        area.basis =
+            std::format("the decoder's crop declaration is incomplete (raw_inset_crops[0] {})", describe(c));
+        return area;
+    }
+    if (!inside_frame(c, facts.raw_frame)) {
+        area.basis = std::format("the decoder's crop declaration {} does not fit the {} x {} raw frame",
+                                 describe(c), facts.raw_frame.width, facts.raw_frame.height);
+        return area;
+    }
+    const image::PixelRect rect{static_cast<std::int32_t>(c.left), static_cast<std::int32_t>(c.top),
+                                static_cast<std::int32_t>(c.width), static_cast<std::int32_t>(c.height)};
+    const image::PixelRect overlap = rect.intersect(facts.visible);
+    // LibRaw::adjust_to_raw_inset_crop() (src/utils/utils_libraw.cpp): limwidth = int(width *
+    // maxcrop), and a crop is used when cwidth >= limwidth (likewise the height).
+    const auto least = [](std::int32_t side) {
+        return static_cast<std::int64_t>(kMinInsetCropFraction * static_cast<double>(side));
+    };
+    if (overlap.width < least(facts.visible.width) || overlap.height < least(facts.visible.height)) {
+        area.basis = std::format(
+            "the decoder's crop declaration {} keeps {} x {} of the {}x{}+{}+{} visible area, less "
+            "than {} of a side: not used",
+            describe(c), overlap.width, overlap.height, facts.visible.width, facts.visible.height,
+            facts.visible.x, facts.visible.y, kMinInsetCropFraction);
+        return area;
+    }
+    area.source = ImageAreaSource::DecoderInsetCrop;
+    area.provenance = Provenance::Decoder;
+    area.rect = AreaRect{static_cast<double>(rect.x), static_cast<double>(rect.y),
+                         static_cast<double>(rect.width), static_cast<double>(rect.height)};
+    area.reference = image::PixelRect::from_size(facts.raw_frame);
+    area.basis =
+        std::format("the decoder's reading of the camera's crop declaration (LibRaw raw_inset_crops[0]): {}",
+                    describe(facts.crop));
+    if (!restored.empty()) {
+        area.provenance = Provenance::LucentRule;
+        area.basis += restored;
+    } else if (facts.declared && !same(*facts.declared, facts.crop)) {
+        area.basis += std::format("; the file's {} ({}) differs and is not LibRaw's adjusted form of it",
+                                  facts.declared_name, describe(*facts.declared));
+    } else if (facts.declared) {
+        area.basis += std::format("; equal to the file's {}", facts.declared_name);
+    } else if (const std::uint32_t p = facts.margin_period;
+               p > 1 && ((c.left != 0 && c.left % p == 0) || (c.top != 0 && c.top % p == 0))) {
+        // An edge on the period may be one LibRaw moved there; one off the period was not moved.
+        area.basis += std::format(
+            "; LibRaw moves a left or top edge that is not a multiple of {} inward to the "
+            "next multiple (open.cpp), so its left or top edge may lie up to {} pixel{} "
+            "inside the camera's declaration",
+            p, p - 1, p - 1 == 1 ? "" : "s");
+    }
+    const InsetCrop& u = facts.user_crop;
+    if (recorded(u) && u.left >= c.left && u.top >= c.top && std::int64_t{u.left} + u.width <= rect.right() &&
+        std::int64_t{u.top} + u.height <= rect.bottom() && (u.width < c.width || u.height < c.height)) {
+        const double w = c.width;
+        const double h = c.height;
+        area.user_crop = NormalizedCrop{(u.top - c.top) / h, (u.left - c.left) / w,
+                                        (u.top - c.top + static_cast<double>(u.height)) / h,
+                                        (u.left - c.left + static_cast<double>(u.width)) / w};
+        area.user_crop_provenance = Provenance::Decoder;
+        area.basis += std::format("; aspect-ratio crop (raw_inset_crops[1]) {}", describe(u));
+    }
+    return area;
+}
+
 ProjectionInfo classify_projection(std::string_view make, std::string_view model, std::uint32_t width,
                                    std::uint32_t height) {
     ProjectionInfo info;
@@ -1225,6 +1350,38 @@ Expected<RawMetadata> extract_metadata(LibRaw& raw, const ExtractionContext& con
                   std::format("unstitched {} source ({}); developing it as one planar image would show the "
                               "separate lens views, and Lucent cannot stitch them",
                               to_string(m.projection.layout), m.projection.basis));
+    }
+
+    // ---- Camera image area -------------------------------------------------------------------
+    // DNG: the raw IFD's DefaultCrop from Lucent's inspector (authoritative for DNG structure,
+    // exact rationals). Other files: LibRaw's reading of the vendor crop tags.
+    if (id.dng_version != 0) {
+        if (m.dng) {
+            m.image_area =
+                dng_image_area(m.dng->raw_ifd, image::Size{static_cast<std::int32_t>(sizes.raw_width),
+                                                           static_cast<std::int32_t>(sizes.raw_height)});
+        } else {
+            m.image_area.basis = "the DNG raw IFD was not identified, so its DefaultCrop is unknown";
+        }
+    } else {
+        InsetCropFacts facts;
+        const auto crop_of = [](const libraw_raw_inset_crop_t& c) {
+            return InsetCrop{c.cleft, c.ctop, c.cwidth, c.cheight};
+        };
+        facts.crop = crop_of(sizes.raw_inset_crops[0]);
+        facts.user_crop = crop_of(sizes.raw_inset_crops[1]);
+        facts.raw_frame = image::Size{static_cast<std::int32_t>(sizes.raw_width),
+                                      static_cast<std::int32_t>(sizes.raw_height)};
+        facts.visible = m.geometry.visible_area;
+        // open.cpp: 6 for Fujifilm X-Trans data, else 2 for CFA data outside the rotated Fuji layout.
+        facts.margin_period = id.maker_index == LIBRAW_CAMERAMAKER_Fujifilm && id.filters == 9 ? 6u
+                              : raw.is_fuji_rotated() == 0 && id.filters >= 1000               ? 2u
+                                                                                               : 0u;
+        if (context.raf_crop) {
+            facts.declared = context.raf_crop;
+            facts.declared_name = "RAF RawImageCropTopLeft / RawImageCroppedSize";
+        }
+        m.image_area = image_area_from_inset_crops(facts);
     }
 
     // ---- Levels and colour ------------------------------------------------------------------

@@ -76,7 +76,7 @@ TEST(DecodedRawContract, PersistedEnumValuesNeverChange) {
     // 1.1 added fields (subimage role, projection, compression provenance), 1.2 the black
     // deltas and 1.3 the decoded opcode parameters and Lucent's opcode support: minor changes.
     EXPECT_EQ(kDecodedRawContractVersion.major, 1u);
-    EXPECT_EQ(kDecodedRawContractVersion.minor, 3u);
+    EXPECT_EQ(kDecodedRawContractVersion.minor, 4u);
     EXPECT_EQ(static_cast<int>(DngBayerPhase::Red), 0);
     EXPECT_EQ(static_cast<int>(DngBayerPhase::Blue), 3);
 }
@@ -378,6 +378,79 @@ TEST(DecodedRawContract, ViolationsAreReported) {
         const Status status = check_consistency(d);
         ASSERT_FALSE(status);
         EXPECT_EQ(status.error().code, ErrorCode::VersionMismatch);
+    }
+}
+
+// The camera's image area (contract 1.4, ADR 0017): a rectangle and a reference inside the frame
+// exactly when the source is known, finite with a positive size, a decoder inset crop inside the
+// raw frame, a user crop ordered inside [0, 1].
+TEST(DecodedRawContract, ImageAreaRules) {
+    const auto inset = [] {
+        DecodedRaw d = make_mosaic();
+        ImageArea& a = d.metadata.image_area;
+        a.source = ImageAreaSource::DecoderInsetCrop;
+        a.provenance = Provenance::Decoder;
+        a.rect = AreaRect{3.0, 1.0, 5.0, 4.0};
+        a.reference = image::PixelRect{0, 0, 8, 6};
+        return d;
+    };
+    {
+        const DecodedRaw d = make_mosaic();  // Unknown, nothing else: consistent
+        EXPECT_EQ(d.metadata.image_area.source, ImageAreaSource::Unknown);
+        EXPECT_TRUE(check_consistency(d)) << check_consistency(d).error().describe();
+    }
+    {
+        DecodedRaw d = inset();
+        EXPECT_TRUE(check_consistency(d)) << check_consistency(d).error().describe();
+        d.metadata.image_area.user_crop = NormalizedCrop{0.1, 0.0, 0.9, 1.0};
+        EXPECT_TRUE(check_consistency(d)) << check_consistency(d).error().describe();
+        d.metadata.image_area.user_crop = NormalizedCrop{0.9, 0.0, 0.1, 1.0};  // bottom above top
+        expect_violation(d, "user crop");
+        d.metadata.image_area.user_crop = NormalizedCrop{0.0, -0.1, 1.0, 1.0};
+        expect_violation(d, "user crop");
+    }
+    {
+        DecodedRaw d = inset();
+        d.metadata.image_area.rect.reset();  // known without a rectangle
+        expect_violation(d, "image area");
+    }
+    {
+        DecodedRaw d = inset();
+        d.metadata.image_area.reference = image::PixelRect{0, 0, 9, 6};  // beyond the 8x6 frame
+        expect_violation(d, "image area");
+    }
+    {
+        DecodedRaw d = make_mosaic();
+        d.metadata.image_area.rect = AreaRect{0.0, 0.0, 8.0, 6.0};  // a rectangle while unknown
+        expect_violation(d, "image area");
+    }
+    {
+        DecodedRaw d = make_mosaic();
+        d.metadata.image_area.user_crop = NormalizedCrop{};  // a user crop while unknown
+        expect_violation(d, "image area");
+    }
+    {
+        DecodedRaw d = inset();
+        d.metadata.image_area.rect->width = 0.0;
+        expect_violation(d, "positive size");
+        d.metadata.image_area.rect->width = std::numeric_limits<double>::quiet_NaN();
+        expect_violation(d, "finite");
+    }
+    {
+        DecodedRaw d = inset();
+        d.metadata.image_area.rect = AreaRect{4.0, 1.0, 5.0, 4.0};  // to x = 9 > 8
+        expect_violation(d, "inside the raw frame");
+        // A DNG area may extend beyond the visible area (it is relative to the ActiveArea): only
+        // its reference must lie inside the frame.
+        d.metadata.image_area.source = ImageAreaSource::DngDefaultCrop;
+        d.metadata.image_area.provenance = Provenance::DngTag;
+        d.metadata.image_area.rect = AreaRect{1.5, 0.5, 7.0, 5.5};
+        EXPECT_TRUE(check_consistency(d)) << check_consistency(d).error().describe();
+    }
+    {
+        DecodedRaw d = inset();
+        d.metadata.image_area.source = static_cast<ImageAreaSource>(99);
+        expect_violation(d, "unknown image area source");
     }
 }
 

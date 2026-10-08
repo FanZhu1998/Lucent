@@ -61,6 +61,18 @@ enum class LibRawBuffer : std::uint8_t {
 };
 [[nodiscard]] LibRawBuffer unpacked_buffer(const LibRaw& raw) noexcept;
 
+// LibRaw's inset crops (imgdata.sizes.raw_inset_crops, libraw_types.h; LibRaw 0.22 doc/
+// API-datastruct.html: "item at [0] contains standard crop data parsed from camera metadata (DNG:
+// DefaultCrop* tags, other formats: vendor specific tags)", "item at [1] is 'user crop'", set by DNG
+// DefaultUserCrop or by raw aspect-ratio tags). Values are raw-frame pixels: cleft/ctop from the
+// frame's top-left, an edge of 0xffff meaning "not recorded" (src/utils/init_close_utils.cpp).
+struct InsetCrop {
+    std::uint32_t left = 0xffff;
+    std::uint32_t top = 0xffff;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+};
+
 // Everything extract_metadata() needs besides LibRaw's own state.
 struct ExtractionContext {
     MetadataStage stage = MetadataStage::AfterOpen;
@@ -73,6 +85,8 @@ struct ExtractionContext {
     // unpacking); 0 means "use the current size". Used to match the DNG raw IFD.
     std::uint32_t open_raw_width = 0;
     std::uint32_t open_raw_height = 0;
+    // Fujifilm RAF: the crop the file declares, read by Lucent (read_raf_crop), or nothing.
+    std::optional<InsetCrop> raf_crop;
 };
 
 // Converts LibRaw's state (after open_datastream(), or after unpack() for stage AfterUnpack)
@@ -121,6 +135,36 @@ struct SubimageClassification {
 };
 
 [[nodiscard]] SubimageClassification classify_subimage(const SubimageFacts& facts);
+
+struct InsetCropFacts {
+    InsetCrop crop;       // raw_inset_crops[0]
+    InsetCrop user_crop;  // raw_inset_crops[1]
+    image::Size raw_frame;
+    image::PixelRect visible;
+    // LibRaw's inset-crop margin adjustment period (src/utils/open.cpp): 6 for Fujifilm X-Trans data
+    // (maker Fujifilm, filters 9), 2 for other CFA data (filters >= 1000) unless LibRaw holds it in
+    // the rotated Fuji layout (fuji_width), 0 otherwise.
+    std::uint32_t margin_period = 0;
+    // The same declaration as the file states it, read by Lucent's own parser (Fujifilm RAF
+    // RawImageCropTopLeft / RawImageCroppedSize), when available.
+    std::optional<InsetCrop> declared;
+    std::string declared_name;  // e.g. "RAF RawImageCropTopLeft / RawImageCroppedSize"
+};
+
+// LibRaw's inset-crop margin adjustment (src/utils/open.cpp, "adjust crop_inset margins") applied to
+// `crop` for `period`: a left (top) edge that is non-zero, recorded and not a multiple of the period
+// moves inward to the next multiple when the width (height) exceeds the period, and the width
+// (height) shrinks by the same amount.
+[[nodiscard]] InsetCrop libraw_adjusted_inset_crop(InsetCrop crop, std::uint32_t period) noexcept;
+
+// The image area of a non-DNG file from LibRaw's inset crops (ImageArea, decoded_raw.hpp): the
+// crop when it is recorded, inside the raw frame and keeps at least kMinInsetCropFraction of the
+// visible area's width and height (DecoderInsetCrop, Provenance::Decoder); otherwise Unknown with
+// the reason. When the file's own declaration (`declared`) is known and LibRaw's crop is exactly
+// its margin-adjusted form, the declaration is used instead (Provenance::LucentRule: the edges
+// LibRaw moved are restored). The user crop is the second inset crop normalised to the first, when
+// it lies inside it and is not the whole of it.
+[[nodiscard]] ImageArea image_area_from_inset_crops(const InsetCropFacts& facts);
 
 // Identifies unstitched two-lens 360-degree sources from the camera identity and the frame shape
 // of the visible area: Insta360 (make "Arashi Vision" or "Insta360", or an "Insta360" model) and
