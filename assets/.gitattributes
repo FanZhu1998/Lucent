@@ -1,0 +1,3 @@
+# The bundled data assets are verified byte for byte against their manifests (ADR 0018):
+# git must never convert their line endings.
+* -text
