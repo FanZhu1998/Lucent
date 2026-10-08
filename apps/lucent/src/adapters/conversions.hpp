@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <memory>
 
+#include <lucent/application/camera_support.hpp>
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/import.hpp>
 #include <lucent/application/preview.hpp>
@@ -36,16 +37,30 @@ namespace lucent::ui::adapters {
 
 // --- Library items ---------------------------------------------------------------------------
 
-// Supported -> CompatibleUnverified (Lucent has no qualification data before W10, so nothing is
-// Verified), Limited -> Limited, Unsupported -> Unsupported.
+// The blueprint's four states (W10, ADR 0018): Verified, Compatible, unverified, Limited and
+// Unsupported map one to one.
 [[nodiscard]] SupportStatus to_ui_support(app::SupportStatus status) noexcept;
 
 // One user-facing sentence per interpretation issue kind.
 [[nodiscard]] QString describe_issue(raw::InterpretationIssueKind kind);
 
-// Why an item has its status, for the badge tooltip and the details panel: the distinct reasons
-// joined; for Supported items a note that the camera is not verified yet.
+// One user-facing sentence naming a limitation of the camera support database by its stable code
+// (ADR 0018). Codes this build has no words for (a later database's) use `fallback`, the
+// database's own English, or a generic sentence when that is empty.
+[[nodiscard]] QString describe_limitation(const QString& code, const QString& fallback = {});
+
+// Why an item has its status, for the badge tooltip and the details panel:
+//   Verified: which camera and mode Lucent's qualification verified, and when;
+//   Compatible, unverified: why there is no verification (the mode is not in the camera support
+//     database, is listed without quality evidence, was qualified with another decoder or
+//     pipeline, or no database is available);
+//   Limited and Unsupported: the distinct reasons joined, the database's limitations named.
 [[nodiscard]] QString support_detail(const app::SupportAssessment& support);
+
+// Help > About's description of the session's camera support database (null `active`: none, with
+// `load`'s reason).
+[[nodiscard]] CameraSupportInfo to_camera_support_info(const app::CameraSupportRef& active,
+                                                       const assets::CameraSupportLoad& load);
 
 // The shell's flags for the source facts of `source` (W4): MissingSource, ChangedSource,
 // RemovableSource (a file on removable media, a card or a USB disk) and DuplicateContent.

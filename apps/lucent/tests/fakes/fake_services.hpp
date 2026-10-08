@@ -97,6 +97,8 @@ public:
     void start_import(const QStringList& paths, const ImportOptions& options) override;
     [[nodiscard]] bool is_importing() const override { return active_imports_ > 0; }
     [[nodiscard]] bool is_busy() const override;
+    // A simulated camera support database 1.0.0 (Help > About, W10).
+    [[nodiscard]] CameraSupportInfo camera_support() const override;
 
     // The current snapshot of every item, in library order (for tests).
     [[nodiscard]] const std::vector<LibraryItem>& items() const noexcept { return items_; }

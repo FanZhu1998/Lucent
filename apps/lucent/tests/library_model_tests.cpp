@@ -1,19 +1,19 @@
 // LibraryModel, CurrentItem and ExportJobModel: roles, identity, and the ordering guarantee that
 // the generation registry is updated before a changed image URL is announced.
 
-#include <gtest/gtest.h>
-
+#include <QSignalSpy>
 #include <cmath>
 #include <limits>
 #include <memory>
 #include <set>
 
-#include <QSignalSpy>
+#include <gtest/gtest.h>
 
 #include "imaging/generation_registry.hpp"
 #include "models/current_item.hpp"
 #include "models/export_job_model.hpp"
 #include "models/library_model.hpp"
+#include "models/presentation.hpp"
 #include "test_support.hpp"
 
 namespace lucent::ui {
@@ -60,6 +60,11 @@ TEST_F(LibraryModelTest, AddsItemsInOrderAndExposesPresentationRoles) {
 
     EXPECT_EQ(role(model, 1, LibraryModel::SupportKeyRole).toString(), QStringLiteral("limited"));
     EXPECT_EQ(role(model, 1, LibraryModel::SupportDetailRole).toString(), QStringLiteral("No lens profile."));
+    // W10: what each state means for the photographer.
+    EXPECT_EQ(role(model, 0, LibraryModel::SupportMeaningRole).toString(),
+              presentation::support_meaning(SupportStatus::Verified));
+    EXPECT_EQ(role(model, 1, LibraryModel::SupportMeaningRole).toString(),
+              presentation::support_meaning(SupportStatus::Limited));
     EXPECT_EQ(role(model, 1, LibraryModel::FlagLabelsRole).toStringList(),
               (QStringList{QStringLiteral("Review recommended"), QStringLiteral("Duplicate")}));
     const QString accessible = role(model, 1, LibraryModel::AccessibleLabelRole).toString();
@@ -77,7 +82,7 @@ TEST_F(LibraryModelTest, AddsItemsInOrderAndExposesPresentationRoles) {
 TEST_F(LibraryModelTest, RoleNamesAreUniqueAndCoverEveryRole) {
     const QHash<int, QByteArray> names = model.roleNames();
     std::set<QByteArray> unique;
-    for (int id = LibraryModel::FileNameRole; id <= LibraryModel::ReviewRole; ++id) {
+    for (int id = LibraryModel::FileNameRole; id <= LibraryModel::SupportMeaningRole; ++id) {
         ASSERT_TRUE(names.contains(id)) << id;
         unique.insert(names.value(id));
     }

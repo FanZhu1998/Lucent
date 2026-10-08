@@ -174,6 +174,8 @@ QVariant LibraryModel::data(const QModelIndex& index, int role) const {
         return p::support_short_label(item->support);
     case SupportDetailRole:
         return item->support_detail;
+    case SupportMeaningRole:
+        return p::support_meaning(item->support);
     case ProcessingLabelRole:
         return p::processing_label(*item);
     case ProcessingDetailRole:
@@ -276,6 +278,7 @@ QHash<int, QByteArray> LibraryModel::roleNames() const {
         {EditedRole, "edited"},
         {InSelectionRole, "inSelection"},
         {ReviewRole, "review"},
+        {SupportMeaningRole, "supportMeaning"},
     };
 }
 

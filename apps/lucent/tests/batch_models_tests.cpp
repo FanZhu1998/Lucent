@@ -585,10 +585,12 @@ BatchReportInfo report_of(BatchId id) {
     exported.output = QStringLiteral("D:\\Out\\A_Lucent_0.jpg");
     exported.reason = QStringLiteral("Exported.");
     exported.review = {QStringLiteral("Saved as A_Lucent_0_2.jpg because A_Lucent_0.jpg already existed.")};
+    exported.support = SupportStatus::Limited;
     BatchReportEntry skipped;
     skipped.source_name = QStringLiteral("B.dng");
     skipped.outcome = BatchOutcome::Skipped;
     skipped.reason = QStringLiteral("Lucent cannot render this camera file faithfully yet, so it was not exported.");
+    skipped.support = SupportStatus::Unsupported;
     BatchReportEntry failed;
     failed.source_name = QStringLiteral("C.NEF");
     failed.outcome = BatchOutcome::Failed;
@@ -614,6 +616,12 @@ TEST(BatchReportModelTest, ShowsTheSelectedBatchsReportWithFilters) {
     EXPECT_EQ(model.failed(), 1);
     EXPECT_EQ(role(model, 0, BatchReportModel::OutputNameRole).toString(), QStringLiteral("A_Lucent_0.jpg"));
     EXPECT_TRUE(role(model, 0, BatchReportModel::HasReviewRole).toBool());
+    // W10: the photo's camera support state as the batch recorded it.
+    EXPECT_EQ(role(model, 0, BatchReportModel::SupportKeyRole).toString(), QStringLiteral("limited"));
+    EXPECT_EQ(role(model, 0, BatchReportModel::SupportLabelRole).toString(), QStringLiteral("Limited"));
+    EXPECT_FALSE(role(model, 0, BatchReportModel::SupportMeaningRole).toString().isEmpty());
+    EXPECT_EQ(role(model, 1, BatchReportModel::SupportKeyRole).toString(), QStringLiteral("unsupported"));
+    EXPECT_TRUE(role(model, 2, BatchReportModel::SupportLabelRole).toString().isEmpty());  // not recorded
 
     model.setFilter(QStringLiteral("failed"));
     ASSERT_EQ(model.count(), 1);

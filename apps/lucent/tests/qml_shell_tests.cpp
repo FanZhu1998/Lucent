@@ -441,6 +441,33 @@ TEST_F(QmlShellTest, TheEditPanelMakesOneRevisionPerGestureAndComparesBeforeAndA
 
 // W4: chosen photos wait in the Import dialog (Include subfolders, Copy into library folder), and
 // the contact sheet shows the file badges of the model's items.
+// W10 (ADR 0018): Help > About shows Lucent's version, the camera support database and what the
+// four support states mean; the Edit details say what the photo's state means.
+TEST_F(QmlShellTest, AboutShowsTheCameraSupportDatabaseAndWhatTheStatesMean) {
+    auto* dialog = child("aboutDialog");
+    ASSERT_NE(dialog, nullptr);
+    EXPECT_FALSE(dialog->property("opened").toBool());
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("aboutButton"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    const QString version = child("aboutVersion")->property("text").toString();
+    EXPECT_TRUE(version.contains(controller->app_version())) << version.toStdString();
+    const QString database = child("aboutCameraSupport")->property("text").toString();
+    EXPECT_TRUE(database.contains(QStringLiteral("Version 1.0.0, qualified 2026-10-08")))
+        << database.toStdString();
+    EXPECT_EQ(child("aboutSupportStates")->property("count").toInt(), 4);
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("aboutCloseButton"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return !dialog->property("visible").toBool(); }, kWaitMs));
+
+    write_photos(3);
+    import_folder();
+    ASSERT_TRUE(controller->openItem(0));
+    ASSERT_TRUE(settle());
+    const QString meaning = child("supportMeaning")->property("text").toString();
+    EXPECT_TRUE(meaning.startsWith(QStringLiteral("What this means: "))) << meaning.toStdString();
+    EXPECT_TRUE(meaning.contains(controller->current()->support_meaning()));
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
 TEST_F(QmlShellTest, TheImportDialogConfirmsAnImportAndCardsShowSourceBadges) {
     write_photos(12);
     auto* dialog = child("importDialog");

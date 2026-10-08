@@ -35,6 +35,8 @@ class CurrentItem : public QObject {
     Q_PROPERTY(QString supportKey READ support_key NOTIFY changed FINAL)
     Q_PROPERTY(QString supportLabel READ support_label NOTIFY changed FINAL)
     Q_PROPERTY(QString supportDetail READ support_detail NOTIFY changed FINAL)
+    // W10: what the support state means for the photographer (presentation::support_meaning).
+    Q_PROPERTY(QString supportMeaning READ support_meaning NOTIFY changed FINAL)
     Q_PROPERTY(QString processingLabel READ processing_label NOTIFY changed FINAL)
     Q_PROPERTY(QString processingDetail READ processing_detail NOTIFY changed FINAL)
     Q_PROPERTY(QString processingKey READ processing_key NOTIFY changed FINAL)
@@ -83,6 +85,7 @@ public:
     [[nodiscard]] QString support_key() const { return text(LibraryModel::SupportKeyRole); }
     [[nodiscard]] QString support_label() const { return text(LibraryModel::SupportLabelRole); }
     [[nodiscard]] QString support_detail() const { return text(LibraryModel::SupportDetailRole); }
+    [[nodiscard]] QString support_meaning() const { return text(LibraryModel::SupportMeaningRole); }
     [[nodiscard]] QString processing_label() const { return text(LibraryModel::ProcessingLabelRole); }
     [[nodiscard]] QString processing_detail() const { return text(LibraryModel::ProcessingDetailRole); }
     [[nodiscard]] QString processing_key() const { return text(LibraryModel::ProcessingKeyRole); }

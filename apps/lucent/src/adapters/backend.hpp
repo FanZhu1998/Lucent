@@ -20,6 +20,14 @@
 // (library_problem() set as well). Without a catalog path the library is a SessionLibrary (the
 // W3 behaviour, used by tests).
 //
+// W10 (ADR 0018): the camera support database. Right after the library, the Backend finds and
+// verifies the bundled asset (assets::load_camera_support: per-user data packs are refused, the
+// bundled folder next to Lucent.exe is checked against the manifest hash compiled into it) and
+// re-assesses the library's items whose stored assessment names another database
+// (app::refresh_support; a read-only catalog keeps the assessments it has). Imports, source
+// maintenance and folder batches assess new probes against it. When none can be activated the
+// session runs without one (no item is Verified) and camera_support_load() says why.
+//
 // W8: the AutoService (auto_service.hpp, ADR 0013) runs the editor's "Auto" in process on the
 // executor's Background lane, over the recipe service; it is created after the executor and
 // destroyed before it (its destructor cancels the runs in progress and waits for them).
@@ -57,6 +65,7 @@
 
 #include <lucent/application/auto_service.hpp>
 #include <lucent/application/batch_service.hpp>
+#include <lucent/application/camera_support.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/export_service.hpp>
 #include <lucent/application/library.hpp>
@@ -67,6 +76,8 @@
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
 #include <lucent/application/thumbnail_cache.hpp>
+#include <lucent/assets/asset_store.hpp>
+#include <lucent/assets/camera_support.hpp>
 #include <lucent/catalog/catalog.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -101,6 +112,11 @@ struct BackendOptions {
     // W8. The interactive Auto (its registry is filled in by the Backend; its decode limits and
     // memory budget follow `renderer`). Tests set fail_final_checks.
     app::AutoServiceOptions automatic;
+    // W10 (ADR 0018). Where the camera support database is looked for; std::nullopt: next to the
+    // executable, and data packs in <user_data_directory>\assets (refused in this version).
+    std::optional<assets::AssetLocations> asset_locations;
+    // The per-user application data folder (core::AppDirectories::data); empty: unknown.
+    std::filesystem::path user_data_directory;
 };
 
 // Output folders chosen for exports in this session. Imports do not scan into them when a scan
@@ -162,6 +178,12 @@ public:
     [[nodiscard]] app::DevelopPreviewService& develop() noexcept { return *develop_; }
     // W8. The editor's Auto (null when it could not be created).
     [[nodiscard]] app::AutoService* automatic() noexcept { return auto_.get(); }
+    // W10. The session's camera support database (null when none could be activated) and how it
+    // was found (refused candidates, the reason when none is active).
+    [[nodiscard]] const app::CameraSupportRef& camera_support() const noexcept { return camera_support_; }
+    [[nodiscard]] const assets::CameraSupportLoad& camera_support_load() const noexcept {
+        return camera_support_load_;
+    }
     [[nodiscard]] OutputFolders& output_folders() noexcept { return output_folders_; }
     // The recipe store under recipes() (tests write revisions through it directly).
     [[nodiscard]] app::RecipeStore& recipe_store() noexcept { return *recipe_store_; }
@@ -195,6 +217,8 @@ private:
     std::shared_ptr<catalog::Catalog> catalog_;
     std::unique_ptr<app::Library> library_;
     std::optional<Error> library_problem_;
+    assets::CameraSupportLoad camera_support_load_;
+    app::CameraSupportRef camera_support_;
     std::shared_ptr<app::RecipeStore> recipe_store_;
     std::unique_ptr<app::RecipeService> recipes_;
     std::unique_ptr<app::BatchService> batches_;

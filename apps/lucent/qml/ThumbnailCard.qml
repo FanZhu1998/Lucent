@@ -21,6 +21,7 @@ Item {
     required property string supportLabel
     required property string supportShortLabel
     required property string supportDetail
+    required property string supportMeaning
     required property string processingKey
     required property string processingLabel
     required property string processingDetail
@@ -166,13 +167,18 @@ Item {
                 font.pixelSize: Theme.fontSmall
             }
 
+            // The camera support state (blueprint section 3; W10): the badge says which, the tooltip
+            // why and what it means.
             Badge {
+                objectName: "supportBadge"
                 anchors.top: parent.top
                 anchors.right: parent.right
                 anchors.margins: 6
                 text: card.supportShortLabel
                 dotColor: Theme.supportColor(card.supportKey)
-                detail: card.supportDetail.length > 0 ? card.supportLabel + " — " + card.supportDetail : card.supportLabel
+                detail: (card.supportDetail.length > 0 ? card.supportLabel + " — " + card.supportDetail
+                                                       : card.supportLabel)
+                        + (card.supportMeaning.length > 0 ? "\n" + card.supportMeaning : "")
             }
 
             // Lucent's own processing (blueprint section 2: the contact sheet shows processing

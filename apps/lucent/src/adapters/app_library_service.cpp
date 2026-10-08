@@ -323,6 +323,10 @@ QString AppLibraryService::library_notice() const {
     return problem ? describe_library_problem(*problem) : QString();
 }
 
+CameraSupportInfo AppLibraryService::camera_support() const {
+    return to_camera_support_info(backend_->camera_support(), backend_->camera_support_load());
+}
+
 RenderEventSink AppLibraryService::render_event_sink() {
     // `this` is only used by the posted function, which runs on the UI thread while it lives.
     return [this, dispatcher = dispatcher_](RenderEvent event) {
@@ -347,11 +351,13 @@ void AppLibraryService::start_next_import() {
     const raw::DecoderRegistry* registry = &backend_->registry();
     std::vector<std::filesystem::path> outputs = backend_->output_folders().snapshot();
     std::vector<std::filesystem::path> own = backend_->lucent_directories();
+    app::CameraSupportRef camera_support = backend_->camera_support();
     // The task uses the library and the registry by reference: the Backend keeps both alive until
     // its executor has run every task. `this` is only used by posted functions (UI thread).
-    auto task = [this, request, library, registry, outputs, own,
+    auto task = [this, request, library, registry, outputs, own, camera_support,
                  dispatcher = dispatcher_](app::TaskContext& context) {
         app::ImportRequest import;
+        import.camera_support = camera_support;
         for (const QString& path : request.paths) {
             std::filesystem::path native = to_path(path);
             std::error_code error;

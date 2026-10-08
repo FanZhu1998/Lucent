@@ -83,6 +83,7 @@ public:
         EditedRole,            // bool: the photo has develop settings other than as shot (W6)
         InSelectionRole,       // bool: selected for a batch export (W7)
         ReviewRole,            // bool: an automatic result recommends a review (W8, ReviewRecommended)
+        SupportMeaningRole,    // presentation::support_meaning: what the state means (W10)
     };
     Q_ENUM(Role)
 

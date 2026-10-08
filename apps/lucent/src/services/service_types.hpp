@@ -147,7 +147,10 @@ struct LibraryItem {
     double focal_length_mm = 0.0;
 
     SupportStatus support = SupportStatus::Unknown;
-    QString support_detail;  // why the status is Limited/Unsupported; may be empty
+    // Why the item has its status (W10, ADR 0018): the limitations or missing steps of a Limited or
+    // Unsupported item, and for a Verified or Compatible, unverified one what Lucent's camera
+    // support database says about its camera mode. May be empty.
+    QString support_detail;
     PickState pick = PickState::None;
     int rating = 0;  // 0 = unrated, 1..5
     // The file is a verified copy Lucent made into a library folder; origin_path names the original.
@@ -196,10 +199,31 @@ struct ImportOptions {
     QString copy_to;
 };
 
+// W10 (ADR 0018). The camera support database the session uses (Help > About).
+struct CameraSupportInfo {
+    bool available = false;  // a database is active
+    QString version;         // its asset version, e.g. "1.0.0"
+    QString qualified_on;    // the qualification run's date, "YYYY-MM-DD"
+    QString decoder;         // the decoder and contract it was qualified with
+    QString location;        // its folder (native separators)
+    bool bundled = true;     // installed with Lucent (data packs are not accepted yet)
+    int modes = 0;           // camera modes listed, and by state
+    int verified = 0;
+    int compatible_unverified = 0;
+    int limited = 0;
+    int unsupported = 0;
+    // False when the database was qualified with another decoder or pipeline than this build's:
+    // its Verified modes then count as Compatible, unverified.
+    bool verified_entries_hold = true;
+    QString problem;    // user-facing: why no database is active (empty when one is)
+    QStringList notes;  // user-facing: data packs that were not used, and why
+};
+
 // Outcome of one LibraryService::start_import() request.
 struct ImportSummary {
     QStringList sources;          // the paths the request named
     int added = 0;                // new library items
+    int verified = 0;             // of `added`: Verified items
     int limited = 0;              // of `added`: Limited items
     int unsupported = 0;          // of `added`: Unsupported items (listed, never auto-exported)
     int already_in_library = 0;   // files that were already library items

@@ -77,6 +77,7 @@ set_target_properties(lucent_ui_adapters PROPERTIES FOLDER "apps/lucent")
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 set(_lucent_qml_files
+    qml/AboutDialog.qml
     qml/AdjustmentSlider.qml
     qml/AdjustPanel.qml
     qml/AppHeader.qml

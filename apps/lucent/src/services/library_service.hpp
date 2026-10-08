@@ -93,6 +93,10 @@ public:
     // be opened and changes are not saved); empty when all is well.
     [[nodiscard]] virtual QString library_notice() const { return {}; }
 
+    // W10 (ADR 0018). The camera support database the items' support states come from (Help >
+    // About). Default: none (available false, no problem).
+    [[nodiscard]] virtual CameraSupportInfo camera_support() const { return {}; }
+
     // True from the first import_started until the last import_finished.
     [[nodiscard]] virtual bool is_importing() const = 0;
 

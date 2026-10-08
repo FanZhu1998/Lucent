@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import Lucent
 
 // Window header: the three views of the application (blueprint section 2), background activity
-// and the latest status message.
+// and the latest status message; W10: Help > About (the camera support database and what the
+// support states mean).
 Rectangle {
     id: header
 
@@ -182,6 +183,23 @@ Rectangle {
             ToolTip.text: qsTr("Photos are not decoded. Metadata, thumbnails, previews and exports are simulated for development.")
             ToolTip.delay: 300
         }
+
+        StyledToolButton {
+            objectName: "aboutButton"
+            text: qsTr("About")
+            Layout.leftMargin: 6
+            onClicked: aboutDialog.open()
+            Accessible.name: qsTr("About Lucent and its camera support")
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("Lucent's version, its camera support database and what the support states mean")
+            ToolTip.delay: 800
+        }
+    }
+
+    AboutDialog {
+        id: aboutDialog
+
+        controller: header.controller
     }
 
     // Per-file reasons of the last import: files that could not be read, and photos that are

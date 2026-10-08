@@ -58,12 +58,26 @@ ColumnLayout {
     }
 
     Text {
+        objectName: "supportDetail"
         visible: panel.item.valid && panel.item.supportDetail.length > 0
         text: panel.item.supportDetail
         color: Theme.textSecondary
         font.pixelSize: Theme.fontSmall
         wrapMode: Text.Wrap
         Layout.fillWidth: true
+    }
+
+    // W10: what the state means for this photo's processing (blueprint section 3).
+    Text {
+        objectName: "supportMeaning"
+        visible: panel.item.valid && panel.item.supportMeaning.length > 0
+        text: qsTr("What this means: %1").arg(panel.item.supportMeaning)
+        color: Theme.textTertiary
+        font.pixelSize: Theme.fontSmall
+        wrapMode: Text.Wrap
+        Layout.fillWidth: true
+        Accessible.role: Accessible.StaticText
+        Accessible.name: text
     }
 
     // The file: badges and what they mean.

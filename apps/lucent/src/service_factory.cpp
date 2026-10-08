@@ -22,6 +22,8 @@ Expected<Services> create_services(const ServiceOptions& options) {
         backend.catalog_path = directories->data / catalog::default_catalog_file_name();
         backend.thumbnail_directory = directories->cache / L"thumbnails";
         backend.lucent_directories = {directories->root};
+        // W10: per-user data packs would live in <data>\assets (refused until they can be signed).
+        backend.user_data_directory = directories->data;
     } else {
         core::log_error("ui.services", "Lucent's application folders are unavailable: {}",
                         created.error().describe());

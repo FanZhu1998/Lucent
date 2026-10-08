@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "models/batch_presentation.hpp"
+#include "models/presentation.hpp"
 
 namespace lucent::ui {
 namespace {
@@ -109,6 +110,14 @@ QVariant BatchReportModel::data(const QModelIndex& index, int role) const {
         return entry->locks;
     case LocksPreventedRole:
         return entry->locks_prevented;
+    case SupportKeyRole:
+        return presentation::support_key(entry->support);
+    case SupportLabelRole:
+        return entry->support == SupportStatus::Unknown ? QString()
+                                                        : presentation::support_label(entry->support);
+    case SupportMeaningRole:
+        return entry->support == SupportStatus::Unknown ? QString()
+                                                        : presentation::support_meaning(entry->support);
     default:
         return {};
     }
@@ -133,12 +142,26 @@ QString BatchReportModel::automatic_summary(const BatchReportEntry& entry) const
 
 QHash<int, QByteArray> BatchReportModel::roleNames() const {
     return {
-        {SourceNameRole, "sourceName"},     {SourcePathRole, "sourcePath"}, {OutcomeKeyRole, "outcomeKey"},
-        {OutcomeLabelRole, "outcomeLabel"}, {OutputRole, "output"},         {OutputNameRole, "outputName"},
-        {ReasonRole, "reason"},             {ActionRole, "action"},         {ReviewRole, "review"},
-        {HasReviewRole, "hasReview"},       {AttemptsRole, "attempts"},     {AccessibleLabelRole, "accessibleLabel"},
-        {AutomaticRole, "automatic"},       {AutomaticSummaryRole, "automaticSummary"},
-        {AutoNotesRole, "autoNotes"},       {LockNotesRole, "lockNotes"},   {LocksPreventedRole, "locksPrevented"},
+        {SourceNameRole, "sourceName"},
+        {SourcePathRole, "sourcePath"},
+        {OutcomeKeyRole, "outcomeKey"},
+        {OutcomeLabelRole, "outcomeLabel"},
+        {OutputRole, "output"},
+        {OutputNameRole, "outputName"},
+        {ReasonRole, "reason"},
+        {ActionRole, "action"},
+        {ReviewRole, "review"},
+        {HasReviewRole, "hasReview"},
+        {AttemptsRole, "attempts"},
+        {AccessibleLabelRole, "accessibleLabel"},
+        {AutomaticRole, "automatic"},
+        {AutomaticSummaryRole, "automaticSummary"},
+        {AutoNotesRole, "autoNotes"},
+        {LockNotesRole, "lockNotes"},
+        {LocksPreventedRole, "locksPrevented"},
+        {SupportKeyRole, "supportKey"},
+        {SupportLabelRole, "supportLabel"},
+        {SupportMeaningRole, "supportMeaning"},
     };
 }
 

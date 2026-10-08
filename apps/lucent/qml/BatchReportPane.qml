@@ -181,6 +181,9 @@ Rectangle {
                 required property var autoNotes
                 required property var lockNotes
                 required property bool locksPrevented
+                required property string supportKey
+                required property string supportLabel
+                required property string supportMeaning
 
                 width: ListView.view.width
                 implicitHeight: entryColumn.implicitHeight + 12
@@ -214,6 +217,16 @@ Rectangle {
                             font.pixelSize: Theme.fontBody
                             elide: Text.ElideMiddle
                             Layout.fillWidth: true
+                        }
+
+                        // W10: the photo's camera support state when the batch handled it.
+                        Badge {
+                            objectName: "reportSupport"
+                            visible: entry.supportLabel.length > 0
+                            text: entry.supportLabel
+                            dotColor: Theme.supportColor(entry.supportKey)
+                            detail: entry.supportMeaning
+                            color: Theme.surfaceRaised
                         }
 
                         Text {
