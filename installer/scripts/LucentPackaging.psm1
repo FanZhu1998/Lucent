@@ -7,7 +7,9 @@
     - Read-LucentPackageInfo      reads <build dir>\packaging\lucent-package.json (written by CMake).
     - Invoke-LayoutAudit          audits the installed layout: provenance of every file, PE imports
                                   (dumpbin), required Qt plugins, QML modules and their plugin DLLs,
-                                  architecture, subsystem, qt.conf, forbidden files.
+                                  architecture, subsystem, qt.conf, forbidden files, and the bundled
+                                  data assets against their manifests and the build's pins
+                                  (Test-BundledAssets, W10, ADR 0018).
     - Invoke-SmokeRun             starts the staged Lucent.exe with a Windows-only PATH and checks it.
     - Get-StaticVcpkgLibraries    vcpkg libraries linked statically into Lucent.exe and its helper
                                   executables (lucent-worker.exe, W7) (build.ninja, lib).
@@ -156,7 +158,16 @@ function Read-LucentPackageInfo {
         throw "$path is missing: configure the build with the release preset first (tools\build.ps1 -Preset release)."
     }
     $info = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($info.schema -ne 3) { throw "$path has schema $($info.schema); this script understands schema 3. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    if ($info.schema -ne 4) { throw "$path has schema $($info.schema); this script understands schema 4. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    # The bundled data assets (schema 4, ADR 0018): each with the SHA-256 the build pinned for its
+    # manifest, its folder in the source tree and the files it installs.
+    foreach ($asset in @($info.assets)) {
+        if (-not $asset) { continue }
+        if ($asset.id -notmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { throw "$path names an invalid asset id '$($asset.id)'." }
+        if ($asset.manifestSha256 -notmatch '^[0-9a-f]{64}$') { throw "$path has no manifest pin for asset $($asset.id)." }
+        if (-not (Test-Path -LiteralPath (ConvertTo-NativePath $asset.sourceDir) -PathType Container)) { throw "$path names a missing asset folder '$($asset.sourceDir)'." }
+        if (@($asset.files).Count -lt 2 -or @($asset.files)[0] -ne 'manifest.json') { throw "$path lists no files for asset $($asset.id)." }
+    }
     if ($info.version -notmatch '^\d+\.\d+\.\d+$') { throw "Unexpected version '$($info.version)' in $path." }
     foreach ($field in 'builtExecutable', 'vcpkgInstalledDir', 'dumpbin', 'qmlSourceDir') {
         $value = $info.$field
@@ -284,6 +295,15 @@ function Get-StagedFileOrigins {
     param([Parameter(Mandatory)][string]$StageDir, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)][hashtable]$FileIndex)
     $tripletDir = Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet
     $origins = New-Object System.Collections.Generic.List[object]
+    # The bundled data assets (ADR 0018): assets\<id>\<file> comes from the source tree's assets folder.
+    $assetSources = @{}
+    foreach ($asset in @($Info.assets)) {
+        if (-not $asset) { continue }
+        foreach ($file in @($asset.files)) {
+            $relativeFile = ConvertTo-NativePath $file
+            $assetSources[("assets\$($asset.id)\$relativeFile").ToLowerInvariant()] = Join-Path (ConvertTo-NativePath $asset.sourceDir) $relativeFile
+        }
+    }
     $helperSources = @{}
     $helperNames = @($Info.helperExecutables)
     $helperBuilt = @($Info.builtHelperExecutables)
@@ -310,6 +330,11 @@ function Get-StagedFileOrigins {
         }
         elseif ($segments[0] -ieq 'licenses') {
             $entry.Origin = 'generated'
+        }
+        elseif ($segments[0] -ieq 'assets' -and $assetSources.ContainsKey($relative.ToLowerInvariant())) {
+            $entry.Origin = 'asset'
+            $entry.Source = $assetSources[$relative.ToLowerInvariant()]
+            $entry.Identical = ($entry.Sha256 -eq (Get-Sha256 $entry.Source))
         }
         else {
             $vcpkgRelative = $null
@@ -497,8 +522,15 @@ function Invoke-LayoutAudit {
                     $errors.Add("$($origin.Path) differs from the build output $($origin.Source)")
                 }
             }
+            'asset' {
+                if (-not $origin.Identical) { $errors.Add("$($origin.Path) differs from the source tree's asset file $($origin.Source)") }
+            }
         }
     }
+
+    # Bundled data assets: verified as Lucent.exe verifies them before use.
+    $assetCheck = Test-BundledAssets -StageDir $StageDir -Info $Info
+    foreach ($problem in $assetCheck.Errors) { $errors.Add($problem) }
 
     # Portable executables.
     $peFiles = @($origins | Where-Object { $_.Path -match '\.(exe|dll)$' })
@@ -600,7 +632,69 @@ function Invoke-LayoutAudit {
         ApiSetImports = @($classes.Keys | Where-Object { $classes[$_] -eq 'apiset' } | Sort-Object)
         Ports = $ports
         QmlModules = $qml.Modules
+        Assets = $assetCheck.Assets
     }
+}
+
+function Test-BundledAssets {
+    <#
+    .SYNOPSIS
+        Verifies every bundled data asset in the layout the way Lucent.exe does before it activates
+        one (src/assets/include/lucent/assets/asset_store.hpp, ADR 0018): the manifest's SHA-256 is
+        the pin the build recorded, the manifest is a "lucent.asset-manifest" version 1 for that
+        asset, and every file it lists exists with exactly the listed size and SHA-256. The asset's
+        folder holds nothing else, and assets\ holds no folder that is not a bundled asset.
+    #>
+    param([Parameter(Mandatory)][string]$StageDir, [Parameter(Mandatory)]$Info)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $verified = New-Object System.Collections.Generic.List[object]
+    $root = Join-Path $StageDir 'assets'
+    $expected = @{}
+    foreach ($asset in @($Info.assets)) {
+        if (-not $asset) { continue }
+        $expected[$asset.id.ToLowerInvariant()] = $true
+        $folder = Join-Path $root $asset.id
+        $manifestPath = Join-Path $folder 'manifest.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { $errors.Add("assets\$($asset.id)\manifest.json is missing"); continue }
+        $manifestSha = Get-Sha256 $manifestPath
+        if ($manifestSha -ne $asset.manifestSha256) {
+            $errors.Add("assets\$($asset.id)\manifest.json has SHA-256 $manifestSha, but the build pinned $($asset.manifestSha256)")
+        }
+        $manifest = $null
+        try { $manifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json }
+        catch { $errors.Add("assets\$($asset.id)\manifest.json is not JSON: $($_.Exception.Message)"); continue }
+        if ($manifest.schema -ne 'lucent.asset-manifest' -or $manifest.schema_version -ne 1) {
+            $errors.Add("assets\$($asset.id)\manifest.json is not a lucent.asset-manifest version 1"); continue
+        }
+        if ($manifest.id -ne $asset.id) { $errors.Add("assets\$($asset.id)\manifest.json describes asset '$($manifest.id)'") }
+        $listed = @{ 'manifest.json' = $true }
+        foreach ($file in @($manifest.files)) {
+            $relativeFile = ConvertTo-NativePath ([string]$file.path)
+            $listed[$relativeFile.ToLowerInvariant()] = $true
+            $path = Join-Path $folder $relativeFile
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $errors.Add("assets\$($asset.id)\$relativeFile is listed by its manifest but missing"); continue }
+            $length = (Get-Item -LiteralPath $path).Length
+            $sha = Get-Sha256 $path
+            if ($length -ne [int64]$file.size -or $sha -ne $file.sha256) {
+                $errors.Add("assets\$($asset.id)\$relativeFile does not match its manifest: $length bytes with SHA-256 $sha, listed $($file.size) bytes with SHA-256 $($file.sha256)")
+            }
+        }
+        foreach ($present in @(Get-ChildItem -LiteralPath $folder -Recurse -File)) {
+            $relativeFile = Get-RelativePathText -Root $folder -Path $present.FullName
+            if (-not $listed.ContainsKey($relativeFile.ToLowerInvariant())) { $errors.Add("assets\$($asset.id)\$relativeFile is not listed by the asset's manifest") }
+        }
+        $verified.Add([pscustomobject]@{ Id = $asset.id; Version = $manifest.version; Files = @($manifest.files).Count; ManifestSha256 = $manifestSha })
+    }
+    if (Test-Path -LiteralPath $root) {
+        foreach ($entry in @(Get-ChildItem -LiteralPath $root)) {
+            if (-not $entry.PSIsContainer -or -not $expected.ContainsKey($entry.Name.ToLowerInvariant())) {
+                $errors.Add("assets\$($entry.Name) is not a bundled asset of this build")
+            }
+        }
+    }
+    if ($expected.Count -gt 0 -and -not (Test-Path -LiteralPath $root)) { $errors.Add('The assets folder is missing') }
+    # An array, not the List[object]: @() of a List[object] fails in Windows PowerShell 5.1.
+    return [pscustomobject]@{ Errors = $errors; Assets = $verified.ToArray() }
 }
 
 function Write-AuditReport {
@@ -621,6 +715,8 @@ function Write-AuditReport {
     foreach ($dll in $Report.WindowsDlls) { $lines.Add(('  {0,-28} {1} {2}' -f $dll.Name, $dll.FileVersion, $dll.Product)) }
     $lines.Add('API set imports: ' + ($Report.ApiSetImports -join ', '))
     $lines.Add('QML modules required (imports of the QML sources, the style selected in code, and their imports): ' + ($Report.QmlModules -join ', '))
+    $assetsText = (@($Report.Assets) | ForEach-Object { "$($_.Id) $($_.Version) ($($_.Files) file(s))" }) -join ', '
+    $lines.Add('Bundled assets (manifest pinned, every file verified): ' + $assetsText)
     $lines.Add('')
     $lines.Add('Files (origin, port, path):')
     foreach ($file in ($Report.Files | Sort-Object Path)) {
@@ -638,6 +734,7 @@ function Write-AuditReport {
     Write-JsonFile -Path $JsonPath -Value ([ordered]@{
         errors = @($Report.Errors); warnings = @($Report.Warnings); ports = @($Report.Ports)
         vcRuntimeImports = @($Report.VcRuntimeImports); apiSetImports = @($Report.ApiSetImports); qmlModules = @($Report.QmlModules)
+        assets = @($Report.Assets | ForEach-Object { [ordered]@{ id = $_.Id; version = $_.Version; files = $_.Files; manifestSha256 = $_.ManifestSha256 } })
         windowsDlls = @($Report.WindowsDlls | ForEach-Object { [ordered]@{ name = $_.Name; version = $_.FileVersion; product = $_.Product } })
         files = @($Report.Files | Sort-Object Path | ForEach-Object { [ordered]@{ path = $_.Path; origin = $_.Origin; port = $_.Port; sha256 = $_.Sha256 } })
         peFiles = @($Report.PeFiles | Sort-Object Path | ForEach-Object { [ordered]@{ path = $_.Path; machine = $_.Machine; subsystem = $_.Subsystem; imports = @($_.Imports); delayImports = @($_.DelayImports) } })
@@ -690,15 +787,22 @@ function Invoke-SmokeRun {
     $timedOut = -not $process.WaitForExit($SettleTimeoutMs + 60000)
     if ($timedOut) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue; $process.WaitForExit() }
     $stderr = if (Test-Path -LiteralPath $stderrPath) { @(Get-Content -LiteralPath $stderrPath) } else { @() }
-    $problems = @($stderr | Where-Object { $_ -match 'module ".*" is not installed|Cannot load library|Could not (find|load) the Qt platform plugin|failed to load|qrc:.*(Error|error)|QQmlApplicationEngine failed|Unsupported image format|is not a type|ReferenceError|TypeError' })
+    $problems = @($stderr | Where-Object { $_ -match 'module ".*" is not installed|Cannot load library|Could not (find|load) the Qt platform plugin|failed to load|qrc:.*(Error|error)|QQmlApplicationEngine failed|Unsupported image format|is not a type|ReferenceError|TypeError|camera support database unavailable' })
+    # W10 (ADR 0018): the installed camera support database must be found and verified in the folder.
+    $supportLines = @($stderr | Where-Object { $_ -match 'camera support database \S+ \(qualified' })
     $changed = @(Compare-Object -ReferenceObject $before -DifferenceObject (Get-FolderSnapshot -Root $StageDir) | ForEach-Object { $_.InputObject })
     $errors = New-Object System.Collections.Generic.List[string]
     if ($timedOut) { $errors.Add("$Executable did not exit within $(($SettleTimeoutMs + 60000) / 1000) s") }
     elseif ($process.ExitCode -ne 0) { $errors.Add("$Executable exited with $($process.ExitCode) (0 expected; see $stderrPath)") }
     if (-not (Test-Path -LiteralPath $screenshot)) { $errors.Add("$Executable saved no screenshot") }
     foreach ($line in $problems) { $errors.Add("Qt/QML problem: $line") }
+    if (-not $timedOut -and $supportLines.Count -eq 0) { $errors.Add("$Executable did not report an active camera support database (see $stderrPath)") }
+    elseif ($supportLines.Count -gt 0 -and $supportLines[0].IndexOf((Join-Path $StageDir 'assets'), [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        $errors.Add("$Executable used a camera support database outside the folder: $($supportLines[0])")
+    }
     foreach ($line in $changed) { $errors.Add("The run changed the installation folder: $line") }
-    return [pscustomobject]@{ Errors = $errors; ExitCode = $(if ($timedOut) { $null } else { $process.ExitCode }); Screenshot = $screenshot; Log = $stderrPath }
+    return [pscustomobject]@{ Errors = $errors; ExitCode = $(if ($timedOut) { $null } else { $process.ExitCode }); Screenshot = $screenshot; Log = $stderrPath
+                              CameraSupport = $(if ($supportLines.Count -gt 0) { $supportLines[0] } else { $null }) }
 }
 
 # --- Static libraries linked into the executable -------------------------------------------------
@@ -1373,7 +1477,7 @@ function New-PackageSbom {
             fileName = './' + $file.Relative.Replace('\', '/'); SPDXID = "SPDXRef-Lucent-file-$counter"
             checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $sha1 },
                           [ordered]@{ algorithm = 'SHA256'; checksumValue = (Get-Sha256 $file.Full) })
-            licenseConcluded = $(if ($file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative) { 'MIT' } else { 'NOASSERTION' })
+            licenseConcluded = $(if ($file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative -or $file.Relative -like 'assets\*') { 'MIT' } else { 'NOASSERTION' })
             copyrightText = 'NOASSERTION' })
     }
     $packages.Add([ordered]@{
@@ -1387,7 +1491,7 @@ function New-PackageSbom {
             packageVerificationCodeExcludedFiles = @($sbomFileName) }
         licenseConcluded = 'MIT'; licenseDeclared = 'MIT'
         copyrightText = 'Copyright (c) 2026 Fan Zhu'
-        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list and the licence bundle); the third-party files are listed under each component's binary package." })
+        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list, the bundled data assets such as the camera support database, and the licence bundle); the third-party files are listed under each component's binary package." })
     $ids[$lucentId] = $true
     Add-Relationship 'SPDXRef-DOCUMENT' 'DESCRIBES' $lucentId
     foreach ($entry in $ownEntries) {

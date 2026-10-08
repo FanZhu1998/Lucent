@@ -17,7 +17,8 @@
        value or effective program changed.
     3. Runs <work>\app\Lucent.exe with PATH=%SystemRoot%\System32;%SystemRoot%, without Qt variables,
        using its developer options: --data-root <work>\data --import <fixture> --open-first
-       --screenshot <work>\lucent.png --quit-after-screenshot. Records every module the process loads.
+       --screenshot <work>\lucent.png --quit-after-screenshot. Records every module the process loads
+       and checks that it reports the installed camera support database as active (W10, ADR 0018).
        A module outside the installation folder and Windows fails the test if it has the name of a
        DLL Lucent ships or imports; other foreign modules (injected by software on the machine, for
        example a remote-desktop client) are reported.
@@ -350,6 +351,12 @@ Add-Check 'Screenshot written' (Test-Path -LiteralPath $screenshot) $screenshot
 $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath } else { @() }
 $qtProblems = @($stderr | Where-Object { $_ -match 'module ".*" is not installed|Cannot load library|Could not (find|load) the Qt platform plugin|failed to load|qrc:.*(Error|error)|QQmlApplicationEngine failed' })
 Add-Check 'No Qt/QML loading errors on stderr' ($qtProblems.Count -eq 0) (($qtProblems | Select-Object -First 3) -join ' | ')
+# W10 (ADR 0018): the installed camera support database is found next to Lucent.exe and verified.
+$supportLine = @($stderr | Where-Object { $_ -match 'camera support database \S+ \(qualified' }) | Select-Object -First 1
+$installedAssets = Join-Path (Split-Path -Parent $exe) 'assets'
+Add-Check 'The installed camera support database is active' `
+    ([bool]$supportLine -and $supportLine.IndexOf($installedAssets, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) `
+    $(if ($supportLine) { $supportLine } else { (@($stderr | Where-Object { $_ -match 'camera support database' }) | Select-Object -First 1) })
 
 $appPrefix = $appDir.ToLowerInvariant().TrimEnd('\') + '\'
 $windowsPrefix = $env:SystemRoot.ToLowerInvariant().TrimEnd('\') + '\'

@@ -12,6 +12,11 @@
 #   plugins\<type>\*.dll       Qt plugins (platform, image formats, icon engines)
 #   qml\...                    the QML modules Lucent imports, deployed by windeployqt
 #   qt.conf                    points Qt at plugins\ and qml\ relative to the executable
+#   assets\<id>\...            the bundled data assets (W10, ADR 0018; LUCENT_BUNDLED_ASSETS below):
+#                              each asset's manifest.json and exactly the files it lists, copied
+#                              unchanged from the source tree's assets\<id> (the camera support
+#                              database first). Lucent.exe verifies them against the manifest hash
+#                              compiled into it; tools/package.ps1 audits the same hashes.
 #
 # Deployment runs at install time:
 #   1. windeployqt deploys the Qt libraries, plugins and the QML imports found by scanning
@@ -280,6 +285,45 @@ endif()
 
 # --- Configure time -------------------------------------------------------------------------------
 
+# Bundled data assets (W10 phase 3, ADR 0018): folders of the source tree's assets/ directory, each
+# with a manifest.json ("lucent.asset-manifest" v1, src/assets/include/lucent/assets/asset_manifest.hpp)
+# and the files it lists. src/assets/CMakeLists.txt pins the SHA-256 of each manifest into the build
+# and copies the asset next to the build's executables; lucent_install_application() installs it into
+# <prefix>/assets/<id> and records it in lucent-package.json for the packaging audit.
+set(LUCENT_ASSETS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/assets")
+set(LUCENT_BUNDLED_ASSETS camera-support)
+
+# lucent_asset_files(<id> <files_var> <sha256_var>)
+#
+# The files of bundled asset <id>, relative to its folder: manifest.json first, then every file the
+# manifest lists, in its order; and the SHA-256 of the manifest. Fails the configure step when the
+# manifest is missing or lists no files. The manifest becomes a configure dependency, so editing it
+# re-pins the build.
+function(lucent_asset_files id files_var sha256_var)
+    set(manifest "${LUCENT_ASSETS_SOURCE_DIR}/${id}/manifest.json")
+    if(NOT EXISTS "${manifest}")
+        message(FATAL_ERROR "The bundled asset '${id}' has no manifest (${manifest}).")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${manifest}")
+    file(READ "${manifest}" text)
+    string(JSON count ERROR_VARIABLE json_error LENGTH "${text}" files)
+    if(json_error OR NOT count GREATER 0)
+        message(FATAL_ERROR "The manifest of the bundled asset '${id}' lists no files (${manifest}).")
+    endif()
+    set(files manifest.json)
+    math(EXPR last "${count} - 1")
+    foreach(index RANGE ${last})
+        string(JSON path GET "${text}" files ${index} path)
+        if(path MATCHES "(^|/)\\.\\.?(/|$)" OR path MATCHES "^/|\\\\|:")
+            message(FATAL_ERROR "The manifest of the bundled asset '${id}' lists an unsafe path '${path}'.")
+        endif()
+        list(APPEND files "${path}")
+    endforeach()
+    file(SHA256 "${manifest}" sha256)
+    set(${files_var} "${files}" PARENT_SCOPE)
+    set(${sha256_var} "${sha256}" PARENT_SCOPE)
+endfunction()
+
 # dumpbin.exe sits next to the MSVC linker; file(GET_RUNTIME_DEPENDENCIES) and the audit in
 # tools/package.ps1 use it.
 get_filename_component(_lucent_linker_dir "${CMAKE_LINKER}" DIRECTORY)
@@ -391,6 +435,32 @@ function(lucent_install_application target)
     endforeach()
     list(JOIN helper_installed "\" \"" helper_installed_text)
 
+    # The bundled data assets (ADR 0018): each manifest and exactly the files it lists, unchanged.
+    set(LUCENT_PACKAGE_ASSETS_JSON "")
+    foreach(asset IN LISTS LUCENT_BUNDLED_ASSETS)
+        lucent_asset_files(${asset} asset_files asset_sha256)
+        set(files_json "")
+        foreach(file IN LISTS asset_files)
+            get_filename_component(subdirectory "${file}" DIRECTORY)
+            set(destination "assets/${asset}")
+            if(subdirectory)
+                string(APPEND destination "/${subdirectory}")
+            endif()
+            install(FILES "${LUCENT_ASSETS_SOURCE_DIR}/${asset}/${file}"
+                DESTINATION "${destination}" COMPONENT ${ARG_COMPONENT})
+            if(files_json)
+                string(APPEND files_json ", ")
+            endif()
+            string(APPEND files_json "\"${file}\"")
+        endforeach()
+        if(LUCENT_PACKAGE_ASSETS_JSON)
+            string(APPEND LUCENT_PACKAGE_ASSETS_JSON ", ")
+        endif()
+        string(APPEND LUCENT_PACKAGE_ASSETS_JSON
+            "{\"id\": \"${asset}\", \"manifestSha256\": \"${asset_sha256}\", "
+            "\"sourceDir\": \"${LUCENT_ASSETS_SOURCE_DIR}/${asset}\", \"files\": [${files_json}]}")
+    endforeach()
+
     set(qt_bin_dir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
     set(packaging_dir "${CMAKE_BINARY_DIR}/packaging")
     if(LUCENT_INSTALL_RUNTIME)
@@ -453,7 +523,7 @@ function(lucent_install_application target)
         string(APPEND LUCENT_PACKAGE_REQUIRED_QML_JSON "\"${name}\"")
     endforeach()
     file(CONFIGURE OUTPUT "${packaging_dir}/lucent-package.json.in" CONTENT [[{
-  "schema": 3,
+  "schema": 4,
   "name": "Lucent",
   "version": "@CMAKE_PROJECT_VERSION@",
   "versionMajor": @CMAKE_PROJECT_VERSION_MAJOR@,
@@ -482,7 +552,8 @@ function(lucent_install_application target)
   "vcRuntimeDlls": [@LUCENT_PACKAGE_VC_RUNTIME_JSON@],
   "qmlSourceDir": "@ARG_QML_SOURCE_DIR@",
   "requiredPlugins": [@LUCENT_PACKAGE_REQUIRED_PLUGINS_JSON@],
-  "requiredQmlModules": [@LUCENT_PACKAGE_REQUIRED_QML_JSON@]
+  "requiredQmlModules": [@LUCENT_PACKAGE_REQUIRED_QML_JSON@],
+  "assets": [@LUCENT_PACKAGE_ASSETS_JSON@]
 }
 ]] @ONLY)
     file(GENERATE
