@@ -77,7 +77,8 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W7 | Durable batch export: `lucent-worker.exe` and its versioned pipe protocol, memory-budgeted scheduling, catalog job journal (schema v3 and v4) with leases, a publication journal and receipts, verified no-clobber publication, restart recovery, pause / cancel / resume and destination attentions, EXIF capture metadata with an explicit GPS policy, completion reports, the Export batch dialog and the Exports view (ADR 0012) | Done, pending commit and merge |
 | W8 | Natural v1 automatic settings (`lucent_analysis`: metric contract, proposals, bounded deterministic search with rechecks, confidence and review flags, related-shot consistency; ADR 0011) and their integration: the editor's Auto with a full-resolution final check and conservative fallbacks, automatic revisions with analysis records (catalog schema v5), automatic batches (Auto, Analyse only, related shots kept consistent) analysed in the worker (protocol v2), the Automatic settings panel and Review badges (ADR 0013) | Done; the blind preference test and the calibration of Natural v1 are pending |
 | W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks, guided chroma denoise, recipes version 2 (ADR 0015); lens corrections | Done except lens corrections (pending a decision on the Lensfun dependency); masks, geometry and denoise pending commit and merge |
-| W10–W12 | Qualification, learned appearance, release hardening | Planned |
+| W10 | Multi-brand qualification: the `lucent-qualify` harness, cited expectations and the support table (ADR 0016); the camera's image area (ADR 0017); the camera support database, a versioned and verified data asset generated from the qualification, and the blueprint's four support states in the library, the editor, batch exports and reports, with Help > About (`lucent_assets`, ADR 0018) | Done (phases 1 to 3), pending review, commit and merge |
+| W11–W12 | Learned appearance, release hardening | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
 ([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library is saved in
@@ -87,8 +88,12 @@ opened by an earlier build, W7 adds the batch journal (catalog schema v4) and W8
 settings' job states and analysis records (catalog schema v5); earlier builds open such a library
 read-only. W9 writes edits as "lucent.develop" version 2 recipes (crop, masks, noise reduction),
 which earlier builds show read-only; version-1 edits open and are upgraded. Photos are rendered with their recipe and the base look "neutral" v1.
-The developer command-line tools `lucent-probe`, `lucent-render` and `lucent-auto` remain; they
-are not installed.
+W10 shows each photo's camera support state (Verified, Compatible, unverified, Limited,
+Unsupported) from the camera support database installed with Lucent (`assets\camera-support`,
+verified against its manifest and the hash built into `Lucent.exe`; Help > About shows its version);
+an earlier build opening the same library shows Verified photos as Compatible, unverified.
+The developer command-line tools `lucent-probe`, `lucent-render`, `lucent-auto` and
+`lucent-qualify` remain; they are not installed.
 
 ## Installing
 
@@ -124,6 +129,8 @@ apps/lucent-probe/   Developer CLI that prints RAW decoder probe results as JSON
 apps/lucent-render/  Developer CLI that renders a RAW file and exports JPEG / 16-bit TIFF (W2)
 apps/lucent-worker/  lucent-worker.exe: the isolated process that renders, verifies and exports one batch job, or analyses one photo (W7, W8)
 apps/lucent-auto/    Developer CLI that runs and evaluates the automatic settings over files (W8)
+apps/lucent-qualify/ Developer CLI that qualifies camera modes over the fixtures and exports the camera support database (W10)
+assets/              Data assets with their manifests, installed next to Lucent.exe: the camera support database (W10)
 cmake/               CMake helpers and the x64-windows-lucent vcpkg overlay triplet
 docs/adr/            Architecture decision records
 docs/architecture/   Module layering and dependency rules
@@ -140,6 +147,7 @@ src/engine/          lucent_engine: the render and develop pipeline from decoded
 src/export/          lucent_export: output profiles, JPEG/TIFF encoding, verified no-clobber export, cache thumbnails
 src/catalog/         lucent_catalog: SQLite catalog of sources, items, imports and recipe revisions; migrations, backups, restore
 src/analysis/        lucent_analysis: Natural v1 automatic settings: metrics, proposals, bounded search, confidence, related shots (W8)
+src/assets/          lucent_assets: versioned asset manifests and their verification, the mode key and the camera support database (W10)
 src/workers/         lucent_workers: the worker process protocol, host and server (W7, W8)
 src/application/     lucent_application: import, session and catalog libraries, source maintenance, task executor, recipes, preview, develop-preview, export, batch and automatic-settings services (no Qt)
 tests/               Cross-module integration tests (unit tests live in src/<module>/tests/)
@@ -147,8 +155,8 @@ tools/               bootstrap-dev.ps1, dev-env.ps1, build.ps1, fetch-fixtures.p
 ```
 
 Modules are layered: a module may depend only on lower layers. `core` is the lowest, then `image`,
-then `raw`, `engine`, `export` and `catalog`; `analysis` and `workers` sit above those and below
-`application` (a planned `assets` module will join them), with the user interface on top. See
+then `raw`, `engine`, `export` and `catalog`; `analysis`, `assets` and `workers` sit above those
+and below `application`, with the user interface on top. See
 [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Developer quick start

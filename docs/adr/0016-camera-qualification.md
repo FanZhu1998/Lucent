@@ -1,7 +1,8 @@
 # ADR 0016: Camera qualification: mode keys, evidence rules, proposed states and the support table
 
-- **Status:** Accepted (phase 1 of W10: the harness, the expectations and the table; the
-  application does not consume the states yet)
+- **Status:** Accepted (phase 1 of W10: the harness, the expectations and the table; amended by
+  ADR 0017 for the camera's image area (check suite 2) and on 2026-10-08 by ADR 0018 for the
+  camera support database: see "Amendment: support data (ADR 0018)" below)
 - **Date:** 2026-10-05
 - **Workflow:** W10 (Multi-brand qualification), phase 1 of 3
 
@@ -224,3 +225,31 @@ Facts that shaped the decisions (measured 2026-10-05 with LibRaw 0.22.2, decoded
 - **Make lens-profile absence a per-mode limitation.** Rejected for now: it applies to every mode
   equally until Lensfun is decided, so it is stated once for the product rather than repeated in
   every row.
+
+## Amendment: support data (ADR 0018), 2026-10-08
+
+Phase 3 of W10 turns the report into the camera support database the application uses
+([ADR 0018](0018-camera-support-data.md)). It changes three things here:
+
+- **Decision 1.** The mode key's definition moved unchanged to `lucent_assets`
+  (`src/assets/include/lucent/assets/mode_key.hpp`); `apps/lucent-qualify/mode_key.hpp` forwards to
+  it. The application derives the same key when it probes a file at import.
+- **Decision 6.** Each fixture result records `lookup_key`, the mode key of the file's probe (stage
+  AfterOpen), which is the key the application looks the mode up under; each support-table row
+  lists its fixtures' probe keys as `lookup_keys`, and the mode-key check records a probe key that
+  differs from the decoded key in its details. The probe key equals the decoded key for 33 of the
+  34 fixtures; for the Canon EOS 5D Mark IV S-RAW the probe's white level gives 15 bits and the
+  decode's 14. The committed report was regenerated on 2026-10-08T21:47Z with these fields and the
+  same outcomes for all 34 fixtures (Verified 14, Compatible, unverified 11, Limited 6,
+  Unsupported 3); apart from the new fields, only its time and measurements changed.
+- **Consequences, "the application still shows ...".** No longer: `lucent-qualify --from-report
+  <report> --export-support assets/camera-support --asset-version <version>` exports the database
+  (refusing partial runs and runs with expectation mismatches), the application combines its
+  answer for the probe's key with the live interpretation into the four states, and a Verified
+  state holds only while the database's basis (decoder, decoded-RAW contract, mode key and
+  pipeline versions) is the running build's. The match is on the mode key and the basis, never on
+  make or extension, as this ADR required.
+
+New tests: `SupportExport.*` and `CommittedData.TheCameraSupportAssetIsTheExportOfTheReport`
+(`lucent_qualification_tests`), and `QualificationFixture.ProbeKeyFindsTheQualifiedState` (every
+cached fixture of any tier, in `lucent_qualification_fixture_tests`).
