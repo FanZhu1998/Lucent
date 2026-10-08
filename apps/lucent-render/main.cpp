@@ -6,9 +6,9 @@
 // Usage:
 //   lucent-render <raw> --out <dir> [--format jpeg|tiff16] [--profile srgb|display-p3]
 //                 [--quality N] [--subimage N] [--develop <settings.json>] [--exposure EV]
-//                 [--report <file.json>]
+//                 [--no-camera-crop] [--report <file.json>]
 //   lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV] [--dump-linear <file.tiff>]
-//                 [--no-dng-opcodes] [other options as above, without --develop]
+//                 [--no-dng-opcodes] [--no-camera-crop] [other options as above, without --develop]
 //
 //   --develop F        the settings to render: a "lucent.develop" recipe document (recipe.hpp),
 //                      version 1 (upgraded on read) or 2, read strictly (an unknown field or
@@ -35,6 +35,14 @@
 //                      decoders that apply none (rawpy / LibRaw, render_reference.py). Every opcode
 //                      is then recorded as disabled and the render is never reported complete. The
 //                      develop pipeline always applies them.
+//   --no-camera-crop   render the decoder's whole visible area instead of the camera's intended
+//                      image area (ADR 0017), for comparisons with decoders that render it (rawpy /
+//                      LibRaw, render_reference.py). --legacy-neutral-v0: RenderSettings::
+//                      apply_camera_area = false (recorded, with a warning). Develop pipeline: the
+//                      settings render with geometry operation version 1 (the whole visible area
+//                      is the frame; the recipe identity says so); a usage error when the settings
+//                      hold a version-2 crop or straighten angle, which is relative to the camera's
+//                      area and would move.
 //   --report F         write the lucent.render-report JSON (render_json.hpp), also for failures.
 //
 // Nothing is ever overwritten: an existing export, report or dump file is an error
@@ -164,6 +172,7 @@ struct Arguments {
     std::optional<std::filesystem::path> develop;
     bool legacy = false;          // --legacy-neutral-v0
     bool no_dng_opcodes = false;  // --no-dng-opcodes
+    bool no_camera_crop = false;  // --no-camera-crop
     std::optional<std::filesystem::path> dump_linear;
     std::optional<std::filesystem::path> report;
     bool help = false;
@@ -176,6 +185,7 @@ void print_usage(std::FILE* stream) {
         "                     [--report <file.json>]\n"
         "       lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV]\n"
         "                     [--dump-linear <file.tiff>] [--no-dng-opcodes] [other options]\n"
+        "       --no-camera-crop renders the decoder's whole visible area (both paths)\n"
         "Renders a RAW file (develop pipeline, neutral v1 look; --legacy-neutral-v0: the W2 render path)\n"
         "and exports <stem>_Lucent.jpg|.tif to <dir> without overwriting anything. Prints one\n"
         "lucent.render-result JSON line.\n"
@@ -300,6 +310,8 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
             args.legacy = true;
         } else if (arg == L"--no-dng-opcodes") {
             args.no_dng_opcodes = true;
+        } else if (arg == L"--no-camera-crop") {
+            args.no_camera_crop = true;
         } else if (arg == L"--dump-linear" && has_value) {
             args.dump_linear = std::filesystem::path(argv[++i]);
         } else if (arg == L"--report" && has_value) {
@@ -425,6 +437,19 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
         }
         if (args.exposure_ev) {
             settings.exposure_ev = *args.exposure_ev;
+        }
+        if (args.no_camera_crop) {
+            // The whole visible area: geometry version 1. A version-2 crop or straighten angle is
+            // relative to the camera's area, so it cannot be moved to the whole frame silently
+            // (quarter turns and the flip do not depend on the frame).
+            const lucent::engine::GeometrySetting& g = settings.geometry;
+            if (lucent::engine::geometry_operation_version(settings) >= 2 &&
+                (g.straighten_degrees != 0.0 || !g.crop.is_full())) {
+                return usage_error(
+                    "--no-camera-crop renders the decoder's whole visible area, but the settings crop or "
+                    "straighten within the camera's image area (geometry operation version 2)");
+            }
+            settings.operations.geometry = lucent::engine::kOldestGeometryOperationVersion;
         }
         auto document = lucent::app::write_recipe(settings);
         if (!document) {
@@ -557,6 +582,7 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
         lucent::engine::RenderSettings legacy;
         legacy.exposure_ev = args.exposure_ev.value_or(0.0);
         legacy.apply_dng_opcodes = !args.no_dng_opcodes;
+        legacy.apply_camera_area = !args.no_camera_crop;
         lucent::engine::RenderOptions options;
         options.keep_scene_linear = args.dump_linear.has_value();
         auto rendered =

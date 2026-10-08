@@ -61,6 +61,7 @@ Json geometry_json(const std::optional<engine::GeometryRecord>& r) {
     }
     return Json{{"version", r->version},
                 {"straighten_degrees", number(r->straighten_degrees)},
+                {"frame", rect_json(r->frame)},
                 {"crop", rect_json(r->crop)},
                 {"orientation", std::string(image::to_string(r->orientation))},
                 {"orientation_exif", image::to_exif(r->orientation)},
@@ -68,6 +69,19 @@ Json geometry_json(const std::optional<engine::GeometryRecord>& r) {
                 {"output_size", size_json(r->output_size)},
                 {"resampled", r->resampled},
                 {"uncovered_pixels", r->uncovered_pixels}};
+}
+
+Json image_area_json(const std::optional<engine::ImageAreaPlacement>& a) {
+    if (!a) {
+        return nullptr;
+    }
+    return Json{{"version", a->version},
+                {"source", std::string(raw::to_string(a->source))},
+                {"provenance", std::string(raw::to_string(a->provenance))},
+                {"rect", rect_json(a->rect)},
+                {"clipped", Json::array({a->clipped[0], a->clipped[1], a->clipped[2], a->clipped[3]})},
+                {"moved_inside", a->moved_inside},
+                {"basis", a->basis}};
 }
 
 template <class Array>
@@ -159,7 +173,8 @@ Json settings_json(const engine::RenderSettings& s) {
                 {"rendering", std::string(engine::to_string(s.rendering))},
                 {"highlight_knee", number(s.highlight_knee)},
                 {"apply_orientation", s.apply_orientation},
-                {"apply_dng_opcodes", s.apply_dng_opcodes}};
+                {"apply_dng_opcodes", s.apply_dng_opcodes},
+                {"apply_camera_area", s.apply_camera_area}};
 }
 
 Json stage_json(const engine::StageRecord& s) {
@@ -196,6 +211,7 @@ Json render_report_json(const engine::RenderReport& r) {
         {"decode_peak", m.decode_peak},         {"normalize_peak", m.normalize_peak},
         {"demosaic_peak", m.demosaic_peak},     {"color_peak", m.color_peak},
         {"rendering_peak", m.rendering_peak},   {"orientation_peak", m.orientation_peak},
+        {"opcode_peak", m.opcode_peak},         {"camera_area_peak", m.camera_area_peak},
         {"peak_bytes", m.peak_bytes},           {"peak_stage", std::string(engine::to_string(m.peak_stage))},
         {"budget_bytes", m.budget_bytes}};
     return Json{{"pipeline_version", r.pipeline_version},
@@ -210,6 +226,8 @@ Json render_report_json(const engine::RenderReport& r) {
                 {"rendering", neutral_v0_json(r.rendering)},
                 {"orientation", std::string(image::to_string(r.orientation))},
                 {"orientation_exif", image::to_exif(r.orientation)},
+                {"image_area", image_area_json(r.image_area)},
+                {"camera_area_applied", r.camera_area_applied},
                 {"output_size", size_json(r.output_size)},
                 {"total_seconds", number(r.total_seconds)}};
 }
@@ -337,6 +355,9 @@ Json develop_report_json(const engine::DevelopReport& r) {
                 {"local_tone", std::move(local_tone)},
                 {"local_adjustments", local_adjustments_json(r.local_adjustments)},
                 {"base_look", std::move(base_look)},
+                {"image_area", image_area_json(r.image_area)},
+                {"geometry_version", r.geometry_version},
+                {"geometry_frame", rect_json(r.geometry_frame)},
                 {"geometry", geometry_json(r.geometry)},
                 {"operations", std::move(operations)},
                 {"warnings", r.warnings},
