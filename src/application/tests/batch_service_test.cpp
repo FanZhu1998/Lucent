@@ -376,6 +376,75 @@ TEST_F(BatchServiceTest, ASingleExportIsABatchOfOne) {
 
 // A crop and a quarter turn change the output size by design: the export has the size the recipe's
 // geometry gives the photo and no review note about it.
+// W10 (ADR 0018, blueprint section 3): an Unsupported photo is skipped with its reason, a Limited
+// one is exported with a review note naming its limitation, and the report records each state.
+TEST_F(BatchServiceTest, LimitedPhotosNameTheirLimitationAndUnsupportedOnesAreSkipped) {
+    const auto files = ts::write_dngs(dir_, L"in", 3);
+    const std::vector<ItemId> ids = h().import(files);
+    const auto update = [&](ItemId item, SupportStatus status, SupportReason reason) {
+        SupportUpdate changed{item, h().library().find(item)->support};
+        changed.support.status = status;
+        changed.support.reasons = {std::move(reason)};
+        return changed;
+    };
+    SupportReason limitation;
+    limitation.kind = SupportReasonKind::CameraLimitation;
+    limitation.limitation = "xtrans_baseline_demosaic";
+    limitation.message = "X-Trans demosaicing is baseline quality: fine detail can look softer.";
+    SupportReason failed;
+    failed.kind = SupportReasonKind::CameraUnsupported;
+    failed.message = "Lucent's qualification found that this camera mode does not develop correctly.";
+    const std::vector<SupportUpdate> updates{update(ids[1], SupportStatus::Limited, limitation),
+                                             update(ids[2], SupportStatus::Unsupported, failed)};
+    ASSERT_TRUE(h().library().set_support(updates));
+
+    const catalog::BatchId id = h().run(h().request(ids, out_));
+    ASSERT_TRUE(id.valid());
+    auto report = h().batches().report(id);
+    ASSERT_TRUE(report) << report.error().describe();
+    EXPECT_EQ(report->exported, 2u);
+    EXPECT_EQ(report->skipped, 1u);
+    const auto entry_of = [&](ItemId item) -> const ReportEntry* {
+        for (const ReportEntry& entry : report->entries) {
+            if (entry.item == item) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    };
+    const ReportEntry* clean = entry_of(ids[0]);
+    ASSERT_NE(clean, nullptr);
+    EXPECT_EQ(clean->outcome, ReportOutcome::Exported);
+    EXPECT_EQ(clean->support, SupportStatus::CompatibleUnverified);
+    const ReportEntry* limited = entry_of(ids[1]);
+    ASSERT_NE(limited, nullptr);
+    EXPECT_EQ(limited->outcome, ReportOutcome::Exported);
+    EXPECT_EQ(limited->support, SupportStatus::Limited);
+    EXPECT_TRUE(std::any_of(limited->review.begin(), limited->review.end(), [](const std::string& note) {
+        return note ==
+               "Limited support: X-Trans demosaicing is baseline quality: fine detail can look softer.";
+    })) << "the review notes do not name the limitation";
+    const ReportEntry* skipped = entry_of(ids[2]);
+    ASSERT_NE(skipped, nullptr);
+    EXPECT_EQ(skipped->outcome, ReportOutcome::Skipped);
+    EXPECT_EQ(skipped->support, SupportStatus::Unsupported);
+    ASSERT_TRUE(skipped->error.has_value());
+    EXPECT_EQ(skipped->error->code, ErrorCode::Unsupported);
+    EXPECT_NE(skipped->error->message.find("does not develop correctly"), std::string::npos);
+    EXPECT_FALSE(skipped->reason.empty());
+
+    auto json = report_json(*report);
+    ASSERT_TRUE(json);
+    const nlohmann::json parsed = nlohmann::json::parse(*json);
+    std::vector<std::string> states;
+    for (const nlohmann::json& entry : parsed["entries"]) {
+        states.push_back(entry["support"].is_string() ? entry["support"].get<std::string>() : "-");
+    }
+    std::sort(states.begin(), states.end());
+    EXPECT_EQ(states, (std::vector<std::string>{"compatible_unverified", "limited", "unsupported"}));
+    EXPECT_NE(report_html(*report).find("Camera support: Limited"), std::string::npos);
+}
+
 TEST_F(BatchServiceTest, AGeometryEditSetsTheOutputSizeWithoutAReviewNote) {
     const auto files = ts::write_dngs(dir_, L"in", 1);
     const std::vector<ItemId> ids = h().import(files);

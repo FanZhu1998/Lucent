@@ -765,10 +765,11 @@ TEST(PreviewRecipes, RenderedThumbnailsAreKeyedBySettingsAndSurviveTheSession) {
         append(tag.data(), tag.size());
         append(edited->committed_sha256.data(), edited->committed_sha256.size());
         for (const std::uint32_t version :
-             {engine::kDevelopPipelineVersion, engine::kSensorNormalizationVersion, engine::kWhiteBalanceVersion,
-              engine::kMalvarHeCutlerVersion, engine::kXTransBaselineVersion, engine::kBypassVersion,
-              engine::kCameraColorVersion, engine::kWorkingSpaceVersion, engine::kGuidedFilterVersion,
-              engine::kBoxDownscaleVersion, engine::kDngOpcodeProcessingVersion}) {
+             {engine::kDevelopPipelineVersion, engine::kSensorNormalizationVersion,
+              engine::kWhiteBalanceVersion, engine::kMalvarHeCutlerVersion, engine::kXTransBaselineVersion,
+              engine::kBypassVersion, engine::kCameraColorVersion, engine::kWorkingSpaceVersion,
+              engine::kGuidedFilterVersion, engine::kBoxDownscaleVersion, engine::kDngOpcodeProcessingVersion,
+              engine::kImageAreaPlacementVersion}) {
             const std::uint8_t le[4] = {static_cast<std::uint8_t>(version), static_cast<std::uint8_t>(version >> 8),
                                         static_cast<std::uint8_t>(version >> 16),
                                         static_cast<std::uint8_t>(version >> 24)};

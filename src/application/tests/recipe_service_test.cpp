@@ -571,18 +571,29 @@ TEST_F(RecipeServiceTest, AMaskStrokeAndACropDragAreOneRevisionEach) {
 TEST_F(RecipeServiceTest, Version1SettingsAreKeptAsTheirConversion) {
     engine::DevelopSettings old = with_exposure(0.3);
     old.version = 1;
+    // Version 2 with geometry version 1: version-1 settings rendered the whole visible area (ADR 0017).
+    engine::DevelopSettings converted = with_exposure(0.3);
+    converted.operations.geometry = engine::kOldestGeometryOperationVersion;
     auto transient = service_->set_transient(a(), old);
     ASSERT_TRUE(transient) << transient.error().describe();
-    EXPECT_EQ(transient->settings, with_exposure(0.3));  // version 2
+    EXPECT_EQ(transient->settings, converted);
     auto committed = service_->commit(a());
     ASSERT_TRUE(committed);
-    EXPECT_EQ(committed->committed, with_exposure(0.3));
-    EXPECT_EQ(committed->committed_sha256, write_recipe(with_exposure(0.3))->sha256);
+    EXPECT_EQ(committed->committed, converted);
+    EXPECT_EQ(committed->committed_sha256, write_recipe(converted)->sha256);
     // The same values as version 2 are no change.
-    auto again = service_->apply(a(), with_exposure(0.3));
+    auto again = service_->apply(a(), converted);
     ASSERT_TRUE(again);
     EXPECT_EQ(again->revision, committed->revision);
     EXPECT_EQ(service_->history(a())->entries.size(), 1u);
+    // Moving to geometry version 2 (the camera's image area) is a geometry change of its own.
+    auto area = service_->apply(a(), with_exposure(0.3));
+    ASSERT_TRUE(area) << area.error().describe();
+    EXPECT_NE(area->revision, committed->revision);
+    auto history = service_->history(a());
+    ASSERT_TRUE(history);
+    ASSERT_EQ(history->entries.size(), 2u);
+    EXPECT_EQ(history->entries[1].parts, std::vector<RecipePart>{RecipePart::Geometry});
 }
 
 TEST_F(RecipeServiceTest, WithoutCalibrationKnowledgeKelvinIsNotPasted) {
@@ -885,6 +896,8 @@ TEST_F(CatalogRecipeTest, AVersion1RevisionIsReadAsItsUpgrade) {
     open();
     engine::DevelopSettings expected = with_exposure(0.5);
     expected.locks = {DevelopControl::Exposure};
+    // A version-1 recipe keeps rendering the whole visible area: geometry version 1 (ADR 0017).
+    expected.operations.geometry = engine::kOldestGeometryOperationVersion;
     const RecipeState s = *service_->state(item);
     EXPECT_FALSE(s.read_only);
     EXPECT_EQ(s.settings, expected);

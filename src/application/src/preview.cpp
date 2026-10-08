@@ -26,7 +26,9 @@ image::Size rendered_full_size(const engine::DevelopReport& report) {
     if (report.full_size.empty()) {
         return report.output_size;
     }
-    auto mapping = engine::GeometryMapping::create(report.settings.geometry, report.full_size);
+    // The geometry's frame at full resolution (the camera's image area for geometry version 2).
+    auto mapping =
+        engine::geometry_mapping(report.settings, report.full_size, report.full_size, report.image_area);
     return mapping ? mapping->output_size() : report.full_size;
 }
 

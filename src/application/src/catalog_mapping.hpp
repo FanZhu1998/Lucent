@@ -11,17 +11,43 @@
 // (subimage_count is restored as the larger of the number of catalogued images of the file and
 // the highest catalogued image index + 1).
 //
-// Support reasons JSON (items.support_reasons_json; "[]" for Supported items). An array of
-// objects, one per app::SupportReason, in order:
+// Support status column (items.support_status). The catalog knows three spellings ("supported",
+// "limited", "unsupported"), and every catalog reader since schema v1 reads them; the four states
+// of ADR 0018 are stored without a schema change, so a catalog this build writes stays readable by
+// older builds (the reader-version contract: no new spelling, min_reader_version unchanged):
+//   Verified, Compatible, unverified -> "supported"   (the "camera_support" element below says which)
+//   Limited                         -> "limited"
+//   Unsupported                     -> "unsupported"
+// An older build shows a Verified item as it showed every supported item (Compatible, unverified):
+// conservative, never better than the truth.
+//
+// Support reasons JSON (items.support_reasons_json). An array of objects, one per
+// app::SupportReason in order, then (ADR 0018) one "camera_support" element when the assessment
+// consulted the camera support database:
 //   {"kind": "issue",        "issue":  "<raw::to_string(InterpretationIssueKind)>", "message": "..."}
 //   {"kind": "status",       "status": "<raw::to_string(InterpretationStatus)>",    "message": "..."}
 //   {"kind": "probe_failed", "error":  "<lucent::to_string(ErrorCode)>",             "message": "..."}
-// "message" is developer-facing English (never shown to the user). Readers keep unknown kinds and
-// spellings (from a newer Lucent) as reasons without a known issue or error, so the generic
-// wording applies; the support status column stays authoritative. The interpretation status of a
-// reloaded assessment is derived: Complete for Supported, OptionalOperationsSkipped for Limited
-// (or the issues' status when worse), and for Unsupported the recorded status reason, else the
-// status the issues imply (at least RequiresUnsupportedOperation), or none after a probe failure.
+//   {"kind": "camera_limitation", "limitation": "<code>",                          "message": "..."}
+//   {"kind": "camera_unsupported",                                                 "message": "..."}
+//   {"kind": "camera_support", "rules": 1, "state": "<assets::to_string(SupportState)>",
+//    "interpretation": "<raw::to_string(InterpretationStatus)>", "mode_key": "mk1|...",
+//    "database": {"id": "camera-support", "version": "1.0.0", "qualified": "2026-10-08"} | null,
+//    "basis_matches": true, "listed": "<state>" | null, "qualified_key": "...", "camera": "...",
+//    "mode": "...", "evidence": "...", "message": "..."}
+// "message" is developer-facing English for the interpretation kinds and the database's user-facing
+// English for the camera kinds. Readers keep unknown kinds and spellings (from a newer Lucent) as
+// reasons without a known issue or error, so the generic wording applies; the support status
+// column stays authoritative: a "camera_support" element whose state does not fit the column
+// (verified or compatible_unverified with "supported", limited with "limited", unsupported with
+// "unsupported") is dropped with a log line, which leaves the item without an evaluation, so source
+// maintenance probes it again (probe_outdated()). Older readers see the camera elements as
+// unknown kinds: a "supported" item still shows as supported, a Limited or Unsupported one with
+// its generic wording.
+//
+// The interpretation status of a reloaded assessment is the camera element's when there is one;
+// otherwise it is derived: Complete for "supported", OptionalOperationsSkipped for Limited (or the
+// issues' status when worse), and for Unsupported the recorded status reason, else the status the
+// issues imply (at least RequiresUnsupportedOperation), or none after a probe failure.
 //
 // Thread-safety: pure functions.
 
@@ -47,8 +73,8 @@ namespace lucent::app::detail {
 [[nodiscard]] ItemFlags from_catalog(const catalog::ItemFlags& flags) noexcept;
 [[nodiscard]] catalog::ImportOutcome to_catalog(ImportJournalOutcome outcome) noexcept;
 
-// The support reasons in the JSON format of the file comment. Never fails (text is sanitised to
-// UTF-8).
+// The support reasons (and the camera support evaluation) in the JSON format of the file comment.
+// Never fails (text is sanitised to UTF-8).
 [[nodiscard]] std::string encode_support_reasons(const SupportAssessment& support);
 
 // The assessment of a stored item. Malformed JSON yields one reason without detail (and a log

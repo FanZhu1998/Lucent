@@ -72,13 +72,14 @@ TEST_F(ApplicationFixtures, ImportsTheFixtureCache) {
     ASSERT_TRUE(report) << report.error().describe();
     std::printf(
         "  imported %zu items (%llu supported, %llu limited, %llu unsupported) from %llu files in %.2f s\n",
-        report->added.size(), static_cast<unsigned long long>(report->supported),
+        report->added.size(), static_cast<unsigned long long>(report->compatible_unverified),
         static_cast<unsigned long long>(report->limited),
         static_cast<unsigned long long>(report->unsupported),
         static_cast<unsigned long long>(report->files_seen), seconds);
     RecordProperty("import_milliseconds", static_cast<int>(seconds * 1000));
     EXPECT_FALSE(report->added.empty());
-    EXPECT_EQ(report->supported + report->limited + report->unsupported, report->added.size());
+    EXPECT_EQ(report->verified + report->compatible_unverified + report->limited + report->unsupported,
+              report->added.size());
     for (const SourceItem& item : library_.items()) {
         std::printf("  %-8s %-40ls %s\n", std::string(to_string(item.support.status)).c_str(),
                     item.path.filename().c_str(),
@@ -92,7 +93,7 @@ TEST_F(ApplicationFixtures, ImportsTheFixtureCache) {
     for (const SourceItem& item : library_.items()) {
         if (item.path.filename() == L"Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3") {
             found = true;
-            EXPECT_EQ(item.support.status, SupportStatus::Supported);
+            EXPECT_EQ(item.support.status, SupportStatus::CompatibleUnverified);
             ASSERT_TRUE(item.probe);
             EXPECT_EQ(item.probe->camera_make, "Canon");
         }

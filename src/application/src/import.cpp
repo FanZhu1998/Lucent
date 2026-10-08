@@ -727,7 +727,7 @@ private:
         item.subimage_count = count;
         item.identity = metadata.source.identity;
         item.probe = summarize_probe(metadata);
-        item.support = assess_interpretation(metadata.interpretation);
+        item.support = assess_support(metadata, request_.camera_support.get());
         return item;
     }
 
@@ -1155,8 +1155,11 @@ private:
                 }
             }
             switch (facts[i].status) {
-                case SupportStatus::Supported:
-                    ++report_.supported;
+                case SupportStatus::Verified:
+                    ++report_.verified;
+                    break;
+                case SupportStatus::CompatibleUnverified:
+                    ++report_.compatible_unverified;
                     break;
                 case SupportStatus::Limited:
                     ++report_.limited;

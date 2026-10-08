@@ -1,7 +1,8 @@
 # lucent_application: import, the session and catalog-backed libraries, source maintenance
 # (hashing, presence checks, relinking), embedded previews, background preview rendering, the
 # on-disk thumbnail cache and single-image export services (W3, W4); recipes, their revisions and
-# editing commands, and interactive develop previews (W6). Pure C++, no Qt: the user interface
+# editing commands, and interactive develop previews (W6); the four support states assessed with the
+# camera support database (W10, ADR 0018). Pure C++, no Qt: the user interface
 # (apps/lucent) drives these services and marshals their callbacks to its own thread.
 # See docs/architecture/overview.md and docs/adr/0007, 0008, 0010.
 #
@@ -14,11 +15,14 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 lucent_add_library(application
     SOURCES
-        # Library items, the session library and the catalog-backed library (W4).
+        # Library items, the session library and the catalog-backed library (W4); the support rules
+        # over the camera support database (W10, ADR 0018).
         include/lucent/application/source_item.hpp
+        include/lucent/application/camera_support.hpp
         include/lucent/application/library.hpp
         include/lucent/application/catalog_library.hpp
         src/source_item.cpp
+        src/camera_support.cpp
         src/library.cpp
         src/catalog_library.cpp
         src/catalog_mapping.cpp
@@ -98,6 +102,7 @@ lucent_add_library(application
         Lucent::export
         Lucent::catalog
         Lucent::analysis
+        Lucent::assets
         Lucent::workers
     PRIVATE_DEPS
         nlohmann_json::nlohmann_json
@@ -112,6 +117,7 @@ lucent_add_library(application
 set(LUCENT_APPLICATION_TEST_SOURCES
     tests/app_test_support.hpp
     tests/source_item_test.cpp
+    tests/camera_support_test.cpp
     tests/library_test.cpp
     tests/catalog_library_test.cpp
     tests/catalog_mapping_test.cpp

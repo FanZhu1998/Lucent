@@ -1343,6 +1343,7 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
             import.folders.push_back(ImportFolder{input, request.folder->include_subfolders});
             import.lucent_directories = s.options.lucent_directories;
             import.output_directories.push_back(folder);
+            import.camera_support = s.options.camera_support;
             auto imported = import_sources(
                 s.library, *s.options.registry, import,
                 [&](const ImportProgress& p) {

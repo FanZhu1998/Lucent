@@ -250,6 +250,21 @@ TEST(BatchDocuments, ReceiptDetailsRoundTrip) {
     EXPECT_EQ(back->name_index, 3u);
     EXPECT_TRUE(back->replaced_existing);
     EXPECT_EQ(back->review, details.review);
+    // W10 (ADR 0018): receipts of earlier builds carry no support state; new ones do.
+    EXPECT_FALSE(back->support.has_value());
+    details.support = SupportStatus::Limited;
+    details.camera_support_version = "1.0.0";
+    auto with_support = write_receipt_details(details);
+    ASSERT_TRUE(with_support);
+    auto supported = read_receipt_details(*with_support);
+    ASSERT_TRUE(supported) << supported.error().describe();
+    EXPECT_EQ(supported->support, SupportStatus::Limited);
+    EXPECT_EQ(supported->camera_support_version, "1.0.0");
+    std::string unknown_state = *with_support;
+    unknown_state.replace(unknown_state.find("\"limited\""), 9, "\"betterr\"");
+    auto unknown = read_receipt_details(unknown_state);
+    ASSERT_TRUE(unknown);
+    EXPECT_FALSE(unknown->support.has_value());  // not guessed
     std::string newer = *json;
     newer.replace(newer.find("\"version\":1"), 11, "\"version\":9");
     auto refused = read_receipt_details(newer);

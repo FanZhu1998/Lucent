@@ -83,6 +83,10 @@ Status Library::set_content_hash(ItemId, const core::Digest256&, const core::Fil
     return unsupported("hash");
 }
 
+Status Library::set_support(std::span<const SupportUpdate>) {
+    return unsupported("support");
+}
+
 Status Library::set_source_state(ItemId, SourceState) {
     return unsupported("state");
 }
@@ -369,6 +373,44 @@ Status SessionLibrary::remove(std::span<const ItemId> ids) {
         change.sequence = ++state_->sequence;
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "removing items ran out of memory", std::string(kWhereRemove));
+    }
+    state_->observers.notify(change);
+    return ok();
+}
+
+Status SessionLibrary::set_support(std::span<const SupportUpdate> updates) {
+    if (updates.empty()) {
+        return ok();
+    }
+    LibraryChange change;
+    change.kind = LibraryChangeKind::Updated;
+    try {
+        change.items.reserve(updates.size());
+        std::lock_guard lock(state_->mutex);
+        for (const SupportUpdate& update : updates) {
+            if (!state_->items.contains(update.id)) {
+                return fail(ErrorCode::NotFound, std::format("no library item {}", update.id.value),
+                            "app.library.support");
+            }
+        }
+        // Copies first, so that a failed allocation changes nothing.
+        std::vector<SupportAssessment> fresh;
+        fresh.reserve(updates.size());
+        for (const SupportUpdate& update : updates) {
+            fresh.push_back(update.support);
+        }
+        for (std::size_t i = 0; i < updates.size(); ++i) {
+            SourceItem& item = state_->items.at(updates[i].id);
+            item.support = std::move(fresh[i]);
+            ++item.revision;
+            if (std::find(change.items.begin(), change.items.end(), updates[i].id) == change.items.end()) {
+                change.items.push_back(updates[i].id);
+            }
+        }
+        change.sequence = ++state_->sequence;
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "updating support assessments ran out of memory",
+                    "app.library.support");
     }
     state_->observers.notify(change);
     return ok();

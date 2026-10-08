@@ -140,7 +140,7 @@ TEST_F(SourceMaintenanceTest, OutdatedSupportStatusIsRenewedOnceInPlace) {
     import(dir_.path() / L"in");
     hash_all();
     const SourceItem current = named(L"a.dng");
-    ASSERT_EQ(current.support.status, SupportStatus::Supported);
+    ASSERT_EQ(current.support.status, SupportStatus::CompatibleUnverified);
     ASSERT_FALSE(probe_outdated(current));
     ASSERT_TRUE(library().set_flags(current.id, ItemFlags{PickFlag::Picked, 4}));
 
@@ -183,7 +183,7 @@ TEST_F(SourceMaintenanceTest, OutdatedSupportStatusIsRenewedOnceInPlace) {
     EXPECT_TRUE(report.unhashed_items.empty());  // the hash is kept: the file did not change
     const SourceItem after = named(L"a.dng");
     EXPECT_EQ(after.id, before.id);
-    EXPECT_EQ(after.support.status, SupportStatus::Supported);
+    EXPECT_EQ(after.support.status, SupportStatus::CompatibleUnverified);
     EXPECT_FALSE(probe_outdated(after));
     EXPECT_EQ(after.flags, (ItemFlags{PickFlag::Picked, 4}));
     EXPECT_EQ(after.sha256, before.sha256);
@@ -193,7 +193,7 @@ TEST_F(SourceMaintenanceTest, OutdatedSupportStatusIsRenewedOnceInPlace) {
     // Renewed for good: the catalog stores the contract now, so the next check re-reads nothing.
     reopen();
     EXPECT_FALSE(probe_outdated(named(L"a.dng")));
-    EXPECT_EQ(named(L"a.dng").support.status, SupportStatus::Supported);
+    EXPECT_EQ(named(L"a.dng").support.status, SupportStatus::CompatibleUnverified);
     const RefreshReport again = refresh_all();
     EXPECT_EQ(again.outdated, 0u);
     EXPECT_TRUE(again.reprobed_items.empty());

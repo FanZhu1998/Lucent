@@ -178,7 +178,7 @@ TEST_F(ExportTest, ExportsJpegAndTiffWithUniqueNames) {
     EXPECT_EQ(first->receipt.format, ExportFormat::Jpeg);
     EXPECT_EQ(first->item, item.id);
     EXPECT_EQ(first->source_identity, item.identity);
-    EXPECT_EQ(first->support, SupportStatus::Supported);
+    EXPECT_EQ(first->support, SupportStatus::CompatibleUnverified);
     EXPECT_EQ(first->render.orientation, image::Orientation::Rotate90Ccw);
     EXPECT_GT(first->total_seconds, 0.0);
     ASSERT_FALSE(progress.empty());

@@ -81,7 +81,7 @@ TEST_F(ImportTest, FoldersImportTheirOwnFilesOrTheWholeTree) {
     ASSERT_TRUE(flat) << flat.error().describe();
     EXPECT_EQ(flat->added.size(), 2u);
     EXPECT_EQ(item_names(), (std::vector<std::wstring>{L"a.DNG", L"b.dng"}));  // sorted discovery
-    EXPECT_EQ(flat->supported, 2u);
+    EXPECT_EQ(flat->compatible_unverified, 2u);
 
     auto tree = run(ImportRequest{.folders = {{dir_.path() / L"in", true}}});
     ASSERT_TRUE(tree) << tree.error().describe();
@@ -97,7 +97,7 @@ TEST_F(ImportTest, FoldersImportTheirOwnFilesOrTheWholeTree) {
 
     const SourceItem first = library_.items().front();
     EXPECT_TRUE(first.path.is_absolute());
-    EXPECT_EQ(first.support.status, SupportStatus::Supported);
+    EXPECT_EQ(first.support.status, SupportStatus::CompatibleUnverified);
     ASSERT_TRUE(first.probe);
     EXPECT_EQ(first.probe->stored_size, (image::Size{64, 48}));
     EXPECT_NE(first.identity.size_bytes, 0u);
@@ -116,7 +116,7 @@ TEST_F(ImportTest, ExtensionsAreHintsAndTheProbeDecides) {
     EXPECT_EQ(report->ignored_non_raw, 3u);  // notes.xyz (no RAW signature), preview.jpg, sidecar.xmp
     EXPECT_EQ(report->files_seen, 6u);
     ASSERT_EQ(report->added.size(), 3u);
-    EXPECT_EQ(report->supported, 2u);
+    EXPECT_EQ(report->compatible_unverified, 2u);
     EXPECT_EQ(report->unsupported, 1u);  // fake.cr2 stays listed, with the probe's reason
 
     const auto items = library_.items();
@@ -142,7 +142,7 @@ TEST_F(ImportTest, ExtensionsAreHintsAndTheProbeDecides) {
     ASSERT_TRUE(explicit_files) << explicit_files.error().describe();
     EXPECT_EQ(count(*explicit_files, SkipReason::NotRawPhoto), 3u);  // preview.jpg, sidecar.xmp, export.tif
     ASSERT_EQ(explicit_files->added.size(), 2u);
-    EXPECT_EQ(explicit_files->supported, 1u);    // scan.tif
+    EXPECT_EQ(explicit_files->compatible_unverified, 1u);  // scan.tif
     EXPECT_EQ(explicit_files->unsupported, 1u);  // odd.xyz: an unknown extension is listed with the reason
     for (const SkippedPath& skipped : explicit_files->skipped) {
         if (skipped.path.filename() == L"export.tif") {
@@ -348,7 +348,7 @@ TEST_F(ImportTest, SupportStatusComesFromTheContractAssessment) {
 
     auto report = run(ImportRequest{.folders = {{dir_.path() / L"in", false}}});
     ASSERT_TRUE(report) << report.error().describe();
-    EXPECT_EQ(report->supported, 1u);
+    EXPECT_EQ(report->compatible_unverified, 1u);
     EXPECT_EQ(report->limited, 1u);
     EXPECT_EQ(report->unsupported, 1u);
     for (const SourceItem& item : library_.items()) {
@@ -362,7 +362,7 @@ TEST_F(ImportTest, SupportStatusComesFromTheContractAssessment) {
         } else if (name == L"optional.dng") {
             EXPECT_EQ(item.support.status, SupportStatus::Limited);
         } else {
-            EXPECT_EQ(item.support.status, SupportStatus::Supported);
+            EXPECT_EQ(item.support.status, SupportStatus::CompatibleUnverified);
             EXPECT_TRUE(item.support.reasons.empty());
         }
     }

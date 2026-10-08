@@ -37,6 +37,10 @@ using namespace std::chrono_literals;
 
 namespace {
 
+// Largest part of a side the camera's image area may cut from the catalogued frame before an
+// export's size gets a review note (geometry version 2; the corpus's largest border is 1.8 %).
+constexpr double kCameraBorderTolerance = 0.05;
+
 constexpr std::string_view kWhere = "app.batch";
 constexpr std::string_view kWherePublish = "app.batch.publish";
 constexpr auto kTick = 250ms;       // while batches have queued jobs (back-off, admission)
@@ -1658,11 +1662,35 @@ void Attempt::calibrate(const workers::JobMetrics& metrics, const workers::Memor
 
 std::vector<std::string> Attempt::review_notes(const workers::JobResult& result) const {
     std::vector<std::string> notes;
+    // A Limited photo is exported with a note naming each limitation (blueprint section 3; ADR 0018):
+    // the camera support database's own words for a limitation of the camera mode.
+    if (item_ && item_->support.status == SupportStatus::Limited) {
+        for (const SupportReason& reason : item_->support.reasons) {
+            if (reason.kind == SupportReasonKind::CameraLimitation && !reason.message.empty()) {
+                notes.push_back("Limited support: " + reason.message);
+            }
+        }
+    }
     if (result.render.interpretation != raw::InterpretationStatus::Complete) {
-        notes.push_back(context_.output.allow_unsupported &&
-                                app::support_status_for(result.render.interpretation) == SupportStatus::Unsupported
-                            ? "Exported although Lucent cannot render this camera file faithfully."
-                            : "Limited support: some optional processing for this camera was not available.");
+        if (context_.output.allow_unsupported &&
+            app::support_status_for(result.render.interpretation) == SupportStatus::Unsupported) {
+            notes.push_back("Exported although Lucent cannot render this camera file faithfully.");
+        } else {
+            // The interpretation's own reason, when the library recorded one (developer English).
+            std::string detail;
+            if (item_) {
+                for (const SupportReason& reason : item_->support.reasons) {
+                    if (reason.kind == SupportReasonKind::InterpretationIssue && reason.issue &&
+                        *reason.issue == raw::InterpretationIssueKind::OptionalOperationUnsupported &&
+                        !reason.message.empty()) {
+                        detail = " (" + reason.message + ")";
+                        break;
+                    }
+                }
+            }
+            notes.push_back("Limited support: some optional processing for this camera was not available" +
+                            detail + ".");
+        }
     }
     for (std::size_t i = 0; i < result.render.warnings.size() && i < 3; ++i) {
         notes.push_back("The renderer reported: " + result.render.warnings[i]);
@@ -1692,13 +1720,23 @@ std::vector<std::string> Attempt::review_notes(const workers::JobResult& result)
         // a geometry edit changes the output size by design.
         const image::Size catalogued = item_->probe->upright_size;
         image::Size expected = catalogued;
+        bool camera_area = false;
         if (auto settings = read_recipe(frozen_.json)) {
             if (auto mapping = engine::GeometryMapping::create(settings->geometry, catalogued)) {
                 expected = mapping->output_size();
             }
+            camera_area = engine::geometry_operation_version(*settings) >= 2;
         }
-        if (static_cast<std::uint32_t>(expected.width) != result.render.width ||
-            static_cast<std::uint32_t>(expected.height) != result.render.height) {
+        // Geometry version 2 crops and straightens within the camera's image area (ADR 0017), which
+        // the catalog does not record: the output may then be smaller than the catalogued frame
+        // gives by the camera's border (at most kCameraBorderTolerance of a side), never larger.
+        const auto within = [&](std::int32_t full, std::uint32_t got) {
+            const auto g = static_cast<std::int64_t>(got);
+            return camera_area ? g <= full && static_cast<double>(g) >=
+                                                  std::floor(full * (1.0 - kCameraBorderTolerance))
+                               : g == full;
+        };
+        if (!within(expected.width, result.render.width) || !within(expected.height, result.render.height)) {
             notes.push_back(
                 expected == catalogued
                     ? std::format("The output is {} x {} pixels; the photo was catalogued as {} x {}.",
@@ -1989,6 +2027,12 @@ void Attempt::run() {
     details.allow_unsupported = context_.output.allow_unsupported;
     details.review = review_notes(result);
     details.review.insert(details.review.end(), automatic_notes_.begin(), automatic_notes_.end());
+    if (item_) {
+        details.support = item_->support.status;
+        if (item_->support.camera) {
+            details.camera_support_version = item_->support.camera->database_version;
+        }
+    }
     auto details_json = write_receipt_details(details);
     catalog::NewReceipt receipt;
     receipt.final_path = final_path_;

@@ -18,18 +18,6 @@ SupportReason status_reason(raw::InterpretationStatus status) {
 
 }  // namespace
 
-std::string_view to_string(SupportStatus status) noexcept {
-    switch (status) {
-        case SupportStatus::Supported:
-            return "supported";
-        case SupportStatus::Limited:
-            return "limited";
-        case SupportStatus::Unsupported:
-            return "unsupported";
-    }
-    return "unknown";
-}
-
 std::string_view to_string(SourceState state) noexcept {
     switch (state) {
         case SourceState::Present:
@@ -55,7 +43,7 @@ std::string_view to_string(ImportMode mode) noexcept {
 SupportStatus support_status_for(raw::InterpretationStatus status) noexcept {
     switch (status) {
         case raw::InterpretationStatus::Complete:
-            return SupportStatus::Supported;
+            return SupportStatus::CompatibleUnverified;
         case raw::InterpretationStatus::OptionalOperationsSkipped:
             return SupportStatus::Limited;
         case raw::InterpretationStatus::RequiresUnsupportedOperation:
@@ -83,7 +71,7 @@ SupportAssessment assess_interpretation(const raw::Interpretation& interpretatio
         reason.message = issue.message;
         assessment.reasons.push_back(std::move(reason));
     }
-    if (assessment.status != SupportStatus::Supported && assessment.reasons.empty()) {
+    if (assessment.status != SupportStatus::CompatibleUnverified && assessment.reasons.empty()) {
         assessment.reasons.push_back(status_reason(interpretation.status));
     }
     return assessment;
@@ -93,7 +81,7 @@ SupportAssessment assess_interpretation_status(raw::InterpretationStatus status)
     SupportAssessment assessment;
     assessment.interpretation = status;
     assessment.status = support_status_for(status);
-    if (assessment.status != SupportStatus::Supported) {
+    if (assessment.status != SupportStatus::CompatibleUnverified) {
         assessment.reasons.push_back(status_reason(status));
     }
     return assessment;
@@ -152,7 +140,15 @@ Status ItemFlags::validate() const {
 }
 
 bool probe_outdated(const SourceItem& item) noexcept {
-    return item.probe && (!item.probe->contract || *item.probe->contract < raw::kDecodedRawContractVersion);
+    if (!item.probe) {
+        return false;
+    }
+    if (!item.probe->contract || *item.probe->contract < raw::kDecodedRawContractVersion) {
+        return true;
+    }
+    // Assessed before the camera support database (ADR 0018), or by older support rules: only a new
+    // probe gives the mode key the database is consulted with.
+    return !item.support.camera || item.support.camera->rules < kSupportRulesVersion;
 }
 
 }  // namespace lucent::app

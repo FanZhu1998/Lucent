@@ -18,7 +18,7 @@ raw::InterpretationIssue issue(raw::InterpretationIssueKind kind, std::string me
 
 TEST(SupportAssessment, MapsEveryInterpretationStatus) {
     using S = raw::InterpretationStatus;
-    EXPECT_EQ(support_status_for(S::Complete), SupportStatus::Supported);
+    EXPECT_EQ(support_status_for(S::Complete), SupportStatus::CompatibleUnverified);
     EXPECT_EQ(support_status_for(S::OptionalOperationsSkipped), SupportStatus::Limited);
     EXPECT_EQ(support_status_for(S::RequiresUnsupportedOperation), SupportStatus::Unsupported);
     EXPECT_EQ(support_status_for(S::Ambiguous), SupportStatus::Unsupported);
@@ -28,7 +28,7 @@ TEST(SupportAssessment, MapsEveryInterpretationStatus) {
 
 TEST(SupportAssessment, CompleteIsSupportedWithoutReasons) {
     const SupportAssessment a = assess_interpretation(raw::Interpretation{});
-    EXPECT_EQ(a.status, SupportStatus::Supported);
+    EXPECT_EQ(a.status, SupportStatus::CompatibleUnverified);
     EXPECT_EQ(a.interpretation, raw::InterpretationStatus::Complete);
     EXPECT_TRUE(a.reasons.empty());
 }
@@ -83,7 +83,8 @@ TEST(SupportAssessment, StatusOnlyAndProbeFailures) {
 }
 
 TEST(SupportAssessment, Names) {
-    EXPECT_EQ(to_string(SupportStatus::Supported), "supported");
+    EXPECT_EQ(to_string(SupportStatus::CompatibleUnverified), "compatible_unverified");
+    EXPECT_EQ(to_string(SupportStatus::Verified), "verified");
     EXPECT_EQ(to_string(SupportStatus::Limited), "limited");
     EXPECT_EQ(to_string(SupportStatus::Unsupported), "unsupported");
 }

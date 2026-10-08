@@ -379,17 +379,23 @@ Status read_numbers(const Json& object, std::initializer_list<std::pair<std::str
     return ok();
 }
 
+// An operation version this build renders: `supported`, or for the geometry any version from
+// `oldest` (version 1, the whole visible area, still rendered for the recipes made with it).
 Status operation_version(const Json& operations, std::string_view name, std::uint32_t supported,
-                         std::uint32_t& out) {
+                         std::uint32_t& out, std::uint32_t oldest = 0) {
     auto version = version_of(operations.at(std::string(name)), std::format("operation '{}' version", name));
     if (!version) {
         return Unexpected(std::move(version.error()));
     }
-    if (*version != supported) {
-        return Unexpected(
-            newer(std::format("the recipe needs version {} of the '{}' operation; this build implements "
-                              "version {}",
-                              *version, name, supported)));
+    const std::uint32_t lowest = oldest == 0 ? supported : oldest;
+    if (*version < lowest || *version > supported) {
+        return Unexpected(newer(
+            lowest == supported ? std::format("the recipe needs version {} of the '{}' operation; this build "
+                                              "implements version {}",
+                                              *version, name, supported)
+                                : std::format("the recipe needs version {} of the '{}' operation; this build "
+                                              "implements versions {} to {}",
+                                              *version, name, lowest, supported)));
     }
     out = *version;
     return ok();
@@ -753,22 +759,26 @@ Expected<engine::DevelopSettings> read_document(const Json& doc, std::uint32_t v
         }
         return Unexpected(std::move(status.error()));
     }
-    std::vector<std::tuple<std::string_view, std::uint32_t, std::uint32_t*>> ops = {
-        {kOpWhiteBalance, engine::kWhiteBalanceOperationVersion, &s.operations.white_balance},
-        {kOpExposure, engine::kExposureOperationVersion, &s.operations.exposure},
-        {kOpLocalTone, engine::kLocalToneOperationVersion, &s.operations.local_tone},
-        {kOpContrast, engine::kContrastOperationVersion, &s.operations.contrast},
-        {kOpToneCurve, engine::kToneCurveOperationVersion, &s.operations.tone_curve},
-        {kOpColor, engine::kColorOperationVersion, &s.operations.color},
+    std::vector<std::tuple<std::string_view, std::uint32_t, std::uint32_t*, std::uint32_t>> ops = {
+        {kOpWhiteBalance, engine::kWhiteBalanceOperationVersion, &s.operations.white_balance, 0},
+        {kOpExposure, engine::kExposureOperationVersion, &s.operations.exposure, 0},
+        {kOpLocalTone, engine::kLocalToneOperationVersion, &s.operations.local_tone, 0},
+        {kOpContrast, engine::kContrastOperationVersion, &s.operations.contrast, 0},
+        {kOpToneCurve, engine::kToneCurveOperationVersion, &s.operations.tone_curve, 0},
+        {kOpColor, engine::kColorOperationVersion, &s.operations.color, 0},
     };
     if (v2) {
-        ops.insert(ops.end(),
-                   {{kOpChromaDenoise, engine::kChromaDenoiseOperationVersion, &s.operations.chroma_denoise},
-                    {kOpLocalAdjustments, engine::kLocalAdjustmentsOperationVersion, &s.operations.local_adjustments},
-                    {kOpGeometry, engine::kGeometryOperationVersion, &s.operations.geometry}});
+        // The geometry operation is read in versions 1 (the whole visible area) and 2 (the camera's
+        // image area, ADR 0017); a recipe keeps the version it was made with.
+        ops.insert(ops.end(), {{kOpChromaDenoise, engine::kChromaDenoiseOperationVersion,
+                                &s.operations.chroma_denoise, 0},
+                               {kOpLocalAdjustments, engine::kLocalAdjustmentsOperationVersion,
+                                &s.operations.local_adjustments, 0},
+                               {kOpGeometry, engine::kGeometryOperationVersion, &s.operations.geometry,
+                                engine::kOldestGeometryOperationVersion}});
     }
-    for (const auto& [name, supported, out] : ops) {
-        if (auto status = operation_version(operations, name, supported, *out); !status) {
+    for (const auto& [name, supported, out, oldest] : ops) {
+        if (auto status = operation_version(operations, name, supported, *out, oldest); !status) {
             return Unexpected(std::move(status.error()));
         }
     }
@@ -1214,7 +1224,9 @@ bool same_value(const engine::DevelopSettings& a, const engine::DevelopSettings&
         case RecipePart::LocalAdjustments:
             return a.local_adjustments == b.local_adjustments;
         case RecipePart::Geometry:
-            return a.geometry == b.geometry;
+            // The geometry part is the value and the frame its operation version places it in.
+            return a.geometry == b.geometry &&
+                   engine::geometry_operation_version(a) == engine::geometry_operation_version(b);
     }
     return true;
 }
@@ -1228,7 +1240,10 @@ void copy_value(const engine::DevelopSettings& from, engine::DevelopSettings& to
             to.local_adjustments = from.local_adjustments;
             return;
         case RecipePart::Geometry:
+            // With its operation version: a crop of version 1 is relative to the whole visible area,
+            // one of version 2 to the camera's image area (ADR 0017).
             to.geometry = from.geometry;
+            to.operations.geometry = engine::geometry_operation_version(from);
             return;
     }
 }

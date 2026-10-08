@@ -30,6 +30,17 @@ constexpr std::string_view kDefaultDocument =
     R"({"base_look":{"id":"neutral","version":1},"chroma_denoise":{"radius":8,"strength":0},"contrast":0,)"
     R"("exposure_ev":0,"geometry":{"crop":{"bottom":1,"left":0,"right":1,"top":0},"flip_horizontal":false,)"
     R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"local_adjustments":[],"locks":[],)"
+    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":2,"local_adjustments":1,)"
+    R"("local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop","shadows":0,)"
+    R"("tone_curve":[[0,0],[1,1]],"version":2,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
+
+// The canonical text of default settings with geometry version 1 (the whole visible area): what W9
+// builds wrote for default settings, and what a version-1 recipe converts to (identity 3104dbcc...,
+// unchanged by ADR 0017).
+constexpr std::string_view kGeometry1DefaultDocument =
+    R"({"base_look":{"id":"neutral","version":1},"chroma_denoise":{"radius":8,"strength":0},"contrast":0,)"
+    R"("exposure_ev":0,"geometry":{"crop":{"bottom":1,"left":0,"right":1,"top":0},"flip_horizontal":false,)"
+    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"local_adjustments":[],"locks":[],)"
     R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":1,"local_adjustments":1,)"
     R"("local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop","shadows":0,)"
     R"("tone_curve":[[0,0],[1,1]],"version":2,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
@@ -142,9 +153,43 @@ TEST(RecipeDocument, DefaultSettingsHaveAFixedCanonicalTextAndIdentity) {
     EXPECT_EQ(document->sha256, *digest);
     // Pinned: any change of the canonical form changes every recipe identity. Version 2 (ADR 0015)
     // writes its three new members for every recipe, so the identity of default settings moved from
-    // version 1's 671dbaa8... to this one.
+    // version 1's 671dbaa8... to 3104dbcc...; geometry version 2 (ADR 0017) moved the defaults'
+    // identity again, to this one. Settings with geometry version 1 keep 3104dbcc... (below).
     EXPECT_EQ(core::to_hex(document->sha256),
-              "3104dbcc769bcd546a0a9449ec561c9e25f7c27a4290dda55f5bb14803f86738");
+              "879de8b79743a9d3cf2db780c0e0ccb09552dc3a35d5e6c538377dd97721c8f7");
+
+    engine::DevelopSettings geometry1;
+    geometry1.operations.geometry = 1;
+    auto old = write_recipe(geometry1);
+    ASSERT_TRUE(old);
+    EXPECT_EQ(old->json, kGeometry1DefaultDocument);
+    EXPECT_EQ(core::to_hex(old->sha256), "3104dbcc769bcd546a0a9449ec561c9e25f7c27a4290dda55f5bb14803f86738");
+}
+
+TEST(RecipeDocument, GeometryVersionsOneAndTwoAreReadAndKept) {
+    // A recipe keeps the geometry version it was made with (ADR 0017): version 1 crops within the
+    // whole visible area, version 2 within the camera's image area.
+    for (const std::uint32_t version : {1u, 2u}) {
+        engine::DevelopSettings s;
+        s.geometry.crop = engine::CropRect{0.1, 0.2, 0.9, 0.8};
+        s.operations.geometry = version;
+        auto document = write_recipe(s);
+        ASSERT_TRUE(document) << document.error().describe();
+        EXPECT_NE(document->json.find("\"geometry\":" + std::to_string(version) + ","), std::string::npos);
+        auto read = read_recipe(document->json);
+        ASSERT_TRUE(read) << read.error().describe();
+        EXPECT_EQ(read->operations.geometry, version);
+        EXPECT_EQ(*read, s);
+    }
+    // A newer version is refused as newer, never reinterpreted; 0 is not a version at all.
+    for (const auto& [version, code] :
+         {std::pair{3, ErrorCode::VersionMismatch}, std::pair{0, ErrorCode::InvalidArgument}}) {
+        Json doc = Json::parse(std::string(kDefaultDocument));
+        doc["operations"]["geometry"] = version;
+        auto read = read_recipe(doc.dump());
+        ASSERT_FALSE(read) << version;
+        EXPECT_EQ(read.error().code, code) << read.error().describe();
+    }
 }
 
 TEST(RecipeDocument, Version2MembersHaveAFixedCanonicalForm) {
@@ -323,6 +368,7 @@ TEST(RecipeDocument, AcceptsAnyJsonNumberSpellingAndOrder) {
     expected.exposure_ev = 1.0;
     expected.shadows = 0.25;
     expected.locks = {engine::DevelopControl::Exposure};
+    expected.operations.geometry = 1;  // a version-1 recipe renders the whole visible area (ADR 0017)
     EXPECT_EQ(*read, expected);
     EXPECT_EQ(read->version, 2u);
     EXPECT_EQ(write_recipe(*read)->sha256, write_recipe(expected)->sha256);
@@ -344,6 +390,7 @@ TEST(RecipeDocument, AcceptsAnyJsonNumberSpellingAndOrder) {
     auto read_v2 = read_recipe(v2);
     ASSERT_TRUE(read_v2) << read_v2.error().describe();
     engine::DevelopSettings expected_v2;
+    expected_v2.operations.geometry = 1;  // as the document says
     expected_v2.geometry.straighten_degrees = 1.5;
     expected_v2.geometry.quarter_turns = 2;
     expected_v2.geometry.crop = engine::CropRect{0.0, 0.1, 0.75, 1.0};
@@ -357,12 +404,15 @@ TEST(RecipeDocument, AcceptsAnyJsonNumberSpellingAndOrder) {
 }
 
 TEST(RecipeDocument, Version1DocumentsAreUpgradedOnRead) {
-    // The version-1 default document reads as default settings, with the version-2 identity.
+    // The version-1 default document reads as default settings of geometry version 1, with the
+    // identity of the version-2 document W9 wrote for them (3104dbcc..., kGeometry1DefaultDocument).
     auto read = read_recipe(kVersion1DefaultDocument);
     ASSERT_TRUE(read) << read.error().describe();
-    EXPECT_EQ(*read, engine::DevelopSettings{});
+    engine::DevelopSettings geometry1;
+    geometry1.operations.geometry = 1;  // version-1 recipes keep rendering the whole visible area
+    EXPECT_EQ(*read, geometry1);
     EXPECT_EQ(read->version, engine::kDevelopSettingsVersion);
-    EXPECT_EQ(write_recipe(*read)->json, kDefaultDocument);
+    EXPECT_EQ(write_recipe(*read)->json, kGeometry1DefaultDocument);
 
     // A version-1 recipe of every version-1 field: the upgrade changes nothing else.
     Json v1 = canonical_json(edited());
@@ -375,16 +425,19 @@ TEST(RecipeDocument, Version1DocumentsAreUpgradedOnRead) {
     v1["operations"].erase("geometry");
     auto upgraded = read_recipe(v1.dump());
     ASSERT_TRUE(upgraded) << upgraded.error().describe();
-    EXPECT_EQ(*upgraded, edited());
-    // It has the identity of the version-2 document of the same settings.
-    EXPECT_EQ(write_recipe(*upgraded)->sha256, write_recipe(edited())->sha256);
+    engine::DevelopSettings expected = edited();
+    expected.operations.geometry = 1;
+    EXPECT_EQ(*upgraded, expected);
+    // It has the identity of the version-2 document of the same settings (geometry version 1).
+    EXPECT_EQ(write_recipe(*upgraded)->sha256, write_recipe(expected)->sha256);
 
-    // Version-1 settings (a value, not a document) are written as their conversion.
+    // Version-1 settings (a value, not a document) are written as their conversion (geometry
+    // version 1).
     engine::DevelopSettings old = edited();
     old.version = 1;
     auto written = write_recipe(old);
     ASSERT_TRUE(written) << written.error().describe();
-    EXPECT_EQ(written->sha256, write_recipe(edited())->sha256);
+    EXPECT_EQ(written->sha256, write_recipe(expected)->sha256);
 
     // A version-1 document never holds a version-2 member or operation.
     for (const char* member : {"chroma_denoise", "local_adjustments", "geometry"}) {
@@ -491,7 +544,8 @@ TEST(RecipeDocument, NewerVersionsAreVersionMismatchNeverNoOps) {
     }
     for (const char* operation : {"exposure", "chroma_denoise", "local_adjustments", "geometry"}) {
         Json doc = base;
-        doc["operations"][operation] = 2;  // a newer definition of the operation
+        // A newer definition of the operation (the geometry reads versions 1 and 2, ADR 0017).
+        doc["operations"][operation] = std::string_view(operation) == "geometry" ? 3 : 2;
         EXPECT_EQ(read_error(doc), ErrorCode::VersionMismatch) << operation;
         doc["operations"][operation] = 0;
         EXPECT_EQ(read_error(doc), ErrorCode::InvalidArgument) << operation;
@@ -649,6 +703,26 @@ TEST(RecipeCategories, ChangedControlsPartsAndCopy) {
         EXPECT_TRUE(same_value(c, b, part));
     }
     EXPECT_EQ(c, b);
+}
+
+TEST(RecipeCategories, TheGeometryPartCarriesItsOperationVersion) {
+    // A crop of geometry version 1 is relative to the whole visible area, one of version 2 to the
+    // camera's image area (ADR 0017): pasting the geometry pastes its version too, and a version
+    // change alone is a geometry change.
+    engine::DevelopSettings old_crop;
+    old_crop.operations.geometry = 1;
+    old_crop.geometry.crop = engine::CropRect{0.1, 0.1, 0.9, 0.9};
+    engine::DevelopSettings target;  // version 2
+    EXPECT_FALSE(same_value(target, old_crop, RecipePart::Geometry));
+    copy_value(old_crop, target, RecipePart::Geometry);
+    EXPECT_EQ(target.operations.geometry, 1u);
+    EXPECT_EQ(target.geometry, old_crop.geometry);
+    EXPECT_TRUE(same_value(target, old_crop, RecipePart::Geometry));
+
+    engine::DevelopSettings v2;
+    engine::DevelopSettings v1 = v2;
+    v1.operations.geometry = 1;
+    EXPECT_EQ(changed_parts(v1, v2), std::vector<RecipePart>{RecipePart::Geometry});
 }
 
 }  // namespace

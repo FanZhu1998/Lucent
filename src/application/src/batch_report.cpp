@@ -41,6 +41,21 @@ Json parsed_or_text(const std::string& text) {
     return parsed.is_discarded() ? Json(text) : parsed;
 }
 
+// The blueprint's names of the support states (section 3), as the report shows them.
+std::string support_label(SupportStatus status) {
+    switch (status) {
+        case SupportStatus::Verified:
+            return "Verified";
+        case SupportStatus::CompatibleUnverified:
+            return "Compatible, unverified";
+        case SupportStatus::Limited:
+            return "Limited";
+        case SupportStatus::Unsupported:
+            return "Unsupported";
+    }
+    return "Unknown";
+}
+
 std::string html_escape(std::string_view text) {
     std::string out;
     out.reserve(text.size());
@@ -404,6 +419,7 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
                         entry.sha256 = (*receipt)->output_sha256;
                         if (auto details = read_receipt_details((*receipt)->settings_json)) {
                             entry.review = details->review;
+                            entry.support = details->support;
                             entry.details = std::move(*details);
                         }
                     }
@@ -471,6 +487,9 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
         entry.source = exclusion.source;
         entry.outcome = ReportOutcome::Skipped;
         entry.error = exclusion.reason;
+        if (exclusion.reason.code == ErrorCode::Unsupported) {
+            entry.support = SupportStatus::Unsupported;  // skipped for its support status
+        }
         const detail::Wording wording = detail::describe_failure(exclusion.reason);
         entry.reason = wording.reason;
         entry.action = wording.action;
@@ -560,6 +579,7 @@ Expected<std::string> report_json(const BatchReport& report) {
                 review.push_back(core::sanitize_utf8(note));
             }
             e["review"] = std::move(review);
+            e["support"] = entry.support ? Json(std::string(assets::to_string(*entry.support))) : Json();
             e["attempts"] = entry.attempts;
             e["automatic"] = entry.automatic ? automatic_json(*entry.automatic) : Json();
             if (entry.error) {
@@ -637,6 +657,9 @@ std::string report_html(const BatchReport& report) {
         }
         if (!entry.action.empty()) {
             lines.push_back("<em>" + html_escape(entry.action) + "</em>");
+        }
+        if (entry.support) {
+            lines.push_back("Camera support: " + html_escape(support_label(*entry.support)));
         }
         if (entry.automatic && entry.automatic->revision) {
             const AutomaticReport& a = *entry.automatic;
