@@ -15,7 +15,10 @@
 # Run just these with:  ctest -L fixtures
 #
 # qualification/ holds the camera qualification tests (W10, ADR 0016; label "qualification").
+#
+# bench/ holds the tests of the performance harness in tools/bench (W12, ADR 0021; label "bench").
 
+add_subdirectory(bench)
 add_subdirectory(qualification)
 
 if(NOT TARGET lucent_probe_report)

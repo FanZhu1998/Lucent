@@ -1,10 +1,15 @@
 #include "developer_automation.hpp"
 
+// clang-format off: psapi.h needs the declarations of windows.h.
 #include <windows.h>
+#include <psapi.h>
+// clang-format on
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -37,6 +42,18 @@ constexpr int kStableFramesRequired = 2;
 // visible thumbnail.
 constexpr int kProbeIntervalMs = 5;
 constexpr qint64 kWalkIntervalMs = 10;
+
+// W12 measurement hooks: the largest photo count of --cancel-batch-after / --pause-batch-after and
+// the longest delay of --resume-after / --cancel-auto-after.
+constexpr int kMaxBatchPhotos = 1'000'000;
+constexpr int kMaxHookDelayMs = 600'000;
+
+constexpr double kMebibyte = 1024.0 * 1024.0;
+
+double filetime_seconds(const FILETIME& time) {
+    const auto ticks = (static_cast<quint64>(time.dwHighDateTime) << 32) | static_cast<quint64>(time.dwLowDateTime);
+    return static_cast<double>(ticks) / 1e7;  // 100 ns ticks
+}
 
 // Milliseconds since this process was created (GetProcessTimes), or -1.
 qint64 milliseconds_since_process_start() {
@@ -359,16 +376,39 @@ CommandLine parse_command_line(const QStringList& arguments) {
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
+    // W12 measurement hooks.
+    const QCommandLineOption resume_batch_option(
+        QStringLiteral("resume-batch"),
+        QStringLiteral("Follow the library's newest batch with work left until it has finished (instead of "
+                       "--export-batch)."));
+    const QCommandLineOption cancel_batch_option(
+        QStringLiteral("cancel-batch-after"),
+        QStringLiteral("With --export-batch or --resume-batch, cancel the batch once <n> photos are done."),
+        QStringLiteral("n"));
+    const QCommandLineOption pause_batch_option(
+        QStringLiteral("pause-batch-after"),
+        QStringLiteral("With --export-batch or --resume-batch, pause the batch once <n> photos are done, then "
+                       "resume it."),
+        QStringLiteral("n"));
+    const QCommandLineOption resume_after_option(
+        QStringLiteral("resume-after"),
+        QStringLiteral("With --pause-batch-after, resume this many milliseconds after the pause took effect "
+                       "(default 5000)."),
+        QStringLiteral("ms"));
+    const QCommandLineOption cancel_auto_option(
+        QStringLiteral("cancel-auto-after"),
+        QStringLiteral("With --auto, cancel the run this many milliseconds after it started."), QStringLiteral("ms"));
     parser.addOptions(
-        {import_option,        subfolders_option, open_first_option, view_option,         export_option,
-         screenshot_option,    quit_option,       timeout_option,    format_option,       color_option,
-         quality_option,       zoom_option,       measure_option,    dialog_option,       data_root_option,
-         set_option,           drag_option,       drag_steps_option, compare_option,      clipping_option,
-         scroll_option,        batch_option,      to_option,         preset_option,       batch_dialog_option,
-         running_option,       done_option,       auto_option,       automatic_option,    consistent_option,
-         turn_option,          straighten_option, crop_option,       add_mask_option,     mask_set_option,
-         mask_exposure_option, brush_option,      brush_size_option, mask_overlay_option, tool_option,
-         about_option});
+        {import_option,        subfolders_option,   open_first_option,   view_option,         export_option,
+         screenshot_option,    quit_option,         timeout_option,      format_option,       color_option,
+         quality_option,       zoom_option,         measure_option,      dialog_option,       data_root_option,
+         set_option,           drag_option,         drag_steps_option,   compare_option,      clipping_option,
+         scroll_option,        batch_option,        to_option,           preset_option,       batch_dialog_option,
+         running_option,       done_option,         auto_option,         automatic_option,    consistent_option,
+         turn_option,          straighten_option,   crop_option,         add_mask_option,     mask_set_option,
+         mask_exposure_option, brush_option,        brush_size_option,   mask_overlay_option, tool_option,
+         about_option,         resume_batch_option, cancel_batch_option, pause_batch_option,  resume_after_option,
+         cancel_auto_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -597,7 +637,11 @@ CommandLine parse_command_line(const QStringList& arguments) {
         return fail(QStringLiteral("--set, --drag, --compare, --clipping, --scroll-panel, --auto and the geometry and "
                                    "mask options need --open-first."));
     }
+    options.resume_batch = parser.isSet(resume_batch_option);
     if (parser.isSet(batch_option)) {
+        if (options.resume_batch) {
+            return fail(QStringLiteral("--resume-batch follows a batch that exists: use it without --export-batch."));
+        }
         options.batch_folder = parser.value(batch_option).trimmed();
         if (options.batch_folder.isEmpty()) {
             return fail(QStringLiteral("--export-batch needs a folder."));
@@ -607,10 +651,13 @@ CommandLine parse_command_line(const QStringList& arguments) {
             return fail(QStringLiteral("--export-batch needs --to <folder>."));
         }
     } else if (parser.isSet(to_option) || parser.isSet(preset_option) || parser.isSet(batch_dialog_option) ||
-               parser.isSet(running_option) || parser.isSet(done_option) || parser.isSet(automatic_option) ||
-               parser.isSet(consistent_option)) {
-        return fail(QStringLiteral("--to, --preset, --show-batch-dialog, --screenshot-running, --quit-when-done, "
-                                   "--automatic and --keep-consistent need --export-batch."));
+               parser.isSet(automatic_option) || parser.isSet(consistent_option)) {
+        return fail(QStringLiteral("--to, --preset, --show-batch-dialog, --automatic and --keep-consistent need "
+                                   "--export-batch."));
+    } else if (!options.resume_batch && (parser.isSet(running_option) || parser.isSet(done_option) ||
+                                         parser.isSet(cancel_batch_option) || parser.isSet(pause_batch_option))) {
+        return fail(QStringLiteral("--screenshot-running, --quit-when-done, --cancel-batch-after and "
+                                   "--pause-batch-after need --export-batch or --resume-batch."));
     }
     if (parser.isSet(automatic_option)) {
         const QString mode = parser.value(automatic_option).trimmed().toLower();
@@ -642,9 +689,49 @@ CommandLine parse_command_line(const QStringList& arguments) {
             return fail(QStringLiteral("--screenshot-running needs a .png file name."));
         }
     }
-    if (options.show_batch_dialog && (options.quit_when_done || !options.running_screenshot_path.isEmpty())) {
-        return fail(QStringLiteral("--show-batch-dialog does not start the batch: --screenshot-running and "
-                                   "--quit-when-done need it to run."));
+    // W12 measurement hooks.
+    const auto bounded = [&parser](const QCommandLineOption& option, int maximum) -> std::optional<int> {
+        bool ok = false;
+        const int value = parser.value(option).trimmed().toInt(&ok);
+        return ok && value >= 0 && value <= maximum ? std::optional<int>(value) : std::nullopt;
+    };
+    if (parser.isSet(cancel_batch_option)) {
+        options.cancel_batch_after = bounded(cancel_batch_option, kMaxBatchPhotos);
+        if (!options.cancel_batch_after) {
+            return fail(
+                QStringLiteral("--cancel-batch-after needs a number of photos from 0 to %1.").arg(kMaxBatchPhotos));
+        }
+    }
+    if (parser.isSet(pause_batch_option)) {
+        options.pause_batch_after = bounded(pause_batch_option, kMaxBatchPhotos);
+        if (!options.pause_batch_after) {
+            return fail(
+                QStringLiteral("--pause-batch-after needs a number of photos from 0 to %1.").arg(kMaxBatchPhotos));
+        }
+    }
+    if (parser.isSet(resume_after_option)) {
+        if (!options.pause_batch_after) {
+            return fail(QStringLiteral("--resume-after needs --pause-batch-after."));
+        }
+        const std::optional<int> ms = bounded(resume_after_option, kMaxHookDelayMs);
+        if (!ms) {
+            return fail(QStringLiteral("--resume-after needs milliseconds from 0 to %1.").arg(kMaxHookDelayMs));
+        }
+        options.resume_after_ms = *ms;
+    }
+    if (parser.isSet(cancel_auto_option)) {
+        if (!options.run_auto) {
+            return fail(QStringLiteral("--cancel-auto-after needs --auto."));
+        }
+        options.cancel_auto_after_ms = bounded(cancel_auto_option, kMaxHookDelayMs);
+        if (!options.cancel_auto_after_ms) {
+            return fail(QStringLiteral("--cancel-auto-after needs milliseconds from 0 to %1.").arg(kMaxHookDelayMs));
+        }
+    }
+    if (options.show_batch_dialog && (options.quit_when_done || !options.running_screenshot_path.isEmpty() ||
+                                      options.cancel_batch_after || options.pause_batch_after)) {
+        return fail(QStringLiteral("--show-batch-dialog does not start the batch: --screenshot-running, "
+                                   "--quit-when-done, --cancel-batch-after and --pause-batch-after need it to run."));
     }
     if (parser.isSet(timeout_option)) {
         bool ok = false;
@@ -707,6 +794,7 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
                     return;
                 }
                 batch_id_ = batch;
+                batch_created_ms_ = clock_.elapsed();
                 report(QStringLiteral("batch %1 created").arg(batch));
                 if (const auto row = controller_.batches()->row_of(batch)) {
                     on_batch_changed(*controller_.batches()->batch_at(*row));
@@ -725,9 +813,11 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
                     report_batch_entries(report);
                 }
             });
+    connect(&controller_.batch_service(), &BatchService::batches_listed, this, &DeveloperAutomation::on_batches_listed);
     connect(&controller_.edit_service(), &EditService::auto_finished, this, [this](const AutoOutcome& outcome) {
         if (auto_started_ && !auto_outcome_ && outcome.item == controller_.edit()->item()) {
             auto_outcome_ = outcome;
+            auto_finished_ms_ = auto_clock_.elapsed();  // not the poll's time: a frame may render first
         }
     });
     connect(&controller_.export_service(), &ExportService::job_changed, this, [](const ExportJob& job) {
@@ -765,6 +855,19 @@ void DeveloperAutomation::start() {
         report(QStringLiteral("measure: window loaded %1 ms after the process started")
                    .arg(milliseconds_since_process_start()));
         probe_timer_.start();
+        // W12: the first frame the window presented. frameSwapped is emitted on the scene graph's render
+        // thread (with the threaded render loop): handled there, once, touching nothing of this object
+        // (the window, the connection's context, may outlive it).
+        auto seen = std::make_shared<std::atomic<bool>>(false);
+        connect(
+            &window_, &QQuickWindow::frameSwapped, &window_,
+            [seen] {
+                if (!seen->exchange(true)) {
+                    report(QStringLiteral("measure: first frame presented %1 ms after the process started")
+                               .arg(milliseconds_since_process_start()));
+                }
+            },
+            Qt::DirectConnection);
     }
     if (options_.include_subfolders) {
         controller_.set_include_subfolders(true);  // show the option the imports used
@@ -837,13 +940,15 @@ void DeveloperAutomation::report_preview(const char* what, qint64 visible_ms) {
 }
 
 void DeveloperAutomation::report_measurements() {
-    if (!options_.measure) {
+    if (!options_.measure || measurements_reported_) {
         return;
     }
+    measurements_reported_ = true;
     if (first_thumbnail_ms_ < 0) {
         report(QStringLiteral("measure: no thumbnail became visible"));
     }
     if (gaps_ms_.empty()) {
+        report_process();
         return;
     }
     std::vector<qint64> sorted = gaps_ms_;
@@ -867,6 +972,35 @@ void DeveloperAutomation::report_measurements() {
                .arg(sorted.back())
                .arg(over(50))
                .arg(over(100)));
+    report_process();
+}
+
+void DeveloperAutomation::report_process() {
+    if (!options_.measure || process_reported_) {
+        return;
+    }
+    process_reported_ = true;
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    FILETIME creation{};
+    FILETIME exit{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                              sizeof(counters)) ||
+        !GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) {
+        report(QStringLiteral("measure: process: unavailable"));
+        return;
+    }
+    report(QStringLiteral("measure: process: peak_working_set_mib=%1 peak_commit_mib=%2 commit_mib=%3 cpu_s=%4 "
+                          "user_s=%5 kernel_s=%6 wall_s=%7")
+               .arg(double(counters.PeakWorkingSetSize) / kMebibyte, 0, 'f', 1)
+               .arg(double(counters.PeakPagefileUsage) / kMebibyte, 0, 'f', 1)
+               .arg(double(counters.PrivateUsage) / kMebibyte, 0, 'f', 1)
+               .arg(filetime_seconds(user) + filetime_seconds(kernel), 0, 'f', 2)
+               .arg(filetime_seconds(user), 0, 'f', 2)
+               .arg(filetime_seconds(kernel), 0, 'f', 2)
+               .arg(double(milliseconds_since_process_start()) / 1000.0, 0, 'f', 2));
 }
 
 void DeveloperAutomation::poll() {
@@ -900,6 +1034,9 @@ void DeveloperAutomation::poll() {
             report(QStringLiteral("the fit preview failed: %1").arg(controller_.current()->processing_detail()));
         } else if (options_.measure) {
             report_preview("fit", clock_.elapsed() - open_ms_);
+            // W12: from adding the photo (the import request) to its first RAW-rendered frame on screen;
+            // the camera's own preview shown meanwhile does not count.
+            report(QStringLiteral("measure: first RAW preview shown %1 ms after the import started").arg(clock_.elapsed()));
         }
         QQuickItem* viewer = window_.findChild<QQuickItem*>(QStringLiteral("previewViewer"));
         if (status == kImageStatusReady && wants_editing()) {
@@ -987,7 +1124,7 @@ void DeveloperAutomation::poll() {
         return;
     }
     case Stage::Done:
-        if (!options_.batch_folder.isEmpty() && options_.screenshot_path.isEmpty()) {
+        if ((!options_.batch_folder.isEmpty() || options_.resume_batch) && options_.screenshot_path.isEmpty()) {
             return;  // the batch's own signals finish the run (--quit-when-done)
         }
         if (options_.measure && options_.screenshot_path.isEmpty()) {
@@ -1029,6 +1166,7 @@ void DeveloperAutomation::start_batch() {
     setup.prepare(controller_.library()->selected_items(), controller_.library()->all_items());
     setup.prepare_folder(QUrl::fromLocalFile(folder), options_.include_subfolders);
     configure();
+    batch_submit_ms_ = clock_.elapsed();
     if (!controller_.startBatch()) {
         report(QStringLiteral("--export-batch: the batch cannot start: %1").arg(setup.start_hint()));
         batch_failed_to_start_ = true;
@@ -1098,11 +1236,137 @@ void DeveloperAutomation::report_batch_entries(const BatchReportInfo& info) {
     finish_when_done();
 }
 
+void DeveloperAutomation::on_batches_listed(const QList<BatchSnapshot>& batches) {
+    if (!options_.resume_batch || resume_listed_ || batch_failed_to_start_) {
+        return;
+    }
+    resume_listed_ = true;
+    // Newest first: the newest batch with work left, as the Exports view lists them.
+    const auto found = std::find_if(batches.begin(), batches.end(), [](const BatchSnapshot& batch) {
+        return batch.state != BatchState::Draft && !batch.finished_state();
+    });
+    if (found == batches.end()) {
+        report(QStringLiteral("--resume-batch: no batch of this library has work left"));
+        batch_failed_to_start_ = true;
+        finish_when_done();
+        return;
+    }
+    batch_id_ = found->id;
+    batch_created_ms_ = clock_.elapsed();
+    report(QStringLiteral("batch %1 found with work left: %2 of %3 done, %4 remaining%5")
+               .arg(found->id)
+               .arg(found->completed + found->failed + found->skipped + found->cancelled)
+               .arg(found->total)
+               .arg(found->remaining())
+               .arg(found->state == BatchState::Paused ? QStringLiteral(" (paused: resumed)") : QString()));
+    if (found->state == BatchState::Paused) {
+        controller_.batch_service().resume(found->id);
+    }
+    on_batch_changed(*found);
+}
+
+void DeveloperAutomation::apply_batch_hooks(const BatchSnapshot& batch, qint64 done) {
+    BatchService& service = controller_.batch_service();
+    // --pause-batch-after: pause once; resume --resume-after ms after its last running photo finished.
+    if (options_.pause_batch_after && !batch_pause_requested_ && batch.state == BatchState::Running &&
+        done >= *options_.pause_batch_after && batch.remaining() > 0) {
+        batch_pause_requested_ = true;
+        batch_pause_ms_ = clock_.elapsed();
+        batch_pause_running_ = batch.running;
+        report(QStringLiteral("batch %1: pause requested after %2 photos done, %3 running")
+                   .arg(batch.id)
+                   .arg(done)
+                   .arg(batch.running));
+        service.pause(batch.id);
+        return;  // this snapshot is from before the pause
+    }
+    if (batch_pause_requested_ && !batch_pause_settled_ && batch.state == BatchState::Paused && batch.running == 0) {
+        batch_pause_settled_ = true;
+        if (options_.measure) {
+            report(QStringLiteral("measure: batch %1 pause: requested_ms=%2 running=%3 settled_after_ms=%4 "
+                                  "resume_after_ms=%5")
+                       .arg(batch.id)
+                       .arg(batch_pause_ms_)
+                       .arg(batch_pause_running_)
+                       .arg(clock_.elapsed() - batch_pause_ms_)
+                       .arg(options_.resume_after_ms));
+        }
+        const BatchId id = batch.id;
+        QTimer::singleShot(options_.resume_after_ms, this, [this, id] {
+            report(QStringLiteral("batch %1: resume requested").arg(id));
+            controller_.batch_service().resume(id);
+        });
+    }
+    // --cancel-batch-after: cancel once, while a photo is being processed.
+    if (options_.cancel_batch_after && !batch_cancel_requested_ && done >= *options_.cancel_batch_after &&
+        batch.running > 0 && (batch.state == BatchState::Running || batch.state == BatchState::Paused)) {
+        batch_cancel_requested_ = true;
+        batch_cancel_ms_ = clock_.elapsed();
+        batch_cancel_done_ = done;
+        batch_cancel_running_ = batch.running;
+        report(QStringLiteral("batch %1: cancel requested after %2 photos done, %3 running")
+                   .arg(batch.id)
+                   .arg(done)
+                   .arg(batch.running));
+        service.cancel(batch.id);
+    }
+}
+
+void DeveloperAutomation::report_batch_timeline(const BatchSnapshot& batch) {
+    if (!options_.measure) {
+        return;
+    }
+    // This session's share: a batch --resume-batch found had photos done already.
+    const BatchSnapshot& first = batch_first_seen_ ? *batch_first_seen_ : batch;
+    const qint64 exported = batch.completed - first.completed;
+    const qint64 failed = batch.failed - first.failed;
+    const qint64 skipped = batch.skipped - first.skipped;
+    const qint64 cancelled = batch.cancelled - first.cancelled;
+    const double seconds = batch_created_ms_ >= 0 && batch_finished_ms_ >= batch_created_ms_
+                               ? double(batch_finished_ms_ - batch_created_ms_) / 1000.0
+                               : -1.0;
+    const double per_minute = seconds > 0.0 ? double(exported) * 60.0 / seconds : -1.0;
+    report(QStringLiteral("measure: batch %1 timeline: submit_ms=%2 created_ms=%3 first_done_ms=%4 finished_ms=%5 "
+                          "done=%6 exported=%7 failed=%8 skipped=%9 cancelled=%10 seconds=%11 per_minute=%12")
+               .arg(batch.id)
+               .arg(batch_submit_ms_)
+               .arg(batch_created_ms_)
+               .arg(batch_first_done_ms_)
+               .arg(batch_finished_ms_)
+               .arg(exported + failed + skipped + cancelled)
+               .arg(exported)
+               .arg(failed)
+               .arg(skipped)
+               .arg(cancelled)
+               .arg(seconds, 0, 'f', 3)
+               .arg(per_minute, 0, 'f', 2));
+    if (batch_cancel_requested_) {
+        report(QStringLiteral("measure: batch %1 cancel: requested_ms=%2 done=%3 running=%4 stopped_after_ms=%5")
+                   .arg(batch.id)
+                   .arg(batch_cancel_ms_)
+                   .arg(batch_cancel_done_)
+                   .arg(batch_cancel_running_)
+                   .arg(batch_finished_ms_ - batch_cancel_ms_));
+    }
+    if (const QString scheduler = controller_.batch_service().measurement_summary(); !scheduler.isEmpty()) {
+        report(QStringLiteral("measure: batch %1 scheduler: %2").arg(batch.id).arg(scheduler));
+    }
+}
+
 void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
     if (batch_id_ == 0 || batch.id != batch_id_) {
         return;
     }
+    if (!batch_first_seen_) {
+        batch_first_seen_ = batch;
+    }
     const qint64 done = batch.completed + batch.failed + batch.skipped + batch.cancelled;
+    const qint64 done_when_seen = batch_first_seen_->completed + batch_first_seen_->failed +
+                                  batch_first_seen_->skipped + batch_first_seen_->cancelled;
+    if (batch_first_done_ms_ < 0 && done > done_when_seen) {
+        batch_first_done_ms_ = clock_.elapsed();
+    }
+    apply_batch_hooks(batch, done);
     if (done != batch_last_done_) {
         batch_last_done_ = done;
         report(QStringLiteral("batch %1: %2 of %3 done (%4 %5, %6 failed, %7 skipped), %8 remaining")
@@ -1121,6 +1385,9 @@ void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
     }
     if (batch.finished_state()) {
         batch_finished_ = true;
+        if (batch_finished_ms_ < 0) {
+            batch_finished_ms_ = clock_.elapsed();  // the review count may arrive with a later snapshot
+        }
         if (batch.review >= 0 && !batch_reported_) {
             batch_reported_ = true;
             report(QStringLiteral("batch %1 finished (%2): %3 %4, %5 skipped, %6 failed, %7 cancelled, %8 "
@@ -1139,6 +1406,7 @@ void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
             if (!batch.report_path.isEmpty()) {
                 report(QStringLiteral("batch %1 report: %2").arg(batch.id).arg(batch.report_path));
             }
+            report_batch_timeline(batch);
         }
         if (batch_reported_ && !batch_report_requested_) {
             // Its rows: what happened to each photo (and what Auto did).
@@ -1154,11 +1422,12 @@ void DeveloperAutomation::on_batch_changed(const BatchSnapshot& batch) {
 }
 
 bool DeveloperAutomation::batch_pending() const {
-    if (options_.batch_folder.isEmpty() || options_.show_batch_dialog || batch_failed_to_start_) {
+    if ((options_.batch_folder.isEmpty() && !options_.resume_batch) || options_.show_batch_dialog ||
+        batch_failed_to_start_) {
         return false;
     }
     if (batch_id_ == 0) {
-        return true;  // still being prepared
+        return true;  // still being prepared (--resume-batch: not listed yet)
     }
     if (!batch_reported_ || !batch_report_printed_) {
         return true;  // running, or its final review count or its report is still being read
@@ -1196,11 +1465,15 @@ void DeveloperAutomation::finish_when_done() {
     } else if (const auto row = controller_.batches()->row_of(batch_id_)) {
         code = controller_.batches()->batch_at(*row)->failed > 0 ? 4 : 0;
     }
+    report_measurements();  // --measure: the UI thread and process lines before the exit
     emit quitRequested(code);
 }
 
 void DeveloperAutomation::after_imports() {
     settle_clock_.start();
+    if (options_.resume_batch && !resume_listed_) {
+        controller_.batch_service().refresh();  // on_batches_listed finds the batch to follow
+    }
     if (options_.open_first) {
         if (controller_.openItem(0)) {
             open_ms_ = clock_.elapsed();
@@ -1409,6 +1682,21 @@ bool DeveloperAutomation::auto_step() {
         auto_clock_.start();
         report(QStringLiteral("auto: started on %1").arg(controller_.current()->file_name()));
         edit.runAuto();
+        if (options_.cancel_auto_after_ms) {
+            // W12: Cancel as the Automatic settings panel does, unless the run has ended already.
+            QTimer::singleShot(*options_.cancel_auto_after_ms, this, [this] {
+                if (auto_outcome_ || auto_cancel_ms_ >= 0) {
+                    return;
+                }
+                EditSession& session = *controller_.edit();
+                auto_cancel_ms_ = auto_clock_.elapsed();
+                auto_cancel_progress_ = session.automatic()->progress();
+                report(QStringLiteral("auto: cancel requested %1 ms after the start (%2 % of the run)")
+                           .arg(auto_cancel_ms_)
+                           .arg(auto_cancel_progress_ * 100.0, 0, 'f', 0));
+                session.cancelAuto();
+            });
+        }
         return true;
     }
     if (!auto_outcome_) {
@@ -1416,6 +1704,19 @@ bool DeveloperAutomation::auto_step() {
     }
     auto_done_ = true;
     report(QStringLiteral("auto: finished after %1 ms: %2").arg(auto_clock_.elapsed()).arg(auto_outcome_->message));
+    if (options_.measure) {
+        report(QStringLiteral("measure: auto run: ended_after_ms=%1 cancelled=%2")
+                   .arg(auto_finished_ms_)
+                   .arg(auto_outcome_->cancelled ? 1 : 0));
+        if (auto_cancel_ms_ >= 0) {
+            report(QStringLiteral("measure: auto cancel: requested_after_ms=%1 ended_after_request_ms=%2 cancelled=%3 "
+                                  "progress=%4")
+                       .arg(auto_cancel_ms_)
+                       .arg(auto_finished_ms_ - auto_cancel_ms_)
+                       .arg(auto_outcome_->cancelled ? 1 : 0)
+                       .arg(auto_cancel_progress_, 0, 'f', 3));
+        }
+    }
     if (auto_outcome_->saved && auto_outcome_->made_current) {
         // The frame of the automatic revision, then the summary (edit_step reports it once it came).
         edit_waiting_ = true;
@@ -1745,7 +2046,7 @@ void DeveloperAutomation::report_drag() {
 void DeveloperAutomation::start_settling() {
     if (options_.screenshot_path.isEmpty()) {
         stage_ = Stage::Done;
-        if (!options_.measure && options_.batch_folder.isEmpty()) {
+        if (!options_.measure && options_.batch_folder.isEmpty() && !options_.resume_batch) {
             poll_timer_.stop();
         }
         return;

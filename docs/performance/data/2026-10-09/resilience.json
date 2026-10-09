@@ -1,0 +1,3710 @@
+{
+  "schema": "lucent.bench-resilience",
+  "version": 1,
+  "measured_at": "2026-10-09T19:19:54Z",
+  "duration_minutes": 5.92,
+  "description": "1,000-file batch resilience run (blueprint section 10): an as-shot JPEG batch of every fixture, real copies of small fixtures, truncated copies and synthetic DNGs, with two injected worker crashes, a pause and resume, Lucent.exe ended mid-batch and started again (--resume-batch), then a separate batch cancelled after a few photos; every output hashed by a watcher and checked against the report.",
+  "parameters": {
+    "count": 1000,
+    "corrupt": 10,
+    "crash_at": ["100","450"],
+    "pause_at": 250,
+    "kill_at": 600,
+    "cancel_subset": 100,
+    "cancel_after": 20,
+    "sample_ms": 1000,
+    "hash_after_seconds": 60
+  },
+  "corpus": {
+    "files": 1000,
+    "fixtures": 40,
+    "fixture_copies": 100,
+    "truncated_copies": 10,
+    "synthetic_dngs": 850,
+    "bytes_written": 4071723684,
+    "synthetic_sizes": ["1024x768","1200x800","1500x1000","1600x1066","2000x1334"]
+  },
+  "machine": {
+    "collected_at": "2026-10-09T19:19:54Z",
+    "cpu": {
+      "name": "AMD Ryzen 5 5500U with Radeon Graphics",
+      "cores": 6,
+      "logical_processors": 12,
+      "max_clock_mhz": 2100
+    },
+    "memory": {
+      "total_gib": 11.91,
+      "available_gib_at_start": 2.3
+    },
+    "os": {
+      "caption": "Microsoft Windows 11 Pro",
+      "version": "10.0.26200",
+      "build": "26200",
+      "architecture": "64-bit"
+    },
+    "gpu": ["AMD Radeon(TM) Graphics"],
+    "system_disk": {
+      "model": "512GB SSD",
+      "media": "SSD",
+      "bus": "NVMe",
+      "size_gb": 512
+    },
+    "system_volume": {
+      "file_system": "NTFS",
+      "free_gib": 9
+    },
+    "power_scheme": "381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+    "on_ac_power": true,
+    "antivirus": {
+      "product": "Microsoft Defender",
+      "real_time_protection": true
+    },
+    "git": {
+      "commit": "e51dd652c495fda4e0ef54a7f6de9c642250d441",
+      "branch": "feat/w12-hardening",
+      "uncommitted_paths": 56
+    },
+    "build": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "LUCENT_BUILD_UI": "ON",
+      "LUCENT_WARNINGS_AS_ERRORS": "ON",
+      "VCPKG_TARGET_TRIPLET": "x64-windows-lucent"
+    },
+    "busiest_other_processes_percent": [93,9,3,2,2],
+    "idle_cpu_percent_before": 11.036
+  },
+  "injections": [
+    {
+      "kind": "worker crash",
+      "at_done": 100,
+      "target_done": "100",
+      "seconds": 40.251,
+      "pid": 17252,
+      "ended": true,
+      "live_workers": 2
+    },
+    {
+      "kind": "worker crash",
+      "at_done": 451,
+      "target_done": "450",
+      "seconds": 152.081,
+      "pid": 43736,
+      "ended": true,
+      "live_workers": 2
+    },
+    {
+      "kind": "Lucent.exe ended",
+      "at_done": 603,
+      "seconds": 195.273,
+      "pid": 33100
+    }
+  ],
+  "checks": {
+    "passed": true,
+    "problems": [],
+    "main_report": {
+      "entries": 1000,
+      "outcomes": {
+        "exported": 987,
+        "skipped": 13
+      },
+      "attempts": {
+        "1": 983,
+        "2": 4,
+        "0": 13
+      },
+      "outputs_hashed": 987,
+      "entries_with_retries": 4,
+      "outcomes_by_kind": {
+        "synthetic": {
+          "exported": 850
+        },
+        "copy": {
+          "exported": 100
+        },
+        "fixture": {
+          "exported": 37,
+          "skipped": 3
+        },
+        "truncated": {
+          "skipped": 10
+        }
+      },
+      "outcomes_by_fixture": {
+        "synthetic": {
+          "exported": 850
+        },
+        "canon-eos-5d-mark-iv-cr2-sraw": {
+          "exported": 21
+        },
+        "dji-fc7303-dng": {
+          "exported": 1
+        },
+        "nikon-z-6-nef-compressed": {
+          "exported": 1
+        },
+        "fujifilm-x-t4-raf-compressed": {
+          "exported": 1
+        },
+        "sony-dslr-a450-arw": {
+          "exported": 21
+        },
+        "canon-eos-r5-cr3-craw-crop-dualpixel": {
+          "exported": 21
+        },
+        "dji-fc4382-dng": {
+          "exported": 21
+        },
+        "bq-aquaris-u-plus-dng": {
+          "exported": 1
+        },
+        "sony-ilce-7m4-arw-compressed": {
+          "exported": 1
+        },
+        "canon-eos-350d-cr2": {
+          "exported": 21
+        },
+        "canon-eos-7d-mark-ii-dng-jxl": {
+          "exported": 1
+        },
+        "pentax-k-3-mark-iii-pef": {
+          "exported": 1
+        },
+        "sony-ilce-7m4-arw-uncompressed": {
+          "exported": 1
+        },
+        "canon-eos-5d-mark-iv-cr2-raw": {
+          "exported": 1
+        },
+        "sony-ilce-7m4-arw-lossless-s": {
+          "exported": 1
+        },
+        "sony-ilce-7m4-arw-compressed-apsc": {
+          "exported": 1
+        },
+        "panasonic-dc-s5m2-rw2": {
+          "exported": 1
+        },
+        "fujifilm-gfx-50s-ii-raf-compressed": {
+          "exported": 1
+        },
+        "hasselblad-x1d-ii-50c-3fr": {
+          "exported": 1
+        },
+        "sony-ilce-7rm5-arw-compressed": {
+          "exported": 1
+        },
+        "pentax-k-3-mark-iii-monochrome-dng": {
+          "exported": 1
+        },
+        "adobe-dng-canon-eos-5d-mark-iii-linear-dng": {
+          "exported": 1
+        },
+        "om-system-om-1-orf": {
+          "exported": 1
+        },
+        "canon-eos-r5-cr3-raw-crop": {
+          "exported": 1
+        },
+        "fujifilm-x-t4-raf-lossless": {
+          "exported": 1
+        },
+        "olympus-xz-10-orf": {
+          "exported": 1
+        },
+        "canon-eos-r5-cr3-raw": {
+          "exported": 1
+        },
+        "sony-ilce-7m4-arw-lossless-m": {
+          "exported": 1
+        },
+        "leica-m-monochrom-typ-246-dng": {
+          "exported": 1
+        },
+        "dji-fc220-dng": {
+          "exported": 1
+        },
+        "ricoh-gxr-s10-dng": {
+          "exported": 1
+        },
+        "oneplus-one-dng": {
+          "exported": 1
+        },
+        "nikon-z-6-nef-lossless": {
+          "exported": 1
+        },
+        "sony-ilce-7m4-arw-lossless-l": {
+          "exported": 1
+        },
+        "canon-eos-r5-cr3-craw": {
+          "exported": 1
+        },
+        "hasselblad-l2d-20c-dng": {
+          "exported": 1
+        },
+        "leica-m10-dng": {
+          "exported": 1
+        },
+        "nikon-z-8-nef-he-star": {
+          "skipped": 1
+        },
+        "insta360-one-x-dng": {
+          "skipped": 1
+        },
+        "nikon-z-8-nef-he": {
+          "skipped": 1
+        }
+      }
+    },
+    "cancelled_report": {
+      "entries": 100,
+      "outcomes": {
+        "exported": 20,
+        "cancelled": 80
+      },
+      "outputs_hashed": 20
+    },
+    "sources_changed": [],
+    "memory": {
+      "session1": {
+        "samples": 184,
+        "from_seconds": 9.397,
+        "lucent_commit_first_tenth_median_mib": 258.531,
+        "lucent_commit_last_tenth_median_mib": 261.719,
+        "lucent_commit_growth_mib": 3.188,
+        "lucent_commit_trend_mib_per_hour": 78.083,
+        "lucent_commit_max_mib": 262.668,
+        "workers_commit_mib": {
+          "n": 184,
+          "median": 193.113,
+          "p95": 773.809,
+          "min": 10.906,
+          "max": 1433.41,
+          "mean": 268.112,
+          "stdev": 255.953,
+          "cv": 0.955
+        },
+        "aggregate_limit_mib": 4559.4,
+        "system_available_min_mib": 909.316,
+        "bounded": true,
+        "rule": "from the first finished photo: last-tenth median of Lucent.exe commit \u003c= first-tenth median + 64 MiB, and the workers together \u003c= the aggregate limit"
+      },
+      "session2": {
+        "samples": 127,
+        "from_seconds": 1.416,
+        "lucent_commit_first_tenth_median_mib": 299.416,
+        "lucent_commit_last_tenth_median_mib": 302.105,
+        "lucent_commit_growth_mib": 2.689,
+        "lucent_commit_trend_mib_per_hour": 216.323,
+        "lucent_commit_max_mib": 302.359,
+        "workers_commit_mib": {
+          "n": 127,
+          "median": 224.207,
+          "p95": 764.516,
+          "min": 8.551,
+          "max": 934.172,
+          "mean": 272.838,
+          "stdev": 219.711,
+          "cv": 0.805
+        },
+        "aggregate_limit_mib": 4559.4,
+        "system_available_min_mib": 1780.25,
+        "bounded": true,
+        "rule": "from the first finished photo: last-tenth median of Lucent.exe commit \u003c= first-tenth median + 64 MiB, and the workers together \u003c= the aggregate limit"
+      }
+    }
+  },
+  "throughput": {
+    "session1": {
+      "from_done": 0,
+      "to_done": 603,
+      "minutes": 3.101,
+      "per_minute": 194.47
+    },
+    "session2": {
+      "from_done": 605,
+      "to_done": 987,
+      "minutes": 2.145,
+      "per_minute": 178.055
+    },
+    "session2_timeline": {
+      "submit_ms": -1,
+      "created_ms": 15,
+      "first_done_ms": 304,
+      "finished_ms": 128739,
+      "done": 382,
+      "exported": 382,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "seconds": 128.724,
+      "per_minute": 178.06
+    }
+  },
+  "sessions": [
+    {
+      "name": "session1-export",
+      "exit_code": -1,
+      "timed_out": false,
+      "seconds": 195.423,
+      "log": "build\\w12-perf-resilience\\logs\\session1-export.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 194.676,
+            "done": 601,
+            "total": 987,
+            "completed": 601,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 386
+          },
+          {
+            "seconds": 194.978,
+            "done": 603,
+            "total": 987,
+            "completed": 603,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 384
+          }
+        ],
+        "errors": [],
+        "window_loaded_ms": 915,
+        "first_frame_ms": 1058,
+        "batch_id": 1,
+        "batch_pause": {
+          "requested_ms": 86495,
+          "running": 1,
+          "settled_after_ms": 200,
+          "resume_after_ms": 10000
+        }
+      },
+      "resources": {
+        "wall_s": 195.423,
+        "cpu_s": 1378.891,
+        "cpu_percent_of_machine": 58.799,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 272.785,
+          "peak_working_set_mib": 314.812,
+          "cpu_s": 49.734
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 4,
+            "peak_commit_mib": 1394.266,
+            "peak_working_set_mib": 1400.211,
+            "cpu_s": 1329.156,
+            "exit_codes": [0,-1073741819,-1073741819,0]
+          }
+        ],
+        "samples": 195,
+        "sampled": {
+          "root_private_max_mib": 262.668,
+          "descendants_private_max_mib": 1433.41,
+          "tree_private_max_mib": 1695.473,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 78.339,
+          "tree_cpu_percent_max": 87.801,
+          "system_available_min_mib": 909.316
+        }
+      },
+      "series": [
+        {
+          "s": 0.1,
+          "lucent_mib": 0.9,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 0,
+          "cpu_system": 0,
+          "available_mib": 2278
+        },
+        {
+          "s": 1.1,
+          "lucent_mib": 97.8,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 7.4,
+          "cpu_system": 26.3,
+          "available_mib": 2140
+        },
+        {
+          "s": 2.1,
+          "lucent_mib": 153.8,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 17.3,
+          "cpu_system": 35,
+          "available_mib": 2045
+        },
+        {
+          "s": 3.1,
+          "lucent_mib": 208.5,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 41,
+          "cpu_system": 68.2,
+          "available_mib": 1782
+        },
+        {
+          "s": 4.1,
+          "lucent_mib": 248.2,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 30.1,
+          "cpu_system": 57.8,
+          "available_mib": 1945
+        },
+        {
+          "s": 5.2,
+          "lucent_mib": 248.2,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 8.3,
+          "cpu_system": 21.1,
+          "available_mib": 1975
+        },
+        {
+          "s": 6.2,
+          "lucent_mib": 248.2,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 9,
+          "cpu_system": 32.8,
+          "available_mib": 2039
+        },
+        {
+          "s": 7.2,
+          "lucent_mib": 248.3,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 7.6,
+          "cpu_system": 29.6,
+          "available_mib": 1963
+        },
+        {
+          "s": 8.2,
+          "lucent_mib": 248.3,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 7.8,
+          "cpu_system": 24.6,
+          "available_mib": 2004
+        },
+        {
+          "s": 9.2,
+          "lucent_mib": 251.3,
+          "workers_mib": 8.2,
+          "workers": 1,
+          "cpu_tree": 13.4,
+          "cpu_system": 29.3,
+          "available_mib": 2116
+        },
+        {
+          "s": 10.2,
+          "lucent_mib": 252.5,
+          "workers_mib": 35.3,
+          "workers": 2,
+          "cpu_tree": 62.2,
+          "cpu_system": 76.6,
+          "available_mib": 2086
+        },
+        {
+          "s": 11.2,
+          "lucent_mib": 255.2,
+          "workers_mib": 138,
+          "workers": 2,
+          "cpu_tree": 63.3,
+          "cpu_system": 76.5,
+          "available_mib": 1976
+        },
+        {
+          "s": 12.2,
+          "lucent_mib": 255.3,
+          "workers_mib": 322.3,
+          "workers": 2,
+          "cpu_tree": 62.6,
+          "cpu_system": 83.6,
+          "available_mib": 1807
+        },
+        {
+          "s": 13.2,
+          "lucent_mib": 258,
+          "workers_mib": 192,
+          "workers": 2,
+          "cpu_tree": 74.1,
+          "cpu_system": 97.4,
+          "available_mib": 1926
+        },
+        {
+          "s": 14.3,
+          "lucent_mib": 257.8,
+          "workers_mib": 94.7,
+          "workers": 2,
+          "cpu_tree": 61.8,
+          "cpu_system": 74.5,
+          "available_mib": 2046
+        },
+        {
+          "s": 15.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 369.2,
+          "workers": 2,
+          "cpu_tree": 57.5,
+          "cpu_system": 78.3,
+          "available_mib": 1749
+        },
+        {
+          "s": 16.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 382.4,
+          "workers": 2,
+          "cpu_tree": 81.5,
+          "cpu_system": 97.7,
+          "available_mib": 1742
+        },
+        {
+          "s": 17.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 135.4,
+          "workers": 2,
+          "cpu_tree": 50.4,
+          "cpu_system": 74.4,
+          "available_mib": 2007
+        },
+        {
+          "s": 18.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 264.5,
+          "workers": 2,
+          "cpu_tree": 63.9,
+          "cpu_system": 75.5,
+          "available_mib": 1863
+        },
+        {
+          "s": 19.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 426.3,
+          "workers": 2,
+          "cpu_tree": 74.5,
+          "cpu_system": 91.3,
+          "available_mib": 1726
+        },
+        {
+          "s": 20.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 463.8,
+          "workers": 2,
+          "cpu_tree": 74.1,
+          "cpu_system": 92.6,
+          "available_mib": 1700
+        },
+        {
+          "s": 21.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 498.3,
+          "workers": 2,
+          "cpu_tree": 83.8,
+          "cpu_system": 97.9,
+          "available_mib": 1802
+        },
+        {
+          "s": 22.3,
+          "lucent_mib": 258.5,
+          "workers_mib": 100.1,
+          "workers": 2,
+          "cpu_tree": 58.9,
+          "cpu_system": 76.4,
+          "available_mib": 2087
+        },
+        {
+          "s": 23.4,
+          "lucent_mib": 258.5,
+          "workers_mib": 225.3,
+          "workers": 2,
+          "cpu_tree": 67.7,
+          "cpu_system": 90.4,
+          "available_mib": 1963
+        },
+        {
+          "s": 24.4,
+          "lucent_mib": 258.5,
+          "workers_mib": 58.9,
+          "workers": 2,
+          "cpu_tree": 68.2,
+          "cpu_system": 84.1,
+          "available_mib": 2143
+        },
+        {
+          "s": 25.4,
+          "lucent_mib": 258.6,
+          "workers_mib": 42.1,
+          "workers": 2,
+          "cpu_tree": 59.1,
+          "cpu_system": 72.6,
+          "available_mib": 2171
+        },
+        {
+          "s": 26.4,
+          "lucent_mib": 258.6,
+          "workers_mib": 188.4,
+          "workers": 2,
+          "cpu_tree": 80.1,
+          "cpu_system": 92.3,
+          "available_mib": 2013
+        },
+        {
+          "s": 27.4,
+          "lucent_mib": 259.7,
+          "workers_mib": 238.6,
+          "workers": 2,
+          "cpu_tree": 68.8,
+          "cpu_system": 93.5,
+          "available_mib": 1996
+        },
+        {
+          "s": 28.4,
+          "lucent_mib": 258.7,
+          "workers_mib": 315.2,
+          "workers": 2,
+          "cpu_tree": 73.4,
+          "cpu_system": 86,
+          "available_mib": 1965
+        },
+        {
+          "s": 29.4,
+          "lucent_mib": 258.8,
+          "workers_mib": 488.7,
+          "workers": 2,
+          "cpu_tree": 74.1,
+          "cpu_system": 92.3,
+          "available_mib": 1733
+        },
+        {
+          "s": 30.4,
+          "lucent_mib": 258.8,
+          "workers_mib": 503.4,
+          "workers": 2,
+          "cpu_tree": 84.4,
+          "cpu_system": 97.2,
+          "available_mib": 1718
+        },
+        {
+          "s": 31.5,
+          "lucent_mib": 258.9,
+          "workers_mib": 314.9,
+          "workers": 2,
+          "cpu_tree": 71.6,
+          "cpu_system": 83.7,
+          "available_mib": 2056
+        },
+        {
+          "s": 32.5,
+          "lucent_mib": 259,
+          "workers_mib": 365.2,
+          "workers": 2,
+          "cpu_tree": 56,
+          "cpu_system": 76.5,
+          "available_mib": 1881
+        },
+        {
+          "s": 33.5,
+          "lucent_mib": 259,
+          "workers_mib": 191.1,
+          "workers": 2,
+          "cpu_tree": 71.2,
+          "cpu_system": 90.3,
+          "available_mib": 2031
+        },
+        {
+          "s": 34.5,
+          "lucent_mib": 258.5,
+          "workers_mib": 345.6,
+          "workers": 2,
+          "cpu_tree": 63.7,
+          "cpu_system": 75.6,
+          "available_mib": 1894
+        },
+        {
+          "s": 35.5,
+          "lucent_mib": 259.2,
+          "workers_mib": 250.2,
+          "workers": 2,
+          "cpu_tree": 84.2,
+          "cpu_system": 94.9,
+          "available_mib": 1971
+        },
+        {
+          "s": 36.5,
+          "lucent_mib": 259.2,
+          "workers_mib": 38.4,
+          "workers": 2,
+          "cpu_tree": 64.4,
+          "cpu_system": 76.9,
+          "available_mib": 2173
+        },
+        {
+          "s": 37.5,
+          "lucent_mib": 259.2,
+          "workers_mib": 156,
+          "workers": 2,
+          "cpu_tree": 56,
+          "cpu_system": 69.6,
+          "available_mib": 2054
+        },
+        {
+          "s": 38.5,
+          "lucent_mib": 259.2,
+          "workers_mib": 72,
+          "workers": 2,
+          "cpu_tree": 57.8,
+          "cpu_system": 84.1,
+          "available_mib": 2141
+        },
+        {
+          "s": 39.5,
+          "lucent_mib": 259.2,
+          "workers_mib": 222.1,
+          "workers": 2,
+          "cpu_tree": 55.2,
+          "cpu_system": 91.8,
+          "available_mib": 2006
+        },
+        {
+          "s": 40.5,
+          "lucent_mib": 259.2,
+          "workers_mib": 54.7,
+          "workers": 2,
+          "cpu_tree": 65.4,
+          "cpu_system": 80.7,
+          "available_mib": 2202
+        },
+        {
+          "s": 41.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 74.7,
+          "workers": 2,
+          "cpu_tree": 71.7,
+          "cpu_system": 85.9,
+          "available_mib": 2203
+        },
+        {
+          "s": 42.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 539.5,
+          "workers": 2,
+          "cpu_tree": 64.9,
+          "cpu_system": 77.9,
+          "available_mib": 1904
+        },
+        {
+          "s": 43.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 427.3,
+          "workers": 2,
+          "cpu_tree": 84.2,
+          "cpu_system": 98.3,
+          "available_mib": 1879
+        },
+        {
+          "s": 44.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 474.1,
+          "workers": 2,
+          "cpu_tree": 67.9,
+          "cpu_system": 84.2,
+          "available_mib": 1979
+        },
+        {
+          "s": 45.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 196.6,
+          "workers": 2,
+          "cpu_tree": 67.7,
+          "cpu_system": 97,
+          "available_mib": 2038
+        },
+        {
+          "s": 46.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 75,
+          "workers": 2,
+          "cpu_tree": 45.3,
+          "cpu_system": 79.7,
+          "available_mib": 2108
+        },
+        {
+          "s": 47.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 316.5,
+          "workers": 2,
+          "cpu_tree": 65.4,
+          "cpu_system": 94.7,
+          "available_mib": 1880
+        },
+        {
+          "s": 48.6,
+          "lucent_mib": 259.2,
+          "workers_mib": 277.7,
+          "workers": 2,
+          "cpu_tree": 53.8,
+          "cpu_system": 95.9,
+          "available_mib": 1898
+        },
+        {
+          "s": 49.6,
+          "lucent_mib": 259.3,
+          "workers_mib": 46.8,
+          "workers": 2,
+          "cpu_tree": 53,
+          "cpu_system": 93.2,
+          "available_mib": 2047
+        },
+        {
+          "s": 50.7,
+          "lucent_mib": 259.4,
+          "workers_mib": 74.4,
+          "workers": 2,
+          "cpu_tree": 47,
+          "cpu_system": 76.2,
+          "available_mib": 2113
+        },
+        {
+          "s": 51.7,
+          "lucent_mib": 259.4,
+          "workers_mib": 440.4,
+          "workers": 2,
+          "cpu_tree": 52.1,
+          "cpu_system": 82.2,
+          "available_mib": 1763
+        },
+        {
+          "s": 52.7,
+          "lucent_mib": 259.4,
+          "workers_mib": 488.8,
+          "workers": 2,
+          "cpu_tree": 77.9,
+          "cpu_system": 92.6,
+          "available_mib": 1687
+        },
+        {
+          "s": 53.7,
+          "lucent_mib": 260.2,
+          "workers_mib": 288.5,
+          "workers": 2,
+          "cpu_tree": 76.7,
+          "cpu_system": 95.5,
+          "available_mib": 2001
+        },
+        {
+          "s": 54.7,
+          "lucent_mib": 259.8,
+          "workers_mib": 183.1,
+          "workers": 2,
+          "cpu_tree": 50.4,
+          "cpu_system": 64.4,
+          "available_mib": 1964
+        },
+        {
+          "s": 55.7,
+          "lucent_mib": 259.2,
+          "workers_mib": 593.6,
+          "workers": 2,
+          "cpu_tree": 77.3,
+          "cpu_system": 98.4,
+          "available_mib": 1579
+        },
+        {
+          "s": 56.7,
+          "lucent_mib": 259.2,
+          "workers_mib": 504.8,
+          "workers": 2,
+          "cpu_tree": 78.2,
+          "cpu_system": 97.9,
+          "available_mib": 1673
+        },
+        {
+          "s": 57.7,
+          "lucent_mib": 259.2,
+          "workers_mib": 488.3,
+          "workers": 2,
+          "cpu_tree": 77.2,
+          "cpu_system": 97.9,
+          "available_mib": 1687
+        },
+        {
+          "s": 58.7,
+          "lucent_mib": 259.2,
+          "workers_mib": 326,
+          "workers": 2,
+          "cpu_tree": 57.4,
+          "cpu_system": 69.3,
+          "available_mib": 1873
+        },
+        {
+          "s": 59.8,
+          "lucent_mib": 259.2,
+          "workers_mib": 87.6,
+          "workers": 2,
+          "cpu_tree": 36.3,
+          "cpu_system": 50,
+          "available_mib": 2111
+        },
+        {
+          "s": 60.8,
+          "lucent_mib": 259.2,
+          "workers_mib": 432.5,
+          "workers": 2,
+          "cpu_tree": 65.7,
+          "cpu_system": 84.6,
+          "available_mib": 1791
+        },
+        {
+          "s": 61.8,
+          "lucent_mib": 259.2,
+          "workers_mib": 515.1,
+          "workers": 2,
+          "cpu_tree": 75.2,
+          "cpu_system": 90.6,
+          "available_mib": 1675
+        },
+        {
+          "s": 62.8,
+          "lucent_mib": 259.2,
+          "workers_mib": 559,
+          "workers": 2,
+          "cpu_tree": 79.5,
+          "cpu_system": 99.5,
+          "available_mib": 1635
+        },
+        {
+          "s": 63.8,
+          "lucent_mib": 259.9,
+          "workers_mib": 303.8,
+          "workers": 2,
+          "cpu_tree": 57.1,
+          "cpu_system": 72.4,
+          "available_mib": 1938
+        },
+        {
+          "s": 64.8,
+          "lucent_mib": 259.9,
+          "workers_mib": 32.3,
+          "workers": 2,
+          "cpu_tree": 53.4,
+          "cpu_system": 67.7,
+          "available_mib": 2149
+        },
+        {
+          "s": 65.8,
+          "lucent_mib": 259.9,
+          "workers_mib": 58.1,
+          "workers": 2,
+          "cpu_tree": 69.9,
+          "cpu_system": 84,
+          "available_mib": 2133
+        },
+        {
+          "s": 66.8,
+          "lucent_mib": 259.9,
+          "workers_mib": 199,
+          "workers": 2,
+          "cpu_tree": 57.2,
+          "cpu_system": 74.3,
+          "available_mib": 1963
+        },
+        {
+          "s": 67.9,
+          "lucent_mib": 259.9,
+          "workers_mib": 152.1,
+          "workers": 2,
+          "cpu_tree": 74,
+          "cpu_system": 93.2,
+          "available_mib": 2049
+        },
+        {
+          "s": 68.9,
+          "lucent_mib": 260,
+          "workers_mib": 54.7,
+          "workers": 2,
+          "cpu_tree": 59.6,
+          "cpu_system": 86.5,
+          "available_mib": 2079
+        },
+        {
+          "s": 69.9,
+          "lucent_mib": 260.1,
+          "workers_mib": 194.2,
+          "workers": 2,
+          "cpu_tree": 57.9,
+          "cpu_system": 89.6,
+          "available_mib": 1909
+        },
+        {
+          "s": 70.9,
+          "lucent_mib": 260.1,
+          "workers_mib": 236.9,
+          "workers": 2,
+          "cpu_tree": 75.4,
+          "cpu_system": 97.4,
+          "available_mib": 1844
+        },
+        {
+          "s": 71.9,
+          "lucent_mib": 260.9,
+          "workers_mib": 205,
+          "workers": 2,
+          "cpu_tree": 57,
+          "cpu_system": 90.8,
+          "available_mib": 1878
+        },
+        {
+          "s": 72.9,
+          "lucent_mib": 260.9,
+          "workers_mib": 325.5,
+          "workers": 2,
+          "cpu_tree": 68.8,
+          "cpu_system": 96.5,
+          "available_mib": 1764
+        },
+        {
+          "s": 73.9,
+          "lucent_mib": 258.9,
+          "workers_mib": 152.4,
+          "workers": 2,
+          "cpu_tree": 66.4,
+          "cpu_system": 91.4,
+          "available_mib": 1965
+        },
+        {
+          "s": 74.9,
+          "lucent_mib": 259,
+          "workers_mib": 40.2,
+          "workers": 2,
+          "cpu_tree": 57.4,
+          "cpu_system": 80.5,
+          "available_mib": 2064
+        },
+        {
+          "s": 75.9,
+          "lucent_mib": 259.8,
+          "workers_mib": 136.7,
+          "workers": 2,
+          "cpu_tree": 61,
+          "cpu_system": 86.2,
+          "available_mib": 1964
+        },
+        {
+          "s": 76.9,
+          "lucent_mib": 259.8,
+          "workers_mib": 14.8,
+          "workers": 2,
+          "cpu_tree": 49.4,
+          "cpu_system": 85.8,
+          "available_mib": 2103
+        },
+        {
+          "s": 77.9,
+          "lucent_mib": 259.8,
+          "workers_mib": 62.6,
+          "workers": 2,
+          "cpu_tree": 53.8,
+          "cpu_system": 83.3,
+          "available_mib": 2062
+        },
+        {
+          "s": 79,
+          "lucent_mib": 259.8,
+          "workers_mib": 124.7,
+          "workers": 2,
+          "cpu_tree": 55,
+          "cpu_system": 67.9,
+          "available_mib": 1990
+        },
+        {
+          "s": 80,
+          "lucent_mib": 259.1,
+          "workers_mib": 229.7,
+          "workers": 2,
+          "cpu_tree": 76,
+          "cpu_system": 92.7,
+          "available_mib": 1905
+        },
+        {
+          "s": 81,
+          "lucent_mib": 259.1,
+          "workers_mib": 170.3,
+          "workers": 2,
+          "cpu_tree": 76.6,
+          "cpu_system": 86.8,
+          "available_mib": 1951
+        },
+        {
+          "s": 82,
+          "lucent_mib": 259.8,
+          "workers_mib": 51.7,
+          "workers": 2,
+          "cpu_tree": 58.3,
+          "cpu_system": 74,
+          "available_mib": 2085
+        },
+        {
+          "s": 83,
+          "lucent_mib": 259.8,
+          "workers_mib": 263.5,
+          "workers": 2,
+          "cpu_tree": 70.4,
+          "cpu_system": 89,
+          "available_mib": 1861
+        },
+        {
+          "s": 84,
+          "lucent_mib": 260.5,
+          "workers_mib": 461.9,
+          "workers": 2,
+          "cpu_tree": 82.4,
+          "cpu_system": 97.7,
+          "available_mib": 1691
+        },
+        {
+          "s": 85,
+          "lucent_mib": 259.3,
+          "workers_mib": 158.4,
+          "workers": 2,
+          "cpu_tree": 58.9,
+          "cpu_system": 74.3,
+          "available_mib": 1969
+        },
+        {
+          "s": 86,
+          "lucent_mib": 260,
+          "workers_mib": 97.6,
+          "workers": 2,
+          "cpu_tree": 64.4,
+          "cpu_system": 79.6,
+          "available_mib": 2039
+        },
+        {
+          "s": 87,
+          "lucent_mib": 260,
+          "workers_mib": 163.7,
+          "workers": 2,
+          "cpu_tree": 64.2,
+          "cpu_system": 80.3,
+          "available_mib": 1960
+        },
+        {
+          "s": 88.1,
+          "lucent_mib": 260.7,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 38.5,
+          "cpu_system": 55.7,
+          "available_mib": 2106
+        },
+        {
+          "s": 89.1,
+          "lucent_mib": 260.7,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.5,
+          "cpu_system": 12.1,
+          "available_mib": 2114
+        },
+        {
+          "s": 90.1,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.6,
+          "cpu_system": 16.9,
+          "available_mib": 2117
+        },
+        {
+          "s": 91.1,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.9,
+          "cpu_system": 15.9,
+          "available_mib": 2119
+        },
+        {
+          "s": 92.1,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.9,
+          "cpu_system": 16.3,
+          "available_mib": 2121
+        },
+        {
+          "s": 93.1,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.6,
+          "cpu_system": 10.2,
+          "available_mib": 2128
+        },
+        {
+          "s": 94.1,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.4,
+          "cpu_system": 12.3,
+          "available_mib": 2101
+        },
+        {
+          "s": 95.1,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.5,
+          "cpu_system": 14.1,
+          "available_mib": 2096
+        },
+        {
+          "s": 96.2,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.5,
+          "cpu_system": 11.6,
+          "available_mib": 2106
+        },
+        {
+          "s": 97.2,
+          "lucent_mib": 260.8,
+          "workers_mib": 10.9,
+          "workers": 2,
+          "cpu_tree": 0.5,
+          "cpu_system": 13.7,
+          "available_mib": 2102
+        },
+        {
+          "s": 98.2,
+          "lucent_mib": 260.8,
+          "workers_mib": 145.2,
+          "workers": 2,
+          "cpu_tree": 19.3,
+          "cpu_system": 30.2,
+          "available_mib": 1983
+        },
+        {
+          "s": 99.2,
+          "lucent_mib": 260.8,
+          "workers_mib": 373.2,
+          "workers": 2,
+          "cpu_tree": 73,
+          "cpu_system": 98,
+          "available_mib": 1754
+        },
+        {
+          "s": 100.2,
+          "lucent_mib": 260.9,
+          "workers_mib": 184.4,
+          "workers": 2,
+          "cpu_tree": 66.3,
+          "cpu_system": 83.6,
+          "available_mib": 1973
+        },
+        {
+          "s": 101.2,
+          "lucent_mib": 260.9,
+          "workers_mib": 47.8,
+          "workers": 2,
+          "cpu_tree": 54.9,
+          "cpu_system": 75.6,
+          "available_mib": 2078
+        },
+        {
+          "s": 102.2,
+          "lucent_mib": 260.7,
+          "workers_mib": 302.7,
+          "workers": 2,
+          "cpu_tree": 51.6,
+          "cpu_system": 69.6,
+          "available_mib": 1969
+        },
+        {
+          "s": 103.2,
+          "lucent_mib": 260.7,
+          "workers_mib": 197.9,
+          "workers": 2,
+          "cpu_tree": 72.1,
+          "cpu_system": 97.5,
+          "available_mib": 1948
+        },
+        {
+          "s": 104.2,
+          "lucent_mib": 260.7,
+          "workers_mib": 306.4,
+          "workers": 2,
+          "cpu_tree": 58.1,
+          "cpu_system": 74.6,
+          "available_mib": 1820
+        },
+        {
+          "s": 105.2,
+          "lucent_mib": 260.7,
+          "workers_mib": 328.8,
+          "workers": 2,
+          "cpu_tree": 64.7,
+          "cpu_system": 100,
+          "available_mib": 1778
+        },
+        {
+          "s": 106.2,
+          "lucent_mib": 259.5,
+          "workers_mib": 66.3,
+          "workers": 2,
+          "cpu_tree": 58,
+          "cpu_system": 71.9,
+          "available_mib": 2065
+        },
+        {
+          "s": 107.3,
+          "lucent_mib": 259.5,
+          "workers_mib": 133.3,
+          "workers": 2,
+          "cpu_tree": 67.5,
+          "cpu_system": 87.8,
+          "available_mib": 2026
+        },
+        {
+          "s": 108.3,
+          "lucent_mib": 260.2,
+          "workers_mib": 394.8,
+          "workers": 2,
+          "cpu_tree": 64,
+          "cpu_system": 77.3,
+          "available_mib": 1716
+        },
+        {
+          "s": 109.3,
+          "lucent_mib": 260.2,
+          "workers_mib": 415.8,
+          "workers": 2,
+          "cpu_tree": 74,
+          "cpu_system": 90.6,
+          "available_mib": 1693
+        },
+        {
+          "s": 110.3,
+          "lucent_mib": 260.2,
+          "workers_mib": 237.3,
+          "workers": 2,
+          "cpu_tree": 70.1,
+          "cpu_system": 83.2,
+          "available_mib": 1886
+        },
+        {
+          "s": 111.3,
+          "lucent_mib": 260.2,
+          "workers_mib": 72.2,
+          "workers": 2,
+          "cpu_tree": 43.7,
+          "cpu_system": 61,
+          "available_mib": 2043
+        },
+        {
+          "s": 112.3,
+          "lucent_mib": 260.9,
+          "workers_mib": 297.6,
+          "workers": 2,
+          "cpu_tree": 78.6,
+          "cpu_system": 94.1,
+          "available_mib": 1799
+        },
+        {
+          "s": 113.3,
+          "lucent_mib": 260.9,
+          "workers_mib": 134.8,
+          "workers": 2,
+          "cpu_tree": 63.9,
+          "cpu_system": 80,
+          "available_mib": 1995
+        },
+        {
+          "s": 114.3,
+          "lucent_mib": 261.6,
+          "workers_mib": 317.8,
+          "workers": 2,
+          "cpu_tree": 70.4,
+          "cpu_system": 92.2,
+          "available_mib": 1799
+        },
+        {
+          "s": 115.3,
+          "lucent_mib": 261.6,
+          "workers_mib": 171.2,
+          "workers": 2,
+          "cpu_tree": 66.3,
+          "cpu_system": 98.6,
+          "available_mib": 1907
+        },
+        {
+          "s": 116.3,
+          "lucent_mib": 260.2,
+          "workers_mib": 41.1,
+          "workers": 2,
+          "cpu_tree": 49.6,
+          "cpu_system": 85.1,
+          "available_mib": 1942
+        },
+        {
+          "s": 117.4,
+          "lucent_mib": 260.3,
+          "workers_mib": 26,
+          "workers": 2,
+          "cpu_tree": 53.3,
+          "cpu_system": 93.6,
+          "available_mib": 1975
+        },
+        {
+          "s": 118.4,
+          "lucent_mib": 259.7,
+          "workers_mib": 142.8,
+          "workers": 2,
+          "cpu_tree": 53.1,
+          "cpu_system": 78.6,
+          "available_mib": 1900
+        },
+        {
+          "s": 119.4,
+          "lucent_mib": 259.7,
+          "workers_mib": 35,
+          "workers": 2,
+          "cpu_tree": 74.4,
+          "cpu_system": 89,
+          "available_mib": 1968
+        },
+        {
+          "s": 120.4,
+          "lucent_mib": 261,
+          "workers_mib": 143.4,
+          "workers": 2,
+          "cpu_tree": 52.5,
+          "cpu_system": 62.9,
+          "available_mib": 1918
+        },
+        {
+          "s": 121.4,
+          "lucent_mib": 261.1,
+          "workers_mib": 242.3,
+          "workers": 2,
+          "cpu_tree": 40.7,
+          "cpu_system": 55.9,
+          "available_mib": 1829
+        },
+        {
+          "s": 122.4,
+          "lucent_mib": 261.4,
+          "workers_mib": 151.4,
+          "workers": 2,
+          "cpu_tree": 56.4,
+          "cpu_system": 75.9,
+          "available_mib": 1846
+        },
+        {
+          "s": 123.4,
+          "lucent_mib": 261.4,
+          "workers_mib": 555.2,
+          "workers": 2,
+          "cpu_tree": 40.1,
+          "cpu_system": 54,
+          "available_mib": 1498
+        },
+        {
+          "s": 124.4,
+          "lucent_mib": 262.1,
+          "workers_mib": 1433.4,
+          "workers": 2,
+          "cpu_tree": 73.8,
+          "cpu_system": 100,
+          "available_mib": 909
+        },
+        {
+          "s": 125.4,
+          "lucent_mib": 262.1,
+          "workers_mib": 991.7,
+          "workers": 2,
+          "cpu_tree": 65.7,
+          "cpu_system": 99.6,
+          "available_mib": 1089
+        },
+        {
+          "s": 126.5,
+          "lucent_mib": 259.9,
+          "workers_mib": 770.2,
+          "workers": 2,
+          "cpu_tree": 73.3,
+          "cpu_system": 93.7,
+          "available_mib": 1726
+        },
+        {
+          "s": 127.5,
+          "lucent_mib": 261.1,
+          "workers_mib": 747.1,
+          "workers": 2,
+          "cpu_tree": 84.1,
+          "cpu_system": 96.9,
+          "available_mib": 1743
+        },
+        {
+          "s": 128.5,
+          "lucent_mib": 261.1,
+          "workers_mib": 757.6,
+          "workers": 2,
+          "cpu_tree": 77.3,
+          "cpu_system": 98.8,
+          "available_mib": 1736
+        },
+        {
+          "s": 129.5,
+          "lucent_mib": 261.8,
+          "workers_mib": 546.7,
+          "workers": 2,
+          "cpu_tree": 45.4,
+          "cpu_system": 69.4,
+          "available_mib": 2029
+        },
+        {
+          "s": 130.5,
+          "lucent_mib": 261.8,
+          "workers_mib": 96.7,
+          "workers": 2,
+          "cpu_tree": 51.4,
+          "cpu_system": 74.3,
+          "available_mib": 2418
+        },
+        {
+          "s": 131.5,
+          "lucent_mib": 261.8,
+          "workers_mib": 33.9,
+          "workers": 2,
+          "cpu_tree": 51.2,
+          "cpu_system": 87.1,
+          "available_mib": 2447
+        },
+        {
+          "s": 132.5,
+          "lucent_mib": 261.8,
+          "workers_mib": 39.6,
+          "workers": 2,
+          "cpu_tree": 61.7,
+          "cpu_system": 84.2,
+          "available_mib": 2443
+        },
+        {
+          "s": 133.5,
+          "lucent_mib": 261.8,
+          "workers_mib": 24.9,
+          "workers": 2,
+          "cpu_tree": 59.5,
+          "cpu_system": 73.6,
+          "available_mib": 2460
+        },
+        {
+          "s": 134.5,
+          "lucent_mib": 261.5,
+          "workers_mib": 230.4,
+          "workers": 2,
+          "cpu_tree": 78.1,
+          "cpu_system": 92.6,
+          "available_mib": 2252
+        },
+        {
+          "s": 135.6,
+          "lucent_mib": 260.9,
+          "workers_mib": 55.7,
+          "workers": 2,
+          "cpu_tree": 68.3,
+          "cpu_system": 83.9,
+          "available_mib": 2407
+        },
+        {
+          "s": 136.6,
+          "lucent_mib": 261,
+          "workers_mib": 305.2,
+          "workers": 2,
+          "cpu_tree": 58.9,
+          "cpu_system": 76.9,
+          "available_mib": 2270
+        },
+        {
+          "s": 137.6,
+          "lucent_mib": 261.8,
+          "workers_mib": 223.9,
+          "workers": 2,
+          "cpu_tree": 81.6,
+          "cpu_system": 97,
+          "available_mib": 2264
+        },
+        {
+          "s": 138.6,
+          "lucent_mib": 261.9,
+          "workers_mib": 46.2,
+          "workers": 2,
+          "cpu_tree": 61.7,
+          "cpu_system": 79.1,
+          "available_mib": 2443
+        },
+        {
+          "s": 139.6,
+          "lucent_mib": 262.7,
+          "workers_mib": 35.5,
+          "workers": 2,
+          "cpu_tree": 40.6,
+          "cpu_system": 57.8,
+          "available_mib": 2422
+        },
+        {
+          "s": 140.6,
+          "lucent_mib": 262.1,
+          "workers_mib": 201.3,
+          "workers": 2,
+          "cpu_tree": 81.9,
+          "cpu_system": 97.2,
+          "available_mib": 2285
+        },
+        {
+          "s": 141.6,
+          "lucent_mib": 261.5,
+          "workers_mib": 54.7,
+          "workers": 2,
+          "cpu_tree": 61.5,
+          "cpu_system": 78,
+          "available_mib": 2366
+        },
+        {
+          "s": 142.6,
+          "lucent_mib": 261.6,
+          "workers_mib": 659.8,
+          "workers": 2,
+          "cpu_tree": 59,
+          "cpu_system": 86.7,
+          "available_mib": 1771
+        },
+        {
+          "s": 143.6,
+          "lucent_mib": 261.6,
+          "workers_mib": 857.6,
+          "workers": 2,
+          "cpu_tree": 60.8,
+          "cpu_system": 98.2,
+          "available_mib": 1551
+        },
+        {
+          "s": 144.6,
+          "lucent_mib": 261.6,
+          "workers_mib": 769.8,
+          "workers": 2,
+          "cpu_tree": 79.4,
+          "cpu_system": 98.9,
+          "available_mib": 1650
+        },
+        {
+          "s": 145.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 773.8,
+          "workers": 2,
+          "cpu_tree": 76.5,
+          "cpu_system": 98.5,
+          "available_mib": 1654
+        },
+        {
+          "s": 146.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 750.4,
+          "workers": 2,
+          "cpu_tree": 81.3,
+          "cpu_system": 96.9,
+          "available_mib": 1659
+        },
+        {
+          "s": 147.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 597.2,
+          "workers": 2,
+          "cpu_tree": 42.1,
+          "cpu_system": 65,
+          "available_mib": 1879
+        },
+        {
+          "s": 148.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 44.8,
+          "workers": 2,
+          "cpu_tree": 55.8,
+          "cpu_system": 81.9,
+          "available_mib": 2346
+        },
+        {
+          "s": 149.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 73.8,
+          "workers": 2,
+          "cpu_tree": 53.2,
+          "cpu_system": 80.7,
+          "available_mib": 2318
+        },
+        {
+          "s": 150.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 48,
+          "workers": 2,
+          "cpu_tree": 65.5,
+          "cpu_system": 78.5,
+          "available_mib": 2375
+        },
+        {
+          "s": 151.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 186.4,
+          "workers": 2,
+          "cpu_tree": 68.5,
+          "cpu_system": 81.5,
+          "available_mib": 2203
+        },
+        {
+          "s": 152.7,
+          "lucent_mib": 260.9,
+          "workers_mib": 66,
+          "workers": 2,
+          "cpu_tree": 69.7,
+          "cpu_system": 85.8,
+          "available_mib": 2326
+        },
+        {
+          "s": 153.7,
+          "lucent_mib": 260.9,
+          "workers_mib": 305.3,
+          "workers": 2,
+          "cpu_tree": 57,
+          "cpu_system": 79.9,
+          "available_mib": 2228
+        },
+        {
+          "s": 154.7,
+          "lucent_mib": 262.3,
+          "workers_mib": 209.3,
+          "workers": 2,
+          "cpu_tree": 65.4,
+          "cpu_system": 98.9,
+          "available_mib": 2165
+        },
+        {
+          "s": 155.7,
+          "lucent_mib": 262.3,
+          "workers_mib": 223.9,
+          "workers": 2,
+          "cpu_tree": 69.9,
+          "cpu_system": 94.7,
+          "available_mib": 2152
+        },
+        {
+          "s": 156.7,
+          "lucent_mib": 261.6,
+          "workers_mib": 163.3,
+          "workers": 2,
+          "cpu_tree": 74,
+          "cpu_system": 84.1,
+          "available_mib": 2215
+        },
+        {
+          "s": 157.7,
+          "lucent_mib": 261.7,
+          "workers_mib": 52.1,
+          "workers": 2,
+          "cpu_tree": 56.9,
+          "cpu_system": 75,
+          "available_mib": 2344
+        },
+        {
+          "s": 158.8,
+          "lucent_mib": 262.5,
+          "workers_mib": 264.6,
+          "workers": 2,
+          "cpu_tree": 58.2,
+          "cpu_system": 72.6,
+          "available_mib": 2174
+        },
+        {
+          "s": 159.8,
+          "lucent_mib": 262.5,
+          "workers_mib": 235.3,
+          "workers": 2,
+          "cpu_tree": 83.4,
+          "cpu_system": 96.7,
+          "available_mib": 2155
+        },
+        {
+          "s": 160.8,
+          "lucent_mib": 261,
+          "workers_mib": 61.7,
+          "workers": 2,
+          "cpu_tree": 60.3,
+          "cpu_system": 74.3,
+          "available_mib": 2325
+        },
+        {
+          "s": 161.8,
+          "lucent_mib": 261,
+          "workers_mib": 142.5,
+          "workers": 2,
+          "cpu_tree": 56.3,
+          "cpu_system": 75.3,
+          "available_mib": 2248
+        },
+        {
+          "s": 162.8,
+          "lucent_mib": 261,
+          "workers_mib": 15.9,
+          "workers": 2,
+          "cpu_tree": 63.9,
+          "cpu_system": 80.4,
+          "available_mib": 2354
+        },
+        {
+          "s": 163.8,
+          "lucent_mib": 261,
+          "workers_mib": 73.8,
+          "workers": 2,
+          "cpu_tree": 63.1,
+          "cpu_system": 81.5,
+          "available_mib": 2313
+        },
+        {
+          "s": 164.8,
+          "lucent_mib": 261,
+          "workers_mib": 187.6,
+          "workers": 2,
+          "cpu_tree": 49.8,
+          "cpu_system": 64.8,
+          "available_mib": 2297
+        },
+        {
+          "s": 165.8,
+          "lucent_mib": 261,
+          "workers_mib": 1072.7,
+          "workers": 2,
+          "cpu_tree": 67.3,
+          "cpu_system": 87.8,
+          "available_mib": 1461
+        },
+        {
+          "s": 166.8,
+          "lucent_mib": 261,
+          "workers_mib": 892.1,
+          "workers": 2,
+          "cpu_tree": 72.1,
+          "cpu_system": 94.9,
+          "available_mib": 1535
+        },
+        {
+          "s": 167.9,
+          "lucent_mib": 261,
+          "workers_mib": 887.4,
+          "workers": 2,
+          "cpu_tree": 76.1,
+          "cpu_system": 98.5,
+          "available_mib": 1586
+        },
+        {
+          "s": 168.9,
+          "lucent_mib": 261,
+          "workers_mib": 896.2,
+          "workers": 2,
+          "cpu_tree": 82.6,
+          "cpu_system": 98.5,
+          "available_mib": 1593
+        },
+        {
+          "s": 169.9,
+          "lucent_mib": 261,
+          "workers_mib": 1078.2,
+          "workers": 2,
+          "cpu_tree": 81.3,
+          "cpu_system": 98.4,
+          "available_mib": 1408
+        },
+        {
+          "s": 170.9,
+          "lucent_mib": 261,
+          "workers_mib": 1078.2,
+          "workers": 2,
+          "cpu_tree": 85.3,
+          "cpu_system": 100,
+          "available_mib": 1428
+        },
+        {
+          "s": 171.9,
+          "lucent_mib": 261,
+          "workers_mib": 597.1,
+          "workers": 2,
+          "cpu_tree": 60.1,
+          "cpu_system": 76.7,
+          "available_mib": 2268
+        },
+        {
+          "s": 172.9,
+          "lucent_mib": 261,
+          "workers_mib": 204.6,
+          "workers": 2,
+          "cpu_tree": 35.9,
+          "cpu_system": 54.5,
+          "available_mib": 2367
+        },
+        {
+          "s": 173.9,
+          "lucent_mib": 261,
+          "workers_mib": 265.2,
+          "workers": 2,
+          "cpu_tree": 52.1,
+          "cpu_system": 68.6,
+          "available_mib": 2304
+        },
+        {
+          "s": 174.9,
+          "lucent_mib": 261,
+          "workers_mib": 509.1,
+          "workers": 2,
+          "cpu_tree": 79.8,
+          "cpu_system": 97.7,
+          "available_mib": 2119
+        },
+        {
+          "s": 175.9,
+          "lucent_mib": 261.1,
+          "workers_mib": 416.5,
+          "workers": 2,
+          "cpu_tree": 65.9,
+          "cpu_system": 97.9,
+          "available_mib": 2099
+        },
+        {
+          "s": 176.9,
+          "lucent_mib": 261.8,
+          "workers_mib": 495.1,
+          "workers": 2,
+          "cpu_tree": 75.8,
+          "cpu_system": 93.6,
+          "available_mib": 2024
+        },
+        {
+          "s": 178,
+          "lucent_mib": 261.8,
+          "workers_mib": 179.1,
+          "workers": 2,
+          "cpu_tree": 76.2,
+          "cpu_system": 90.6,
+          "available_mib": 2352
+        },
+        {
+          "s": 179,
+          "lucent_mib": 262,
+          "workers_mib": 254.4,
+          "workers": 2,
+          "cpu_tree": 59.2,
+          "cpu_system": 75.6,
+          "available_mib": 2230
+        },
+        {
+          "s": 180,
+          "lucent_mib": 262,
+          "workers_mib": 461.1,
+          "workers": 2,
+          "cpu_tree": 87.8,
+          "cpu_system": 99.6,
+          "available_mib": 2028
+        },
+        {
+          "s": 181,
+          "lucent_mib": 262,
+          "workers_mib": 181.6,
+          "workers": 2,
+          "cpu_tree": 64.3,
+          "cpu_system": 79.3,
+          "available_mib": 2322
+        },
+        {
+          "s": 182,
+          "lucent_mib": 262,
+          "workers_mib": 30.9,
+          "workers": 2,
+          "cpu_tree": 58.4,
+          "cpu_system": 72.4,
+          "available_mib": 2442
+        },
+        {
+          "s": 183,
+          "lucent_mib": 261.7,
+          "workers_mib": 50.3,
+          "workers": 2,
+          "cpu_tree": 54.5,
+          "cpu_system": 82.3,
+          "available_mib": 2423
+        },
+        {
+          "s": 184,
+          "lucent_mib": 261.7,
+          "workers_mib": 82.5,
+          "workers": 2,
+          "cpu_tree": 50.4,
+          "cpu_system": 64.8,
+          "available_mib": 2393
+        },
+        {
+          "s": 185,
+          "lucent_mib": 261.7,
+          "workers_mib": 109.3,
+          "workers": 2,
+          "cpu_tree": 56.7,
+          "cpu_system": 74.9,
+          "available_mib": 2362
+        },
+        {
+          "s": 186,
+          "lucent_mib": 261.7,
+          "workers_mib": 79.9,
+          "workers": 2,
+          "cpu_tree": 70.7,
+          "cpu_system": 92.7,
+          "available_mib": 2390
+        },
+        {
+          "s": 187,
+          "lucent_mib": 261.7,
+          "workers_mib": 21.8,
+          "workers": 2,
+          "cpu_tree": 58.8,
+          "cpu_system": 80.4,
+          "available_mib": 2425
+        },
+        {
+          "s": 188.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 132,
+          "workers": 2,
+          "cpu_tree": 43.9,
+          "cpu_system": 59,
+          "available_mib": 2377
+        },
+        {
+          "s": 189.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 492.5,
+          "workers": 2,
+          "cpu_tree": 62.8,
+          "cpu_system": 78.2,
+          "available_mib": 2055
+        },
+        {
+          "s": 190.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 382.1,
+          "workers": 2,
+          "cpu_tree": 73,
+          "cpu_system": 87.2,
+          "available_mib": 2087
+        },
+        {
+          "s": 191.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 373.4,
+          "workers": 2,
+          "cpu_tree": 78.4,
+          "cpu_system": 99.4,
+          "available_mib": 2216
+        },
+        {
+          "s": 192.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 94.7,
+          "workers": 2,
+          "cpu_tree": 47.9,
+          "cpu_system": 71.8,
+          "available_mib": 2396
+        },
+        {
+          "s": 193.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 157.6,
+          "workers": 2,
+          "cpu_tree": 45.4,
+          "cpu_system": 81.2,
+          "available_mib": 2295
+        },
+        {
+          "s": 194.1,
+          "lucent_mib": 261.7,
+          "workers_mib": 79.2,
+          "workers": 2,
+          "cpu_tree": 62.8,
+          "cpu_system": 90,
+          "available_mib": 2385
+        },
+        {
+          "s": 195.1,
+          "lucent_mib": 261.8,
+          "workers_mib": 53.7,
+          "workers": 2,
+          "cpu_tree": 67.3,
+          "cpu_system": 87.2,
+          "available_mib": 2388
+        },
+        {
+          "s": 195.4,
+          "lucent_mib": 0,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 42.2,
+          "cpu_system": 76.1,
+          "available_mib": 2695
+        }
+      ]
+    },
+    {
+      "name": "session2-resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 130.225,
+      "log": "build\\w12-perf-resilience\\logs\\session2-resume.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 128.413,
+            "done": 986,
+            "total": 987,
+            "completed": 986,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 1
+          },
+          {
+            "seconds": 129.852,
+            "done": 987,
+            "total": 987,
+            "completed": 987,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "window_loaded_ms": 1110,
+        "batch_id": 1,
+        "batch_found": {
+          "done": 605,
+          "total": 987
+        },
+        "first_frame_ms": 1412,
+        "first_thumbnail_ms": 330,
+        "batch_finished": {
+          "seconds": 129.852,
+          "state": "completed",
+          "completed": 987,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 0,
+          "review": 357,
+          "folder": "build\\w12-perf-resilience\\out"
+        },
+        "batch_report_html": "build\\w12-perf-resilience\\out\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": -1,
+          "created_ms": 15,
+          "first_done_ms": 304,
+          "finished_ms": 128739,
+          "done": 382,
+          "exported": 382,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 0,
+          "seconds": 128.724,
+          "per_minute": 178.06
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 382,
+          "completed": 382,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 2,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 24.39,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 758.2,
+          "peak_aggregate_commit_mib": 976.6,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 987,
+          "analysed": 0,
+          "skipped": 13,
+          "failed": 0,
+          "review": 358
+        },
+        "ui": {
+          "seconds": 128.8,
+          "ticks": 7737,
+          "gap_median_ms": 16,
+          "gap_p99_ms": 33,
+          "gap_max_ms": 75,
+          "over_50": 11,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 318.4,
+          "peak_commit_mib": 322.7,
+          "commit_mib": 301.9,
+          "cpu_s": 49.91,
+          "user_s": 39.63,
+          "kernel_s": 10.28,
+          "wall_s": 129.97
+        }
+      },
+      "resources": {
+        "wall_s": 130.225,
+        "cpu_s": 963.281,
+        "cpu_percent_of_machine": 61.642,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 322.738,
+          "peak_working_set_mib": 318.449,
+          "cpu_s": 50.234
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 758.203,
+            "peak_working_set_mib": 765.426,
+            "cpu_s": 913.047,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 130,
+        "sampled": {
+          "root_private_max_mib": 302.359,
+          "descendants_private_max_mib": 934.172,
+          "tree_private_max_mib": 1235.188,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 84.813,
+          "tree_cpu_percent_max": 85.01,
+          "system_available_min_mib": 1780.25
+        }
+      },
+      "series": [
+        {
+          "s": 0,
+          "lucent_mib": 1,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 0,
+          "cpu_system": 0,
+          "available_mib": 2710
+        },
+        {
+          "s": 1,
+          "lucent_mib": 87,
+          "workers_mib": 35.5,
+          "workers": 2,
+          "cpu_tree": 29.1,
+          "cpu_system": 56.6,
+          "available_mib": 2527
+        },
+        {
+          "s": 2,
+          "lucent_mib": 206.7,
+          "workers_mib": 51.9,
+          "workers": 2,
+          "cpu_tree": 61.5,
+          "cpu_system": 95.9,
+          "available_mib": 2409
+        },
+        {
+          "s": 3,
+          "lucent_mib": 275,
+          "workers_mib": 53.8,
+          "workers": 2,
+          "cpu_tree": 69.9,
+          "cpu_system": 96.8,
+          "available_mib": 2329
+        },
+        {
+          "s": 4.1,
+          "lucent_mib": 298.2,
+          "workers_mib": 24.1,
+          "workers": 2,
+          "cpu_tree": 61.4,
+          "cpu_system": 89.1,
+          "available_mib": 2343
+        },
+        {
+          "s": 5.1,
+          "lucent_mib": 298.3,
+          "workers_mib": 278.2,
+          "workers": 2,
+          "cpu_tree": 57.8,
+          "cpu_system": 83.9,
+          "available_mib": 2105
+        },
+        {
+          "s": 6.1,
+          "lucent_mib": 299,
+          "workers_mib": 256.3,
+          "workers": 2,
+          "cpu_tree": 75.1,
+          "cpu_system": 99.4,
+          "available_mib": 2127
+        },
+        {
+          "s": 7.1,
+          "lucent_mib": 299.1,
+          "workers_mib": 8.6,
+          "workers": 2,
+          "cpu_tree": 53.2,
+          "cpu_system": 76.2,
+          "available_mib": 2359
+        },
+        {
+          "s": 8.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 161.1,
+          "workers": 2,
+          "cpu_tree": 52.6,
+          "cpu_system": 70.8,
+          "available_mib": 2251
+        },
+        {
+          "s": 9.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 40.9,
+          "workers": 2,
+          "cpu_tree": 59.8,
+          "cpu_system": 85.5,
+          "available_mib": 2335
+        },
+        {
+          "s": 10.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 227.9,
+          "workers": 2,
+          "cpu_tree": 48.3,
+          "cpu_system": 74.4,
+          "available_mib": 2234
+        },
+        {
+          "s": 11.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 462.9,
+          "workers": 2,
+          "cpu_tree": 76.3,
+          "cpu_system": 94.2,
+          "available_mib": 2021
+        },
+        {
+          "s": 12.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 221.9,
+          "workers": 2,
+          "cpu_tree": 74.1,
+          "cpu_system": 93.4,
+          "available_mib": 2195
+        },
+        {
+          "s": 13.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 270.9,
+          "workers": 2,
+          "cpu_tree": 58.6,
+          "cpu_system": 78.9,
+          "available_mib": 2177
+        },
+        {
+          "s": 14.1,
+          "lucent_mib": 299.8,
+          "workers_mib": 320.5,
+          "workers": 2,
+          "cpu_tree": 72.1,
+          "cpu_system": 97.9,
+          "available_mib": 2114
+        },
+        {
+          "s": 15.2,
+          "lucent_mib": 299.8,
+          "workers_mib": 39.4,
+          "workers": 2,
+          "cpu_tree": 52.8,
+          "cpu_system": 76.4,
+          "available_mib": 2379
+        },
+        {
+          "s": 16.2,
+          "lucent_mib": 299.9,
+          "workers_mib": 233.9,
+          "workers": 2,
+          "cpu_tree": 54.2,
+          "cpu_system": 82.3,
+          "available_mib": 2209
+        },
+        {
+          "s": 17.2,
+          "lucent_mib": 299.9,
+          "workers_mib": 281.2,
+          "workers": 2,
+          "cpu_tree": 73,
+          "cpu_system": 99.9,
+          "available_mib": 2136
+        },
+        {
+          "s": 18.2,
+          "lucent_mib": 299.9,
+          "workers_mib": 194.2,
+          "workers": 2,
+          "cpu_tree": 61.9,
+          "cpu_system": 96.3,
+          "available_mib": 2393
+        },
+        {
+          "s": 19.2,
+          "lucent_mib": 299.9,
+          "workers_mib": 214,
+          "workers": 2,
+          "cpu_tree": 45.5,
+          "cpu_system": 85.8,
+          "available_mib": 2487
+        },
+        {
+          "s": 20.2,
+          "lucent_mib": 299.9,
+          "workers_mib": 293.7,
+          "workers": 2,
+          "cpu_tree": 72.7,
+          "cpu_system": 99,
+          "available_mib": 2526
+        },
+        {
+          "s": 21.2,
+          "lucent_mib": 299.9,
+          "workers_mib": 417.7,
+          "workers": 2,
+          "cpu_tree": 70.7,
+          "cpu_system": 96.6,
+          "available_mib": 2548
+        },
+        {
+          "s": 22.2,
+          "lucent_mib": 300.7,
+          "workers_mib": 308.3,
+          "workers": 2,
+          "cpu_tree": 62.2,
+          "cpu_system": 81.2,
+          "available_mib": 2753
+        },
+        {
+          "s": 23.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 68.8,
+          "workers": 2,
+          "cpu_tree": 63,
+          "cpu_system": 83.7,
+          "available_mib": 2900
+        },
+        {
+          "s": 24.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 120.5,
+          "workers": 2,
+          "cpu_tree": 34.9,
+          "cpu_system": 51.2,
+          "available_mib": 2869
+        },
+        {
+          "s": 25.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 86.2,
+          "workers": 2,
+          "cpu_tree": 58.1,
+          "cpu_system": 75.4,
+          "available_mib": 2891
+        },
+        {
+          "s": 26.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 386.3,
+          "workers": 2,
+          "cpu_tree": 65,
+          "cpu_system": 84.9,
+          "available_mib": 2554
+        },
+        {
+          "s": 27.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 579.5,
+          "workers": 2,
+          "cpu_tree": 72.6,
+          "cpu_system": 95.5,
+          "available_mib": 2380
+        },
+        {
+          "s": 28.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 629.1,
+          "workers": 2,
+          "cpu_tree": 84.6,
+          "cpu_system": 100,
+          "available_mib": 2338
+        },
+        {
+          "s": 29.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 86.8,
+          "workers": 2,
+          "cpu_tree": 48.5,
+          "cpu_system": 76.5,
+          "available_mib": 2876
+        },
+        {
+          "s": 30.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 208.8,
+          "workers": 2,
+          "cpu_tree": 56.7,
+          "cpu_system": 80.7,
+          "available_mib": 2741
+        },
+        {
+          "s": 31.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 297,
+          "workers": 2,
+          "cpu_tree": 80.5,
+          "cpu_system": 98,
+          "available_mib": 2721
+        },
+        {
+          "s": 32.3,
+          "lucent_mib": 301.7,
+          "workers_mib": 30.1,
+          "workers": 2,
+          "cpu_tree": 60.7,
+          "cpu_system": 77.4,
+          "available_mib": 2908
+        },
+        {
+          "s": 33.3,
+          "lucent_mib": 300.7,
+          "workers_mib": 192.1,
+          "workers": 2,
+          "cpu_tree": 68.2,
+          "cpu_system": 90.1,
+          "available_mib": 2755
+        },
+        {
+          "s": 34.4,
+          "lucent_mib": 300.5,
+          "workers_mib": 155.4,
+          "workers": 2,
+          "cpu_tree": 54.1,
+          "cpu_system": 72.6,
+          "available_mib": 2783
+        },
+        {
+          "s": 35.4,
+          "lucent_mib": 300.5,
+          "workers_mib": 68.9,
+          "workers": 2,
+          "cpu_tree": 61.9,
+          "cpu_system": 87.6,
+          "available_mib": 2856
+        },
+        {
+          "s": 36.4,
+          "lucent_mib": 300.5,
+          "workers_mib": 101.2,
+          "workers": 2,
+          "cpu_tree": 36.7,
+          "cpu_system": 57.7,
+          "available_mib": 2809
+        },
+        {
+          "s": 37.4,
+          "lucent_mib": 300.5,
+          "workers_mib": 827.9,
+          "workers": 2,
+          "cpu_tree": 59.6,
+          "cpu_system": 81.8,
+          "available_mib": 2102
+        },
+        {
+          "s": 38.4,
+          "lucent_mib": 301.2,
+          "workers_mib": 855.2,
+          "workers": 2,
+          "cpu_tree": 70.9,
+          "cpu_system": 100,
+          "available_mib": 2082
+        },
+        {
+          "s": 39.4,
+          "lucent_mib": 301.2,
+          "workers_mib": 854,
+          "workers": 2,
+          "cpu_tree": 79,
+          "cpu_system": 100,
+          "available_mib": 2143
+        },
+        {
+          "s": 40.4,
+          "lucent_mib": 302,
+          "workers_mib": 668.3,
+          "workers": 2,
+          "cpu_tree": 70.6,
+          "cpu_system": 93.1,
+          "available_mib": 2289
+        },
+        {
+          "s": 41.4,
+          "lucent_mib": 302,
+          "workers_mib": 764.5,
+          "workers": 2,
+          "cpu_tree": 85,
+          "cpu_system": 98.5,
+          "available_mib": 2195
+        },
+        {
+          "s": 42.4,
+          "lucent_mib": 300.3,
+          "workers_mib": 171.4,
+          "workers": 2,
+          "cpu_tree": 39.1,
+          "cpu_system": 59.7,
+          "available_mib": 2780
+        },
+        {
+          "s": 43.5,
+          "lucent_mib": 295.6,
+          "workers_mib": 55.3,
+          "workers": 2,
+          "cpu_tree": 53.6,
+          "cpu_system": 85.6,
+          "available_mib": 2908
+        },
+        {
+          "s": 44.5,
+          "lucent_mib": 298.3,
+          "workers_mib": 81.2,
+          "workers": 2,
+          "cpu_tree": 54.5,
+          "cpu_system": 78.5,
+          "available_mib": 2917
+        },
+        {
+          "s": 45.5,
+          "lucent_mib": 298.3,
+          "workers_mib": 549.8,
+          "workers": 2,
+          "cpu_tree": 58.2,
+          "cpu_system": 76.8,
+          "available_mib": 2435
+        },
+        {
+          "s": 46.5,
+          "lucent_mib": 299.4,
+          "workers_mib": 527,
+          "workers": 2,
+          "cpu_tree": 76.6,
+          "cpu_system": 100,
+          "available_mib": 2471
+        },
+        {
+          "s": 47.5,
+          "lucent_mib": 299.4,
+          "workers_mib": 363.2,
+          "workers": 2,
+          "cpu_tree": 77.2,
+          "cpu_system": 95.8,
+          "available_mib": 2611
+        },
+        {
+          "s": 48.5,
+          "lucent_mib": 299.4,
+          "workers_mib": 47.4,
+          "workers": 2,
+          "cpu_tree": 44.3,
+          "cpu_system": 66.9,
+          "available_mib": 2937
+        },
+        {
+          "s": 49.5,
+          "lucent_mib": 299.4,
+          "workers_mib": 45,
+          "workers": 2,
+          "cpu_tree": 51.2,
+          "cpu_system": 70.5,
+          "available_mib": 2927
+        },
+        {
+          "s": 50.5,
+          "lucent_mib": 299.5,
+          "workers_mib": 208.5,
+          "workers": 2,
+          "cpu_tree": 75,
+          "cpu_system": 90.5,
+          "available_mib": 2767
+        },
+        {
+          "s": 51.5,
+          "lucent_mib": 299.5,
+          "workers_mib": 21,
+          "workers": 2,
+          "cpu_tree": 63,
+          "cpu_system": 83.7,
+          "available_mib": 2945
+        },
+        {
+          "s": 52.6,
+          "lucent_mib": 300.4,
+          "workers_mib": 198.3,
+          "workers": 2,
+          "cpu_tree": 60.5,
+          "cpu_system": 82.6,
+          "available_mib": 2776
+        },
+        {
+          "s": 53.6,
+          "lucent_mib": 300.4,
+          "workers_mib": 235.4,
+          "workers": 2,
+          "cpu_tree": 70,
+          "cpu_system": 98.8,
+          "available_mib": 2715
+        },
+        {
+          "s": 54.6,
+          "lucent_mib": 300.4,
+          "workers_mib": 51.4,
+          "workers": 2,
+          "cpu_tree": 47.7,
+          "cpu_system": 85.4,
+          "available_mib": 2846
+        },
+        {
+          "s": 55.6,
+          "lucent_mib": 300.4,
+          "workers_mib": 144.2,
+          "workers": 2,
+          "cpu_tree": 56.3,
+          "cpu_system": 87.8,
+          "available_mib": 2645
+        },
+        {
+          "s": 56.6,
+          "lucent_mib": 300.5,
+          "workers_mib": 161.8,
+          "workers": 2,
+          "cpu_tree": 65.6,
+          "cpu_system": 96.3,
+          "available_mib": 2595
+        },
+        {
+          "s": 57.6,
+          "lucent_mib": 300.5,
+          "workers_mib": 47.6,
+          "workers": 2,
+          "cpu_tree": 55.4,
+          "cpu_system": 75.8,
+          "available_mib": 2713
+        },
+        {
+          "s": 58.6,
+          "lucent_mib": 301.2,
+          "workers_mib": 24.4,
+          "workers": 2,
+          "cpu_tree": 53.6,
+          "cpu_system": 74.7,
+          "available_mib": 2725
+        },
+        {
+          "s": 59.6,
+          "lucent_mib": 301.2,
+          "workers_mib": 237.6,
+          "workers": 2,
+          "cpu_tree": 64.7,
+          "cpu_system": 90.8,
+          "available_mib": 2529
+        },
+        {
+          "s": 60.6,
+          "lucent_mib": 302.2,
+          "workers_mib": 465.6,
+          "workers": 2,
+          "cpu_tree": 76.5,
+          "cpu_system": 97.3,
+          "available_mib": 2455
+        },
+        {
+          "s": 61.6,
+          "lucent_mib": 302.2,
+          "workers_mib": 226.3,
+          "workers": 2,
+          "cpu_tree": 78,
+          "cpu_system": 94.8,
+          "available_mib": 2548
+        },
+        {
+          "s": 62.7,
+          "lucent_mib": 298.5,
+          "workers_mib": 37.4,
+          "workers": 2,
+          "cpu_tree": 55,
+          "cpu_system": 80.4,
+          "available_mib": 2743
+        },
+        {
+          "s": 63.7,
+          "lucent_mib": 299,
+          "workers_mib": 15.5,
+          "workers": 2,
+          "cpu_tree": 56.3,
+          "cpu_system": 80,
+          "available_mib": 2754
+        },
+        {
+          "s": 64.7,
+          "lucent_mib": 301.1,
+          "workers_mib": 327.4,
+          "workers": 2,
+          "cpu_tree": 57.9,
+          "cpu_system": 81.8,
+          "available_mib": 2568
+        },
+        {
+          "s": 65.7,
+          "lucent_mib": 301.1,
+          "workers_mib": 312.8,
+          "workers": 2,
+          "cpu_tree": 75.8,
+          "cpu_system": 97.9,
+          "available_mib": 2464
+        },
+        {
+          "s": 66.7,
+          "lucent_mib": 302.2,
+          "workers_mib": 13.5,
+          "workers": 2,
+          "cpu_tree": 49,
+          "cpu_system": 70.4,
+          "available_mib": 2735
+        },
+        {
+          "s": 67.7,
+          "lucent_mib": 301.2,
+          "workers_mib": 62.6,
+          "workers": 2,
+          "cpu_tree": 60.6,
+          "cpu_system": 76.9,
+          "available_mib": 2689
+        },
+        {
+          "s": 68.7,
+          "lucent_mib": 301.2,
+          "workers_mib": 56,
+          "workers": 2,
+          "cpu_tree": 51.4,
+          "cpu_system": 75.4,
+          "available_mib": 2688
+        },
+        {
+          "s": 69.7,
+          "lucent_mib": 301.2,
+          "workers_mib": 185.4,
+          "workers": 2,
+          "cpu_tree": 57.5,
+          "cpu_system": 80.3,
+          "available_mib": 2575
+        },
+        {
+          "s": 70.7,
+          "lucent_mib": 301.2,
+          "workers_mib": 197.9,
+          "workers": 2,
+          "cpu_tree": 58,
+          "cpu_system": 99.7,
+          "available_mib": 2554
+        },
+        {
+          "s": 71.8,
+          "lucent_mib": 301.2,
+          "workers_mib": 191.4,
+          "workers": 2,
+          "cpu_tree": 41.2,
+          "cpu_system": 59.4,
+          "available_mib": 2665
+        },
+        {
+          "s": 72.8,
+          "lucent_mib": 300.6,
+          "workers_mib": 382.1,
+          "workers": 2,
+          "cpu_tree": 63.3,
+          "cpu_system": 96.5,
+          "available_mib": 2384
+        },
+        {
+          "s": 73.8,
+          "lucent_mib": 300.6,
+          "workers_mib": 385.1,
+          "workers": 2,
+          "cpu_tree": 71.1,
+          "cpu_system": 98.7,
+          "available_mib": 2379
+        },
+        {
+          "s": 74.8,
+          "lucent_mib": 300.8,
+          "workers_mib": 276.6,
+          "workers": 2,
+          "cpu_tree": 59.2,
+          "cpu_system": 96.5,
+          "available_mib": 2551
+        },
+        {
+          "s": 75.8,
+          "lucent_mib": 300.8,
+          "workers_mib": 217.4,
+          "workers": 2,
+          "cpu_tree": 60.3,
+          "cpu_system": 86.9,
+          "available_mib": 2478
+        },
+        {
+          "s": 76.8,
+          "lucent_mib": 300.8,
+          "workers_mib": 156.7,
+          "workers": 2,
+          "cpu_tree": 69.4,
+          "cpu_system": 88.1,
+          "available_mib": 2523
+        },
+        {
+          "s": 77.8,
+          "lucent_mib": 300.8,
+          "workers_mib": 283.8,
+          "workers": 2,
+          "cpu_tree": 63.6,
+          "cpu_system": 84.6,
+          "available_mib": 2387
+        },
+        {
+          "s": 78.8,
+          "lucent_mib": 301,
+          "workers_mib": 283.8,
+          "workers": 2,
+          "cpu_tree": 74.9,
+          "cpu_system": 97.7,
+          "available_mib": 2379
+        },
+        {
+          "s": 79.8,
+          "lucent_mib": 301,
+          "workers_mib": 65.6,
+          "workers": 2,
+          "cpu_tree": 62,
+          "cpu_system": 81.8,
+          "available_mib": 2590
+        },
+        {
+          "s": 80.9,
+          "lucent_mib": 301,
+          "workers_mib": 191.7,
+          "workers": 2,
+          "cpu_tree": 36.8,
+          "cpu_system": 61.7,
+          "available_mib": 2526
+        },
+        {
+          "s": 81.9,
+          "lucent_mib": 301,
+          "workers_mib": 410.8,
+          "workers": 2,
+          "cpu_tree": 56.3,
+          "cpu_system": 72.1,
+          "available_mib": 2252
+        },
+        {
+          "s": 82.9,
+          "lucent_mib": 301,
+          "workers_mib": 539.7,
+          "workers": 2,
+          "cpu_tree": 71.4,
+          "cpu_system": 97.3,
+          "available_mib": 2172
+        },
+        {
+          "s": 83.9,
+          "lucent_mib": 301,
+          "workers_mib": 590.1,
+          "workers": 2,
+          "cpu_tree": 76.6,
+          "cpu_system": 96.4,
+          "available_mib": 2102
+        },
+        {
+          "s": 84.9,
+          "lucent_mib": 301,
+          "workers_mib": 520.3,
+          "workers": 2,
+          "cpu_tree": 75,
+          "cpu_system": 94.7,
+          "available_mib": 2161
+        },
+        {
+          "s": 85.9,
+          "lucent_mib": 301,
+          "workers_mib": 321.1,
+          "workers": 2,
+          "cpu_tree": 62.6,
+          "cpu_system": 82.2,
+          "available_mib": 2373
+        },
+        {
+          "s": 86.9,
+          "lucent_mib": 301,
+          "workers_mib": 80,
+          "workers": 2,
+          "cpu_tree": 64.8,
+          "cpu_system": 87.8,
+          "available_mib": 2586
+        },
+        {
+          "s": 87.9,
+          "lucent_mib": 301,
+          "workers_mib": 289.1,
+          "workers": 2,
+          "cpu_tree": 51.1,
+          "cpu_system": 80.4,
+          "available_mib": 2373
+        },
+        {
+          "s": 88.9,
+          "lucent_mib": 301,
+          "workers_mib": 328,
+          "workers": 2,
+          "cpu_tree": 70.9,
+          "cpu_system": 99.9,
+          "available_mib": 2362
+        },
+        {
+          "s": 89.9,
+          "lucent_mib": 301,
+          "workers_mib": 40.7,
+          "workers": 2,
+          "cpu_tree": 57.5,
+          "cpu_system": 77.4,
+          "available_mib": 2620
+        },
+        {
+          "s": 91,
+          "lucent_mib": 301,
+          "workers_mib": 135.4,
+          "workers": 2,
+          "cpu_tree": 45.9,
+          "cpu_system": 71.1,
+          "available_mib": 2523
+        },
+        {
+          "s": 92,
+          "lucent_mib": 301,
+          "workers_mib": 934.2,
+          "workers": 2,
+          "cpu_tree": 66,
+          "cpu_system": 95,
+          "available_mib": 1895
+        },
+        {
+          "s": 93,
+          "lucent_mib": 301.1,
+          "workers_mib": 902.2,
+          "workers": 2,
+          "cpu_tree": 83.5,
+          "cpu_system": 99.9,
+          "available_mib": 1784
+        },
+        {
+          "s": 94,
+          "lucent_mib": 301.1,
+          "workers_mib": 902,
+          "workers": 2,
+          "cpu_tree": 82.7,
+          "cpu_system": 100,
+          "available_mib": 1780
+        },
+        {
+          "s": 95,
+          "lucent_mib": 301.1,
+          "workers_mib": 668.1,
+          "workers": 2,
+          "cpu_tree": 67.8,
+          "cpu_system": 95.9,
+          "available_mib": 2006
+        },
+        {
+          "s": 96,
+          "lucent_mib": 301.1,
+          "workers_mib": 666.8,
+          "workers": 2,
+          "cpu_tree": 71.4,
+          "cpu_system": 92.4,
+          "available_mib": 2004
+        },
+        {
+          "s": 97,
+          "lucent_mib": 301.1,
+          "workers_mib": 156.9,
+          "workers": 2,
+          "cpu_tree": 47.9,
+          "cpu_system": 68.3,
+          "available_mib": 2520
+        },
+        {
+          "s": 98,
+          "lucent_mib": 301.1,
+          "workers_mib": 164.3,
+          "workers": 2,
+          "cpu_tree": 48.1,
+          "cpu_system": 73.2,
+          "available_mib": 2498
+        },
+        {
+          "s": 99,
+          "lucent_mib": 301.2,
+          "workers_mib": 211.4,
+          "workers": 2,
+          "cpu_tree": 79.9,
+          "cpu_system": 97.6,
+          "available_mib": 2460
+        },
+        {
+          "s": 100,
+          "lucent_mib": 301.2,
+          "workers_mib": 58.7,
+          "workers": 2,
+          "cpu_tree": 46.6,
+          "cpu_system": 67.2,
+          "available_mib": 2602
+        },
+        {
+          "s": 101,
+          "lucent_mib": 301.2,
+          "workers_mib": 136.8,
+          "workers": 2,
+          "cpu_tree": 45.4,
+          "cpu_system": 67.7,
+          "available_mib": 2522
+        },
+        {
+          "s": 102.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 99.8,
+          "workers": 2,
+          "cpu_tree": 75.7,
+          "cpu_system": 91.3,
+          "available_mib": 2587
+        },
+        {
+          "s": 103.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 46.2,
+          "workers": 2,
+          "cpu_tree": 57.1,
+          "cpu_system": 85,
+          "available_mib": 2599
+        },
+        {
+          "s": 104.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 41.8,
+          "workers": 2,
+          "cpu_tree": 54,
+          "cpu_system": 89.2,
+          "available_mib": 2585
+        },
+        {
+          "s": 105.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 77.2,
+          "workers": 2,
+          "cpu_tree": 50.7,
+          "cpu_system": 86.3,
+          "available_mib": 2554
+        },
+        {
+          "s": 106.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 504.5,
+          "workers": 2,
+          "cpu_tree": 69.8,
+          "cpu_system": 92.8,
+          "available_mib": 2274
+        },
+        {
+          "s": 107.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 340.9,
+          "workers": 2,
+          "cpu_tree": 72.7,
+          "cpu_system": 98.6,
+          "available_mib": 2323
+        },
+        {
+          "s": 108.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 332,
+          "workers": 2,
+          "cpu_tree": 83,
+          "cpu_system": 99,
+          "available_mib": 2323
+        },
+        {
+          "s": 109.1,
+          "lucent_mib": 301.2,
+          "workers_mib": 97.8,
+          "workers": 2,
+          "cpu_tree": 48.9,
+          "cpu_system": 67.7,
+          "available_mib": 2548
+        },
+        {
+          "s": 110.1,
+          "lucent_mib": 301.3,
+          "workers_mib": 454.8,
+          "workers": 2,
+          "cpu_tree": 48.5,
+          "cpu_system": 82.6,
+          "available_mib": 2187
+        },
+        {
+          "s": 111.2,
+          "lucent_mib": 301.3,
+          "workers_mib": 463.4,
+          "workers": 2,
+          "cpu_tree": 83.3,
+          "cpu_system": 99.9,
+          "available_mib": 2164
+        },
+        {
+          "s": 112.2,
+          "lucent_mib": 301.3,
+          "workers_mib": 304.5,
+          "workers": 2,
+          "cpu_tree": 68,
+          "cpu_system": 90.2,
+          "available_mib": 2421
+        },
+        {
+          "s": 113.2,
+          "lucent_mib": 302.4,
+          "workers_mib": 239.2,
+          "workers": 2,
+          "cpu_tree": 56.1,
+          "cpu_system": 71.8,
+          "available_mib": 2399
+        },
+        {
+          "s": 114.2,
+          "lucent_mib": 301.3,
+          "workers_mib": 423.7,
+          "workers": 2,
+          "cpu_tree": 76.3,
+          "cpu_system": 92.8,
+          "available_mib": 2406
+        },
+        {
+          "s": 115.2,
+          "lucent_mib": 301.4,
+          "workers_mib": 139.4,
+          "workers": 2,
+          "cpu_tree": 74.4,
+          "cpu_system": 92.3,
+          "available_mib": 2534
+        },
+        {
+          "s": 116.2,
+          "lucent_mib": 301.4,
+          "workers_mib": 313.8,
+          "workers": 2,
+          "cpu_tree": 46,
+          "cpu_system": 65.8,
+          "available_mib": 2394
+        },
+        {
+          "s": 117.2,
+          "lucent_mib": 301.4,
+          "workers_mib": 192,
+          "workers": 2,
+          "cpu_tree": 76.2,
+          "cpu_system": 97.6,
+          "available_mib": 2426
+        },
+        {
+          "s": 118.2,
+          "lucent_mib": 301.4,
+          "workers_mib": 28.3,
+          "workers": 2,
+          "cpu_tree": 56.2,
+          "cpu_system": 78.7,
+          "available_mib": 2585
+        },
+        {
+          "s": 119.2,
+          "lucent_mib": 301.4,
+          "workers_mib": 298.8,
+          "workers": 2,
+          "cpu_tree": 53,
+          "cpu_system": 71,
+          "available_mib": 2392
+        },
+        {
+          "s": 120.3,
+          "lucent_mib": 301.4,
+          "workers_mib": 508.2,
+          "workers": 2,
+          "cpu_tree": 70.2,
+          "cpu_system": 97.8,
+          "available_mib": 2149
+        },
+        {
+          "s": 121.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 420.2,
+          "workers": 2,
+          "cpu_tree": 75.6,
+          "cpu_system": 99.9,
+          "available_mib": 2329
+        },
+        {
+          "s": 122.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 224.2,
+          "workers": 2,
+          "cpu_tree": 43.2,
+          "cpu_system": 63.8,
+          "available_mib": 2410
+        },
+        {
+          "s": 123.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 271.2,
+          "workers": 2,
+          "cpu_tree": 82.1,
+          "cpu_system": 95.8,
+          "available_mib": 2353
+        },
+        {
+          "s": 124.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 81.6,
+          "workers": 2,
+          "cpu_tree": 33.7,
+          "cpu_system": 55,
+          "available_mib": 2566
+        },
+        {
+          "s": 125.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 493.5,
+          "workers": 2,
+          "cpu_tree": 61,
+          "cpu_system": 89,
+          "available_mib": 2133
+        },
+        {
+          "s": 126.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 528,
+          "workers": 2,
+          "cpu_tree": 81.2,
+          "cpu_system": 99.9,
+          "available_mib": 2111
+        },
+        {
+          "s": 127.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 390.9,
+          "workers": 2,
+          "cpu_tree": 69.6,
+          "cpu_system": 90.4,
+          "available_mib": 2239
+        },
+        {
+          "s": 128.3,
+          "lucent_mib": 302.1,
+          "workers_mib": 258.9,
+          "workers": 2,
+          "cpu_tree": 46.1,
+          "cpu_system": 64.5,
+          "available_mib": 2358
+        },
+        {
+          "s": 129.3,
+          "lucent_mib": 302.2,
+          "workers_mib": 172.3,
+          "workers": 2,
+          "cpu_tree": 55.5,
+          "cpu_system": 80.4,
+          "available_mib": 2403
+        },
+        {
+          "s": 130.2,
+          "lucent_mib": 0,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 9,
+          "cpu_system": 34,
+          "available_mib": 2725
+        }
+      ]
+    },
+    {
+      "name": "session3-cancel",
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.815,
+      "log": "build\\w12-perf-resilience\\logs\\session3-cancel.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 7.397,
+            "done": 20,
+            "total": 100,
+            "completed": 20,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 80
+          },
+          {
+            "seconds": 7.601,
+            "done": 100,
+            "total": 100,
+            "completed": 20,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "window_loaded_ms": 864,
+        "first_frame_ms": 989,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 7.601,
+          "state": "cancelled",
+          "completed": 20,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 80,
+          "review": 9,
+          "folder": "build\\w12-perf-resilience\\out-cancel"
+        },
+        "batch_report_html": "build\\w12-perf-resilience\\out-cancel\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 126,
+          "created_ms": 1021,
+          "first_done_ms": 1507,
+          "finished_ms": 6732,
+          "done": 100,
+          "exported": 20,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 80,
+          "seconds": 5.711,
+          "per_minute": 210.12
+        },
+        "batch_cancel": {
+          "requested_ms": 6528,
+          "done": 20,
+          "running": 1,
+          "stopped_after_ms": 204
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 22,
+          "completed": 20,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 2,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 24,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 141.8,
+          "peak_aggregate_commit_mib": 326.3,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 20,
+          "analysed": 0,
+          "skipped": 0,
+          "failed": 0,
+          "review": 10
+        },
+        "ui": {
+          "seconds": 6.7,
+          "ticks": 495,
+          "gap_median_ms": 11,
+          "gap_p99_ms": 39,
+          "gap_max_ms": 72,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 307.1,
+          "peak_commit_mib": 266.5,
+          "commit_mib": 244.9,
+          "cpu_s": 11.3,
+          "user_s": 7.8,
+          "kernel_s": 3.5,
+          "wall_s": 7.61
+        }
+      },
+      "resources": {
+        "wall_s": 7.815,
+        "cpu_s": 46.859,
+        "cpu_percent_of_machine": 49.97,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 266.473,
+          "peak_working_set_mib": 307.066,
+          "cpu_s": 11.453
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 279.18,
+            "peak_working_set_mib": 287.32,
+            "cpu_s": 35.406,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 9,
+        "sampled": {
+          "root_private_max_mib": 244.777,
+          "descendants_private_max_mib": 321.645,
+          "tree_private_max_mib": 566.422,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 71.999,
+          "tree_cpu_percent_max": 81.34,
+          "system_available_min_mib": 2143.258
+        }
+      },
+      "series": [
+        {
+          "s": 0,
+          "lucent_mib": 1,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 0,
+          "cpu_system": 0,
+          "available_mib": 2696
+        },
+        {
+          "s": 1,
+          "lucent_mib": 99.7,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 7.4,
+          "cpu_system": 33.5,
+          "available_mib": 2573
+        },
+        {
+          "s": 2,
+          "lucent_mib": 176.2,
+          "workers_mib": 25.4,
+          "workers": 1,
+          "cpu_tree": 21.6,
+          "cpu_system": 43.9,
+          "available_mib": 2505
+        },
+        {
+          "s": 3,
+          "lucent_mib": 196.5,
+          "workers_mib": 43.6,
+          "workers": 2,
+          "cpu_tree": 65.6,
+          "cpu_system": 90.5,
+          "available_mib": 2442
+        },
+        {
+          "s": 4.1,
+          "lucent_mib": 238.8,
+          "workers_mib": 105.6,
+          "workers": 2,
+          "cpu_tree": 64,
+          "cpu_system": 86.6,
+          "available_mib": 2400
+        },
+        {
+          "s": 5.1,
+          "lucent_mib": 244.3,
+          "workers_mib": 138.3,
+          "workers": 2,
+          "cpu_tree": 54.5,
+          "cpu_system": 83.1,
+          "available_mib": 2317
+        },
+        {
+          "s": 6.1,
+          "lucent_mib": 244.8,
+          "workers_mib": 321.6,
+          "workers": 2,
+          "cpu_tree": 71.2,
+          "cpu_system": 90.3,
+          "available_mib": 2143
+        },
+        {
+          "s": 7.1,
+          "lucent_mib": 244.8,
+          "workers_mib": 194,
+          "workers": 2,
+          "cpu_tree": 81.3,
+          "cpu_system": 97.6,
+          "available_mib": 2245
+        },
+        {
+          "s": 7.8,
+          "lucent_mib": 0,
+          "workers_mib": 0,
+          "workers": 0,
+          "cpu_tree": 28.6,
+          "cpu_system": 50.6,
+          "available_mib": 2717
+        }
+      ]
+    }
+  ]
+}

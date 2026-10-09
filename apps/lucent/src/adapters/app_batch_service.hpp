@@ -91,6 +91,7 @@ public:
     void request_report(BatchId batch) override;
     void request_report_file(BatchId batch) override;
     [[nodiscard]] bool is_busy() const override;
+    [[nodiscard]] QString measurement_summary() const override;
 
     // The current snapshot of `batch` (tests); nullptr when unknown.
     [[nodiscard]] const BatchSnapshot* snapshot(BatchId batch) const;

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string_view>
 #include <thread>
@@ -276,6 +277,25 @@ TEST_F(BatchAdapterTest, ABatchRunsWithCoalescedUpdatesAndAResponsiveUiThreadThe
         EXPECT_TRUE(std::filesystem::is_regular_file(dir_.path() / std::format(L"out\\IMG_{:04}_Lucent_0.jpg", i)));
     }
 
+    // W12: the scheduler's statistics for Lucent.exe --measure, as key=value fields.
+    std::map<QString, double> stats;
+    for (const QString& field : batches_->measurement_summary().split(u' ', Qt::SkipEmptyParts)) {
+        const QStringList pair = field.split(u'=');
+        ASSERT_EQ(pair.size(), 2) << field.toStdString();
+        bool number = false;
+        stats[pair[0]] = pair[1].toDouble(&number);
+        EXPECT_TRUE(number) << field.toStdString();
+    }
+    EXPECT_EQ(stats["completed"], static_cast<double>(kPhotos));
+    EXPECT_GE(stats["attempts"], static_cast<double>(kPhotos));
+    EXPECT_EQ(stats["failed"], 0.0);
+    EXPECT_GE(stats["worker_starts"], 1.0);
+    EXPECT_GE(stats["peak_active_workers"], 1.0);
+    EXPECT_LE(stats["peak_active_workers"], stats["max_workers"]);
+    EXPECT_GT(stats["worker_budget_mib"], 0.0);
+    EXPECT_GT(stats["peak_worker_commit_mib"], 0.0);
+    EXPECT_EQ(stats.count("peak_aggregate_commit_mib"), 1u);
+
     batches_->request_report(batch);
     ASSERT_TRUE(QTest::qWaitFor([&] { return !reports_.empty(); }, kAdapterWaitMs));
     const BatchReportInfo& report = reports_.back();
@@ -491,6 +511,7 @@ TEST_F(BatchAdapterTest, WithoutACatalogBatchesAreUnavailableAndSaySo) {
     open(/*with_catalog=*/false);
     EXPECT_FALSE(batches_->is_available());
     EXPECT_FALSE(batches_->unavailable_reason().isEmpty());
+    EXPECT_TRUE(batches_->measurement_summary().isEmpty());
     const quint64 plan = batches_->request_plan(setup_for({1}));
     ASSERT_TRUE(QTest::qWaitFor([&] { return !plans_.empty(); }, kAdapterWaitMs));
     EXPECT_EQ(plans_[0].first, plan);

@@ -1,0 +1,81 @@
+{
+  "collected_at": "2026-10-09T19:04:40Z",
+  "cpu": {
+    "name": "AMD Ryzen 5 5500U with Radeon Graphics",
+    "cores": 6,
+    "logical_processors": 12,
+    "max_clock_mhz": 2100
+  },
+  "memory": {
+    "total_gib": 11.91,
+    "available_gib_at_start": 2.65
+  },
+  "os": {
+    "caption": "Microsoft Windows 11 Pro",
+    "version": "10.0.26200",
+    "build": "26200",
+    "architecture": "64-bit"
+  },
+  "gpu": [
+                "AMD Radeon(TM) Graphics"
+            ],
+  "system_disk": {
+    "model": "512GB SSD",
+    "media": "SSD",
+    "bus": "NVMe",
+    "size_gb": 512
+  },
+  "system_volume": {
+    "file_system": "NTFS",
+    "free_gib": 12.8
+  },
+  "power_scheme": "381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "on_ac_power": true,
+  "antivirus": {
+    "product": "Microsoft Defender",
+    "real_time_protection": true
+  },
+  "git": {
+    "commit": "e51dd652c495fda4e0ef54a7f6de9c642250d441",
+    "branch": "feat/w12-hardening",
+    "uncommitted_paths": 56
+  },
+  "build": {
+    "CMAKE_BUILD_TYPE": "Release",
+    "LUCENT_BUILD_UI": "ON",
+    "LUCENT_WARNINGS_AS_ERRORS": "ON",
+    "VCPKG_TARGET_TRIPLET": "x64-windows-lucent"
+  },
+  "busiest_other_processes_percent": [127,105,40,17,6],
+  "idle_cpu_percent_before": 29.881,
+  "harness": {
+    "build_dir": "build\\w12-perf",
+    "app_dir": "build\\w12-perf\\package\\stage",
+    "work_dir": "build\\w12-perf-bench",
+    "repetitions": 3,
+    "sample_ms": 250,
+    "quick": false,
+    "powershell": "5.1.26100.9444",
+    "scenarios": [
+                                      "export"
+                                  ]
+  },
+  "fixtures": [
+    {
+      "id": "canon-eos-r5-cr3-craw-crop-dualpixel",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS R5",
+      "file": "Canon_EOS_R5_CRAW_ISO_100_crop_dual.CR3",
+      "bytes": 11416376,
+      "width": 5087,
+      "height": 3391,
+      "megapixels": 17.25
+    }
+  ],
+  "finished_at": "2026-10-09T19:05:26Z",
+  "duration_minutes": 0.561,
+  "sources_changed": [
+
+                        ]
+}

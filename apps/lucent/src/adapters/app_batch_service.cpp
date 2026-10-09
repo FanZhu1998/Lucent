@@ -464,6 +464,39 @@ bool AppBatchService::is_busy() const {
     });
 }
 
+QString AppBatchService::measurement_summary() const {
+    const app::BatchService* service = backend_->batches();
+    if (service == nullptr) {
+        return {};
+    }
+    const app::BatchSchedulerStats s = service->stats();
+    const auto mib = [](std::uint64_t bytes) { return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 1); };
+    return QStringLiteral("max_workers=%1 peak_active_workers=%2 worker_starts=%3 attempts=%4 completed=%5 "
+                          "retried=%6 failed=%7 deferred_for_memory=%8 deferred_for_interactive=%9 calibrated=%10 "
+                          "bytes_per_pixel=%11 total_budget_mib=%12 worker_budget_mib=%13 aggregate_limit_mib=%14 "
+                          "peak_worker_commit_mib=%15 peak_aggregate_commit_mib=%16 aggregate_limit_hits=%17 "
+                          "exclusive_attempts=%18 idle_workers_released=%19")
+        .arg(s.max_workers)
+        .arg(s.peak_active_workers)
+        .arg(s.worker_starts)
+        .arg(s.attempts)
+        .arg(s.completed)
+        .arg(s.retried)
+        .arg(s.failed)
+        .arg(s.deferred_for_memory)
+        .arg(s.deferred_for_interactive)
+        .arg(s.calibrated ? 1 : 0)
+        .arg(s.bytes_per_pixel, 0, 'f', 2)
+        .arg(mib(s.total_budget_bytes))
+        .arg(mib(s.worker_budget_bytes))
+        .arg(mib(s.aggregate_limit_bytes))
+        .arg(mib(s.peak_worker_commit_bytes))
+        .arg(mib(s.peak_aggregate_commit_bytes))
+        .arg(s.aggregate_limit_hits)
+        .arg(s.exclusive_attempts)
+        .arg(s.idle_workers_released);
+}
+
 const BatchSnapshot* AppBatchService::snapshot(BatchId batch) const {
     const auto found = snapshots_.find(batch);
     return found == snapshots_.end() ? nullptr : &found->second;

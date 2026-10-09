@@ -298,6 +298,11 @@ public:
     // True while a submission runs or a batch has jobs to run (not while it is paused).
     [[nodiscard]] virtual bool is_busy() const = 0;
 
+    // Developer measurements only (Lucent.exe --measure, W12): the batch scheduler's statistics of
+    // this session as "key=value" fields separated by spaces (workers, attempts, memory budget and
+    // the workers' peak commit); empty when there are none.
+    [[nodiscard]] virtual QString measurement_summary() const { return {}; }
+
 signals:
     void plan_ready(quint64 token, const lucent::ui::BatchPlanInfo& plan);
     // `text` describes the step ("Adding the folder's photos… 12 of 40"); fraction 0..1 or -1.

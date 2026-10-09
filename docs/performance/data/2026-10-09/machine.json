@@ -1,0 +1,519 @@
+{
+  "collected_at": "2026-10-09T18:05:11Z",
+  "cpu": {
+    "name": "AMD Ryzen 5 5500U with Radeon Graphics",
+    "cores": 6,
+    "logical_processors": 12,
+    "max_clock_mhz": 2100
+  },
+  "memory": {
+    "total_gib": 11.91,
+    "available_gib_at_start": 2.41
+  },
+  "os": {
+    "caption": "Microsoft Windows 11 Pro",
+    "version": "10.0.26200",
+    "build": "26200",
+    "architecture": "64-bit"
+  },
+  "gpu": [
+                "AMD Radeon(TM) Graphics"
+            ],
+  "system_disk": {
+    "model": "512GB SSD",
+    "media": "SSD",
+    "bus": "NVMe",
+    "size_gb": 512
+  },
+  "system_volume": {
+    "file_system": "NTFS",
+    "free_gib": 12.9
+  },
+  "power_scheme": "381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "on_ac_power": true,
+  "antivirus": {
+    "product": "Microsoft Defender",
+    "real_time_protection": true
+  },
+  "git": {
+    "commit": "e51dd652c495fda4e0ef54a7f6de9c642250d441",
+    "branch": "feat/w12-hardening",
+    "uncommitted_paths": 54
+  },
+  "build": {
+    "CMAKE_BUILD_TYPE": "Release",
+    "LUCENT_BUILD_UI": "ON",
+    "LUCENT_WARNINGS_AS_ERRORS": "ON",
+    "VCPKG_TARGET_TRIPLET": "x64-windows-lucent"
+  },
+  "busiest_other_processes_percent": [104,23,7,4,3],
+  "idle_cpu_percent_before": 15.515,
+  "harness": {
+    "build_dir": "build\\w12-perf",
+    "app_dir": "build\\w12-perf\\package\\stage",
+    "work_dir": "build\\w12-perf-bench",
+    "repetitions": 3,
+    "sample_ms": 250,
+    "quick": false,
+    "powershell": "5.1.26100.9444",
+    "scenarios": [
+      "startup",
+      "thumbnails",
+      "preview",
+      "edit",
+      "auto-editor",
+      "auto-cancel",
+      "auto-analysis",
+      "export",
+      "batch",
+      "batch-cancel"
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "canon-eos-r5-cr3-raw",
+      "tier": "smoke",
+      "make": "Canon",
+      "model": "EOS R5",
+      "file": "Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3",
+      "bytes": 40632406,
+      "width": 8191,
+      "height": 5463,
+      "megapixels": 44.747
+    },
+    {
+      "id": "sony-ilce-7m4-arw-compressed",
+      "tier": "smoke",
+      "make": "Sony",
+      "model": "ILCE-7M4",
+      "file": "ILCE-7M4_DSC06677_FullFrame-Raw-Compressed.ARW",
+      "bytes": 40665088,
+      "width": 7028,
+      "height": 4688,
+      "megapixels": 32.947
+    },
+    {
+      "id": "dji-fc4382-dng",
+      "tier": "smoke",
+      "make": "DJI",
+      "model": "FC4382",
+      "file": "DJI_20250506184749_0011_D.DNG",
+      "bytes": 14884352,
+      "width": 4032,
+      "height": 3024,
+      "megapixels": 12.193
+    },
+    {
+      "id": "fujifilm-x-t4-raf-lossless",
+      "tier": "smoke",
+      "make": "Fujifilm",
+      "model": "X-T4",
+      "file": "DSCF0267.RAF",
+      "bytes": 27949104,
+      "width": 6246,
+      "height": 4170,
+      "megapixels": 26.046
+    },
+    {
+      "id": "nikon-z-6-nef-lossless",
+      "tier": "smoke",
+      "make": "Nikon",
+      "model": "Z 6",
+      "file": "DSC_0752.NEF",
+      "bytes": 30164134,
+      "width": 6064,
+      "height": 4040,
+      "megapixels": 24.499
+    },
+    {
+      "id": "canon-eos-r5-cr3-craw",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS R5",
+      "file": "Canon_EOS_R5_CRAW_ISO_100_nocrop_nodual.CR3",
+      "bytes": 16815190,
+      "width": 8191,
+      "height": 5463,
+      "megapixels": 44.747
+    },
+    {
+      "id": "canon-eos-r5-cr3-raw-crop",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS R5",
+      "file": "Canon_EOS_R5_RAW_ISO_100_crop_nodual.CR3",
+      "bytes": 17391702,
+      "width": 5087,
+      "height": 3391,
+      "megapixels": 17.25
+    },
+    {
+      "id": "canon-eos-r5-cr3-craw-crop-dualpixel",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS R5",
+      "file": "Canon_EOS_R5_CRAW_ISO_100_crop_dual.CR3",
+      "bytes": 11416376,
+      "width": 5087,
+      "height": 3391,
+      "megapixels": 17.25
+    },
+    {
+      "id": "canon-eos-5d-mark-iv-cr2-raw",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS 5D Mark IV",
+      "file": "B13A0734.CR2",
+      "bytes": 33900585,
+      "width": 6744,
+      "height": 4502,
+      "megapixels": 30.361
+    },
+    {
+      "id": "canon-eos-5d-mark-iv-cr2-sraw",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS 5D Mark IV",
+      "file": "B13A0732.CR2",
+      "bytes": 15217883,
+      "width": 3360,
+      "height": 2240,
+      "megapixels": 7.526
+    },
+    {
+      "id": "sony-ilce-7m4-arw-uncompressed",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "ILCE-7M4",
+      "file": "ILCE-7M4_DSC06673_FullFrame-Raw-Uncompressed.ARW",
+      "bytes": 73457664,
+      "width": 7028,
+      "height": 4688,
+      "megapixels": 32.947
+    },
+    {
+      "id": "sony-ilce-7m4-arw-lossless-l",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "ILCE-7M4",
+      "file": "ILCE-7M4_DSC06674_FullFrame-LossLess-Compressed-Large.ARW",
+      "bytes": 49184768,
+      "width": 7028,
+      "height": 4688,
+      "megapixels": 32.947
+    },
+    {
+      "id": "sony-ilce-7m4-arw-lossless-m",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "ILCE-7M4",
+      "file": "ILCE-7M4_DSC06675_FullFrame-LossLess-Compressed-Medium.ARW",
+      "bytes": 32804864,
+      "width": 4624,
+      "height": 3080,
+      "megapixels": 14.242
+    },
+    {
+      "id": "sony-ilce-7m4-arw-lossless-s",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "ILCE-7M4",
+      "file": "ILCE-7M4_DSC06676_FullFrame-LossLess-Compressed-Small.ARW",
+      "bytes": 22933504,
+      "width": 3516,
+      "height": 2344,
+      "megapixels": 8.242
+    },
+    {
+      "id": "sony-ilce-7m4-arw-compressed-apsc",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "ILCE-7M4",
+      "file": "ILCE-7M4_DSC06681_APS-C-Raw-Compressed.ARW",
+      "bytes": 19636224,
+      "width": 4692,
+      "height": 3132,
+      "megapixels": 14.695
+    },
+    {
+      "id": "sony-ilce-7rm5-arw-compressed",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "ILCE-7RM5",
+      "file": "7RM5-LossyCompressed.ARW",
+      "bytes": 72286208,
+      "width": 9564,
+      "height": 6376,
+      "megapixels": 60.98
+    },
+    {
+      "id": "dji-fc220-dng",
+      "tier": "qualification",
+      "make": "DJI",
+      "model": "FC220",
+      "file": "DJI_0004.DNG",
+      "bytes": 24331468,
+      "width": 4000,
+      "height": 3000,
+      "megapixels": 12
+    },
+    {
+      "id": "hasselblad-l2d-20c-dng",
+      "tier": "qualification",
+      "make": "Hasselblad",
+      "model": "L2D-20c",
+      "file": "DJI_0023.DNG",
+      "bytes": 43571200,
+      "width": 5280,
+      "height": 3956,
+      "megapixels": 20.888
+    },
+    {
+      "id": "dji-fc7303-dng",
+      "tier": "qualification",
+      "make": "DJI",
+      "model": "FC7303",
+      "file": "DJI_0109.DNG",
+      "bytes": 24524288,
+      "width": 4000,
+      "height": 3000,
+      "megapixels": 12
+    },
+    {
+      "id": "insta360-one-x-dng",
+      "tier": "qualification",
+      "make": "Arashi Vision",
+      "model": "Insta360 One X",
+      "file": "IMG_20201122_142733_00_015.dng",
+      "bytes": 36967459,
+      "width": 3040,
+      "height": 6080,
+      "megapixels": 18.483
+    },
+    {
+      "id": "nikon-z-8-nef-he",
+      "tier": "qualification",
+      "make": "Nikon",
+      "model": "Z 8",
+      "file": "Nikon_Z8_high_efficiency_low.NEF",
+      "bytes": 24384512,
+      "width": null,
+      "height": null,
+      "megapixels": null
+    },
+    {
+      "id": "nikon-z-8-nef-he-star",
+      "tier": "qualification",
+      "make": "Nikon",
+      "model": "Z 8",
+      "file": "Nikon_Z8_raw_high_efficiency_hight.NEF",
+      "bytes": 35744768,
+      "width": null,
+      "height": null,
+      "megapixels": null
+    },
+    {
+      "id": "nikon-z-6-nef-compressed",
+      "tier": "qualification",
+      "make": "Nikon",
+      "model": "Z 6",
+      "file": "DSC_0751.NEF",
+      "bytes": 25994889,
+      "width": 6064,
+      "height": 4040,
+      "megapixels": 24.499
+    },
+    {
+      "id": "fujifilm-x-t4-raf-compressed",
+      "tier": "qualification",
+      "make": "Fujifilm",
+      "model": "X-T4",
+      "file": "DSCF0268.RAF",
+      "bytes": 26971008,
+      "width": 6246,
+      "height": 4170,
+      "megapixels": 26.046
+    },
+    {
+      "id": "fujifilm-gfx-50s-ii-raf-compressed",
+      "tier": "qualification",
+      "make": "Fujifilm",
+      "model": "GFX50S II",
+      "file": "Fuji_GFX50S_II_-_Compressed.RAF",
+      "bytes": 34522544,
+      "width": 8280,
+      "height": 6208,
+      "megapixels": 51.402
+    },
+    {
+      "id": "panasonic-dc-s5m2-rw2",
+      "tier": "qualification",
+      "make": "Panasonic",
+      "model": "DC-S5M2",
+      "file": "P1126458_mechanical.RW2",
+      "bytes": 37309952,
+      "width": 6008,
+      "height": 4008,
+      "megapixels": 24.08
+    },
+    {
+      "id": "om-system-om-1-orf",
+      "tier": "qualification",
+      "make": "OM System",
+      "model": "OM-1",
+      "file": "OM_Systems_OM1_RAW_Image_20mpx_P1010025.ORF",
+      "bytes": 21820729,
+      "width": 5220,
+      "height": 3912,
+      "megapixels": 20.421
+    },
+    {
+      "id": "pentax-k-3-mark-iii-pef",
+      "tier": "qualification",
+      "make": "Pentax",
+      "model": "K-3 Mark III",
+      "file": "_IMG0115.PEF",
+      "bytes": 32300671,
+      "width": 6224,
+      "height": 4160,
+      "megapixels": 25.892
+    },
+    {
+      "id": "pentax-k-3-mark-iii-monochrome-dng",
+      "tier": "qualification",
+      "make": "Pentax",
+      "model": "K-3 Mark III Monochrome",
+      "file": "K3III.DNG",
+      "bytes": 37669430,
+      "width": 6224,
+      "height": 4160,
+      "megapixels": 25.892
+    },
+    {
+      "id": "leica-m10-dng",
+      "tier": "qualification",
+      "make": "Leica",
+      "model": "M10",
+      "file": "f5381888.dng",
+      "bytes": 34209792,
+      "width": 5984,
+      "height": 3992,
+      "megapixels": 23.888
+    },
+    {
+      "id": "leica-m-monochrom-typ-246-dng",
+      "tier": "qualification",
+      "make": "Leica",
+      "model": "M Monochrom (Typ 246)",
+      "file": "M2462362.DNG",
+      "bytes": 21700096,
+      "width": 5984,
+      "height": 4000,
+      "megapixels": 23.936
+    },
+    {
+      "id": "hasselblad-x1d-ii-50c-3fr",
+      "tier": "qualification",
+      "make": "Hasselblad",
+      "model": "X1D II 50C",
+      "file": "MKW_20200429_0004569.3FR",
+      "bytes": 108399104,
+      "width": 8278,
+      "height": 6208,
+      "megapixels": 51.39
+    },
+    {
+      "id": "adobe-dng-canon-eos-5d-mark-iii-linear-dng",
+      "tier": "qualification",
+      "make": "Adobe DNG Converter",
+      "model": "Canon EOS 5D Mark III",
+      "file": "5G4A9395-compressed-lossless.DNG",
+      "bytes": 24103910,
+      "width": 3960,
+      "height": 2640,
+      "megapixels": 10.454
+    },
+    {
+      "id": "canon-eos-7d-mark-ii-dng-jxl",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS 7D Mark II",
+      "file": "0P9A0410-Enhanced-NR.dng",
+      "bytes": 38265824,
+      "width": 5496,
+      "height": 3670,
+      "megapixels": 20.17
+    },
+    {
+      "id": "canon-eos-350d-cr2",
+      "tier": "qualification",
+      "make": "Canon",
+      "model": "EOS Digital Rebel XT",
+      "file": "IMG_8728.CR2",
+      "bytes": 7456886,
+      "width": 3474,
+      "height": 2314,
+      "megapixels": 8.039
+    },
+    {
+      "id": "olympus-xz-10-orf",
+      "tier": "qualification",
+      "make": "Olympus",
+      "model": "XZ-10",
+      "file": "P1240016.ORF",
+      "bytes": 19344848,
+      "width": 3984,
+      "height": 2990,
+      "megapixels": 11.912
+    },
+    {
+      "id": "ricoh-gxr-s10-dng",
+      "tier": "qualification",
+      "make": "Ricoh",
+      "model": "GXR",
+      "file": "R0017428.DNG",
+      "bytes": 15293931,
+      "width": 3672,
+      "height": 2748,
+      "megapixels": 10.091
+    },
+    {
+      "id": "bq-aquaris-u-plus-dng",
+      "tier": "qualification",
+      "make": "bq",
+      "model": "Aquaris U Plus",
+      "file": "IMG_20180217_111328_894.dng",
+      "bytes": 32326108,
+      "width": 4640,
+      "height": 3480,
+      "megapixels": 16.147
+    },
+    {
+      "id": "oneplus-one-dng",
+      "tier": "qualification",
+      "make": "OnePlus",
+      "model": "One",
+      "file": "IMG_20150729_201116.dng",
+      "bytes": 17168592,
+      "width": 4208,
+      "height": 3120,
+      "megapixels": 13.129
+    },
+    {
+      "id": "sony-dslr-a450-arw",
+      "tier": "qualification",
+      "make": "Sony",
+      "model": "DSLR-A450",
+      "file": "20170423_113243_A450_07665.ARW",
+      "bytes": 14712832,
+      "width": 4608,
+      "height": 3072,
+      "megapixels": 14.156
+    }
+  ],
+  "finished_at": "2026-10-09T19:01:02Z",
+  "duration_minutes": 55.647,
+  "sources_changed": [
+
+                        ]
+}

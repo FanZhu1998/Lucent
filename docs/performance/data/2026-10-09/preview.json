@@ -1,0 +1,1802 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "preview",
+  "description": "First RAW preview: the photo is added to a new library (--import) and opened in Edit. first_raw_preview_ms: from the import request to the first frame rendered from the RAW data on screen (the camera preview shown meanwhile does not count); fit_preview.visible_ms: from opening the photo to that frame; engine_s / preview_s: the preview service\u0027s latest full-size render (it starts when the photo is added); then the 100 % view (full-resolution final frame) after the zoom.",
+  "repetitions": 3,
+  "measured_at": "2026-10-09T18:07:57Z",
+  "summary": {
+    "canon-eos-r5-cr3-raw": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_raw_preview_ms": {
+        "n": 3,
+        "median": 1193,
+        "p95": 1201,
+        "min": 1184,
+        "max": 1201,
+        "mean": 1192.667,
+        "stdev": 8.505,
+        "cv": 0.007
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 320,
+        "p95": 360,
+        "min": 263,
+        "max": 360,
+        "mean": 314.333,
+        "stdev": 48.748,
+        "cv": 0.155
+      },
+      "metrics.fit_preview.engine_s": {
+        "n": 3,
+        "median": 0.93,
+        "p95": 0.96,
+        "min": 0.92,
+        "max": 0.96,
+        "mean": 0.937,
+        "stdev": 0.021,
+        "cv": 0.022
+      },
+      "metrics.fit_preview.preview_s": {
+        "n": 3,
+        "median": 0.95,
+        "p95": 0.99,
+        "min": 0.94,
+        "max": 0.99,
+        "mean": 0.96,
+        "stdev": 0.026,
+        "cv": 0.028
+      },
+      "metrics.zoom_preview.visible_ms": {
+        "n": 3,
+        "median": 1583,
+        "p95": 1760,
+        "min": 1556,
+        "max": 1760,
+        "mean": 1633,
+        "stdev": 110.811,
+        "cv": 0.068
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 1404.9,
+        "p95": 1407.6,
+        "min": 1403.3,
+        "max": 1407.6,
+        "mean": 1405.267,
+        "stdev": 2.173,
+        "cv": 0.002
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 1429,
+        "p95": 1430.3,
+        "min": 1426.1,
+        "max": 1430.3,
+        "mean": 1428.467,
+        "stdev": 2.15,
+        "cv": 0.002
+      }
+    },
+    "sony-ilce-7m4-arw-compressed": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_raw_preview_ms": {
+        "n": 3,
+        "median": 804,
+        "p95": 811,
+        "min": 750,
+        "max": 811,
+        "mean": 788.333,
+        "stdev": 33.382,
+        "cv": 0.042
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 244,
+        "p95": 258,
+        "min": 188,
+        "max": 258,
+        "mean": 230,
+        "stdev": 37.041,
+        "cv": 0.161
+      },
+      "metrics.fit_preview.engine_s": {
+        "n": 3,
+        "median": 0.51,
+        "p95": 0.52,
+        "min": 0.49,
+        "max": 0.52,
+        "mean": 0.507,
+        "stdev": 0.015,
+        "cv": 0.03
+      },
+      "metrics.fit_preview.preview_s": {
+        "n": 3,
+        "median": 0.54,
+        "p95": 0.54,
+        "min": 0.51,
+        "max": 0.54,
+        "mean": 0.53,
+        "stdev": 0.017,
+        "cv": 0.033
+      },
+      "metrics.zoom_preview.visible_ms": {
+        "n": 3,
+        "median": 1000,
+        "p95": 1119,
+        "min": 936,
+        "max": 1119,
+        "mean": 1018.333,
+        "stdev": 92.867,
+        "cv": 0.091
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 1365,
+        "p95": 1375.1,
+        "min": 1363.2,
+        "max": 1375.1,
+        "mean": 1367.767,
+        "stdev": 6.414,
+        "cv": 0.005
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 1403.5,
+        "p95": 1404.1,
+        "min": 1386.8,
+        "max": 1404.1,
+        "mean": 1398.133,
+        "stdev": 9.82,
+        "cv": 0.007
+      }
+    },
+    "dji-fc4382-dng": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_raw_preview_ms": {
+        "n": 3,
+        "median": 942,
+        "p95": 997,
+        "min": 879,
+        "max": 997,
+        "mean": 939.333,
+        "stdev": 59.045,
+        "cv": 0.063
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 127,
+        "p95": 321,
+        "min": 117,
+        "max": 321,
+        "mean": 188.333,
+        "stdev": 115.001,
+        "cv": 0.611
+      },
+      "metrics.fit_preview.engine_s": {
+        "n": 3,
+        "median": 0.66,
+        "p95": 0.7,
+        "min": 0.62,
+        "max": 0.7,
+        "mean": 0.66,
+        "stdev": 0.04,
+        "cv": 0.061
+      },
+      "metrics.fit_preview.preview_s": {
+        "n": 3,
+        "median": 0.68,
+        "p95": 0.73,
+        "min": 0.64,
+        "max": 0.73,
+        "mean": 0.683,
+        "stdev": 0.045,
+        "cv": 0.066
+      },
+      "metrics.zoom_preview.visible_ms": {
+        "n": 3,
+        "median": 871,
+        "p95": 932,
+        "min": 866,
+        "max": 932,
+        "mean": 889.667,
+        "stdev": 36.747,
+        "cv": 0.041
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 662.3,
+        "p95": 663.8,
+        "min": 658.3,
+        "max": 663.8,
+        "mean": 661.467,
+        "stdev": 2.843,
+        "cv": 0.004
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 685.7,
+        "p95": 688,
+        "min": 685.3,
+        "max": 688,
+        "mean": 686.333,
+        "stdev": 1.457,
+        "cv": 0.002
+      }
+    },
+    "fujifilm-x-t4-raf-lossless": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_raw_preview_ms": {
+        "n": 3,
+        "median": 2058,
+        "p95": 2120,
+        "min": 1876,
+        "max": 2120,
+        "mean": 2018,
+        "stdev": 126.823,
+        "cv": 0.063
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 249,
+        "p95": 315,
+        "min": 127,
+        "max": 315,
+        "mean": 230.333,
+        "stdev": 95.38,
+        "cv": 0.414
+      },
+      "metrics.fit_preview.engine_s": {
+        "n": 3,
+        "median": 1.79,
+        "p95": 1.84,
+        "min": 1.69,
+        "max": 1.84,
+        "mean": 1.773,
+        "stdev": 0.076,
+        "cv": 0.043
+      },
+      "metrics.fit_preview.preview_s": {
+        "n": 3,
+        "median": 1.82,
+        "p95": 1.86,
+        "min": 1.71,
+        "max": 1.86,
+        "mean": 1.797,
+        "stdev": 0.078,
+        "cv": 0.043
+      },
+      "metrics.zoom_preview.visible_ms": {
+        "n": 3,
+        "median": 2438,
+        "p95": 2498,
+        "min": 2370,
+        "max": 2498,
+        "mean": 2435.333,
+        "stdev": 64.042,
+        "cv": 0.026
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 1130.1,
+        "p95": 1132.8,
+        "min": 1123.7,
+        "max": 1132.8,
+        "mean": 1128.867,
+        "stdev": 4.674,
+        "cv": 0.004
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 1155.5,
+        "p95": 1156.3,
+        "min": 1154.6,
+        "max": 1156.3,
+        "mean": 1155.467,
+        "stdev": 0.85,
+        "cv": 0.001
+      }
+    },
+    "nikon-z-6-nef-lossless": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_raw_preview_ms": {
+        "n": 3,
+        "median": 1012,
+        "p95": 1052,
+        "min": 991,
+        "max": 1052,
+        "mean": 1018.333,
+        "stdev": 30.989,
+        "cv": 0.03
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 135,
+        "p95": 187,
+        "min": 125,
+        "max": 187,
+        "mean": 149,
+        "stdev": 33.287,
+        "cv": 0.223
+      },
+      "metrics.fit_preview.engine_s": {
+        "n": 3,
+        "median": 0.74,
+        "p95": 0.77,
+        "min": 0.74,
+        "max": 0.77,
+        "mean": 0.75,
+        "stdev": 0.017,
+        "cv": 0.023
+      },
+      "metrics.fit_preview.preview_s": {
+        "n": 3,
+        "median": 0.76,
+        "p95": 0.79,
+        "min": 0.76,
+        "max": 0.79,
+        "mean": 0.77,
+        "stdev": 0.017,
+        "cv": 0.022
+      },
+      "metrics.zoom_preview.visible_ms": {
+        "n": 3,
+        "median": 1144,
+        "p95": 1207,
+        "min": 1117,
+        "max": 1207,
+        "mean": 1156,
+        "stdev": 46.184,
+        "cv": 0.04
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 1074.6,
+        "p95": 1076.1,
+        "min": 1064.4,
+        "max": 1076.1,
+        "mean": 1071.7,
+        "stdev": 6.366,
+        "cv": 0.006
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 1098.3,
+        "p95": 1098.4,
+        "min": 1081.3,
+        "max": 1098.4,
+        "mean": 1092.667,
+        "stdev": 9.844,
+        "cv": 0.009
+      }
+    }
+  },
+  "extra": {
+    "megapixels": {
+      "hasselblad-x1d-ii-50c-3fr": 51.39,
+      "nikon-z-8-nef-he": null,
+      "adobe-dng-canon-eos-5d-mark-iii-linear-dng": 10.454,
+      "dji-fc220-dng": 12,
+      "canon-eos-r5-cr3-craw": 44.747,
+      "pentax-k-3-mark-iii-monochrome-dng": 25.892,
+      "nikon-z-6-nef-lossless": 24.499,
+      "sony-ilce-7m4-arw-compressed": 32.947,
+      "sony-dslr-a450-arw": 14.156,
+      "sony-ilce-7m4-arw-compressed-apsc": 14.695,
+      "dji-fc7303-dng": 12,
+      "leica-m10-dng": 23.888,
+      "fujifilm-x-t4-raf-compressed": 26.046,
+      "dji-fc4382-dng": 12.193,
+      "pentax-k-3-mark-iii-pef": 25.892,
+      "canon-eos-r5-cr3-craw-crop-dualpixel": 17.25,
+      "fujifilm-x-t4-raf-lossless": 26.046,
+      "canon-eos-350d-cr2": 8.039,
+      "canon-eos-5d-mark-iv-cr2-sraw": 7.526,
+      "canon-eos-7d-mark-ii-dng-jxl": 20.17,
+      "sony-ilce-7m4-arw-lossless-s": 8.242,
+      "oneplus-one-dng": 13.129,
+      "sony-ilce-7m4-arw-lossless-l": 32.947,
+      "fujifilm-gfx-50s-ii-raf-compressed": 51.402,
+      "sony-ilce-7m4-arw-uncompressed": 32.947,
+      "panasonic-dc-s5m2-rw2": 24.08,
+      "ricoh-gxr-s10-dng": 10.091,
+      "sony-ilce-7m4-arw-lossless-m": 14.242,
+      "canon-eos-r5-cr3-raw": 44.747,
+      "hasselblad-l2d-20c-dng": 20.888,
+      "canon-eos-r5-cr3-raw-crop": 17.25,
+      "bq-aquaris-u-plus-dng": 16.147,
+      "olympus-xz-10-orf": 11.912,
+      "nikon-z-8-nef-he-star": null,
+      "canon-eos-5d-mark-iv-cr2-raw": 30.361,
+      "leica-m-monochrom-typ-246-dng": 23.936,
+      "nikon-z-6-nef-compressed": 24.499,
+      "om-system-om-1-orf": 20.421,
+      "insta360-one-x-dng": 18.483,
+      "sony-ilce-7rm5-arw-compressed": 60.98
+    }
+  },
+  "runs": [
+    {
+      "name": "canon-eos-r5-cr3-raw",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 5.836,
+      "log": "build\\w12-perf-bench\\logs\\preview\\canon-eos-r5-cr3-raw-warmup.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 837,
+        "first_frame_ms": 958,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 248,
+        "fit_preview": {
+          "visible_ms": 117,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 1.04,
+          "preview_s": 1.07
+        },
+        "first_raw_preview_ms": 1319,
+        "zoom_preview": {
+          "visible_ms": 1949,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 1.04,
+          "preview_s": 1.07
+        },
+        "ui": {
+          "seconds": 3.9,
+          "ticks": 206,
+          "gap_median_ms": 15,
+          "gap_p99_ms": 47,
+          "gap_max_ms": 77,
+          "over_50": 2,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1388.3,
+          "peak_commit_mib": 1394.5,
+          "commit_mib": 1153.6,
+          "cpu_s": 13.75,
+          "user_s": 9.78,
+          "kernel_s": 3.97,
+          "wall_s": 4.76
+        }
+      },
+      "resources": {
+        "wall_s": 5.836,
+        "cpu_s": 14.719,
+        "cpu_percent_of_machine": 21.018,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1394.508,
+          "peak_working_set_mib": 1388.262,
+          "cpu_s": 14.719
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2426.449
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 5.516,
+      "log": "build\\w12-perf-bench\\logs\\preview\\canon-eos-r5-cr3-raw-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 875,
+        "first_frame_ms": 1004,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 190,
+        "fit_preview": {
+          "visible_ms": 263,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.93,
+          "preview_s": 0.95
+        },
+        "first_raw_preview_ms": 1193,
+        "zoom_preview": {
+          "visible_ms": 1556,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.93,
+          "preview_s": 0.95
+        },
+        "ui": {
+          "seconds": 3.5,
+          "ticks": 276,
+          "gap_median_ms": 6,
+          "gap_p99_ms": 31,
+          "gap_max_ms": 41,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1403.3,
+          "peak_commit_mib": 1426.1,
+          "commit_mib": 1169.4,
+          "cpu_s": 13.27,
+          "user_s": 10.61,
+          "kernel_s": 2.66,
+          "wall_s": 4.33
+        }
+      },
+      "resources": {
+        "wall_s": 5.516,
+        "cpu_s": 14.422,
+        "cpu_percent_of_machine": 21.79,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1426.113,
+          "peak_working_set_mib": 1403.289,
+          "cpu_s": 14.422
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2675.949
+        }
+      }
+    },
+    {
+      "name": "sony-ilce-7m4-arw-compressed",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.715,
+      "log": "build\\w12-perf-bench\\logs\\preview\\sony-ilce-7m4-arw-compressed-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 1044,
+        "first_frame_ms": 1169,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 174,
+        "fit_preview": {
+          "visible_ms": 244,
+          "width": 7008,
+          "height": 4672,
+          "engine_s": 0.51,
+          "preview_s": 0.54
+        },
+        "first_raw_preview_ms": 804,
+        "zoom_preview": {
+          "visible_ms": 1000,
+          "width": 7008,
+          "height": 4672,
+          "engine_s": 0.51,
+          "preview_s": 0.54
+        },
+        "ui": {
+          "seconds": 2.6,
+          "ticks": 211,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 33,
+          "gap_max_ms": 41,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1365,
+          "peak_commit_mib": 1404.1,
+          "commit_mib": 932.4,
+          "cpu_s": 9.64,
+          "user_s": 7.19,
+          "kernel_s": 2.45,
+          "wall_s": 3.67
+        }
+      },
+      "resources": {
+        "wall_s": 4.715,
+        "cpu_s": 10.609,
+        "cpu_percent_of_machine": 18.751,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1404.109,
+          "peak_working_set_mib": 1365.043,
+          "cpu_s": 10.609
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2667.621
+        }
+      }
+    },
+    {
+      "name": "dji-fc4382-dng",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.673,
+      "log": "build\\w12-perf-bench\\logs\\preview\\dji-fc4382-dng-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 942,
+        "first_frame_ms": 1068,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 194,
+        "fit_preview": {
+          "visible_ms": 321,
+          "width": 4024,
+          "height": 3016,
+          "engine_s": 0.62,
+          "preview_s": 0.64
+        },
+        "first_raw_preview_ms": 879,
+        "zoom_preview": {
+          "visible_ms": 866,
+          "width": 4024,
+          "height": 3016,
+          "engine_s": 0.62,
+          "preview_s": 0.64
+        },
+        "ui": {
+          "seconds": 2.5,
+          "ticks": 224,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 25,
+          "gap_max_ms": 126,
+          "over_50": 1,
+          "over_100": 1
+        },
+        "process": {
+          "peak_working_set_mib": 663.8,
+          "peak_commit_mib": 688,
+          "commit_mib": 523.8,
+          "cpu_s": 8.8,
+          "user_s": 7.09,
+          "kernel_s": 1.7,
+          "wall_s": 3.4
+        }
+      },
+      "resources": {
+        "wall_s": 4.673,
+        "cpu_s": 10.031,
+        "cpu_percent_of_machine": 17.887,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 688.016,
+          "peak_working_set_mib": 663.84,
+          "cpu_s": 10.031
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2612.324
+        }
+      }
+    },
+    {
+      "name": "fujifilm-x-t4-raf-lossless",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.354,
+      "log": "build\\w12-perf-bench\\logs\\preview\\fujifilm-x-t4-raf-lossless-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 833,
+        "first_frame_ms": 966,
+        "import": {
+          "added": 1,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 295,
+        "fit_preview": {
+          "visible_ms": 315,
+          "width": 6240,
+          "height": 4160,
+          "engine_s": 1.84,
+          "preview_s": 1.86
+        },
+        "first_raw_preview_ms": 2120,
+        "zoom_preview": {
+          "visible_ms": 2370,
+          "width": 6240,
+          "height": 4160,
+          "engine_s": 1.84,
+          "preview_s": 1.86
+        },
+        "ui": {
+          "seconds": 5.3,
+          "ticks": 358,
+          "gap_median_ms": 7,
+          "gap_p99_ms": 32,
+          "gap_max_ms": 56,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1130.1,
+          "peak_commit_mib": 1154.6,
+          "commit_mib": 796.9,
+          "cpu_s": 12.41,
+          "user_s": 9.89,
+          "kernel_s": 2.52,
+          "wall_s": 6.09
+        }
+      },
+      "resources": {
+        "wall_s": 7.354,
+        "cpu_s": 13.547,
+        "cpu_percent_of_machine": 15.351,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1154.625,
+          "peak_working_set_mib": 1130.102,
+          "cpu_s": 13.547
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2582.879
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.877,
+      "log": "build\\w12-perf-bench\\logs\\preview\\nikon-z-6-nef-lossless-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 850,
+        "first_frame_ms": 982,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 171,
+        "fit_preview": {
+          "visible_ms": 187,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.77,
+          "preview_s": 0.79
+        },
+        "first_raw_preview_ms": 1052,
+        "zoom_preview": {
+          "visible_ms": 1207,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.77,
+          "preview_s": 0.79
+        },
+        "ui": {
+          "seconds": 2.9,
+          "ticks": 246,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 29,
+          "gap_max_ms": 39,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1074.6,
+          "peak_commit_mib": 1098.3,
+          "commit_mib": 764.4,
+          "cpu_s": 8.3,
+          "user_s": 6.75,
+          "kernel_s": 1.55,
+          "wall_s": 3.8
+        }
+      },
+      "resources": {
+        "wall_s": 4.877,
+        "cpu_s": 9.328,
+        "cpu_percent_of_machine": 15.939,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1098.312,
+          "peak_working_set_mib": 1074.566,
+          "cpu_s": 9.328
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2523.613
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 5.706,
+      "log": "build\\w12-perf-bench\\logs\\preview\\canon-eos-r5-cr3-raw-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 796,
+        "first_frame_ms": 912,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 250,
+        "fit_preview": {
+          "visible_ms": 360,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.96,
+          "preview_s": 0.99
+        },
+        "first_raw_preview_ms": 1201,
+        "zoom_preview": {
+          "visible_ms": 1760,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.96,
+          "preview_s": 0.99
+        },
+        "ui": {
+          "seconds": 3.7,
+          "ticks": 282,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 32,
+          "gap_max_ms": 82,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1404.9,
+          "peak_commit_mib": 1429,
+          "commit_mib": 1171.4,
+          "cpu_s": 13.3,
+          "user_s": 10.52,
+          "kernel_s": 2.78,
+          "wall_s": 4.52
+        }
+      },
+      "resources": {
+        "wall_s": 5.706,
+        "cpu_s": 14.469,
+        "cpu_percent_of_machine": 21.13,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1429.012,
+          "peak_working_set_mib": 1404.914,
+          "cpu_s": 14.469
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2703.465
+        }
+      }
+    },
+    {
+      "name": "sony-ilce-7m4-arw-compressed",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.234,
+      "log": "build\\w12-perf-bench\\logs\\preview\\sony-ilce-7m4-arw-compressed-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 879,
+        "first_frame_ms": 1024,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 241,
+        "fit_preview": {
+          "visible_ms": 188,
+          "width": 7008,
+          "height": 4672,
+          "engine_s": 0.49,
+          "preview_s": 0.51
+        },
+        "first_raw_preview_ms": 750,
+        "zoom_preview": {
+          "visible_ms": 936,
+          "width": 7008,
+          "height": 4672,
+          "engine_s": 0.49,
+          "preview_s": 0.51
+        },
+        "ui": {
+          "seconds": 2.4,
+          "ticks": 262,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 32,
+          "gap_max_ms": 153,
+          "over_50": 1,
+          "over_100": 1
+        },
+        "process": {
+          "peak_working_set_mib": 1375.1,
+          "peak_commit_mib": 1403.5,
+          "commit_mib": 931.7,
+          "cpu_s": 10.53,
+          "user_s": 7.58,
+          "kernel_s": 2.95,
+          "wall_s": 3.27
+        }
+      },
+      "resources": {
+        "wall_s": 4.234,
+        "cpu_s": 11.438,
+        "cpu_percent_of_machine": 22.509,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1403.461,
+          "peak_working_set_mib": 1375.129,
+          "cpu_s": 11.438
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2690.613
+        }
+      }
+    },
+    {
+      "name": "dji-fc4382-dng",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.532,
+      "log": "build\\w12-perf-bench\\logs\\preview\\dji-fc4382-dng-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 769,
+        "first_frame_ms": 897,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 200,
+        "fit_preview": {
+          "visible_ms": 127,
+          "width": 4024,
+          "height": 3016,
+          "engine_s": 0.66,
+          "preview_s": 0.68
+        },
+        "first_raw_preview_ms": 997,
+        "zoom_preview": {
+          "visible_ms": 871,
+          "width": 4024,
+          "height": 3016,
+          "engine_s": 0.66,
+          "preview_s": 0.68
+        },
+        "ui": {
+          "seconds": 2.6,
+          "ticks": 249,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 28,
+          "gap_max_ms": 117,
+          "over_50": 1,
+          "over_100": 1
+        },
+        "process": {
+          "peak_working_set_mib": 658.3,
+          "peak_commit_mib": 685.3,
+          "commit_mib": 523.1,
+          "cpu_s": 9.47,
+          "user_s": 7.72,
+          "kernel_s": 1.75,
+          "wall_s": 3.36
+        }
+      },
+      "resources": {
+        "wall_s": 4.532,
+        "cpu_s": 10.594,
+        "cpu_percent_of_machine": 19.48,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 685.262,
+          "peak_working_set_mib": 658.289,
+          "cpu_s": 10.594
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2707.742
+        }
+      }
+    },
+    {
+      "name": "fujifilm-x-t4-raf-lossless",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.214,
+      "log": "build\\w12-perf-bench\\logs\\preview\\fujifilm-x-t4-raf-lossless-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 838,
+        "first_frame_ms": 962,
+        "import": {
+          "added": 1,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 208,
+        "fit_preview": {
+          "visible_ms": 249,
+          "width": 6240,
+          "height": 4160,
+          "engine_s": 1.79,
+          "preview_s": 1.82
+        },
+        "first_raw_preview_ms": 2058,
+        "zoom_preview": {
+          "visible_ms": 2438,
+          "width": 6240,
+          "height": 4160,
+          "engine_s": 1.79,
+          "preview_s": 1.82
+        },
+        "ui": {
+          "seconds": 5.2,
+          "ticks": 360,
+          "gap_median_ms": 6,
+          "gap_p99_ms": 32,
+          "gap_max_ms": 33,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1132.8,
+          "peak_commit_mib": 1156.3,
+          "commit_mib": 798.5,
+          "cpu_s": 12.77,
+          "user_s": 10.25,
+          "kernel_s": 2.52,
+          "wall_s": 6.04
+        }
+      },
+      "resources": {
+        "wall_s": 7.214,
+        "cpu_s": 13.891,
+        "cpu_percent_of_machine": 16.047,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1156.293,
+          "peak_working_set_mib": 1132.828,
+          "cpu_s": 13.891
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2386.387
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.696,
+      "log": "build\\w12-perf-bench\\logs\\preview\\nikon-z-6-nef-lossless-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 800,
+        "first_frame_ms": 914,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 164,
+        "fit_preview": {
+          "visible_ms": 125,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.74,
+          "preview_s": 0.76
+        },
+        "first_raw_preview_ms": 991,
+        "zoom_preview": {
+          "visible_ms": 1144,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.74,
+          "preview_s": 0.76
+        },
+        "ui": {
+          "seconds": 2.9,
+          "ticks": 250,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 27,
+          "gap_max_ms": 35,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1064.4,
+          "peak_commit_mib": 1081.3,
+          "commit_mib": 747.3,
+          "cpu_s": 8.41,
+          "user_s": 6.77,
+          "kernel_s": 1.64,
+          "wall_s": 3.69
+        }
+      },
+      "resources": {
+        "wall_s": 4.696,
+        "cpu_s": 9.359,
+        "cpu_percent_of_machine": 16.61,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1081.254,
+          "peak_working_set_mib": 1064.387,
+          "cpu_s": 9.359
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2370.918
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 5.518,
+      "log": "build\\w12-perf-bench\\logs\\preview\\canon-eos-r5-cr3-raw-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 794,
+        "first_frame_ms": 936,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 233,
+        "fit_preview": {
+          "visible_ms": 320,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.92,
+          "preview_s": 0.94
+        },
+        "first_raw_preview_ms": 1184,
+        "zoom_preview": {
+          "visible_ms": 1583,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.92,
+          "preview_s": 0.94
+        },
+        "ui": {
+          "seconds": 3.6,
+          "ticks": 404,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 25,
+          "gap_max_ms": 64,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1407.6,
+          "peak_commit_mib": 1430.3,
+          "commit_mib": 1171.6,
+          "cpu_s": 13.72,
+          "user_s": 10.48,
+          "kernel_s": 3.23,
+          "wall_s": 4.43
+        }
+      },
+      "resources": {
+        "wall_s": 5.518,
+        "cpu_s": 14.766,
+        "cpu_percent_of_machine": 22.3,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1430.293,
+          "peak_working_set_mib": 1407.648,
+          "cpu_s": 14.766
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2319.668
+        }
+      }
+    },
+    {
+      "name": "sony-ilce-7m4-arw-compressed",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.658,
+      "log": "build\\w12-perf-bench\\logs\\preview\\sony-ilce-7m4-arw-compressed-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 833,
+        "first_frame_ms": 953,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 197,
+        "fit_preview": {
+          "visible_ms": 258,
+          "width": 7008,
+          "height": 4672,
+          "engine_s": 0.52,
+          "preview_s": 0.54
+        },
+        "first_raw_preview_ms": 811,
+        "zoom_preview": {
+          "visible_ms": 1119,
+          "width": 7008,
+          "height": 4672,
+          "engine_s": 0.52,
+          "preview_s": 0.54
+        },
+        "ui": {
+          "seconds": 2.8,
+          "ticks": 235,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 26,
+          "gap_max_ms": 34,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1363.2,
+          "peak_commit_mib": 1386.8,
+          "commit_mib": 931.8,
+          "cpu_s": 10.28,
+          "user_s": 7.5,
+          "kernel_s": 2.78,
+          "wall_s": 3.6
+        }
+      },
+      "resources": {
+        "wall_s": 4.658,
+        "cpu_s": 11.328,
+        "cpu_percent_of_machine": 20.265,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1386.75,
+          "peak_working_set_mib": 1363.164,
+          "cpu_s": 11.328
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2316.918
+        }
+      }
+    },
+    {
+      "name": "dji-fc4382-dng",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.584,
+      "log": "build\\w12-perf-bench\\logs\\preview\\dji-fc4382-dng-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 897,
+        "first_frame_ms": 1010,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 192,
+        "fit_preview": {
+          "visible_ms": 117,
+          "width": 4024,
+          "height": 3016,
+          "engine_s": 0.7,
+          "preview_s": 0.73
+        },
+        "first_raw_preview_ms": 942,
+        "zoom_preview": {
+          "visible_ms": 932,
+          "width": 4024,
+          "height": 3016,
+          "engine_s": 0.7,
+          "preview_s": 0.73
+        },
+        "ui": {
+          "seconds": 2.6,
+          "ticks": 220,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 24,
+          "gap_max_ms": 43,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 662.3,
+          "peak_commit_mib": 685.7,
+          "commit_mib": 523.5,
+          "cpu_s": 9.39,
+          "user_s": 7.75,
+          "kernel_s": 1.64,
+          "wall_s": 3.48
+        }
+      },
+      "resources": {
+        "wall_s": 4.584,
+        "cpu_s": 10.453,
+        "cpu_percent_of_machine": 19.002,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 685.742,
+          "peak_working_set_mib": 662.344,
+          "cpu_s": 10.453
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2299.902
+        }
+      }
+    },
+    {
+      "name": "fujifilm-x-t4-raf-lossless",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.137,
+      "log": "build\\w12-perf-bench\\logs\\preview\\fujifilm-x-t4-raf-lossless-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 831,
+        "first_frame_ms": 956,
+        "import": {
+          "added": 1,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 265,
+        "fit_preview": {
+          "visible_ms": 127,
+          "width": 6240,
+          "height": 4160,
+          "engine_s": 1.69,
+          "preview_s": 1.71
+        },
+        "first_raw_preview_ms": 1876,
+        "zoom_preview": {
+          "visible_ms": 2498,
+          "width": 6240,
+          "height": 4160,
+          "engine_s": 1.69,
+          "preview_s": 1.71
+        },
+        "ui": {
+          "seconds": 5.1,
+          "ticks": 351,
+          "gap_median_ms": 8,
+          "gap_p99_ms": 32,
+          "gap_max_ms": 39,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1123.7,
+          "peak_commit_mib": 1155.5,
+          "commit_mib": 782,
+          "cpu_s": 12.22,
+          "user_s": 9.91,
+          "kernel_s": 2.31,
+          "wall_s": 5.92
+        }
+      },
+      "resources": {
+        "wall_s": 7.137,
+        "cpu_s": 13.328,
+        "cpu_percent_of_machine": 15.563,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1155.512,
+          "peak_working_set_mib": 1123.656,
+          "cpu_s": 13.328
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2255.359
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.916,
+      "log": "build\\w12-perf-bench\\logs\\preview\\nikon-z-6-nef-lossless-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+
+                                               ],
+        "batch_progress": [
+
+                                                        ],
+        "errors": [
+
+                                                ],
+        "window_loaded_ms": 882,
+        "first_frame_ms": 1016,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 205,
+        "fit_preview": {
+          "visible_ms": 135,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.74,
+          "preview_s": 0.76
+        },
+        "first_raw_preview_ms": 1012,
+        "zoom_preview": {
+          "visible_ms": 1117,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.74,
+          "preview_s": 0.76
+        },
+        "ui": {
+          "seconds": 3,
+          "ticks": 252,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 24,
+          "gap_max_ms": 43,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1076.1,
+          "peak_commit_mib": 1098.4,
+          "commit_mib": 764.4,
+          "cpu_s": 8.16,
+          "user_s": 6.66,
+          "kernel_s": 1.5,
+          "wall_s": 3.84
+        }
+      },
+      "resources": {
+        "wall_s": 4.916,
+        "cpu_s": 9.156,
+        "cpu_percent_of_machine": 15.522,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1098.395,
+          "peak_working_set_mib": 1076.074,
+          "cpu_s": 9.156
+        },
+        "descendants": [
+
+                                                       ],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2286.848
+        }
+      }
+    }
+  ]
+}
