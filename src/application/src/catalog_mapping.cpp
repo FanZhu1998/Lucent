@@ -161,14 +161,22 @@ Json camera_element(const SupportAssessment& support, const CameraSupportEvaluat
     element["state"] = std::string(assets::to_string(support.status));
     element["interpretation"] = std::string(raw::to_string(camera.interpretation));
     element["mode_key"] = core::sanitize_utf8(camera.mode_key);
+    element["image_area"] = core::sanitize_utf8(camera.image_area);
+    Json opcodes = Json::array();
+    for (const std::string& opcode : camera.dng_opcodes) {
+        opcodes.push_back(core::sanitize_utf8(opcode));
+    }
+    element["dng_opcodes"] = std::move(opcodes);
     if (camera.database_id.empty()) {
         element["database"] = nullptr;
     } else {
         element["database"] = Json{{"id", core::sanitize_utf8(camera.database_id)},
                                    {"version", core::sanitize_utf8(camera.database_version)},
+                                   {"sha256", core::sanitize_utf8(camera.database_sha256)},
                                    {"qualified", core::sanitize_utf8(camera.qualified_on)}};
     }
     element["basis_matches"] = camera.basis_matches;
+    element["variant_matches"] = camera.variant_matches;
     element["listed"] = camera.listed ? Json(std::string(assets::to_string(*camera.listed))) : Json();
     element["qualified_key"] = core::sanitize_utf8(camera.qualified_key);
     element["camera"] = core::sanitize_utf8(camera.camera);
@@ -176,7 +184,10 @@ Json camera_element(const SupportAssessment& support, const CameraSupportEvaluat
     element["evidence"] = core::sanitize_utf8(camera.evidence);
     element["message"] =
         camera.database_id.empty()
-            ? std::string("assessed without a camera support database")
+            ? (camera.listed ? std::format("assessed without a camera support database; the last database listed "
+                                           "the mode as {}",
+                                           assets::to_string(*camera.listed))
+                             : std::string("assessed without a camera support database"))
             : std::format("camera support database {} {}: {}", core::sanitize_utf8(camera.database_id),
                           core::sanitize_utf8(camera.database_version),
                           camera.listed
@@ -202,10 +213,20 @@ std::optional<std::pair<SupportStatus, CameraSupportEvaluation>> read_camera_ele
     if (camera.mode_key.empty()) {
         return std::nullopt;
     }
+    camera.image_area = string_field(element, "image_area");
+    const auto opcodes = element.find("dng_opcodes");
+    if (opcodes != element.end() && opcodes->is_array()) {
+        for (const Json& opcode : *opcodes) {
+            if (opcode.is_string()) {
+                camera.dng_opcodes.push_back(opcode.get<std::string>());
+            }
+        }
+    }
     const auto database = element.find("database");
     if (database != element.end() && database->is_object()) {
         camera.database_id = string_field(*database, "id");
         camera.database_version = string_field(*database, "version");
+        camera.database_sha256 = string_field(*database, "sha256");
         camera.qualified_on = string_field(*database, "qualified");
         if (camera.database_id.empty() || camera.database_version.empty()) {
             return std::nullopt;
@@ -213,6 +234,9 @@ std::optional<std::pair<SupportStatus, CameraSupportEvaluation>> read_camera_ele
     }
     const auto basis = element.find("basis_matches");
     camera.basis_matches = basis == element.end() || !basis->is_boolean() || basis->get<bool>();
+    // A record without the probe facts (rules 1) cannot show that a Verified entry fits the file.
+    const auto variant = element.find("variant_matches");
+    camera.variant_matches = variant != element.end() && variant->is_boolean() && variant->get<bool>();
     const auto listed = element.find("listed");
     if (listed != element.end() && listed->is_string()) {
         camera.listed = assets::parse_support_state(listed->get<std::string>());
@@ -259,6 +283,10 @@ std::string encode_support_reasons(const SupportAssessment& support) {
                 break;
             case SupportReasonKind::CameraUnsupported:
                 element["kind"] = "camera_unsupported";
+                break;
+            case SupportReasonKind::EngineLimitation:
+                element["kind"] = "engine_limitation";
+                element["limitation"] = core::sanitize_utf8(reason.limitation);
                 break;
         }
         element["message"] = core::sanitize_utf8(reason.message);
@@ -310,6 +338,9 @@ SupportAssessment decode_support(catalog::SupportStatus status, std::string_view
                 probe_failed = true;
             } else if (kind == "camera_limitation") {
                 reason.kind = SupportReasonKind::CameraLimitation;
+                reason.limitation = string_field(element, "limitation");
+            } else if (kind == "engine_limitation") {
+                reason.kind = SupportReasonKind::EngineLimitation;
                 reason.limitation = string_field(element, "limitation");
             } else if (kind == "camera_unsupported") {
                 reason.kind = SupportReasonKind::CameraUnsupported;

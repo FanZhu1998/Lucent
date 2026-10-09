@@ -3,6 +3,8 @@
 #include <utility>
 
 #include <lucent/application/source_item.hpp>
+#include <lucent/assets/mode_key.hpp>
+#include <lucent/raw/libraw_decoder.hpp>
 
 namespace lucent::app {
 
@@ -139,6 +141,27 @@ Status ItemFlags::validate() const {
     return ok();
 }
 
+bool is_live_reason(SupportReasonKind kind) noexcept {
+    return kind == SupportReasonKind::InterpretationIssue || kind == SupportReasonKind::InterpretationStatus ||
+           kind == SupportReasonKind::ProbeFailed || kind == SupportReasonKind::EngineLimitation;
+}
+
+namespace {
+
+// "LibRaw" adapter's library version of this build ("0.22.2-Release"), computed once.
+const std::string& running_libraw_version() noexcept {
+    static const std::string version = [] {
+        try {
+            return raw::libraw_build_info().version;
+        } catch (...) {
+            return std::string();
+        }
+    }();
+    return version;
+}
+
+}  // namespace
+
 bool probe_outdated(const SourceItem& item) noexcept {
     if (!item.probe) {
         return false;
@@ -146,9 +169,19 @@ bool probe_outdated(const SourceItem& item) noexcept {
     if (!item.probe->contract || *item.probe->contract < raw::kDecodedRawContractVersion) {
         return true;
     }
+    // AST-08: a probe of another LibRaw version may have another mode key (a new visible area).
+    if (item.probe->decoder == raw::kLibRawDecoderId && !running_libraw_version().empty() &&
+        item.probe->decoder_version != running_libraw_version()) {
+        return true;
+    }
     // Assessed before the camera support database (ADR 0018), or by older support rules: only a new
     // probe gives the mode key the database is consulted with.
-    return !item.support.camera || item.support.camera->rules < kSupportRulesVersion;
+    if (!item.support.camera || item.support.camera->rules < kSupportRulesVersion) {
+        return true;
+    }
+    // A key of another mode-key version never equals a database key (AST-08).
+    const std::string prefix = "mk" + std::to_string(assets::kModeKeyVersion) + "|";
+    return !item.support.camera->mode_key.starts_with(prefix);
 }
 
 }  // namespace lucent::app

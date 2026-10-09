@@ -29,13 +29,18 @@
 //   {"kind": "probe_failed", "error":  "<lucent::to_string(ErrorCode)>",             "message": "..."}
 //   {"kind": "camera_limitation", "limitation": "<code>",                          "message": "..."}
 //   {"kind": "camera_unsupported",                                                 "message": "..."}
-//   {"kind": "camera_support", "rules": 1, "state": "<assets::to_string(SupportState)>",
+//   {"kind": "engine_limitation", "limitation": "<code>",                          "message": "..."}
+//   {"kind": "camera_support", "rules": 2, "state": "<assets::to_string(SupportState)>",
 //    "interpretation": "<raw::to_string(InterpretationStatus)>", "mode_key": "mk1|...",
-//    "database": {"id": "camera-support", "version": "1.0.0", "qualified": "2026-10-08"} | null,
-//    "basis_matches": true, "listed": "<state>" | null, "qualified_key": "...", "camera": "...",
-//    "mode": "...", "evidence": "...", "message": "..."}
-// "message" is developer-facing English for the interpretation kinds and the database's user-facing
-// English for the camera kinds. Readers keep unknown kinds and spellings (from a newer Lucent) as
+//    "image_area": "decoder_inset_crop 7008x4672", "dng_opcodes": ["list3:WarpRectilinear"],
+//    "database": {"id": "camera-support", "version": "2.0.0", "sha256": "<manifest SHA-256 hex>",
+//                 "qualified": "2026-10-08"} | null,
+//    "basis_matches": true, "variant_matches": true, "listed": "<state>" | null,
+//    "qualified_key": "...", "camera": "...", "mode": "...", "evidence": "...", "message": "..."}
+// (rules 2 added "engine_limitation", "image_area", "dng_opcodes", "sha256" and "variant_matches";
+// "listed" with a null "database" is the answer kept from the last database while none is active.)
+// "message" is developer-facing English for the interpretation kinds and user-facing English for the
+// limitation and camera kinds. Readers keep unknown kinds and spellings (from a newer Lucent) as
 // reasons without a known issue or error, so the generic wording applies; the support status
 // column stays authoritative: a "camera_support" element whose state does not fit the column
 // (verified or compatible_unverified with "supported", limited with "limited", unsupported with

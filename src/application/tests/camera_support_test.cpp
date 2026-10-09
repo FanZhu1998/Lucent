@@ -2,7 +2,9 @@
 // the camera support database combine into the blueprint's four states, how stored assessments
 // follow a new database without reading files, and how the catalog keeps them across a restart.
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,7 @@
 #include <lucent/application/import.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/assets/mode_key.hpp>
+#include <lucent/core/hash.hpp>
 
 #include "app_test_support.hpp"
 #include "catalog_mapping.hpp"
@@ -44,6 +47,9 @@ raw::RawMetadata sony(InterpretationStatus status = InterpretationStatus::Comple
     m.representation.sample_encoding = raw::SampleEncoding::UInt16;
     m.representation.cfa = image::CfaPattern::bayer(image::BayerLayout::Rggb);
     m.levels.white = 16383;
+    m.image_area.source = raw::ImageAreaSource::DecoderInsetCrop;
+    m.image_area.rect = raw::AreaRect{12.0, 8.0, 7008.0, 4672.0};
+    m.image_area.reference = image::PixelRect{0, 0, 7040, 4688};
     m.interpretation.status = status;
     if (status == InterpretationStatus::OptionalOperationsSkipped) {
         m.interpretation.issues.push_back(
@@ -64,6 +70,7 @@ assets::CameraSupportEntry entry_for(const std::string& key, assets::SupportStat
     assets::CameraSupportEntry entry;
     entry.match = key;
     entry.qualified_key = key;
+    entry.image_area = "decoder_inset_crop 7008x4672";  // sony()'s probe facts (QUA-08)
     entry.state = state;
     entry.camera = "Sony A7 IV (ILCE-7M4)";
     entry.mode = "ARW compressed (lossy)";
@@ -76,13 +83,14 @@ assets::CameraSupportEntry entry_for(const std::string& key, assets::SupportStat
 }
 
 // An active database "camera-support" `version` holding `entries`; `basis_holds` false makes its
-// Verified entries not hold for this build.
+// Verified entries not hold for this build; `manifest_byte` stands for its manifest's SHA-256.
 std::shared_ptr<const assets::CameraSupport> database(const char* version,
                                                       std::vector<assets::CameraSupportEntry> entries,
-                                                      bool basis_holds = true) {
+                                                      bool basis_holds = true, std::uint8_t manifest_byte = 1) {
     auto support = std::make_shared<assets::CameraSupport>();
     support->asset_id = "camera-support";
     support->version = semver(version);
+    support->manifest_sha256.fill(manifest_byte);
     support->database.generated = "2026-10-08T03:13:58Z";
     support->database.date = "2026-10-08";
     support->database.basis = assets::running_basis();
@@ -229,15 +237,153 @@ TEST(SupportRules, ReassessmentFollowsANewDatabaseWithoutTheFile) {
     EXPECT_EQ(count_kind(*kept, SupportReasonKind::InterpretationIssue), 1u);
     EXPECT_EQ(kept->reasons.size(), 1u);
 
-    // No database at all: the mode is not listed anywhere.
+    // No database at all: nothing can be Verified, so the item is Compatible, unverified, with the
+    // last database's answer kept (AST-01).
     auto none = reassess_support(*upgraded, nullptr);
     ASSERT_TRUE(none.has_value());
     EXPECT_EQ(none->status, SupportStatus::CompatibleUnverified);
     EXPECT_TRUE(assessed_with(*none, nullptr));
+    EXPECT_TRUE(none->camera->database_id.empty());
+    EXPECT_EQ(none->camera->listed, SupportStatus::Verified);
 
     // An assessment without a record cannot be re-assessed: the file must be probed again.
     EXPECT_FALSE(reassess_support(assess_interpretation(sony().interpretation), v2.get()).has_value());
     EXPECT_FALSE(reassess_support(assess_probe_failure(Error{ErrorCode::Corrupt, "x", "raw", 0}), v2.get()));
+}
+
+// AST-01: a database that is missing or refused never improves a stored state. Its Limited and
+// Unsupported answers and their reasons are kept; only Verified, which nothing confirms now, drops to
+// Compatible, unverified. When a database is active again, the items follow it.
+TEST(SupportRules, AMissingDatabaseNeverImprovesAState) {
+    const std::string key = key_of(sony());
+    const auto verifying = database("1.0.0", {entry_for(key, assets::SupportState::Verified)});
+    const auto limiting =
+        database("1.0.0", {entry_for(key, assets::SupportState::Limited, {"xtrans_baseline_demosaic"})});
+    const auto refusing = database("1.0.0", {entry_for(key, assets::SupportState::Unsupported)});
+
+    const SupportAssessment limited = assess_support(sony(), limiting.get());
+    auto kept = reassess_support(limited, nullptr);
+    ASSERT_TRUE(kept.has_value());
+    EXPECT_EQ(kept->status, SupportStatus::Limited);
+    ASSERT_EQ(count_kind(*kept, SupportReasonKind::CameraLimitation), 1u);
+    EXPECT_EQ(kept->reasons.back().message, limited.reasons.back().message);
+    EXPECT_TRUE(assessed_with(*kept, nullptr)) << "stable while no database is active";
+    // Kept again on a later start without a database: still Limited, nothing duplicated.
+    auto twice = reassess_support(*kept, nullptr);
+    ASSERT_TRUE(twice.has_value());
+    EXPECT_EQ(twice->status, SupportStatus::Limited);
+    EXPECT_EQ(twice->reasons.size(), kept->reasons.size());
+
+    const SupportAssessment unsupported = assess_support(sony(), refusing.get());
+    auto still = reassess_support(unsupported, nullptr);
+    ASSERT_TRUE(still.has_value());
+    EXPECT_EQ(still->status, SupportStatus::Unsupported) << "never exported automatically without the database";
+    EXPECT_EQ(count_kind(*still, SupportReasonKind::CameraUnsupported), 1u);
+
+    const SupportAssessment verified = assess_support(sony(), verifying.get());
+    ASSERT_EQ(verified.status, SupportStatus::Verified);
+    auto capped = reassess_support(verified, nullptr);
+    ASSERT_TRUE(capped.has_value());
+    EXPECT_EQ(capped->status, SupportStatus::CompatibleUnverified);
+
+    // The database is back: the item follows it again.
+    auto back = reassess_support(*kept, verifying.get());
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(back->status, SupportStatus::Verified);
+    EXPECT_TRUE(back->reasons.empty());
+    // A Verified record is never "assessed" without a database (it is capped on the next refresh).
+    EXPECT_FALSE(assessed_with(verified, nullptr));
+}
+
+// AST-03: limitations of Lucent's engine are derived from the probe, whatever the database lists.
+TEST(SupportRules, EngineLimitationsComeFromTheProbe) {
+    raw::RawMetadata xtrans = sony();
+    xtrans.camera.make = "FUJIFILM";
+    xtrans.camera.model = "X-T5";
+    // The X-T4's tile, GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG (0 red, 1 green, 2 blue).
+    const char tile[6][6] = {{1, 1, 0, 1, 1, 2}, {1, 1, 2, 1, 1, 0}, {2, 0, 1, 0, 2, 1},
+                             {1, 1, 2, 1, 1, 0}, {1, 1, 0, 1, 1, 2}, {0, 2, 1, 2, 0, 1}};
+    auto cfa = image::CfaPattern::from_xtrans(tile);
+    ASSERT_TRUE(cfa) << cfa.error().describe();
+    ASSERT_TRUE(cfa->is_xtrans());
+    xtrans.representation.cfa = *cfa;
+    // Not in any database: Limited (not Compatible, unverified), with the database's own words.
+    const SupportAssessment unlisted = assess_support(xtrans, nullptr);
+    EXPECT_EQ(unlisted.status, SupportStatus::Limited);
+    ASSERT_EQ(count_kind(unlisted, SupportReasonKind::EngineLimitation), 1u);
+    EXPECT_EQ(unlisted.reasons.back().limitation, "xtrans_baseline_demosaic");
+    EXPECT_EQ(unlisted.reasons.back().message.rfind("X-Trans demosaicing is baseline quality: ", 0), 0u);
+    // A database that also lists it: one reason, not two.
+    const auto db = database(
+        "1.0.0", {entry_for(key_of(xtrans), assets::SupportState::Limited, {"xtrans_baseline_demosaic"})});
+    const SupportAssessment listed = assess_support(xtrans, db.get());
+    EXPECT_EQ(listed.status, SupportStatus::Limited);
+    EXPECT_EQ(count_kind(listed, SupportReasonKind::EngineLimitation), 1u);
+    EXPECT_EQ(count_kind(listed, SupportReasonKind::CameraLimitation), 0u);
+    // A Verified entry cannot hide it.
+    const auto verified = database("1.0.0", {entry_for(key_of(xtrans), assets::SupportState::Verified)});
+    EXPECT_EQ(assess_support(xtrans, verified.get()).status, SupportStatus::Limited);
+    // It survives a re-assessment, also without a database.
+    auto again = reassess_support(listed, nullptr);
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(again->status, SupportStatus::Limited);
+    EXPECT_EQ(count_kind(*again, SupportReasonKind::EngineLimitation), 1u);
+
+    // A file with a Dual Pixel component image.
+    SupportFileFacts dual;
+    dual.dual_pixel_component = true;
+    const SupportAssessment canon = assess_support(sony(), nullptr, dual);
+    EXPECT_EQ(canon.status, SupportStatus::Limited);
+    ASSERT_EQ(count_kind(canon, SupportReasonKind::EngineLimitation), 1u);
+    EXPECT_EQ(canon.reasons.back().limitation, "dual_pixel_not_processed");
+}
+
+// QUA-08: a Verified entry holds only for files with the qualified file's image area and DNG opcodes.
+TEST(SupportRules, AVerifiedEntryHoldsOnlyForTheQualifiedVariant) {
+    const auto db = database("1.0.0", {entry_for(key_of(sony()), assets::SupportState::Verified)});
+    // Another image area under the same key (a Canon aspect-ratio setting, missing crop tags).
+    raw::RawMetadata square = sony();
+    square.image_area.rect = raw::AreaRect{1500.0, 8.0, 4672.0, 4672.0};
+    const SupportAssessment a = assess_support(square, db.get());
+    EXPECT_EQ(a.status, SupportStatus::CompatibleUnverified);
+    ASSERT_TRUE(a.camera.has_value());
+    EXPECT_FALSE(a.camera->variant_matches);
+    EXPECT_EQ(a.camera->listed, SupportStatus::Verified);
+    EXPECT_EQ(a.camera->image_area, "decoder_inset_crop 4672x4672");
+    raw::RawMetadata unknown = sony();
+    unknown.image_area = raw::ImageArea{};
+    EXPECT_EQ(assess_support(unknown, db.get()).status, SupportStatus::CompatibleUnverified);
+    // DNG opcodes the qualified file did not have.
+    raw::RawMetadata opcodes = sony();
+    raw::RequiredOperation gain;
+    gain.kind = raw::RequiredOperationKind::DngOpcode;
+    gain.stage = raw::OperationStage::LinearRaw;
+    gain.name = "GainMap";
+    gain.supported_by_lucent = true;
+    opcodes.required_operations = {gain};
+    EXPECT_EQ(assess_support(opcodes, db.get()).status, SupportStatus::CompatibleUnverified);
+    // The qualified variant is Verified, and the record re-assesses the same way.
+    const SupportAssessment same = assess_support(sony(), db.get());
+    EXPECT_EQ(same.status, SupportStatus::Verified);
+    EXPECT_TRUE(same.camera->variant_matches);
+    auto again = reassess_support(a, db.get());
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(again->status, SupportStatus::CompatibleUnverified);
+}
+
+// AST-02: another content under the same database version is noticed by its manifest's SHA-256.
+TEST(SupportRules, TheSameVersionWithOtherContentIsAssessedAgain) {
+    const std::string key = key_of(sony());
+    const auto first = database("1.0.0", {entry_for(key, assets::SupportState::Verified)}, true, 1);
+    const auto changed =
+        database("1.0.0", {entry_for(key, assets::SupportState::Limited, {"xtrans_baseline_demosaic"})}, true, 2);
+    const SupportAssessment verified = assess_support(sony(), first.get());
+    EXPECT_TRUE(assessed_with(verified, first.get()));
+    EXPECT_FALSE(assessed_with(verified, changed.get()));
+    EXPECT_EQ(verified.camera->database_sha256, core::to_hex(first->manifest_sha256));
+    auto refreshed = reassess_support(verified, changed.get());
+    ASSERT_TRUE(refreshed.has_value());
+    EXPECT_EQ(refreshed->status, SupportStatus::Limited);
 }
 
 TEST(SupportRules, ItemsWithoutARecordAreProbedAgain) {
@@ -248,6 +394,37 @@ TEST(SupportRules, ItemsWithoutARecordAreProbedAgain) {
     EXPECT_FALSE(probe_outdated(item));
     item.support.camera->rules = 0;
     EXPECT_TRUE(probe_outdated(item));
+    item.support.camera->rules = kSupportRulesVersion - 1;  // rules 1: no probe facts in the record
+    EXPECT_TRUE(probe_outdated(item));
+}
+
+// AST-06, AST-08: what an item shows with the active database, also where the library cannot store
+// it (a read-only catalog); a stale record is never re-assessed, but never shown Verified either.
+TEST(SupportRules, CurrentSupportFollowsTheActiveDatabaseWithoutStoringIt) {
+    const std::string key = key_of(sony());
+    const auto verifying = database("1.0.0", {entry_for(key, assets::SupportState::Verified)});
+    const auto limiting =
+        database("1.1.0", {entry_for(key, assets::SupportState::Limited, {"xtrans_baseline_demosaic"})});
+    SourceItem item = ts::fake_item(L"C:\\photos\\a.arw");
+    item.probe->contract = raw::kDecodedRawContractVersion;
+    item.support = assess_support(sony(), verifying.get());
+    ASSERT_EQ(item.support.status, SupportStatus::Verified);
+
+    EXPECT_FALSE(refreshed_support(item, verifying.get()).has_value()) << "assessed with the active database";
+    EXPECT_EQ(current_support(item, verifying.get()).status, SupportStatus::Verified);
+    EXPECT_EQ(current_support(item, nullptr).status, SupportStatus::CompatibleUnverified);
+    EXPECT_EQ(current_support(item, limiting.get()).status, SupportStatus::Limited);
+
+    // AST-08: a probe of another decoder version is left to source maintenance; until then its record
+    // cannot keep it Verified.
+    item.probe->decoder = "libraw";
+    item.probe->decoder_version = "0.21.4-Release";
+    ASSERT_TRUE(probe_outdated(item));
+    const std::optional<SupportAssessment> stale = refreshed_support(item, verifying.get());
+    ASSERT_TRUE(stale.has_value());
+    EXPECT_EQ(stale->status, SupportStatus::CompatibleUnverified);
+    item.support = *stale;
+    EXPECT_FALSE(refreshed_support(item, limiting.get()).has_value()) << "not re-assessed from a stale key";
 }
 
 // ---- Libraries ---------------------------------------------------------------------------------------
@@ -257,8 +434,10 @@ TEST(SupportRefreshTest, ReassessesStaleItemsOfASessionLibrary) {
     const std::string key = key_of(sony());
     const auto v1 = database("1.0.0", {});
     SourceItem a = ts::fake_item(L"C:\\photos\\a.arw");
+    a.probe->contract = raw::kDecodedRawContractVersion;
     a.support = assess_support(sony(), v1.get());
     SourceItem b = ts::fake_item(L"C:\\photos\\b.arw");
+    b.probe->contract = raw::kDecodedRawContractVersion;
     b.support = assess_support(sony(InterpretationStatus::RequiresUnsupportedOperation), v1.get());
     SourceItem c = ts::fake_item(L"C:\\photos\\c.arw");  // catalogued before the database
     ASSERT_TRUE(library.add({a, b, c}));
@@ -350,7 +529,11 @@ TEST(SupportRefreshTest, ImportAssessesProbedFilesAgainstTheDatabase) {
     auto probed = registry->select(path, options, {});
     ASSERT_TRUE(probed) << probed.error().describe();
     const std::string key = key_of(probed->probe.metadata);
-    const auto db = database("1.0.0", {entry_for(key, assets::SupportState::Verified)});
+    assets::CameraSupportEntry entry = entry_for(key, assets::SupportState::Verified);
+    const assets::ModeVariant variant = assets::derive_mode_variant(probed->probe.metadata);
+    entry.image_area = variant.image_area;
+    entry.dng_opcodes = variant.dng_opcodes;
+    const auto db = database("1.0.0", {entry});
 
     SessionLibrary library;
     ImportRequest request;
@@ -415,8 +598,36 @@ TEST(SupportEncoding, ARecordThatDoesNotFitTheColumnIsDropped) {
     EXPECT_FALSE(old.camera.has_value());
     // Records of newer support rules are not understood: dropped, not guessed.
     std::string newer = json;
-    newer.replace(newer.find("\"rules\":1"), 9, "\"rules\":9");
+    const std::string rules = "\"rules\":" + std::to_string(kSupportRulesVersion);
+    ASSERT_NE(newer.find(rules), std::string::npos) << newer;
+    newer.replace(newer.find(rules), rules.size(), "\"rules\":9");
     EXPECT_FALSE(detail::decode_support(catalog::SupportStatus::Supported, newer).camera.has_value());
+}
+
+// Rules 2's record: the probe facts, the manifest SHA-256, the variant check and engine limitations
+// survive the catalog.
+TEST(SupportEncoding, TheRecordKeepsTheProbeFactsAndTheDatabaseContent) {
+    raw::RawMetadata xtrans = sony();
+    const char tile[6][6] = {{1, 1, 0, 1, 1, 2}, {1, 1, 2, 1, 1, 0}, {2, 0, 1, 0, 2, 1},
+                             {1, 1, 2, 1, 1, 0}, {1, 1, 0, 1, 1, 2}, {0, 2, 1, 2, 0, 1}};
+    xtrans.representation.cfa = *image::CfaPattern::from_xtrans(tile);
+    raw::RequiredOperation warp;
+    warp.kind = raw::RequiredOperationKind::DngOpcode;
+    warp.stage = raw::OperationStage::AfterDemosaic;
+    warp.name = "WarpRectilinear";
+    xtrans.required_operations = {warp};
+    const auto db = database("2.0.0", {entry_for(key_of(xtrans), assets::SupportState::Verified)}, true, 7);
+    const SupportAssessment support = assess_support(xtrans, db.get());
+    ASSERT_EQ(support.status, SupportStatus::Limited);
+    const SupportAssessment restored =
+        detail::decode_support(detail::to_catalog(support.status), detail::encode_support_reasons(support));
+    ASSERT_TRUE(restored.camera.has_value());
+    EXPECT_EQ(*restored.camera, *support.camera);
+    EXPECT_EQ(restored.camera->dng_opcodes, std::vector<std::string>{"list3:WarpRectilinear"});
+    EXPECT_EQ(restored.camera->database_sha256, core::to_hex(db->manifest_sha256));
+    EXPECT_FALSE(restored.camera->variant_matches);  // the entry was qualified without the opcode
+    ASSERT_EQ(count_kind(restored, SupportReasonKind::EngineLimitation), 1u);
+    EXPECT_TRUE(assessed_with(restored, db.get()));
 }
 
 }  // namespace

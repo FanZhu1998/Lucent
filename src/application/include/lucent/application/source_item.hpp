@@ -82,7 +82,11 @@ struct ItemIdHash {
 using SupportStatus = assets::SupportState;
 
 // Version of the support rules (camera_support.hpp) an assessment was made with.
-inline constexpr std::uint32_t kSupportRulesVersion = 1;
+//   2 (2026-10-08, review of W10): engine limitations derived from the probe (X-Trans baseline
+//     demosaicing, unprocessed Dual Pixel data), a Verified entry only for the qualified file's image
+//     area and DNG opcodes, the database's manifest SHA-256 in the record, and a database that is
+//     missing or refused never improving a stored state. Records of rules 1 are probed again.
+inline constexpr std::uint32_t kSupportRulesVersion = 2;
 
 // Where a support reason comes from (append only).
 enum class SupportReasonKind : std::uint8_t {
@@ -91,17 +95,26 @@ enum class SupportReasonKind : std::uint8_t {
     ProbeFailed = 3,           // the file could not be identified; see error_code
     CameraLimitation = 4,      // a limitation the camera support database lists for the mode
     CameraUnsupported = 5,     // the camera support database lists the mode as Unsupported
+    // A known optional capability Lucent's engine lacks for this file, derived from its probe
+    // without a database (rules 2): X-Trans data is demosaiced with the baseline route, a Dual Pixel
+    // RAW's second image is not processed. Kept with the live reasons when the item is re-assessed.
+    EngineLimitation = 6,
 };
 
 struct SupportReason {
     SupportReasonKind kind = SupportReasonKind::InterpretationIssue;
     std::optional<raw::InterpretationIssueKind> issue;  // InterpretationIssue
     std::optional<ErrorCode> error_code;                // ProbeFailed
-    std::string limitation;                             // CameraLimitation: its stable code
-    // Developer-facing English for the interpretation kinds. For the Camera kinds, the database's
-    // user-facing English ("<summary>: <meaning>"), which reports and review notes show as is.
+    std::string limitation;                             // CameraLimitation, EngineLimitation: its stable code
+    // Developer-facing English for the interpretation kinds. For the Camera and Engine limitation
+    // kinds, user-facing English ("<summary>: <meaning>"; the database's words, or this build's
+    // assets::standard_limitation_text()), which reports and review notes show as is.
     std::string message;
 };
+
+// True for the reasons the probe gave (interpretation, failure and engine limitations): a
+// re-assessment against another database keeps them and recomputes the database's.
+[[nodiscard]] bool is_live_reason(SupportReasonKind kind) noexcept;
 
 // How the camera support database was consulted for an item (ADR 0018). Kept with the assessment
 // (and in the catalog) so that another database version can assess the item again without reading
@@ -110,17 +123,28 @@ struct CameraSupportEvaluation {
     std::uint32_t rules = kSupportRulesVersion;
     // The mode key of the probe the item was assessed with (assets::derive_mode_key()).
     std::string mode_key;
+    // The probe's facts beside the key (assets::derive_mode_variant(), rules 2): its image area and
+    // DNG opcodes, compared with a Verified entry's.
+    std::string image_area;
+    std::vector<std::string> dng_opcodes;
     // The interpretation status of that probe: the live part of the assessment.
     raw::InterpretationStatus interpretation = raw::InterpretationStatus::Complete;
-    // The database consulted: its asset id and version and its qualification date; all empty when
+    // The database consulted: its asset id, version, manifest SHA-256 (lower-case hex; rules 2: a
+    // content change under the same version is noticed) and its qualification date; all empty when
     // no database was active.
     std::string database_id;
     std::string database_version;
+    std::string database_sha256;
     std::string qualified_on;
     // The database's Verified entries held for the build that assessed (assets::CameraSupport::
     // verified_entries_hold()); false downgrades a Verified entry to Compatible, unverified.
     bool basis_matches = true;
-    // The database's answer for mode_key; std::nullopt when the mode is not in the database.
+    // The probe's image area and DNG opcodes are those the matching entry was qualified with (rules
+    // 2); false downgrades a Verified entry to Compatible, unverified. True when not listed.
+    bool variant_matches = true;
+    // The database's answer for mode_key; std::nullopt when the mode is not in the database. With no
+    // database active (database_id empty) it is the answer of the database the item was last assessed
+    // with, kept so that a missing or refused database never improves the item's state (AST-01).
     std::optional<SupportStatus> listed;
     // The matching entry's decoded key, labels and evidence (empty when not listed).
     std::string qualified_key;
@@ -265,10 +289,12 @@ struct SourceItem {
 // True when the item's support status came from an older interpretation than this build's: it
 // has a probe whose decoded-RAW contract is unknown or older than raw::kDecodedRawContractVersion
 // (a contract change can change what a file requires and what Lucent supports; W9 made DNG
-// opcodes supported), or its assessment has no camera support evaluation (made before ADR 0018:
-// without the probe's mode key it cannot be assessed against the database) or one of older support
-// rules. Source maintenance probes such items again (refresh_sources). An item whose probe failed
-// carries no interpretation and is not outdated.
+// opcodes supported), or a probe made with another version of the LibRaw decoder (AST-08: a decoder
+// upgrade can move the mode key), or its assessment has no camera support evaluation (made before
+// ADR 0018: without the probe's mode key it cannot be assessed against the database), one of older
+// support rules, or one whose mode key is not of this build's mode-key version. Source maintenance
+// probes such items again (refresh_sources); refresh_support() does not re-assess them from their
+// stale record. An item whose probe failed carries no interpretation and is not outdated.
 [[nodiscard]] bool probe_outdated(const SourceItem& item) noexcept;
 
 }  // namespace lucent::app

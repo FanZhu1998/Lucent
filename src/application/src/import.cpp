@@ -720,14 +720,14 @@ private:
     }
 
     SourceItem probed_item(const std::filesystem::path& path, const raw::RawMetadata& metadata,
-                           std::uint32_t subimage, std::uint32_t count) const {
+                           std::uint32_t subimage, std::uint32_t count, const SupportFileFacts& file = {}) const {
         SourceItem item;
         item.path = path;
         item.subimage = subimage;
         item.subimage_count = count;
         item.identity = metadata.source.identity;
         item.probe = summarize_probe(metadata);
-        item.support = assess_support(metadata, request_.camera_support.get());
+        item.support = assess_support(metadata, request_.camera_support.get(), file);
         return item;
     }
 
@@ -766,6 +766,13 @@ private:
             return ok();
         }
         report_.unlisted_subimages += count - static_cast<std::uint32_t>(result.subimages.size());
+        // AST-03: the photographs of a file with a Dual Pixel component are Limited (it is not
+        // processed), whatever the camera support database lists for their mode.
+        SupportFileFacts file;
+        file.dual_pixel_component =
+            std::any_of(result.subimages.begin(), result.subimages.end(), [](const raw::SubimageInfo& info) {
+                return !info.error && info.role == raw::SubimageRole::DualPixelComponent;
+            });
         for (const raw::SubimageInfo& info : result.subimages) {
             if (info.error) {
                 queue(failed_item(path, info.index, count, metadata.source.identity, *info.error), copy);
@@ -775,7 +782,7 @@ private:
                 continue;
             }
             if (info.index == metadata.subimage_index) {
-                queue(probed_item(path, metadata, info.index, count), copy);
+                queue(probed_item(path, metadata, info.index, count, file), copy);
                 continue;
             }
             raw::ProbeOptions one;
@@ -791,7 +798,7 @@ private:
                 queue(failed_item(path, info.index, count, metadata.source.identity, again.error()), copy);
                 continue;
             }
-            queue(probed_item(path, again->metadata, info.index, count), copy);
+            queue(probed_item(path, again->metadata, info.index, count, file), copy);
         }
         return ok();
     }

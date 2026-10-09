@@ -159,6 +159,16 @@ TEST(CatalogMapping, TheProbeContractIsStoredWithTheDecoderVersion) {
     item.support.camera->mode_key =
         "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1";
     EXPECT_FALSE(probe_outdated(item));
+    // AST-08: a probe of another LibRaw version, or a key of another mode-key version, is probed again
+    // instead of being looked up under a key the database may no longer list.
+    item.probe->decoder_version = "0.21.4-Release";
+    EXPECT_TRUE(probe_outdated(item));
+    item.probe->decoder_version = "0.22.2-Release";
+    item.support.camera->mode_key =
+        "mk0|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1";
+    EXPECT_TRUE(probe_outdated(item));
+    item.support.camera->mode_key =
+        "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1";
 
     // What a build before W9 stored: no contract, so the support status is outdated.
     catalog::ItemMetadata old = metadata;

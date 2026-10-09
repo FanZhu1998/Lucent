@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -443,6 +444,90 @@ TEST_F(BatchServiceTest, LimitedPhotosNameTheirLimitationAndUnsupportedOnesAreSk
     std::sort(states.begin(), states.end());
     EXPECT_EQ(states, (std::vector<std::string>{"compatible_unverified", "limited", "unsupported"}));
     EXPECT_NE(report_html(*report).find("Camera support: Limited"), std::string::npos);
+}
+
+// AST-07: a photo that becomes Unsupported after its batch was created (a database update, a
+// re-probe) is skipped when its job runs, as at creation, not exported.
+TEST_F(BatchServiceTest, APhotoThatBecameUnsupportedAfterCreationIsSkipped) {
+    const auto files = ts::write_dngs(dir_, L"in", 2);
+    const std::vector<ItemId> ids = h().import(files);
+    BatchRequest request = h().request(ids, out_);
+    request.start = false;  // created now, run later
+    auto submitted = h().batches().submit(request);
+    ASSERT_TRUE(submitted) << submitted.error().describe();
+    SupportReason failed;
+    failed.kind = SupportReasonKind::CameraUnsupported;
+    failed.message = "Lucent's qualification found that this camera mode does not develop correctly.";
+    SupportUpdate changed{ids[1], h().library().find(ids[1])->support};
+    changed.support.status = SupportStatus::Unsupported;
+    changed.support.reasons = {failed};
+    const std::vector<SupportUpdate> updates{changed};
+    ASSERT_TRUE(h().library().set_support(updates));
+
+    ASSERT_TRUE(h().batches().start(submitted->id));
+    ASSERT_TRUE(h().log.wait_for_kind(submitted->id, BatchEventKind::Finished));
+    auto report = h().batches().report(submitted->id);
+    ASSERT_TRUE(report) << report.error().describe();
+    EXPECT_EQ(report->exported, 1u);
+    EXPECT_EQ(report->skipped, 1u);
+    EXPECT_EQ(report->failed, 0u);
+    const auto entry = std::find_if(report->entries.begin(), report->entries.end(),
+                                    [&](const ReportEntry& e) { return e.item == ids[1]; });
+    ASSERT_NE(entry, report->entries.end());
+    EXPECT_EQ(entry->outcome, ReportOutcome::Skipped);
+    ASSERT_TRUE(entry->error.has_value());
+    EXPECT_EQ(entry->error->code, ErrorCode::Unsupported);
+    EXPECT_NE(entry->error->message.find("does not develop correctly"), std::string::npos) << entry->error->message;
+    EXPECT_EQ(count_with_extension(out_, L".jpg"), 1u);
+}
+
+// QUA-04: a batch frozen by an earlier build with the as-shot settings of geometry version 1 (W9,
+// identity 3104dbcc...) still runs after the update, rendering exactly that frozen recipe.
+TEST_F(BatchServiceTest, AsShotJobsFrozenWithAnEarlierGeometryVersionStillRun) {
+    const auto files = ts::write_dngs(dir_, L"in", 1);
+    const std::vector<ItemId> ids = h().import(files);
+    // A Draft batch gives the destination, export and policy documents this build writes.
+    BatchRequest request = h().request(ids, out_);
+    request.start = false;
+    auto draft = h().batches().submit(request);
+    ASSERT_TRUE(draft) << draft.error().describe();
+    const catalog::BatchRecord record = h().record(draft->id);
+    const std::vector<catalog::JobRecord> jobs = h().jobs(draft->id);
+    ASSERT_EQ(jobs.size(), 1u);
+    ASSERT_TRUE(jobs[0].item.has_value());
+
+    // The same batch as the earlier build froze it: no revision, the geometry-1 as-shot identity.
+    engine::DevelopSettings earlier;
+    earlier.operations.geometry = 1;
+    const auto earlier_document = write_recipe(earlier);
+    ASSERT_TRUE(earlier_document);
+    ASSERT_NE(earlier_document->sha256, write_recipe(engine::DevelopSettings{})->sha256);
+    catalog::NewBatch batch;
+    batch.name = "frozen before the update";
+    batch.selection_description = "1 selected photo";
+    batch.destination_json = record.destination_json;
+    batch.export_settings_json = record.export_settings_json;
+    batch.policy_json = record.policy_json;
+    batch.renderer_version = record.renderer_version;
+    batch.created_at = record.created_at;
+    batch.start = true;
+    catalog::NewJob job;
+    job.item = jobs[0].item.value();
+    job.settings_sha256 = earlier_document->sha256;
+    auto created = h().catalog().transact(
+        [&](catalog::WriteTransaction& tx) { return tx.create_batch(batch, std::span(&job, 1)); });
+    ASSERT_TRUE(created) << created.error().describe();
+    h().reopen();  // the updated build starts and resumes the unfinished batch
+    ASSERT_TRUE(h().log.wait_for_kind(created->id, BatchEventKind::Finished));
+
+    const catalog::BatchRecord resumed = h().record(created->id);
+    EXPECT_EQ(resumed.counts.complete, 1u);
+    EXPECT_EQ(resumed.counts.failed, 0u);
+    const auto receipts = h().receipts(created->id);
+    ASSERT_EQ(receipts.size(), 1u);
+    auto details = read_receipt_details(receipts[0].settings_json);
+    ASSERT_TRUE(details) << details.error().describe();
+    EXPECT_EQ(details->recipe_sha256, earlier_document->sha256) << "the frozen recipe, not today's defaults";
 }
 
 TEST_F(BatchServiceTest, AGeometryEditSetsTheOutputSizeWithoutAReviewNote) {

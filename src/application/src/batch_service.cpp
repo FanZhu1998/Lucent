@@ -462,6 +462,22 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
     if (!document) {
         return Unexpected(std::move(document.error()));
     }
+    if (document->sha256 != job.settings_sha256 && !job.revision) {
+        // QUA-04: as-shot settings frozen by an earlier build carry that build's geometry version (W9
+        // froze geometry version 1, the whole visible area; ADR 0017). This build still renders every
+        // geometry version it reads, so the as-shot settings of each are tried for the job's identity
+        // and the matching one is rendered exactly as it was frozen.
+        for (std::uint32_t version = engine::kOldestGeometryOperationVersion;
+             version < engine::kGeometryOperationVersion; ++version) {
+            engine::DevelopSettings earlier;
+            earlier.operations.geometry = version;
+            auto candidate = write_recipe(earlier);
+            if (candidate && candidate->sha256 == job.settings_sha256) {
+                document = std::move(candidate);
+                break;
+            }
+        }
+    }
     if (document->sha256 != job.settings_sha256) {
         return fail(ErrorCode::VersionMismatch,
                     "the recipe frozen for this job cannot be reproduced by this version of Lucent (its canonical "

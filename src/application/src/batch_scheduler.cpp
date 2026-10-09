@@ -1663,10 +1663,13 @@ void Attempt::calibrate(const workers::JobMetrics& metrics, const workers::Memor
 std::vector<std::string> Attempt::review_notes(const workers::JobResult& result) const {
     std::vector<std::string> notes;
     // A Limited photo is exported with a note naming each limitation (blueprint section 3; ADR 0018):
-    // the camera support database's own words for a limitation of the camera mode.
+    // the camera support database's own words for a limitation of the camera mode, and the same
+    // words for the engine's own limitations the probe showed (support rules 2).
     if (item_ && item_->support.status == SupportStatus::Limited) {
         for (const SupportReason& reason : item_->support.reasons) {
-            if (reason.kind == SupportReasonKind::CameraLimitation && !reason.message.empty()) {
+            if ((reason.kind == SupportReasonKind::CameraLimitation ||
+                 reason.kind == SupportReasonKind::EngineLimitation) &&
+                !reason.message.empty()) {
                 notes.push_back("Limited support: " + reason.message);
             }
         }
@@ -1772,6 +1775,20 @@ void Attempt::run() {
         fail_job(catalog::FailureClass::Deterministic,
              Error{ErrorCode::NotFound, "the photo was removed from the library", std::string(detail::kWhereRemoved), 0},
              false);
+        return;
+    }
+    // AST-07: a photo that became Unsupported after the batch was created (a database update listing
+    // its mode as Unsupported, a re-probe) is skipped like the ones left out at creation (blueprint
+    // section 3: "skip automatic export and give a useful reason"); resumes and retries included.
+    if (item_->support.status == SupportStatus::Unsupported && !context_.output.allow_unsupported) {
+        std::string reasons;
+        for (const SupportReason& reason : item_->support.reasons) {
+            reasons += reasons.empty() ? reason.message : "; " + reason.message;
+        }
+        fail_job(catalog::FailureClass::Deterministic,
+                 Error{ErrorCode::Unsupported, std::format("{} is not supported: {}", quoted(item_->path), reasons),
+                       "app.batch.support", 0},
+                 false, true);
         return;
     }
     auto frozen = s_.frozen_document(job_, item_->id);
