@@ -280,6 +280,11 @@ struct TiffIfdSummary {
     // relative to the top-left of the active area. Size components are > 0.
     std::optional<std::array<double, 2>> default_crop_origin;
     std::optional<std::array<double, 2>> default_crop_size;
+    // DefaultUserCrop (51125, DNG 1.4.0.0): {top, left, bottom, right} relative to the default crop,
+    // 0 <= top < bottom <= 1 and 0 <= left < right <= 1. The tag is advisory (the initial value of
+    // a user's crop), so a malformed one is skipped with a warning instead of failing the
+    // inspection, as LibRaw also ignores it.
+    std::optional<std::array<double, 4>> default_user_crop;
     // BlackLevelRepeatDim (50713) {rows, cols}. The single value 1, which some cameras write
     // instead of two values, is read as {1, 1} with a warning; other single values are Corrupt.
     std::optional<std::array<std::uint16_t, 2>> black_level_repeat_dim;

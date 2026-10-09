@@ -357,7 +357,7 @@ private:
 // A library item for `path` that has not been probed (tests of services that use scripted
 // renderers do not need a real file).
 inline SourceItem fake_item(const std::filesystem::path& path,
-                            SupportStatus status = SupportStatus::Supported) {
+                            SupportStatus status = SupportStatus::CompatibleUnverified) {
     SourceItem item;
     item.path = path;
     item.support.status = status;

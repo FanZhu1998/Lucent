@@ -8,6 +8,8 @@
 #include <QLocale>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include "services/service_types.hpp"
 
@@ -48,6 +50,16 @@ namespace lucent::ui::presentation {
 [[nodiscard]] QString support_label(SupportStatus status);
 // Compact badge text: "Verified", "Unverified", "Limited", "Unsupported", "Not checked".
 [[nodiscard]] QString support_short_label(SupportStatus status);
+// What a state means for the photographer (blueprint section 3; W10, ADR 0018): what Lucent
+// checked, and what it does with such photos (automatic exports, review notes, skipping).
+[[nodiscard]] QString support_meaning(SupportStatus status);
+// The four states for Help > About, best first: {key, label, meaning} maps.
+[[nodiscard]] QVariantList support_states();
+// Help > About's camera support database (W10, ADR 0018) as QML reads it: available, version,
+// qualifiedOn, decoder, location, bundled, modes, verified, compatibleUnverified, limited,
+// unsupported, verifiedEntriesHold, problem, notes, and summary: one sentence ("Version 1.0.0,
+// qualified 2026-10-08: 34 camera modes, 14 verified, ...") or the problem.
+[[nodiscard]] QVariantMap camera_support_map(const CameraSupportInfo& info);
 
 [[nodiscard]] QString processing_label(ProcessingStatus status);
 

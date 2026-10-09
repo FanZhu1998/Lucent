@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <exception>
+#include <format>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -88,13 +90,22 @@ void read_decoder_version(std::string_view stored, ProbeSummary& probe) {
 }  // namespace
 
 catalog::SupportStatus to_catalog(SupportStatus status) noexcept {
-    return static_cast<catalog::SupportStatus>(status);  // same values (source_item.hpp, types.hpp)
+    switch (status) {
+        case SupportStatus::Verified:
+        case SupportStatus::CompatibleUnverified:
+            return catalog::SupportStatus::Supported;
+        case SupportStatus::Limited:
+            return catalog::SupportStatus::Limited;
+        case SupportStatus::Unsupported:
+            return catalog::SupportStatus::Unsupported;
+    }
+    return catalog::SupportStatus::Unsupported;
 }
 
 SupportStatus from_catalog(catalog::SupportStatus status) noexcept {
     switch (status) {
         case catalog::SupportStatus::Supported:
-            return SupportStatus::Supported;
+            return SupportStatus::CompatibleUnverified;  // Verified only with its camera_support element
         case catalog::SupportStatus::Limited:
             return SupportStatus::Limited;
         case catalog::SupportStatus::Unsupported:
@@ -139,6 +150,114 @@ catalog::ImportOutcome to_catalog(ImportJournalOutcome outcome) noexcept {
     return static_cast<catalog::ImportOutcome>(outcome);
 }
 
+namespace {
+
+constexpr std::string_view kCameraSupportKind = "camera_support";
+
+Json camera_element(const SupportAssessment& support, const CameraSupportEvaluation& camera) {
+    Json element = Json::object();
+    element["kind"] = kCameraSupportKind;
+    element["rules"] = camera.rules;
+    element["state"] = std::string(assets::to_string(support.status));
+    element["interpretation"] = std::string(raw::to_string(camera.interpretation));
+    element["mode_key"] = core::sanitize_utf8(camera.mode_key);
+    element["image_area"] = core::sanitize_utf8(camera.image_area);
+    Json opcodes = Json::array();
+    for (const std::string& opcode : camera.dng_opcodes) {
+        opcodes.push_back(core::sanitize_utf8(opcode));
+    }
+    element["dng_opcodes"] = std::move(opcodes);
+    if (camera.database_id.empty()) {
+        element["database"] = nullptr;
+    } else {
+        element["database"] = Json{{"id", core::sanitize_utf8(camera.database_id)},
+                                   {"version", core::sanitize_utf8(camera.database_version)},
+                                   {"sha256", core::sanitize_utf8(camera.database_sha256)},
+                                   {"qualified", core::sanitize_utf8(camera.qualified_on)}};
+    }
+    element["basis_matches"] = camera.basis_matches;
+    element["variant_matches"] = camera.variant_matches;
+    element["listed"] = camera.listed ? Json(std::string(assets::to_string(*camera.listed))) : Json();
+    element["qualified_key"] = core::sanitize_utf8(camera.qualified_key);
+    element["camera"] = core::sanitize_utf8(camera.camera);
+    element["mode"] = core::sanitize_utf8(camera.mode);
+    element["evidence"] = core::sanitize_utf8(camera.evidence);
+    element["message"] =
+        camera.database_id.empty()
+            ? (camera.listed ? std::format("assessed without a camera support database; the last database listed "
+                                           "the mode as {}",
+                                           assets::to_string(*camera.listed))
+                             : std::string("assessed without a camera support database"))
+            : std::format("camera support database {} {}: {}", core::sanitize_utf8(camera.database_id),
+                          core::sanitize_utf8(camera.database_version),
+                          camera.listed
+                              ? std::format("the mode is listed as {}", assets::to_string(*camera.listed))
+                              : std::string("the mode is not listed"));
+    return element;
+}
+
+// The evaluation of a "camera_support" element; std::nullopt when it is malformed or of newer rules.
+std::optional<std::pair<SupportStatus, CameraSupportEvaluation>> read_camera_element(const Json& element) {
+    const auto rules = element.find("rules");
+    const auto state = assets::parse_support_state(string_field(element, "state"));
+    const auto interpretation =
+        parse_enum<raw::InterpretationStatus>(string_field(element, "interpretation"));
+    if (rules == element.end() || !rules->is_number_unsigned() || rules->get<std::uint64_t>() == 0 ||
+        rules->get<std::uint64_t>() > kSupportRulesVersion || !state || !interpretation) {
+        return std::nullopt;
+    }
+    CameraSupportEvaluation camera;
+    camera.rules = static_cast<std::uint32_t>(rules->get<std::uint64_t>());
+    camera.interpretation = *interpretation;
+    camera.mode_key = string_field(element, "mode_key");
+    if (camera.mode_key.empty()) {
+        return std::nullopt;
+    }
+    camera.image_area = string_field(element, "image_area");
+    const auto opcodes = element.find("dng_opcodes");
+    if (opcodes != element.end() && opcodes->is_array()) {
+        for (const Json& opcode : *opcodes) {
+            if (opcode.is_string()) {
+                camera.dng_opcodes.push_back(opcode.get<std::string>());
+            }
+        }
+    }
+    const auto database = element.find("database");
+    if (database != element.end() && database->is_object()) {
+        camera.database_id = string_field(*database, "id");
+        camera.database_version = string_field(*database, "version");
+        camera.database_sha256 = string_field(*database, "sha256");
+        camera.qualified_on = string_field(*database, "qualified");
+        if (camera.database_id.empty() || camera.database_version.empty()) {
+            return std::nullopt;
+        }
+    }
+    const auto basis = element.find("basis_matches");
+    camera.basis_matches = basis == element.end() || !basis->is_boolean() || basis->get<bool>();
+    // A record without the probe facts (rules 1) cannot show that a Verified entry fits the file.
+    const auto variant = element.find("variant_matches");
+    camera.variant_matches = variant != element.end() && variant->is_boolean() && variant->get<bool>();
+    const auto listed = element.find("listed");
+    if (listed != element.end() && listed->is_string()) {
+        camera.listed = assets::parse_support_state(listed->get<std::string>());
+        if (!camera.listed) {
+            return std::nullopt;
+        }
+    }
+    camera.qualified_key = string_field(element, "qualified_key");
+    camera.camera = string_field(element, "camera");
+    camera.mode = string_field(element, "mode");
+    camera.evidence = string_field(element, "evidence");
+    return std::pair{*state, std::move(camera)};
+}
+
+// True when a stored state fits the catalog's status column.
+bool fits_column(SupportStatus state, catalog::SupportStatus column) noexcept {
+    return to_catalog(state) == column;
+}
+
+}  // namespace
+
 std::string encode_support_reasons(const SupportAssessment& support) {
     Json reasons = Json::array();
     for (const SupportReason& reason : support.reasons) {
@@ -158,9 +277,23 @@ std::string encode_support_reasons(const SupportAssessment& support) {
                 element["kind"] = "probe_failed";
                 element["error"] = std::string(to_string(reason.error_code.value_or(ErrorCode::Unknown)));
                 break;
+            case SupportReasonKind::CameraLimitation:
+                element["kind"] = "camera_limitation";
+                element["limitation"] = core::sanitize_utf8(reason.limitation);
+                break;
+            case SupportReasonKind::CameraUnsupported:
+                element["kind"] = "camera_unsupported";
+                break;
+            case SupportReasonKind::EngineLimitation:
+                element["kind"] = "engine_limitation";
+                element["limitation"] = core::sanitize_utf8(reason.limitation);
+                break;
         }
         element["message"] = core::sanitize_utf8(reason.message);
         reasons.push_back(std::move(element));
+    }
+    if (support.camera) {
+        reasons.push_back(camera_element(support, *support.camera));
     }
     return reasons.dump(-1, ' ', false, Json::error_handler_t::replace);
 }
@@ -171,11 +304,12 @@ SupportAssessment decode_support(catalog::SupportStatus status, std::string_view
     std::optional<raw::InterpretationStatus> recorded_status;
     bool probe_failed = false;
     std::vector<raw::InterpretationIssue> issues;
+    std::optional<std::pair<SupportStatus, CameraSupportEvaluation>> camera;
 
     const Json parsed = Json::parse(reasons_json.begin(), reasons_json.end(), nullptr, false);
     if (parsed.is_discarded() || !parsed.is_array()) {
         core::log_warn(kLogCategory, "an item's support reasons are not a JSON array; shown without detail");
-        if (support.status != SupportStatus::Supported) {
+        if (support.status != SupportStatus::CompatibleUnverified) {
             SupportReason reason;
             reason.kind = SupportReasonKind::InterpretationStatus;
             reason.message = "stored support reasons are unreadable";
@@ -202,6 +336,23 @@ SupportAssessment decode_support(catalog::SupportStatus status, std::string_view
                 reason.error_code =
                     parse_error_code(string_field(element, "error")).value_or(ErrorCode::Unknown);
                 probe_failed = true;
+            } else if (kind == "camera_limitation") {
+                reason.kind = SupportReasonKind::CameraLimitation;
+                reason.limitation = string_field(element, "limitation");
+            } else if (kind == "engine_limitation") {
+                reason.kind = SupportReasonKind::EngineLimitation;
+                reason.limitation = string_field(element, "limitation");
+            } else if (kind == "camera_unsupported") {
+                reason.kind = SupportReasonKind::CameraUnsupported;
+            } else if (kind == kCameraSupportKind) {
+                camera = read_camera_element(element);
+                if (!camera || !fits_column(camera->first, status)) {
+                    core::log_warn(kLogCategory,
+                                   "an item's camera support record is unreadable or does not fit its "
+                                   "status; the item will be probed again");
+                    camera.reset();
+                }
+                continue;
             } else {
                 reason.kind = SupportReasonKind::InterpretationStatus;
                 if (kind == "status") {
@@ -212,9 +363,16 @@ SupportAssessment decode_support(catalog::SupportStatus status, std::string_view
         }
     }
 
+    if (camera) {
+        support.status = camera->first;
+        support.interpretation = camera->second.interpretation;
+        support.camera = std::move(camera->second);
+        return support;
+    }
     const raw::InterpretationStatus implied = raw::derive_interpretation_status(issues);
     switch (support.status) {
-        case SupportStatus::Supported:
+        case SupportStatus::Verified:  // only from a camera element (handled above)
+        case SupportStatus::CompatibleUnverified:
             support.interpretation = raw::InterpretationStatus::Complete;
             break;
         case SupportStatus::Limited:

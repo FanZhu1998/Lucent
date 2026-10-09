@@ -220,10 +220,24 @@ private:
 struct Inspection {
     std::optional<TiffSummary> summary;
     std::optional<Error> error;
+    // Fujifilm RAF: the crop the file declares, read by Lucent (detail::read_raf_crop).
+    std::optional<detail::InsetCrop> raf_crop;
 };
 
-Inspection inspect_if_dng(const OpenedSource& source, LibRaw& raw) {
+// The DNG structure (TIFF inspector) of a DNG, or the declared crop of a RAF (which restores the
+// edges LibRaw moves to its CFA period, libraw_support.hpp); nothing for other files. A RAF whose
+// crop cannot be read simply has none: LibRaw's own reading remains.
+Inspection inspect_source(const OpenedSource& source, LibRaw& raw) {
     Inspection inspection;
+    if (source.container == ContainerFormat::Raf) {
+        if (auto file_source = FileSource::create(source.file); file_source) {
+            if (auto crop = detail::read_raf_crop(*file_source); crop && *crop) {
+                inspection.raf_crop =
+                    detail::InsetCrop{(*crop)->left, (*crop)->top, (*crop)->width, (*crop)->height};
+            }
+        }
+        return inspection;
+    }
     if (raw.imgdata.idata.dng_version == 0) {
         return inspection;
     }
@@ -257,6 +271,7 @@ ExtractionContext make_context(const std::filesystem::path& path, const OpenedSo
     context.subimage_index = subimage;
     context.tiff = inspection.summary ? &*inspection.summary : nullptr;
     context.tiff_error = inspection.error;
+    context.raf_crop = inspection.raf_crop;
     return context;
 }
 
@@ -624,7 +639,7 @@ private:
         if (auto chosen = check_subimage(options.subimage, count, false); !chosen) {
             return Unexpected(std::move(chosen.error()));
         }
-        const Inspection inspection = inspect_if_dng(*source, session.raw());
+        const Inspection inspection = inspect_source(*source, session.raw());
         auto metadata =
             detail::extract_metadata(session.raw(), make_context(path, *source, inspection, shot));
         if (!metadata) {
@@ -721,7 +736,7 @@ private:
             return Unexpected(std::move(chosen.error()));
         }
 
-        const Inspection inspection = inspect_if_dng(*source, raw);
+        const Inspection inspection = inspect_source(*source, raw);
         ExtractionContext context = make_context(path, *source, inspection, shot);
         auto opened_metadata = detail::extract_metadata(raw, context);
         if (!opened_metadata) {

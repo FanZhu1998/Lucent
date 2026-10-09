@@ -10,8 +10,11 @@
 #include <QSignalSpy>
 #include <QTimer>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <memory>
+#include <string_view>
+#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -33,7 +36,10 @@ constexpr int kBatchWaitMs = 120000;
 
 class BatchAdapterTest : public ::testing::Test {
 protected:
-    void TearDown() override { close(); }
+    void TearDown() override {
+        release_attempt_ = true;  // never leave a slot thread held
+        close();
+    }
 
     void open(bool with_catalog = true) {
         adapters::BackendOptions options = testing::test_backend_options();
@@ -41,6 +47,14 @@ protected:
             options.catalog_path = dir_.path() / L"lucent\\data\\lucent.catalog";
         }
         options.batch.worker_executable = std::filesystem::path(LUCENT_WORKER_EXE).make_preferred();
+        options.batch.test.on_point = [this](std::string_view point, catalog::JobId) {
+            if (point == "complete" && hold_complete_.load()) {
+                attempt_held_ = true;
+                while (!release_attempt_.load()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+            }
+        };
         options.batch.test.free_space = [this](const std::filesystem::path&) -> std::optional<std::uint64_t> {
             if (full_after_first_.load() && free_calls_.fetch_add(1) > 0) {
                 return std::uint64_t{1} << 20;  // 1 MiB: below what any output needs
@@ -145,6 +159,11 @@ protected:
     };
 
     rts::ScratchDir dir_;
+    // Holds each attempt at its "complete" point (its job recorded, the batch's report not yet
+    // written) until release_attempt_, while hold_complete_ is set.
+    std::atomic<bool> hold_complete_{false};
+    std::atomic<bool> attempt_held_{false};
+    std::atomic<bool> release_attempt_{false};
     // The destination's free space as the service sees it: plenty, or after the first query 1 MiB.
     std::atomic<bool> full_after_first_{false};
     std::atomic<int> free_calls_{0};
@@ -226,6 +245,11 @@ TEST_F(BatchAdapterTest, ABatchRunsWithCoalescedUpdatesAndAResponsiveUiThreadThe
     QElapsedTimer run;
     run.start();
     ASSERT_TRUE(wait_finished(batch));
+    // The report's path arrives with its own event: a status read can show the batch finished while
+    // the service still writes it (AFinishedBatchListsNoReturningAttemptAndItsReportFollows).
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] { return !batches_->snapshot(batch)->report_path.isEmpty() && !batches_->is_busy(); },
+        kAdapterWaitMs));
     const qint64 elapsed = run.elapsed();
     probe.stop();
 
@@ -267,6 +291,44 @@ TEST_F(BatchAdapterTest, ABatchRunsWithCoalescedUpdatesAndAResponsiveUiThreadThe
     ASSERT_TRUE(wait_finished(again));
     EXPECT_EQ(batches_->snapshot(again)->skipped, 2);
     EXPECT_EQ(batches_->snapshot(again)->completed, 0);
+}
+
+// The end of a batch: its last job is recorded (the batch is Completed in the catalog) before the
+// attempt returns and the service writes the report. A status read in between shows the batch
+// finished with nothing running, the report follows with its event, and the finished batch never
+// keeps a running job (it is not read again).
+TEST_F(BatchAdapterTest, AFinishedBatchListsNoReturningAttemptAndItsReportFollows) {
+    hold_complete_ = true;
+    open();
+    const QList<ItemId> items = import_photos(1);
+    ASSERT_EQ(items.size(), 1);
+    const BatchId batch = submit(setup_for(items));
+    ASSERT_NE(batch, 0u);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return attempt_held_.load(); }, kBatchWaitMs));
+    // The periodic status read finds the batch Completed while its slot still runs the attempt.
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] {
+            const BatchSnapshot* s = batches_->snapshot(batch);
+            return s != nullptr && s->state == BatchState::Completed && s->review >= 0;
+        },
+        kAdapterWaitMs));
+    {
+        const BatchSnapshot& held = *batches_->snapshot(batch);
+        EXPECT_EQ(held.completed, 1);
+        EXPECT_EQ(held.running, 0);
+        EXPECT_TRUE(held.running_jobs.isEmpty());
+        EXPECT_TRUE(held.report_path.isEmpty());  // written once the attempt returns
+    }
+
+    release_attempt_ = true;
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] { return !batches_->snapshot(batch)->report_path.isEmpty() && !batches_->is_busy(); }, kBatchWaitMs));
+    const BatchSnapshot& done = *batches_->snapshot(batch);
+    EXPECT_EQ(done.state, BatchState::Completed);
+    EXPECT_EQ(done.completed, 1);
+    EXPECT_TRUE(done.running_jobs.isEmpty());
+    EXPECT_TRUE(QFileInfo(done.report_path).isFile()) << done.report_path.toStdString();
+    EXPECT_TRUE(std::filesystem::is_regular_file(dir_.path() / L"out\\IMG_0000_Lucent_0.jpg"));
 }
 
 // W8: automatic batches. Analysing only keeps an automatic revision per photo and exports nothing;

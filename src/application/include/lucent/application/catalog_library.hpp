@@ -79,6 +79,8 @@ public:
     [[nodiscard]] Status refresh(const SourceItem& fresh) override;
     // A file whose last item is removed is removed from the catalog as well.
     [[nodiscard]] Status remove(std::span<const ItemId> ids) override;
+    // Rewrites only the items' support columns (status and reasons), in one transaction.
+    [[nodiscard]] Status set_support(std::span<const SupportUpdate> updates) override;
     [[nodiscard]] Subscription subscribe(LibraryObserver observer) override;
 
     [[nodiscard]] LibraryCapabilities capabilities() const override;

@@ -25,18 +25,6 @@ inline void metadata_warnings(const raw::RawMetadata& metadata, bool apply_orien
         warnings.push_back(std::format("non-square pixels (aspect {}) are not corrected; the image is distorted",
                                        metadata.geometry.pixel_aspect));
     }
-    if (metadata.dng && metadata.dng->raw_ifd.default_crop_origin && metadata.dng->raw_ifd.default_crop_size) {
-        const auto& origin = *metadata.dng->raw_ifd.default_crop_origin;
-        const auto& size = *metadata.dng->raw_ifd.default_crop_size;
-        const image::PixelRect& visible = metadata.geometry.visible_area;
-        if (origin[0] != 0.0 || origin[1] != 0.0 || size[0] != static_cast<double>(visible.width) ||
-            size[1] != static_cast<double>(visible.height)) {
-            warnings.push_back(
-                std::format("DNG DefaultCrop (origin {}, {}; size {} x {}) is not applied; the whole visible "
-                            "area is rendered",
-                            origin[0], origin[1], size[0], size[1]));
-        }
-    }
     if (!apply_orientation && metadata.geometry.orientation != image::Orientation::Normal) {
         warnings.push_back(std::format("the file's orientation '{}' is not applied (settings); pixels stay in stored "
                                        "order",

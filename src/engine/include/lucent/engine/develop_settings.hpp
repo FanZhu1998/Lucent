@@ -47,7 +47,8 @@
 //   base_look      the scene-to-display rendering, id + version ("neutral" v1: a hue-preserving
 //                  filmic tone curve, develop_operations.hpp).
 //   geometry       straighten, crop, quarter turns and horizontal flip of the rendered image
-//                  (GeometrySetting), the last operation.
+//                  (GeometrySetting), the last operation; version 2 crops and straightens within the
+//                  camera's image area (kGeometryOperationVersion).
 //   locks          controls the automatic optimiser (W8) must not change; stored, not used here.
 //
 // Coordinates (ADR 0015). Masks and the crop are resolution independent:
@@ -60,8 +61,11 @@
 //   * Mask shapes are defined in U, before straightening and cropping: changing the crop, the
 //     straighten angle or the quarter turns never moves a mask relative to the image content;
 //     develop_geometry.hpp maps mask positions to output pixels (and back) for overlays.
-//   * The crop rectangle is normalised in the straightened frame S (U rotated about its centre,
-//     same canvas); with no straightening S = U.
+//   * The crop rectangle is normalised in the straightened frame S: the geometry's frame F (the
+//     whole of U for geometry version 1; the camera's image area inside U for version 2, when the
+//     file declares one) rotated about its centre on a canvas of its size; with no straightening
+//     S = F. Masks stay normalised in U in both versions, so a geometry version never moves a mask
+//     relative to the content (ADR 0017).
 //
 // Thread-safety: a value type; concurrent reads are safe.
 
@@ -100,8 +104,16 @@ inline constexpr std::uint32_t kColorOperationVersion = 1;  // saturation and vi
 inline constexpr std::uint32_t kChromaDenoiseOperationVersion = 1;
 // Masks (shape definitions, coordinate frame, rasterisation) and their local controls.
 inline constexpr std::uint32_t kLocalAdjustmentsOperationVersion = 1;
-// Straighten (resampling kernel), crop (pixel rounding), quarter turns and flip.
-inline constexpr std::uint32_t kGeometryOperationVersion = 1;
+// Straighten (resampling kernel), crop (pixel rounding), quarter turns and flip, in a frame:
+//   1: the frame is the whole upright image (the decoder's visible area after the DNG opcodes and
+//      the camera orientation); the identity geometry renders all of it.
+//   2: the frame is the camera's intended image area (image_area.hpp, ADR 0017) when the file
+//      declares one, the whole upright image otherwise; the identity geometry renders the area.
+// This build renders both. New settings (and the as-shot defaults) use version 2; settings made
+// with version 1 keep it and render exactly as before. The masks' frame is the same in both
+// versions (the whole upright image, see "Coordinates" above).
+inline constexpr std::uint32_t kGeometryOperationVersion = 2;
+inline constexpr std::uint32_t kOldestGeometryOperationVersion = 1;
 
 // The base looks this build implements.
 inline constexpr std::string_view kNeutralLookId = "neutral";
@@ -381,8 +393,9 @@ struct CropRect {
     friend bool operator==(const CropRect&, const CropRect&) = default;
 };
 
-// The geometry applied at the end of stage two (develop_geometry.hpp), in this order:
-//   1. straighten: the upright image rotated by straighten_degrees about its centre
+// The geometry applied at the end of stage two (develop_geometry.hpp) to its frame (the whole
+// upright image for geometry version 1, the camera's image area for version 2), in this order:
+//   1. straighten: the frame rotated by straighten_degrees about its centre
 //      (counter-clockwise as displayed for positive angles) on a canvas of the same size,
 //      resampled with the Keys cubic convolution kernel a = -0.5 (Catmull-Rom), each result
 //      limited to the range of its four nearest pixels; canvas points the rotated image does not
@@ -486,8 +499,9 @@ struct DevelopSettings {
     // Checks the whole value (Error::where "engine.develop.settings"):
     //   VersionMismatch  `version` is neither kDevelopSettingsVersion nor an older version this
     //                    build reads (kOldestDevelopSettingsVersion), an operation version is not
-    //                    the one this build implements, or the base look's version is not
-    //                    implemented (newer or retired);
+    //                    one this build implements (the geometry: kOldestGeometryOperationVersion
+    //                    to kGeometryOperationVersion; every other operation: its constant), or the
+    //                    base look's version is not implemented (newer or retired);
     //   Unsupported      an unknown base-look id;
     //   InvalidArgument  an unknown enum value (white-balance mode, lock, brush mode), a non-finite
     //                    number, a value outside its range (see the constants above), a tone curve
@@ -500,19 +514,25 @@ struct DevelopSettings {
 
     // True when every pixel-affecting value equals the default (locks, the recorded operation
     // versions, the chroma-denoise radius at strength 0 and local adjustments without effect are
-    // ignored): the image renders "as shot".
+    // ignored): the image renders "as shot". The geometry version is a recorded operation version:
+    // an identity geometry of version 1 (the whole visible area) counts as as shot too.
     [[nodiscard]] bool is_as_shot() const noexcept;
 
     friend bool operator==(const DevelopSettings&, const DevelopSettings&) = default;
 };
 
 // Converts settings of an older version this build reads to kDevelopSettingsVersion:
-//   version 1 -> 2: no chroma denoising, no local adjustment, no geometry, and this build's
-//   versions of the operations version 2 added. The result renders exactly as the version-1
-//   value does.
+//   version 1 -> 2: no chroma denoising, no local adjustment, no geometry, this build's versions
+//   of chroma denoising and local adjustments, and geometry version 1 (version-1 settings were
+//   made before the camera's image area existed and rendered the whole visible area). The result
+//   renders exactly as the version-1 value does.
 // Current settings are returned unchanged. Errors (engine.develop.settings): VersionMismatch for
 // a version this build does not read (0, or newer); InvalidArgument for a version-1 value that
 // holds a member of version 2. The other fields are not checked (call validate()).
 [[nodiscard]] Expected<DevelopSettings> upgrade_develop_settings(DevelopSettings settings);
+
+// The geometry operation version `settings` render with: 1 for version-1 settings (whatever their
+// unused operations.geometry holds), operations.geometry otherwise.
+[[nodiscard]] std::uint32_t geometry_operation_version(const DevelopSettings& settings) noexcept;
 
 }  // namespace lucent::engine

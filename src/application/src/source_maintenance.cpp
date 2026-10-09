@@ -400,6 +400,7 @@ Expected<RefreshReport> refresh_sources(Library& library, const raw::DecoderRegi
             request.probe_limits = options.probe_limits;
             request.record = false;
             request.reprobe_known = !outdated.empty();
+            request.camera_support = options.camera_support;
             auto reread = import_sources(library, registry, request, {}, cancel);
             if (!reread) {
                 return Unexpected(std::move(reread.error()));

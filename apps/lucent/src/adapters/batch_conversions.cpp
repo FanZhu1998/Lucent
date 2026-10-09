@@ -499,6 +499,7 @@ BatchReportInfo to_report_info(const app::BatchReport& report) {
         for (const std::string& note : entry.review) {
             out.review << from_utf8(note);
         }
+        out.support = entry.support ? to_ui_support(*entry.support) : SupportStatus::Unknown;
         out.attempts = static_cast<int>(entry.attempts);
         if (entry.automatic) {
             const app::AutomaticReport& automatic = *entry.automatic;

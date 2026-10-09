@@ -250,6 +250,82 @@ std::string_view to_string(InterpretationIssueKind value) noexcept {
     return "invalid";
 }
 
+std::string_view to_string(ImageAreaSource value) noexcept {
+    switch (value) {
+        case ImageAreaSource::Unknown:
+            return "unknown";
+        case ImageAreaSource::DngDefaultCrop:
+            return "dng_default_crop";
+        case ImageAreaSource::DngDefaultWholeImage:
+            return "dng_default_whole_image";
+        case ImageAreaSource::DecoderInsetCrop:
+            return "decoder_inset_crop";
+    }
+    return "invalid";
+}
+
+ImageArea dng_image_area(const TiffIfdSummary& ifd, image::Size raw_frame) {
+    ImageArea area;
+    const std::uint32_t width = ifd.width.value_or(0);
+    const std::uint32_t height = ifd.height.value_or(0);
+    if (width == 0 || height == 0 || static_cast<std::int64_t>(width) != raw_frame.width ||
+        static_cast<std::int64_t>(height) != raw_frame.height) {
+        area.basis = std::format(
+            "the DNG raw IFD {} is {} x {}, the decoded raw frame {} x {}: its DefaultCrop "
+            "cannot be placed",
+            ifd.path, width, height, raw_frame.width, raw_frame.height);
+        return area;
+    }
+    const DngRect active = ifd.active_area.value_or(DngRect{0, 0, height, width});
+    const image::PixelRect reference{static_cast<std::int32_t>(active.left),
+                                     static_cast<std::int32_t>(active.top),
+                                     static_cast<std::int32_t>(active.right - active.left),
+                                     static_cast<std::int32_t>(active.bottom - active.top)};
+    const std::string frame =
+        ifd.active_area
+            ? std::format("the ActiveArea {}x{}+{}+{} of {}", reference.width, reference.height, reference.x,
+                          reference.y, ifd.path)
+            : std::format("the whole {} x {} image of {} (no ActiveArea)", width, height, ifd.path);
+    area.reference = reference;
+    if (ifd.default_crop_origin || ifd.default_crop_size) {
+        // Each tag has its own default (DNG 1.4.0.0 p. 31): DefaultCropOrigin (0, 0), DefaultCropSize
+        // ImageWidth x ImageLength. A rectangle that overruns the stage-3 image is moved back inside
+        // and cut when the engine places it (image_area.hpp, the DNG SDK's DefaultCropArea()).
+        const std::array<double, 2> origin = ifd.default_crop_origin.value_or(std::array<double, 2>{0.0, 0.0});
+        const std::array<double, 2> size = ifd.default_crop_size.value_or(
+            std::array<double, 2>{static_cast<double>(width), static_cast<double>(height)});
+        area.source = ImageAreaSource::DngDefaultCrop;
+        area.provenance = Provenance::DngTag;
+        area.rect = AreaRect{reference.x + origin[0], reference.y + origin[1], size[0], size[1]};
+        area.basis = std::format("DNG DefaultCropOrigin ({}, {}) and DefaultCropSize {} x {}, relative to {}",
+                                 origin[0], origin[1], size[0], size[1], frame);
+        if (!ifd.default_crop_origin) {
+            area.basis += "; DefaultCropOrigin is absent: the specification's default (0, 0)";
+        } else if (!ifd.default_crop_size) {
+            area.basis += std::format(
+                "; DefaultCropSize is absent: the specification's default, the IFD's ImageWidth x ImageLength "
+                "{} x {}",
+                width, height);
+        }
+    } else {
+        area.source = ImageAreaSource::DngDefaultWholeImage;
+        area.provenance = Provenance::LucentRule;
+        area.rect = AreaRect{static_cast<double>(reference.x), static_cast<double>(reference.y),
+                             static_cast<double>(reference.width), static_cast<double>(reference.height)};
+        area.basis = std::format("no DNG DefaultCrop tags: the specification's default, {}", frame);
+    }
+    if (ifd.default_user_crop) {
+        const auto& u = *ifd.default_user_crop;
+        if (!(u[0] == 0.0 && u[1] == 0.0 && u[2] == 1.0 && u[3] == 1.0)) {
+            area.user_crop = NormalizedCrop{u[0], u[1], u[2], u[3]};
+            area.user_crop_provenance = Provenance::DngTag;
+            area.basis +=
+                std::format("; DefaultUserCrop top {}, left {}, bottom {}, right {}", u[0], u[1], u[2], u[3]);
+        }
+    }
+    return area;
+}
+
 ContainerFormat detect_container_format(std::span<const std::byte> bytes) noexcept {
     // Vendor TIFF variants first: their signatures share the "II"/"MM" prefix with TIFF.
     if (starts_with(bytes, 0, "IIRO") || starts_with(bytes, 0, "IIRS") || starts_with(bytes, 0, "MMOR")) {
@@ -805,6 +881,46 @@ Status check_consistency(const DecodedRaw& decoded) {
     }
     if (m.interpretation.status != derive_interpretation_status(m.interpretation.issues)) {
         return contract_violation("interpretation status does not match its issues");
+    }
+    {
+        const ImageArea& area = m.image_area;
+        switch (area.source) {
+            case ImageAreaSource::Unknown:
+            case ImageAreaSource::DngDefaultCrop:
+            case ImageAreaSource::DngDefaultWholeImage:
+            case ImageAreaSource::DecoderInsetCrop:
+                break;
+            default:
+                return contract_violation("unknown image area source");
+        }
+        const bool known = area.source != ImageAreaSource::Unknown;
+        if (known != area.rect.has_value() || (known && !frame.contains(area.reference)) ||
+            (!known && (area.user_crop || !area.reference.empty()))) {
+            return contract_violation(
+                std::format("image area ({}) needs a rectangle and a reference inside the frame "
+                            "exactly when it is known",
+                            to_string(area.source)));
+        }
+        if (area.rect) {
+            const AreaRect& r = *area.rect;
+            if (!finite(r.x) || !finite(r.y) || !finite(r.width) || !finite(r.height) || !(r.width > 0.0) ||
+                !(r.height > 0.0)) {
+                return contract_violation("image area must be finite with a positive size");
+            }
+            if (area.source == ImageAreaSource::DecoderInsetCrop &&
+                (r.x < 0.0 || r.y < 0.0 || r.x + r.width > geo.raw_width ||
+                 r.y + r.height > geo.raw_height)) {
+                return contract_violation("a decoder inset crop must lie inside the raw frame");
+            }
+        }
+        if (area.user_crop) {
+            const NormalizedCrop& u = *area.user_crop;
+            const auto unit = [&](double v) { return finite(v) && v >= 0.0 && v <= 1.0; };
+            if (!unit(u.top) || !unit(u.left) || !unit(u.bottom) || !unit(u.right) || !(u.top < u.bottom) ||
+                !(u.left < u.right)) {
+                return contract_violation("image area user crop must be ordered inside [0, 1]");
+            }
+        }
     }
     // Every operation marked supported is one the engine can apply: a decoded DNG opcode that
     // assess_dng_opcode accepts at its stage, evaluated in processing order (assess_in_order).

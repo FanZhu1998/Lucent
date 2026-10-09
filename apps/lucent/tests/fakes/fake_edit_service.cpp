@@ -720,16 +720,16 @@ void FakeEditService::finish_auto(ItemId id, const AutoRun& run) {
     later([this, outcome] { emit auto_finished(outcome); });
 }
 
-GeometryMap FakeEditService::map_geometry(const EditGeometry& geometry, QSize upright_size) const {
-    return adapters::geometry_map(geometry, upright_size);
+GeometryMap FakeEditService::map_geometry(const EditGeometry& geometry, QSize upright_size, QRect frame) const {
+    return adapters::geometry_map(geometry, upright_size, frame);
 }
 
-bool FakeEditService::crop_inside_image(const EditGeometry& geometry, QSize upright_size) const {
-    return adapters::geometry_crop_inside(geometry, upright_size);
+bool FakeEditService::crop_inside_image(const EditGeometry& geometry, QSize frame_size) const {
+    return adapters::geometry_crop_inside(geometry, frame_size);
 }
 
-EditCrop FakeEditService::largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect) const {
-    return adapters::geometry_largest_inside_crop(straighten_degrees, upright_size, aspect);
+EditCrop FakeEditService::largest_inside_crop(double straighten_degrees, QSize frame_size, double aspect) const {
+    return adapters::geometry_largest_inside_crop(straighten_degrees, frame_size, aspect);
 }
 
 EditGeometry FakeEditService::turned(const EditGeometry& geometry, GeometryTurn turn) const {

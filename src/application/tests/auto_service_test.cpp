@@ -332,6 +332,39 @@ TEST_F(AutoServiceTest, ACropWithoutNeutralSurfacesKeepsTheWhiteBalanceDecision)
     EXPECT_EQ(effective.settings.white_balance, uncropped->chosen.white_balance);
 }
 
+// The camera's image area (geometry version 2, ADR 0017) is part of the geometry the evaluation sets
+// aside: Auto decides the same for a recipe of geometry version 1 (the whole visible area) and one of
+// version 2 (the DNG's DefaultCrop), keeps each recipe's version, and the full-resolution check
+// measures the version-2 output (the area) without failing.
+TEST_F(AutoServiceTest, TheCameraAreaDoesNotChangeTheAutoDecision) {
+    rts::SyntheticDngSpec spec = dark_spec();
+    spec.default_crop_origin = std::array<std::pair<std::uint32_t, std::uint32_t>, 2>{{{12, 1}, {8, 1}}};
+    spec.default_crop_size = std::array<std::pair<std::uint32_t, std::uint32_t>, 2>{{{232, 1}, {176, 1}}};
+    const auto path = ts::write_dng(dir_, L"area.dng", spec);
+    engine::DevelopSettings whole;
+    whole.operations.geometry = 1;
+    const engine::DevelopSettings area;  // version 2
+    auto a = run_automatic(*registry_, path, 0, whole, AutoRunRequest{});
+    auto b = run_automatic(*registry_, path, 0, area, AutoRunRequest{});
+    ASSERT_TRUE(a && b) << (a ? b.error().describe() : a.error().describe());
+    EXPECT_EQ(a->chosen.operations.geometry, 1u);
+    EXPECT_EQ(b->chosen.operations.geometry, 2u);
+    engine::DevelopSettings b_as_whole = b->chosen;
+    b_as_whole.operations.geometry = 1;
+    EXPECT_EQ(b_as_whole, a->chosen);
+    EXPECT_EQ(a->confidence, b->confidence);
+    ASSERT_TRUE(a->effective && b->effective);
+    EXPECT_EQ(a->attempts[*a->effective].kind, AutoAttemptKind::Chosen);
+    EXPECT_EQ(b->attempts[*b->effective].kind, AutoAttemptKind::Chosen)
+        << (b->attempts[0].check.failures.empty() ? "" : b->attempts[0].check.failures.front());
+    ASSERT_EQ(a->attempts.size(), b->attempts.size());
+    for (std::size_t i = 0; i < a->attempts.size(); ++i) {
+        engine::DevelopSettings s = b->attempts[i].settings;
+        s.operations.geometry = 1;
+        EXPECT_EQ(s, a->attempts[i].settings) << i;
+    }
+}
+
 TEST_F(AutoServiceTest, LockedControlsAreKeptAndTheirEffectReported) {
     engine::DevelopSettings locked;
     locked.exposure_ev = -1.0;

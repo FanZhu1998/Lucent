@@ -64,13 +64,13 @@ public:
     enum Role {
         SourceNameRole = Qt::UserRole + 1,
         SourcePathRole,
-        OutcomeKeyRole,   // presentation::outcome_key
+        OutcomeKeyRole,  // presentation::outcome_key
         OutcomeLabelRole,
-        OutputRole,       // full path; may be empty
-        OutputNameRole,   // file name of OutputRole
+        OutputRole,      // full path; may be empty
+        OutputNameRole,  // file name of OutputRole
         ReasonRole,
         ActionRole,
-        ReviewRole,       // QStringList
+        ReviewRole,  // QStringList
         HasReviewRole,
         AttemptsRole,
         AccessibleLabelRole,
@@ -80,6 +80,10 @@ public:
         AutoNotesRole,         // QStringList: Auto's other findings (those not in ReviewRole)
         LockNotesRole,         // QStringList: what locked controls did
         LocksPreventedRole,    // bool: locks kept Auto from its usual targets
+        // W10: the photo's camera support state as the batch recorded it.
+        SupportKeyRole,      // presentation::support_key ("unknown" when not recorded)
+        SupportLabelRole,    // presentation::support_label; empty when not recorded
+        SupportMeaningRole,  // presentation::support_meaning; empty when not recorded
     };
     Q_ENUM(Role)
 

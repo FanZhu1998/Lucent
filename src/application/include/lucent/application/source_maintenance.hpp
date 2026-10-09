@@ -77,6 +77,7 @@
 #include <span>
 #include <vector>
 
+#include <lucent/application/camera_support.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/application/thumbnail_cache.hpp>
 #include <lucent/core/cancellation.hpp>
@@ -180,6 +181,8 @@ struct RefreshOptions {
     bool reprobe_changed = true;
     bool reprobe_outdated = true;  // probe Present files whose items' probe is outdated again
     raw::DecodeLimits probe_limits;
+    // W10 (ADR 0018): the camera support database re-read items are assessed against (null: none).
+    CameraSupportRef camera_support;
 };
 
 struct RefreshReport {

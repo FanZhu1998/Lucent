@@ -356,12 +356,15 @@ Status check_chroma_denoise(const ChromaDenoiseSetting& d) {
                        "the chroma-denoise radius (full-image pixels)");
 }
 
-// A version-1 value holds none of version 2's members.
+// A version-1 value holds none of version 2's members. Its geometry version is the default or 1
+// (what upgrade_develop_settings() gives it): either way it renders as geometry version 1.
 Status check_version_1(const DevelopSettings& s) {
     const DevelopOperationVersions current;
     if (!(s.chroma_denoise == ChromaDenoiseSetting{}) || !s.local_adjustments.empty() ||
         !(s.geometry == GeometrySetting{}) || s.operations.chroma_denoise != current.chroma_denoise ||
-        s.operations.local_adjustments != current.local_adjustments || s.operations.geometry != current.geometry) {
+        s.operations.local_adjustments != current.local_adjustments ||
+        (s.operations.geometry != current.geometry &&
+         s.operations.geometry != kOldestGeometryOperationVersion)) {
         return fail(ErrorCode::InvalidArgument,
                     "version-1 settings cannot hold chroma denoising, local adjustments or geometry (members of "
                     "version 2)",
@@ -492,7 +495,9 @@ GeometrySetting flipped_horizontally(GeometrySetting geometry) noexcept {
 
 std::uint64_t geometry_revision(const GeometrySetting& geometry) noexcept {
     Fnv1a h;
-    h.add(std::uint64_t{kGeometryOperationVersion});
+    // The value's own semantics (unchanged since geometry version 1); the frame a version places it
+    // in enters GeometryMapping::revision().
+    h.add(std::uint64_t{kOldestGeometryOperationVersion});
     h.add(geometry.straighten_degrees);
     h.add(geometry.crop.left);
     h.add(geometry.crop.top);
@@ -548,7 +553,7 @@ Status DevelopSettings::validate() const {
             return status;
         }
     }
-    const std::array<std::pair<std::uint32_t, std::pair<std::uint32_t, std::string_view>>, 9> versions = {{
+    const std::array<std::pair<std::uint32_t, std::pair<std::uint32_t, std::string_view>>, 8> versions = {{
         {operations.white_balance, {kWhiteBalanceOperationVersion, "white-balance"}},
         {operations.exposure, {kExposureOperationVersion, "exposure"}},
         {operations.local_tone, {kLocalToneOperationVersion, "local tone (highlights/shadows)"}},
@@ -557,12 +562,19 @@ Status DevelopSettings::validate() const {
         {operations.color, {kColorOperationVersion, "colour (saturation/vibrance)"}},
         {operations.chroma_denoise, {kChromaDenoiseOperationVersion, "chroma-denoise"}},
         {operations.local_adjustments, {kLocalAdjustmentsOperationVersion, "local-adjustments (masks)"}},
-        {operations.geometry, {kGeometryOperationVersion, "geometry"}},
     }};
     for (const auto& [found, expected] : versions) {
         if (auto status = check_operation_version(found, expected.first, expected.second); !status) {
             return status;
         }
+    }
+    if (operations.geometry < kOldestGeometryOperationVersion ||
+        operations.geometry > kGeometryOperationVersion) {
+        return fail(
+            ErrorCode::VersionMismatch,
+            std::format("the geometry operation has version {}; this build implements versions {} to {}",
+                        operations.geometry, kOldestGeometryOperationVersion, kGeometryOperationVersion),
+            kWhere);
     }
     if (base_look.id != kNeutralLookId) {
         return fail(ErrorCode::Unsupported, std::format("unknown base look '{}'", base_look.id), kWhere);
@@ -630,10 +642,17 @@ Expected<DevelopSettings> upgrade_develop_settings(DevelopSettings settings) {
     if (auto status = check_version_1(settings); !status) {
         return Unexpected(std::move(status.error()));
     }
-    // Version 1 -> 2: the new members keep their defaults (no denoising, no masks, no geometry) and
-    // the operations version 2 added get this build's versions (check_version_1 ensured both).
+    // Version 1 -> 2: the new members keep their defaults (no denoising, no masks, no geometry),
+    // denoising and masks get this build's versions (check_version_1 ensured both) and the geometry
+    // version 1: version-1 settings rendered the whole visible area (ADR 0017).
     settings.version = kDevelopSettingsVersion;
+    settings.operations.geometry = kOldestGeometryOperationVersion;
     return settings;
+}
+
+std::uint32_t geometry_operation_version(const DevelopSettings& settings) noexcept {
+    return settings.version == kOldestDevelopSettingsVersion ? kOldestGeometryOperationVersion
+                                                             : settings.operations.geometry;
 }
 
 }  // namespace lucent::engine

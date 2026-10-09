@@ -150,17 +150,31 @@ TEST(DevelopSettings, RejectsOtherVersionsAndUnknownLooks) {
     s.version = kOldestDevelopSettingsVersion;  // version 1 is still read
     EXPECT_TRUE(s.validate());
 
-    for (std::uint32_t DevelopOperationVersions::*field :
+    for (std::uint32_t DevelopOperationVersions::* field :
          {&DevelopOperationVersions::white_balance, &DevelopOperationVersions::exposure,
           &DevelopOperationVersions::local_tone, &DevelopOperationVersions::contrast,
           &DevelopOperationVersions::tone_curve, &DevelopOperationVersions::color,
-          &DevelopOperationVersions::chroma_denoise, &DevelopOperationVersions::local_adjustments,
-          &DevelopOperationVersions::geometry}) {
+          &DevelopOperationVersions::chroma_denoise, &DevelopOperationVersions::local_adjustments}) {
         DevelopSettings t;
         t.operations.*field = 2;
         ts::expect_error(t.validate(), ErrorCode::VersionMismatch, kWhere);
         EXPECT_TRUE(t.is_as_shot());  // recorded versions do not change "as shot"
     }
+    // The geometry: versions 1 (the whole visible area) and 2 (the camera's image area) are read.
+    for (const std::uint32_t version : {0u, 3u}) {
+        DevelopSettings t;
+        t.operations.geometry = version;
+        ts::expect_error(t.validate(), ErrorCode::VersionMismatch, kWhere);
+    }
+    for (const std::uint32_t version : {kOldestGeometryOperationVersion, kGeometryOperationVersion}) {
+        DevelopSettings t;
+        t.operations.geometry = version;
+        EXPECT_TRUE(t.validate()) << version;
+        EXPECT_TRUE(t.is_as_shot()) << version;
+        EXPECT_EQ(geometry_operation_version(t), version);
+    }
+    EXPECT_EQ(kGeometryOperationVersion, 2u);
+    EXPECT_EQ(DevelopSettings{}.operations.geometry, 2u);  // new settings use the camera's image area
 
     DevelopSettings look;
     look.base_look.id = "vivid";
@@ -272,17 +286,27 @@ TEST(DevelopSettingsV2, Version1ValuesAreValidAndUpgradeWithoutTheNewMembers) {
     EXPECT_TRUE(upgraded->validate());
     DevelopSettings expected = v1;
     expected.version = kDevelopSettingsVersion;
+    // Version-1 settings rendered the whole visible area: they keep geometry version 1 (ADR 0017).
+    expected.operations.geometry = kOldestGeometryOperationVersion;
     EXPECT_EQ(*upgraded, expected);  // every version-1 field kept, the new ones at their defaults
     EXPECT_TRUE(upgraded->chroma_denoise.is_identity());
     EXPECT_TRUE(upgraded->local_adjustments.empty());
     EXPECT_TRUE(upgraded->geometry.is_identity());
+    EXPECT_EQ(geometry_operation_version(v1), 1u);  // whatever its unused operations.geometry holds
+    EXPECT_EQ(geometry_operation_version(*upgraded), 1u);
 
-    // A default version-1 value becomes exactly the default version-2 value.
+    // A default version-1 value becomes the default version-2 value with geometry version 1.
     DevelopSettings plain;
     plain.version = 1;
     auto plain_upgraded = upgrade_develop_settings(plain);
     ASSERT_TRUE(plain_upgraded);
-    EXPECT_EQ(*plain_upgraded, DevelopSettings{});
+    DevelopSettings plain_expected;
+    plain_expected.operations.geometry = 1;
+    EXPECT_EQ(*plain_upgraded, plain_expected);
+    // The upgraded value is itself a valid version-1 value again when written back as version 1.
+    DevelopSettings again = *plain_upgraded;
+    again.version = 1;
+    EXPECT_TRUE(again.validate());
 
     // Current values pass unchanged.
     DevelopSettings current;

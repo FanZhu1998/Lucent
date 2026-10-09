@@ -1,16 +1,16 @@
 #include "app_controller.hpp"
 
-#include <algorithm>
-#include <stdexcept>
-#include <utility>
-
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QQmlEngine>
+#include <algorithm>
+#include <stdexcept>
+#include <utility>
 
 #include "imaging/image_provider.hpp"
+#include "models/presentation.hpp"
 
 namespace lucent::ui {
 namespace {
@@ -385,6 +385,19 @@ bool AppController::can_back_up() const {
 
 QString AppController::library_notice() const {
     return services_.library->library_notice();
+}
+
+QString AppController::app_version() const {
+    const QString version = QCoreApplication::applicationVersion();
+    return version.isEmpty() ? QStringLiteral("unknown") : version;
+}
+
+QVariantMap AppController::camera_support() const {
+    return presentation::camera_support_map(services_.library->camera_support());
+}
+
+QVariantList AppController::support_states() const {
+    return presentation::support_states();
 }
 
 void AppController::on_relink_finished(const RelinkSummary& summary) {

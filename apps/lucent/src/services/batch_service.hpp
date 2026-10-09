@@ -208,6 +208,9 @@ struct BatchReportEntry {
     QString reason;  // what happened (failed, skipped, cancelled)
     QString action;  // what to do; may be empty
     QStringList review;  // why a review is recommended; empty when it is not
+    // W10 (ADR 0018): the photo's camera support state as the batch recorded it; Unknown when not
+    // recorded (earlier batches, photos not exported).
+    SupportStatus support = SupportStatus::Unknown;
     int attempts = 0;
     // Automatic batches: what automatic settings did to the photo (its effective automatic
     // revision's analysis record). `automatic` false for other batches.

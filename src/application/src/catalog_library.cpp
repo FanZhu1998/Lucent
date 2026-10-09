@@ -31,6 +31,7 @@ constexpr std::string_view kWhereHash = "app.library.hash";
 constexpr std::string_view kWhereState = "app.library.state";
 constexpr std::string_view kWhereRelocate = "app.library.relocate";
 constexpr std::string_view kWhereJournal = "app.library.journal";
+constexpr std::string_view kWhereSupport = "app.library.support";
 
 ItemId to_app(catalog::ItemId id) noexcept {
     return ItemId{static_cast<std::uint64_t>(id.value)};
@@ -864,6 +865,68 @@ Status CatalogLibrary::set_flags(ItemId id, const ItemFlags& flags) {
         s.publish_later(pending, LibraryChangeKind::Updated, {id});
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "changing flags ran out of memory", std::string(kWhereFlags));
+    }
+    s.notify(pending);
+    return ok();
+}
+
+Status CatalogLibrary::set_support(std::span<const SupportUpdate> updates) {
+    if (updates.empty()) {
+        return ok();
+    }
+    State& s = *state_;
+    State::Pending pending;
+    try {
+        std::lock_guard write(s.write_mutex);
+        {
+            std::lock_guard lock(s.mutex);
+            for (const SupportUpdate& update : updates) {
+                if (!s.items.contains(update.id)) {
+                    return fail(ErrorCode::NotFound, std::format("no library item {}", update.id.value),
+                                std::string(kWhereSupport));
+                }
+            }
+        }
+        // Only the support columns change: every other stored column (probe time, capture fields
+        // this build does not read back) is written back as stored.
+        Status written = s.store->write([&](catalog::WriteTransaction& tx) -> Status {
+            for (const SupportUpdate& update : updates) {
+                auto record = tx.find_item(to_catalog_id(update.id));
+                if (!record) {
+                    return Unexpected(std::move(record.error()));
+                }
+                if (!*record) {
+                    return fail(ErrorCode::NotFound, std::format("no catalog item {}", update.id.value),
+                                std::string(kWhereSupport));
+                }
+                catalog::ItemMetadata metadata = (*record)->metadata;
+                metadata.support_status = detail::to_catalog(update.support.status);
+                metadata.support_reasons_json = detail::encode_support_reasons(update.support);
+                auto ids = tx.upsert_items((*record)->source_id, std::span(&metadata, 1));
+                if (!ids) {
+                    return Unexpected(std::move(ids.error()));
+                }
+            }
+            return ok();
+        });
+        if (!written) {
+            return Unexpected(from_catalog_error(written.error(), kWhereSupport));
+        }
+        std::vector<ItemId> changed;
+        changed.reserve(updates.size());
+        std::lock_guard lock(s.mutex);
+        for (const SupportUpdate& update : updates) {
+            SourceItem& item = s.items.at(update.id);
+            item.support = update.support;
+            ++item.revision;
+            if (std::find(changed.begin(), changed.end(), update.id) == changed.end()) {
+                changed.push_back(update.id);
+            }
+        }
+        s.publish_later(pending, LibraryChangeKind::Updated, std::move(changed));
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "updating support assessments ran out of memory",
+                    std::string(kWhereSupport));
     }
     s.notify(pending);
     return ok();

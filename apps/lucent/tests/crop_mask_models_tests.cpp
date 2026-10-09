@@ -53,7 +53,8 @@ protected:
             frame->geometry.crop = EditCrop{};
         }
         frame->full_upright_size = kUpright;
-        const GeometryMap map = service.map_geometry(frame->geometry, kUpright);
+        frame->full_frame = frame_area;  // the camera's image area of a geometry-2 recipe (QUA-05)
+        const GeometryMap map = service.map_geometry(frame->geometry, kUpright, frame_area);
         frame->full_output_size = map.output_size;
         frame->image = testing::solid_image(QSize(map.output_size.width() / 10, map.output_size.height() / 10));
         frame->info = std::make_shared<RenderInfo>();
@@ -83,7 +84,52 @@ protected:
     std::shared_ptr<FrameStore> store;
     EditSession session;
     quint64 sequence = 0;
+    QRect frame_area;  // the frames' geometry frame F (empty: the whole upright image)
 };
+
+// QUA-05: a geometry-version-2 recipe of a file with a camera image area works in that area (the
+// frame F, ADR 0017): the tools map pointer positions, handles and the straightened crop through it,
+// not through the whole upright image (whose border lies outside the output).
+TEST_F(CropMaskModelsTest, TheToolsWorkInTheCameraAreaOfTheFrame) {
+    frame_area = QRect(44, 30, 5900, 3936);  // a border of 44 x 30 pixels, as the A7 IV APS-C crop
+    open();
+    ASSERT_EQ(session.frame_full_frame(), frame_area);
+    ASSERT_EQ(session.frame_output_width(), 5900);
+    ASSERT_EQ(session.frame_output_height(), 3936);
+
+    // Masks: the displayed image's corners are F's corners in the masks' frame U.
+    session.setTool(QStringLiteral("masks"));
+    show_frame();
+    const auto top_left = session.masks()->normalized_at(0.0, 0.0);
+    const auto bottom_right = session.masks()->normalized_at(1.0, 1.0);
+    ASSERT_TRUE(top_left && bottom_right);
+    EXPECT_NEAR(top_left->x(), 44.0 / 6000.0, 1e-9);
+    EXPECT_NEAR(top_left->y(), 30.0 / 4000.0, 1e-9);
+    EXPECT_NEAR(bottom_right->x(), (44.0 + 5900.0) / 6000.0, 1e-9);
+    EXPECT_NEAR(bottom_right->y(), (30.0 + 3936.0) / 4000.0, 1e-9);
+    const auto shown = session.masks()->displayed_at(QPointF(0.5, 0.5));
+    ASSERT_TRUE(shown);
+    EXPECT_NEAR(shown->x(), (3000.0 - 44.0) / 5900.0, 1e-9);
+    EXPECT_NEAR(shown->y(), (2000.0 - 30.0) / 3936.0, 1e-9);
+
+    // Crop: the identity crop is the whole displayed area, and a straightened crop that follows the
+    // angle keeps F's own aspect ratio and stays inside F.
+    session.setTool(QStringLiteral("crop"));
+    show_frame();
+    EXPECT_EQ(session.crop()->rect(), QRectF(0.0, 0.0, 1.0, 1.0));
+    EXPECT_EQ(session.crop()->size_text(), QStringLiteral("5900 × 3936 px"));
+    const EditGeometry level = session.crop()->straightened(session.settings().geometry, 5.0);
+    const EditCrop c = level.crop;
+    const EditCrop in_frame = service.largest_inside_crop(5.0, QSize(5900, 3936), 5900.0 / 3936.0);
+    EXPECT_NEAR(c.left, in_frame.left, 1e-6);
+    EXPECT_NEAR(c.top, in_frame.top, 1e-6);
+    EXPECT_NEAR(c.right, in_frame.right, 1e-6);
+    EXPECT_NEAR(c.bottom, in_frame.bottom, 1e-6);
+    EXPECT_NEAR((c.width() * 5900.0) / (c.height() * 3936.0), 5900.0 / 3936.0, 1e-5);
+    // The whole upright image's answer is another crop.
+    const EditCrop in_upright = service.largest_inside_crop(5.0, kUpright, 1.5);
+    EXPECT_GT(std::abs(in_upright.top - in_frame.top) + std::abs(in_upright.left - in_frame.left), 1e-6);
+}
 
 // ---- Crop math ------------------------------------------------------------------------------------------
 

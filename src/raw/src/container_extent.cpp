@@ -155,6 +155,57 @@ Expected<ImageDataExtent> raf_overruns(RandomAccessSource& source) {
 
 }  // namespace
 
+Expected<std::optional<RafCrop>> read_raf_crop(RandomAccessSource& source) {
+    constexpr std::uint64_t kHeaderBytes = 108;
+    constexpr std::uint32_t kMaxEntries = 512;
+    const std::uint64_t size = source.size();
+    if (size < kHeaderBytes) {
+        return std::optional<RafCrop>{};
+    }
+    std::array<std::byte, kHeaderBytes> header{};
+    if (auto status = read_exact(source, 0, header); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    if (std::memcmp(header.data(), "FUJIFILM", 8) != 0) {
+        return std::optional<RafCrop>{};
+    }
+    const std::uint64_t start = load_be(header.data() + 92, 4);
+    const std::uint64_t length = load_be(header.data() + 96, 4);
+    if (start == 0 || length < 4 || start + length > size) {
+        return std::optional<RafCrop>{};
+    }
+    std::array<std::byte, 4> word{};
+    if (auto status = read_exact(source, start, word); !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    const std::uint64_t entries = load_be(word.data(), 4);
+    const std::uint64_t end = start + length;
+    std::uint64_t at = start + 4;
+    std::optional<std::array<std::uint32_t, 2>> top_left;
+    std::optional<std::array<std::uint32_t, 2>> cropped;
+    for (std::uint64_t i = 0; i < entries && i < kMaxEntries && at + 4 <= end; ++i) {
+        if (auto status = read_exact(source, at, word); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+        const auto tag = static_cast<std::uint32_t>(load_be(word.data(), 2));
+        const std::uint64_t bytes = load_be(word.data() + 2, 2);
+        if ((tag == 0x110 || tag == 0x111) && bytes == 4 && at + 8 <= end) {
+            std::array<std::byte, 4> value{};
+            if (auto status = read_exact(source, at + 4, value); !status) {
+                return Unexpected(std::move(status.error()));
+            }
+            const std::array<std::uint32_t, 2> pair{static_cast<std::uint32_t>(load_be(value.data(), 2)),
+                                                    static_cast<std::uint32_t>(load_be(value.data() + 2, 2))};
+            (tag == 0x110 ? top_left : cropped) = pair;
+        }
+        at += 4 + bytes;
+    }
+    if (!top_left || !cropped) {
+        return std::optional<RafCrop>{};
+    }
+    return std::optional<RafCrop>{RafCrop{(*top_left)[0], (*top_left)[1], (*cropped)[0], (*cropped)[1]}};
+}
+
 bool has_structural_check(ContainerFormat container) noexcept {
     switch (container) {
         case ContainerFormat::Tiff:

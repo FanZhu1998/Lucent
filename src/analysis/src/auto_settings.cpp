@@ -499,6 +499,11 @@ Status AutoSession::Impl::setup(raw::DecodedRaw&& decoded) {
     if (!one) {
         return Unexpected(std::move(one.error()));
     }
+    // The evaluation measures the whole upright image, as before geometry version 2 (ADR 0017): the
+    // camera's image area is part of the geometry the evaluation sets aside, so every render here
+    // (proxies, native crops, appearances) uses the whole frame whatever the settings' geometry
+    // version; the application's full-resolution check measures the real output frame.
+    one->image_area.reset();
     result_.timing.stage_one_seconds = seconds_since(t);
     result_.full_size = one->full_size;
     result_.warnings = one->warnings;

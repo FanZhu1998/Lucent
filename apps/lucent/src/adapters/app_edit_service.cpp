@@ -718,13 +718,18 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         });
     }
 
-    // The weight overlay of mask `mask_id` for a frame rendered as `report` says (null when the
-    // settings have no such mask).
+    // The weight overlay of mask `mask_id` for a frame rendered as `report` says, through the mapping
+    // stage two rendered it with (engine::geometry_mapping() of the report's sizes and area: the
+    // frame F is the camera's area for a geometry-version-2 recipe, QUA-05); null when the settings
+    // have no such mask.
     static QImage mask_overlay_for(const engine::DevelopReport& report, quint32 mask_id) {
         for (const engine::LocalAdjustment& adjustment : report.settings.local_adjustments) {
-            if (adjustment.id == mask_id) {
-                return mask_overlay_image(adjustment, report.settings.geometry, report.upright_size);
+            if (adjustment.id != mask_id) {
+                continue;
             }
+            auto mapping =
+                engine::geometry_mapping(report.settings, report.upright_size, report.full_size, report.image_area);
+            return mapping ? mask_overlay_image(adjustment, *mapping) : QImage();
         }
         return {};
     }
@@ -1253,16 +1258,16 @@ void AppEditService::note_auto_finished(const AutoOutcome& outcome) {
     emit auto_finished(outcome);
 }
 
-GeometryMap AppEditService::map_geometry(const EditGeometry& geometry, QSize upright_size) const {
-    return geometry_map(geometry, upright_size);
+GeometryMap AppEditService::map_geometry(const EditGeometry& geometry, QSize upright_size, QRect frame) const {
+    return geometry_map(geometry, upright_size, frame);
 }
 
-bool AppEditService::crop_inside_image(const EditGeometry& geometry, QSize upright_size) const {
-    return geometry_crop_inside(geometry, upright_size);
+bool AppEditService::crop_inside_image(const EditGeometry& geometry, QSize frame_size) const {
+    return geometry_crop_inside(geometry, frame_size);
 }
 
-EditCrop AppEditService::largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect) const {
-    return geometry_largest_inside_crop(straighten_degrees, upright_size, aspect);
+EditCrop AppEditService::largest_inside_crop(double straighten_degrees, QSize frame_size, double aspect) const {
+    return geometry_largest_inside_crop(straighten_degrees, frame_size, aspect);
 }
 
 EditGeometry AppEditService::turned(const EditGeometry& geometry, GeometryTurn turn) const {

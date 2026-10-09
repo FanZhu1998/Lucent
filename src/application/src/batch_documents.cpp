@@ -507,6 +507,14 @@ Expected<std::string> write_receipt_details(const ReceiptDetails& details) {
         out["replaced_existing"] = details.replaced_existing;
         out["allow_unsupported"] = details.allow_unsupported;
         out["review"] = detail::string_array(details.review);
+        if (details.support) {
+            Json support = Json::object();
+            support["state"] = std::string(assets::to_string(*details.support));
+            support["database"] = details.camera_support_version.empty()
+                                      ? Json()
+                                      : Json(core::sanitize_utf8(details.camera_support_version));
+            out["support"] = std::move(support);
+        }
         return out.dump();
     });
 }
@@ -562,6 +570,18 @@ Expected<ReceiptDetails> read_receipt_details(std::string_view json) {
         details.replaced_existing = detail::boolean(in, "replaced_existing");
         details.allow_unsupported = detail::boolean(in, "allow_unsupported");
         details.review = detail::strings_from(in, "review");
+        // W10 (ADR 0018): optional; receipts of earlier builds have none, an unknown spelling is
+        // left unrecorded rather than guessed.
+        if (const auto support = in.find("support"); support != in.end() && support->is_object()) {
+            const auto state = support->find("state");
+            if (state != support->end() && state->is_string()) {
+                details.support = assets::parse_support_state(state->get<std::string>());
+            }
+            const auto database = support->find("database");
+            if (details.support && database != support->end() && database->is_string()) {
+                details.camera_support_version = database->get<std::string>();
+            }
+        }
         return details;
     });
     if (!result && result.error().where == "app.batch.document") {

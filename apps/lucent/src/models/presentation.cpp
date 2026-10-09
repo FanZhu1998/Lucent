@@ -166,6 +166,88 @@ QString support_short_label(SupportStatus status) {
     return support_label(status);
 }
 
+QString support_meaning(SupportStatus status) {
+    switch (status) {
+        case SupportStatus::Verified:
+            // QUA-03: colour is checked as agreement with the decoder's camera calibration.
+            return tr_text(
+                "This exact camera model and capture mode passed Lucent's decoding, colour, geometry and "
+                "export tests (colour as agreement with the decoder's camera calibration, not yet against a "
+                "colour chart). Automatic batches develop it like any other photo.");
+        case SupportStatus::CompatibleUnverified:
+            // QUA-10, AST-05: covers modes without a test photo and modes whose tests are incomplete.
+            return tr_text(
+                "Lucent decodes this file and every step it requires is available, but Lucent lacks "
+                "representative quality evidence for this camera mode: it has no test photo of it, or its "
+                "tests could not be confirmed. It is developed with the same care; check the results.");
+        case SupportStatus::Limited:
+            return tr_text(
+                "An optional feature or profile is not available for this camera mode. Lucent develops the "
+                "photo without it, and exports carry a review note that names what is missing.");
+        case SupportStatus::Unsupported:
+            return tr_text(
+                "Lucent cannot develop this file faithfully: it cannot decode it, cannot apply a step it "
+                "requires, or its quality tests found that this camera mode does not develop correctly. "
+                "Automatic exports skip it and say why.");
+        case SupportStatus::Unknown:
+            break;
+    }
+    return tr_text("Lucent has not checked this file yet.");
+}
+
+QVariantList support_states() {
+    QVariantList states;
+    for (const SupportStatus status : {SupportStatus::Verified, SupportStatus::CompatibleUnverified,
+                                       SupportStatus::Limited, SupportStatus::Unsupported}) {
+        QVariantMap state;
+        state.insert(QStringLiteral("key"), support_key(status));
+        state.insert(QStringLiteral("label"), support_label(status));
+        state.insert(QStringLiteral("meaning"), support_meaning(status));
+        states.append(state);
+    }
+    return states;
+}
+
+QVariantMap camera_support_map(const CameraSupportInfo& info) {
+    QVariantMap map;
+    map.insert(QStringLiteral("available"), info.available);
+    map.insert(QStringLiteral("version"), info.version);
+    map.insert(QStringLiteral("qualifiedOn"), info.qualified_on);
+    map.insert(QStringLiteral("decoder"), info.decoder);
+    map.insert(QStringLiteral("location"), info.location);
+    map.insert(QStringLiteral("bundled"), info.bundled);
+    map.insert(QStringLiteral("modes"), info.modes);
+    map.insert(QStringLiteral("verified"), info.verified);
+    map.insert(QStringLiteral("compatibleUnverified"), info.compatible_unverified);
+    map.insert(QStringLiteral("limited"), info.limited);
+    map.insert(QStringLiteral("unsupported"), info.unsupported);
+    map.insert(QStringLiteral("verifiedEntriesHold"), info.verified_entries_hold);
+    map.insert(QStringLiteral("problem"), info.problem);
+    map.insert(QStringLiteral("notes"), info.notes);
+    QString summary;
+    if (info.available) {
+        const QString counts = tr_text(
+            "Version %1, qualified %2: %3 camera modes, %4 verified, %5 compatible but unverified, "
+            "%6 limited, %7 unsupported.");
+        summary = counts.arg(info.version, info.qualified_on)
+                      .arg(info.modes)
+                      .arg(info.verified)
+                      .arg(info.compatible_unverified)
+                      .arg(info.limited)
+                      .arg(info.unsupported);
+        if (!info.verified_entries_hold) {
+            const QString basis = tr_text(
+                "It was qualified with another version of Lucent's decoder or processing, so its verified "
+                "modes count as compatible but unverified.");
+            summary += u' ' + basis;
+        }
+    } else {
+        summary = info.problem.isEmpty() ? tr_text("No camera support database is in use.") : info.problem;
+    }
+    map.insert(QStringLiteral("summary"), summary);
+    return map;
+}
+
 QString processing_label(ProcessingStatus status) {
     switch (status) {
     case ProcessingStatus::NotProcessed:

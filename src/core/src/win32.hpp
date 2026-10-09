@@ -51,10 +51,11 @@ private:
 // The string to hand to wide-character Win32 file APIs for `path`:
 //  - empty paths and paths containing NUL are InvalidArgument (a NUL would silently truncate
 //    the name at the API boundary);
-//  - paths already in "\\?\" or "\\.\" form, and paths shorter than MAX_PATH, pass unchanged;
+//  - paths already in "\\?\" or "\\.\" form, and paths shorter than MAX_PATH - 12 (248, where
+//    CreateDirectoryW stops), pass unchanged;
 //  - longer paths are made absolute with GetFullPathNameW (which also normalises separators
 //    and "." / ".." segments, as Win32 would) and prefixed with "\\?\" (or "\\?\UNC\" for
-//    UNC paths) so the MAX_PATH limit does not apply.
+//    UNC paths) so neither the CreateDirectoryW limit nor MAX_PATH applies.
 [[nodiscard]] Expected<std::wstring> win32_api_path(const std::filesystem::path& path,
                                                     std::string_view where);
 

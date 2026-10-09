@@ -1,0 +1,2791 @@
+{
+ "schema": "lucent.qualification-expectations",
+ "schema_version": 1,
+ "mode_key_version": 1,
+ "reviewed": "2026-10-07",
+ "evidence_rule": "A 'verified' fact cites at least one independent source: manufacturer_spec, file_tag (tests/qualification/tools/file_facts.py), independent_decoder (RawSpeed cameras.xml) or reviewer_visual. decoder_reference (LibRaw/rawpy) and archive_metadata are recorded but never suffice (ADR 0016).",
+ "sources": {
+  "spec-canon-eos-r5": {
+   "kind": "manufacturer_spec",
+   "title": "Canon EOS R5 product manual, Specifications",
+   "url": "https://cam.start.canon/en/C003/manual/html/UG-09_Reference_0100.html",
+   "retrieved": "2026-10-05",
+   "quote": "Recorded pixels, RAW / Compact RAW: Approx. 44.8 megapixels (8192x5464) [3:2 full frame]; Approx. 17.3 megapixels (5088x3392) [1.6x (crop)]. Image types: RAW, C-RAW, Dual Pixel RAW."
+  },
+  "spec-canon-eos-5d-mark-iv": {
+   "kind": "manufacturer_spec",
+   "title": "Canon Asia, EOS 5D Mark IV specifications",
+   "url": "https://asia.canon/en/support/6200376100",
+   "retrieved": "2026-10-05",
+   "quote": "RAW: Approx. 30.1 megapixels (6720 x 4480); M-RAW: Approx. 16.9 megapixels (5040 x 3360); S-RAW: Approx. 7.5 megapixels (3360 x 2240); RAW (14-bit Canon original)."
+  },
+  "spec-canon-eos-5d-mark-iii": {
+   "kind": "manufacturer_spec",
+   "title": "Canon Camera Museum, EOS 5D Mark III specifications",
+   "url": "https://global.canon/en/c-museum/product/dslr808.html",
+   "retrieved": "2026-10-05",
+   "quote": "RAW: Approx. 22.10 megapixels (5760 x 3840); M-RAW: Approx. 10.50 megapixels (3960 x 2640); S-RAW: Approx. 5.50 megapixels (2880 x 1920)."
+  },
+  "spec-canon-eos-7d-mark-ii": {
+   "kind": "manufacturer_spec",
+   "title": "Canon Camera Museum, EOS 7D Mark II specifications",
+   "url": "https://global.canon/en/c-museum/product/dslr819.html",
+   "retrieved": "2026-10-05",
+   "quote": "RAW: Approx. 20.0 megapixels (5472 x 3648)."
+  },
+  "spec-sony-ilce-7m4-image-size": {
+   "kind": "manufacturer_spec",
+   "title": "Sony ILCE-7M4 Help Guide: JPEG Image Size/HEIF Image Size",
+   "url": "https://helpguide.sony.net/ilc/2110/v1/en/contents/TP1000659393.html",
+   "retrieved": "2026-10-05",
+   "quote": "3:2: L 33M 7008x4672, M 14M 4608x3072, S 8.2M 3504x2336. The L size cannot be selected when shooting in the APS-C size."
+  },
+  "spec-sony-ilce-7m4-raw-file-type": {
+   "kind": "manufacturer_spec",
+   "title": "Sony ILCE-7M4 Help Guide: RAW File Type",
+   "url": "https://helpguide.sony.net/ilc/2110/v1/en/contents/TP1000659395.html",
+   "retrieved": "2026-10-05",
+   "quote": "Uncompressed; Lossless Compression (L/M/S): the number of pixels after development using a Sony application is the same as the L/M/S size for JPEG/HEIF images, and the L size can be selected only when shooting in full frame; Compressed."
+  },
+  "spec-sony-ilce-7rm5-image-size": {
+   "kind": "manufacturer_spec",
+   "title": "Sony ILCE-7RM5 Help Guide: JPEG Image Size/HEIF Image Size",
+   "url": "https://helpguide.sony.net/ilc/2230/v1/en/contents/TP0003057051.html",
+   "retrieved": "2026-10-05",
+   "quote": "3:2: L 60M 9504x6336, M 26M 6240x4160, S 15M 4752x3168."
+  },
+  "spec-nikon-z-6": {
+   "kind": "manufacturer_spec",
+   "title": "Nikon Z 6 product page, specifications",
+   "url": "https://imaging.nikon.com/imaging/lineup/mirrorless/z_6/",
+   "retrieved": "2026-10-05",
+   "quote": "FX (36x24) image area: 6048 x 4024 (L: 24.3 million); NEF (RAW): 12 or 14 bit (lossless compressed, compressed or uncompressed)."
+  },
+  "spec-nikon-z-8": {
+   "kind": "manufacturer_spec",
+   "title": "Nikon Z 8 product page, specifications",
+   "url": "https://imaging.nikon.com/imaging/lineup/mirrorless/z_8/",
+   "retrieved": "2026-10-05",
+   "quote": "[FX (36 x 24)] selected for image area: 8256 x 5504 (Large: 45.4 M); NEF (RAW): 14 bit; choose from lossless compression, high efficiency* and high efficiency options."
+  },
+  "spec-fujifilm-x-t4": {
+   "kind": "manufacturer_spec",
+   "title": "Fujifilm X-T4 specifications",
+   "url": "https://www.fujifilm-x.com/global/products/cameras/x-t4/specifications/",
+   "retrieved": "2026-10-05",
+   "quote": "Number of recorded pixels [L] <3:2> 6240 x 4160; image sensor 23.5mm x 15.6mm (APS-C) X-Trans CMOS 4 with primary color filter; 14bit RAW (RAF original format)."
+  },
+  "spec-fujifilm-gfx50s-ii": {
+   "kind": "manufacturer_spec",
+   "title": "Fujifilm GFX50S II specifications",
+   "url": "https://www.fujifilm-x.com/global/products/cameras/gfx50s-ii/specifications/",
+   "retrieved": "2026-10-05",
+   "quote": "Number of recorded pixels L 4:3: 8256 x 6192; image sensor 43.8mm x 32.9mm Bayer array with primary color filter; 14bit RAW (RAF original format)."
+  },
+  "spec-panasonic-dc-s5m2": {
+   "kind": "manufacturer_spec",
+   "title": "Panasonic DC-S5M2 operating instructions, Specifications",
+   "url": "https://eww.pavc.panasonic.co.jp/dscoi/DC-S5M2/html/DC-S5M2_DVQP2839_eng/0150.html",
+   "retrieved": "2026-10-05",
+   "quote": "Image size, aspect 3:2, [L]: 6000x4000 (3984x2656 with APS-C lenses)."
+  },
+  "spec-om-system-om-1": {
+   "kind": "manufacturer_spec",
+   "title": "OM System OM-1 product page, specifications",
+   "url": "https://explore.omsystem.com/us/en/om-1",
+   "retrieved": "2026-10-05",
+   "quote": "Recording image size RAW: 5184 x 3888; RAW recording bit: 12bit."
+  },
+  "spec-pentax-k-3-mark-iii": {
+   "kind": "manufacturer_spec",
+   "title": "Ricoh Imaging, PENTAX K-3 Mark III specifications",
+   "url": "https://www.ricoh-imaging.co.jp/english/products/k-3-3/spec/",
+   "retrieved": "2026-10-05",
+   "quote": "Recorded pixels L(26M:6192x4128); RAW (14bit): PEF, DNG."
+  },
+  "spec-pentax-k-3-mark-iii-monochrome": {
+   "kind": "manufacturer_spec",
+   "title": "Ricoh Imaging Europe, PENTAX K-3 Mark III Monochrome",
+   "url": "https://pentax.eu/products/pentax-k-3-mark-iii-monochrome",
+   "retrieved": "2026-10-05",
+   "quote": "L(26M:6192x4128); RAW (14bit): PEF, DNG; special monochromatic CMOS image sensor, without a low-pass filter."
+  },
+  "spec-hasselblad-x1d-ii-50c": {
+   "kind": "manufacturer_spec",
+   "title": "Hasselblad X1D II 50C data sheet",
+   "url": "https://cdn.hasselblad.com/datasheets/x1d-II-50c/x1D-ii-50c-data-sheet.pdf",
+   "retrieved": "2026-10-05",
+   "quote": "Sensor type CMOS, 50 megapixels (8272 x 6200 pixels, 5.3 x 5.3 um); Hasselblad 3FR RAW."
+  },
+  "spec-dji-mavic-pro": {
+   "kind": "manufacturer_spec",
+   "title": "DJI Mavic Pro specifications",
+   "url": "https://www.dji.com/global/support/product/mavic",
+   "retrieved": "2026-10-05",
+   "quote": "Camera sensor 1/2.3\" (CMOS), effective pixels 12.35 M; image size 4000x3000; still formats JPEG, DNG."
+  },
+  "spec-dji-mini-2": {
+   "kind": "manufacturer_spec",
+   "title": "DJI Mini 2 specifications",
+   "url": "https://www.dji.com/global/support/product/mini-2",
+   "retrieved": "2026-10-05",
+   "quote": "Sensor 1/2.3\" CMOS, effective pixels 12 MP; image size 4:3: 4000x3000, 16:9: 4000x2250; JPEG/DNG (RAW)."
+  },
+  "spec-dji-mavic-3": {
+   "kind": "manufacturer_spec",
+   "title": "DJI Mavic 3 specifications",
+   "url": "https://www.dji.com/global/support/product/mavic-3",
+   "retrieved": "2026-10-05",
+   "quote": "Hasselblad camera 4/3 CMOS, effective pixels 20 MP; max image size 5280x3956; JPEG/DNG (RAW)."
+  },
+  "spec-dji-mavic-3-pro": {
+   "kind": "manufacturer_spec",
+   "title": "DJI Mavic 3 Pro specifications",
+   "url": "https://www.dji.com/mavic-3-pro/specs",
+   "retrieved": "2026-10-05",
+   "quote": "Medium tele camera 1/1.3\" CMOS, 48 MP, 70 mm format equivalent; max image size 8064x6048; single shot 12 MP or 48 MP. No pixel size is given for the 12 MP mode."
+  },
+  "visual-2026-10-05": {
+   "kind": "reviewer_visual",
+   "title": "Reviewer inspection of the lucent-qualify --previews renders (develop path, as shot, 1024 px)",
+   "retrieved": "2026-10-05",
+   "quote": "On 2026-10-05 every decodable fixture was inspected: upright, natural colours (sky, foliage, colour checkers; no red/blue exchange), no dark or garbage borders; the Insta360 frame shows two fisheye circles stacked vertically."
+  },
+  "rawpy-reference": {
+   "kind": "decoder_reference",
+   "title": "Committed rawpy 0.27.1 / LibRaw 0.22.1 reference probes (fixtures/reference/<id>.parity.json)",
+   "retrieved": "2026-10-05"
+  },
+  "raw-pixls-us": {
+   "kind": "archive_metadata",
+   "title": "raw.pixls.us sample metadata and file names (fixtures/manifest.json)",
+   "url": "https://raw.pixls.us/",
+   "retrieved": "2026-10-05"
+  },
+  "rawspeed-canon-eos-5d-mark-iv": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"Canon\" model=\"Canon EOS 5D Mark IV\": CFA (0,0) RED, (1,0) GREEN, (0,1) GREEN, (1,1) BLUE; Crop x=136 y=44 width=0 height=0; modes sRaw1/sRaw2 decoded as sRaw (YCbCr)."
+  },
+  "rawspeed-sony-ilce-7m4": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"SONY\" model=\"ILCE-7M4\": CFA RED GREEN / GREEN BLUE; Crop x=0 y=0 width=-8 height=0; Sensor black=512 white=16383."
+  },
+  "rawspeed-sony-ilce-7rm5": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"SONY\" model=\"ILCE-7RM5\": CFA RED GREEN / GREEN BLUE; Crop x=0 y=0 width=-32 height=0."
+  },
+  "rawspeed-nikon-z-6": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"NIKON CORPORATION\" model=\"NIKON Z 6\" modes 14bit-compressed / 14bit-uncompressed / 12bit-*: CFA RED GREEN / GREEN BLUE; Crop 0 0 0 0; Sensor black=1008 white=15520 (14-bit)."
+  },
+  "rawspeed-nikon-z-8": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"NIKON CORPORATION\" model=\"NIKON Z 8\" mode 14bit-compressed: CFA RED GREEN / GREEN BLUE (no HE / HE* mode entry)."
+  },
+  "rawspeed-fujifilm-x-t4": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"FUJIFILM\" model=\"X-T4\" (and mode compressed): CFA2 6x6 rows GGRGGB, GGBGGR, BRGRBG, GGBGGR, GGRGGB, RBGBRG."
+  },
+  "rawspeed-fujifilm-gfx50s-ii": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"FUJIFILM\" model=\"GFX50S II\" (and mode compressed): CFA RED GREEN / GREEN BLUE."
+  },
+  "rawspeed-hasselblad-x1d-ii-50c": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-05",
+   "quote": "Camera make=\"Hasselblad\" model=\"X1D II 50C\": CFA RED GREEN / GREEN BLUE; Crop x=56 y=104 width=-60 height=0."
+  },
+  "file-canon-eos-r5-cr3-raw": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-r5-cr3-raw, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS R5\", Orientation [1]; CR3 CMP1 (full-size track): 8352x5586, 14 bits, CFA layout 0 (RGGB), wavelet levels 0 (lclevy/canon_cr3: 'number of wavelet levels ... 0 for raw, 3 for craw'; CFA layout 0 = RGGB)"
+  },
+  "file-sony-ilce-7m4-arw-compressed": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7m4-arw-compressed, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7M4\", Orientation [1]; raw IFD ifd0.subifd0: [7040]x[4688], Compression [32767], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14], DefaultCropOrigin [12, 8], DefaultCropSize [7008, 4672]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-dji-fc4382-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file dji-fc4382-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"DJI\", Model \"FC4382\", Orientation [1]; UniqueCameraModel \"DJI FC4382 Mavic3Pro Cine\"; raw IFD ifd0.subifd0: [4032]x[3024], Compression [7], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [4.0, 4.0], DefaultCropSize [4024.0, 3016.0], ActiveArea [0, 0, 3024, 4032]; CFAPattern (33422) in ifd0.subifd0: GR/BG"
+  },
+  "file-fujifilm-x-t4-raf-lossless": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file fujifilm-x-t4-raf-lossless, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"FUJIFILM\", Model \"X-T4\", Orientation [1]; RAF RawImageFullSize 6384x4182; RAF RawImageCroppedSize 6240x4160; RAF RawImageCropTopLeft top 13, left 6"
+  },
+  "file-nikon-z-6-nef-lossless": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file nikon-z-6-nef-lossless, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"NIKON CORPORATION\", Model \"NIKON Z 6\", Orientation [1]; raw IFD ifd0.subifd1: [6064]x[4040], Compression [34713], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14]; CFAPattern (33422) in ifd0.subifd1: RG/GB; CFAPattern (33422) in ifd0.subifd4: RG/GB; EXIF CFAPattern (41730) in ifd0.exif: RG/GB"
+  },
+  "file-canon-eos-r5-cr3-craw": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-r5-cr3-craw, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS R5\", Orientation [1]; CR3 CMP1 (full-size track): 8352x5586, 14 bits, CFA layout 0 (RGGB), wavelet levels 3 (lclevy/canon_cr3: 'number of wavelet levels ... 0 for raw, 3 for craw'; CFA layout 0 = RGGB)"
+  },
+  "file-canon-eos-r5-cr3-raw-crop": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-r5-cr3-raw-crop, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS R5\", Orientation [1]; CR3 CMP1 (full-size track): 5248x3510, 14 bits, CFA layout 0 (RGGB), wavelet levels 0 (lclevy/canon_cr3: 'number of wavelet levels ... 0 for raw, 3 for craw'; CFA layout 0 = RGGB)"
+  },
+  "file-canon-eos-r5-cr3-craw-crop-dualpixel": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-r5-cr3-craw-crop-dualpixel, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS R5\", Orientation [1]; CR3 CMP1 (full-size track): 5248x3510, 14 bits, CFA layout 0 (RGGB), wavelet levels 3 (lclevy/canon_cr3: 'number of wavelet levels ... 0 for raw, 3 for craw'; CFA layout 0 = RGGB)"
+  },
+  "file-canon-eos-5d-mark-iv-cr2-raw": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-5d-mark-iv-cr2-raw, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS 5D Mark IV\", Orientation [1]; CR2 raw IFD ifd3: [6880]x[4544], Compression [6]; ifd0 (full-size JPEG) [6720]x[4480]"
+  },
+  "file-canon-eos-5d-mark-iv-cr2-sraw": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-5d-mark-iv-cr2-sraw, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS 5D Mark IV\", Orientation [1]; CR2 raw IFD ifd3: [3360]x[2240], Compression [6]; ifd0 (full-size JPEG) [6720]x[4480]"
+  },
+  "file-sony-ilce-7m4-arw-uncompressed": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7m4-arw-uncompressed, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7M4\", Orientation [1]; raw IFD ifd0.subifd0: [7040]x[4688], Compression [1], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14], DefaultCropOrigin [12, 8], DefaultCropSize [7008, 4672]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-sony-ilce-7m4-arw-lossless-l": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7m4-arw-lossless-l, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7M4\", Orientation [1]; raw IFD ifd0.subifd0: [7168]x[5120], Compression [7], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14], DefaultCropOrigin [12, 8], DefaultCropSize [7008, 4672]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-sony-ilce-7m4-arw-lossless-m": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7m4-arw-lossless-m, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7M4\", Orientation [1]; raw IFD ifd0.subifd0: [5120]x[3584], Compression [7], PhotometricInterpretation [6], SamplesPerPixel [3], BitsPerSample [15, 15, 15], DefaultCropOrigin [8, 4], DefaultCropSize [4608, 3072]; CFAPattern (33422) in ifd0.subifd0: ??/??"
+  },
+  "file-sony-ilce-7m4-arw-lossless-s": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7m4-arw-lossless-s, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7M4\", Orientation [1]; raw IFD ifd0.subifd0: [3584]x[2560], Compression [7], PhotometricInterpretation [6], SamplesPerPixel [3], BitsPerSample [15, 15, 15], DefaultCropOrigin [6, 4], DefaultCropSize [3504, 2336]; CFAPattern (33422) in ifd0.subifd0: ??/??"
+  },
+  "file-sony-ilce-7m4-arw-compressed-apsc": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7m4-arw-compressed-apsc, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7M4\", Orientation [1]; raw IFD ifd0.subifd0: [4736]x[3132], Compression [32767], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14], DefaultCropOrigin [44, 30], DefaultCropSize [4608, 3072]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-sony-ilce-7rm5-arw-compressed": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-ilce-7rm5-arw-compressed, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"SONY\", Model \"ILCE-7RM5\", Orientation [1]; raw IFD ifd0.subifd0: [9600]x[6376], Compression [32767], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14], DefaultCropOrigin [32, 20], DefaultCropSize [9504, 6336]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-dji-fc220-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file dji-fc220-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"DJI\", Model \"FC220\", Orientation [1]; UniqueCameraModel \"FC220\"; raw IFD ifd0.subifd0: [4000]x[3000], Compression [1], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [4.0, 4.0], DefaultCropSize [3992.0, 2992.0], ActiveArea [0, 0, 3000, 4000]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-hasselblad-l2d-20c-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file hasselblad-l2d-20c-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Hasselblad\", Model \"L2D-20c\", Orientation [1]; UniqueCameraModel \"Hasselblad L2D-20c\"; raw IFD ifd0.subifd0: [5376]x[3956], Compression [1], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [4.0, 4.0], DefaultCropSize [5272.0, 3948.0], ActiveArea [0, 0, 3956, 5280]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-dji-fc7303-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file dji-fc7303-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"DJI\", Model \"FC7303\", Orientation [1]; UniqueCameraModel \"FC7303\"; raw IFD ifd0.subifd0: [4000]x[3000], Compression [1], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [0.0, 0.0], DefaultCropSize [4000.0, 3000.0], ActiveArea [0, 0, 3000, 4000]; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-insta360-one-x-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file insta360-one-x-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Arashi Vision\", Model \"Insta360 One2\", Orientation [1]; UniqueCameraModel \"Insta360 One2\"; raw IFD ifd0: [3040]x[6080], Compression [1], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16]; CFAPattern (33422) in ifd0: GR/BG"
+  },
+  "file-nikon-z-8-nef-he": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file nikon-z-8-nef-he, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"NIKON CORPORATION\", Model \"NIKON Z 8\", Orientation [1]; raw IFD ifd0.subifd1: [8280]x[5520], Compression [34713], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14]; CFAPattern (33422) in ifd0.subifd1: RG/GB; EXIF CFAPattern (41730) in ifd0.exif: RG/GB"
+  },
+  "file-nikon-z-8-nef-he-star": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file nikon-z-8-nef-he-star, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"NIKON CORPORATION\", Model \"NIKON Z 8\", Orientation [1]; raw IFD ifd0.subifd1: [8280]x[5520], Compression [34713], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14]; CFAPattern (33422) in ifd0.subifd1: RG/GB; EXIF CFAPattern (41730) in ifd0.exif: RG/GB"
+  },
+  "file-nikon-z-6-nef-compressed": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file nikon-z-6-nef-compressed, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"NIKON CORPORATION\", Model \"NIKON Z 6\", Orientation [1]; raw IFD ifd0.subifd1: [6064]x[4040], Compression [34713], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14]; CFAPattern (33422) in ifd0.subifd1: RG/GB; CFAPattern (33422) in ifd0.subifd4: RG/GB; EXIF CFAPattern (41730) in ifd0.exif: RG/GB"
+  },
+  "file-fujifilm-x-t4-raf-compressed": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file fujifilm-x-t4-raf-compressed, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"FUJIFILM\", Model \"X-T4\", Orientation [1]; RAF RawImageFullSize 6384x4182; RAF RawImageCroppedSize 6240x4160; RAF RawImageCropTopLeft top 13, left 6"
+  },
+  "file-fujifilm-gfx-50s-ii-raf-compressed": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file fujifilm-gfx-50s-ii-raf-compressed, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"FUJIFILM\", Model \"GFX50S II\", Orientation [1]; RAF RawImageFullSize 8472x6210; RAF RawImageCroppedSize 8256x6192; RAF RawImageCropTopLeft top 8, left 12"
+  },
+  "file-panasonic-dc-s5m2-rw2": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file panasonic-dc-s5m2-rw2, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Panasonic\", Model \"DC-S5M2\", Orientation [1]; PanasonicRaw CFAPattern (9) in ifd0: RGGB; RW2 SensorWidth/Height [6008]x[4008], borders top [4] left [4] bottom [4004] right [6004]"
+  },
+  "file-om-system-om-1-orf": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file om-system-om-1-orf, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"OM Digital Solutions\", Model \"OM-1\", Orientation [1]; raw IFD ifd0: [5220]x[3912], Compression [1], PhotometricInterpretation [1], SamplesPerPixel [1], BitsPerSample [16]; EXIF CFAPattern (41730) in ifd0.exif: RG/GB"
+  },
+  "file-pentax-k-3-mark-iii-pef": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file pentax-k-3-mark-iii-pef, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"RICOH IMAGING COMPANY, LTD.\", Model \"PENTAX K-3 Mark III\", Orientation [1]; raw IFD ifd0: [6304]x[4224], Compression [65535], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [14]; EXIF CFAPattern (41730) in ifd0.exif: RG/GB; ifd2 (full-size JPEG) [6192]x[4128]"
+  },
+  "file-pentax-k-3-mark-iii-monochrome-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file pentax-k-3-mark-iii-monochrome-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"RICOH IMAGING COMPANY, LTD.\", Model \"PENTAX K-3 Mark III Monochrome\", Orientation [1]; UniqueCameraModel \"PENTAX K-3 Mark III Monochrome\"; raw IFD ifd0.subifd0: [6304]x[4224], Compression [7], PhotometricInterpretation [34892], SamplesPerPixel [1], BitsPerSample [14], DefaultCropOrigin [28, 24], DefaultCropSize [6192, 4128], ActiveArea [34, 26, 4194, 6250]"
+  },
+  "file-leica-m10-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file leica-m10-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Leica Camera AG\", Model \"LEICA M10\", Orientation [1]; UniqueCameraModel \"LEICA M10\"; raw IFD ifd0: [5984]x[3992], Compression [7], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [4, 4], DefaultCropSize [5976, 3984]; CFAPattern (33422) in ifd0: RG/GB"
+  },
+  "file-leica-m-monochrom-typ-246-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file leica-m-monochrom-typ-246-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Leica Camera AG\", Model \"LEICA M MONOCHROM (Typ 246)\", Orientation [1]; UniqueCameraModel \"LEICA M MONOCHROM (Typ 246)\"; raw IFD ifd0.subifd0: [5984]x[4000], Compression [7], PhotometricInterpretation [34892], SamplesPerPixel [1], BitsPerSample [12], DefaultCropOrigin [4, 4], DefaultCropSize [5976, 3992]"
+  },
+  "file-hasselblad-x1d-ii-50c-3fr": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file hasselblad-x1d-ii-50c-3fr, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Hasselblad\", Model \"X1D II 50C\", Orientation [1]; UniqueCameraModel \"Hasselblad X1D II 50C\"; raw IFD ifd0.subifd0: [8384]x[6304], Compression [1], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [50, 100], DefaultCropSize [8272, 6200]"
+  },
+  "file-adobe-dng-canon-eos-5d-mark-iii-linear-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file adobe-dng-canon-eos-5d-mark-iii-linear-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS 5D Mark III\", Orientation [1]; UniqueCameraModel \"Canon EOS 5D Mark III\"; raw IFD ifd0.subifd0: [3960]x[2640], Compression [7], PhotometricInterpretation [34892], SamplesPerPixel [3], BitsPerSample [16, 16, 16], DefaultCropOrigin [0.0, 0.0], DefaultCropSize [3960.0, 2640.0], ActiveArea [0, 0, 2640, 3960]"
+  },
+  "file-canon-eos-7d-mark-ii-dng-jxl": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-7d-mark-ii-dng-jxl, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-05",
+   "quote": "Make \"Canon\", Model \"Canon EOS 7D Mark II\", Orientation [1]; UniqueCameraModel \"Canon EOS 7D Mark II\"; raw IFD ifd0.subifd0: [5568]x[3708], Compression [7], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [12.0, 12.0], DefaultCropSize [5472.0, 3648.0], ActiveArea [38, 72, 3708, 5568]; CFAPattern (33422) in ifd0.subifd0: RG/GB; ifd0.subifd1: NewSubFileType 16 (Enhanced image), 5496x3670, Compression 52546 (JPEG XL), PhotometricInterpretation 34892"
+  }
+ },
+ "fixtures": [
+  {
+   "id": "canon-eos-r5-cr3-raw",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS R5",
+    "product": "Canon EOS R5",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-raw"]
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "CR3 RAW (lossless CRX), full frame, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-raw", "spec-canon-eos-r5"],
+     "note": "CMP1 wavelet levels 0 = lossless RAW"
+    }
+   },
+   "dimensions": {
+    "rendered": [8191, 5463],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [8192, 5464],
+     "status": "verified",
+     "sources": ["spec-canon-eos-r5"]
+    },
+    "note": "LibRaw's crop reading (8192x5464 at (144, 112)) is Canon's recorded size and lies one column and one row beyond LibRaw's visible area (8191x5463), so the area applied is the whole visible area: within the permissible 1-pixel shortfall (ADR 0016, ADR 0017)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-raw", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-raw"],
+    "note": "CMP1 CFA layout 0 (RGGB) at the frame origin; the visible area starts at (144, 112), even offsets"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7m4-arw-compressed",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7M4",
+    "product": "Sony A7 IV (ILCE-7M4)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-compressed"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ARW compressed (lossy), full frame, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-compressed", "spec-sony-ilce-7m4-raw-file-type"],
+     "note": "raw IFD Compression 32767 (Sony ARW compressed)"
+    }
+   },
+   "dimensions": {
+    "rendered": [7008, 4672],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 7008, 4672],
+    "camera_image_area": {
+     "size": [7008, 4672],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-compressed", "spec-sony-ilce-7m4-image-size"]
+    },
+    "note": "ARW DefaultCropSize 7008x4672 at (12, 8) equals Sony's L size; LibRaw reads it (raw_inset_crops) and Lucent renders it from LibRaw's 7028x4688 visible area (RawSpeed 7032x4688)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-compressed", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-compressed", "rawspeed-sony-ilce-7m4"],
+    "note": "CFAPattern RG/GB in the raw IFD; RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "dji-fc4382-dng",
+   "camera": {
+    "family": "dji",
+    "file_make": "DJI",
+    "file_model": "FC4382",
+    "product": "DJI Mavic 3 Pro medium tele camera (70 mm), 12 MP mode",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-dji-fc4382-dng"],
+     "note": "UniqueCameraModel 'DJI FC4382 Mavic3Pro Cine' names the product"
+    }
+   },
+   "mode": {
+    "key": "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
+    "label": "DNG, tiled lossless JPEG, 16-bit, OpcodeList3 WarpRectilinear",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-dji-fc4382-dng"],
+     "note": "raw IFD Compression 7 (lossless JPEG)"
+    }
+   },
+   "dimensions": {
+    "rendered": [4024, 3016],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 4024, 3016],
+    "camera_image_area": {
+     "size": [4024, 3016],
+     "status": "verified",
+     "sources": ["file-dji-fc4382-dng"],
+     "note": "DNG DefaultCropSize 4024x3016 at (4, 4); DJI publishes only the 48 MP size (8064x6048) and says the camera also shoots 12 MP"
+    },
+    "note": "The 12 MP DNG is 4032x3024 (half of 8064x6048 in each direction); Lucent renders its DefaultCrop, 4 pixels inside per side."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-dji-fc4382-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:GRBG",
+    "status": "verified",
+    "sources": ["file-dji-fc4382-dng"],
+    "note": "CFAPattern GR/BG at the frame origin"
+   },
+   "mandatory_steps": [
+    {
+     "id": "dng_opcode:3:0:WarpRectilinear",
+     "lucent_support": "applied",
+     "description": "Lens distortion correction (ADR 0014)."
+    }
+   ],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "pass",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "Colour evidence is weak (DNG camera profile versus LibRaw's matrix)."
+  },
+  {
+   "id": "fujifilm-x-t4-raf-lossless",
+   "camera": {
+    "family": "fujifilm",
+    "file_make": "FUJIFILM",
+    "file_model": "X-T4",
+    "product": "Fujifilm X-T4",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-fujifilm-x-t4-raf-lossless"]
+    }
+   },
+   "mode": {
+    "key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+    "label": "RAF 14-bit lossless compressed, X-Trans",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "the compression mode comes from the decoder (RAF compressed-data header) and the archive's label"
+    }
+   },
+   "dimensions": {
+    "rendered": [6240, 4160],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 7, 6240, 4160],
+    "camera_image_area": {
+     "size": [6240, 4160],
+     "status": "verified",
+     "sources": ["file-fujifilm-x-t4-raf-lossless", "spec-fujifilm-x-t4"],
+     "note": "RAF RawImageCroppedSize 6240x4160 equals Fujifilm's L 3:2 size"
+    },
+    "note": "Lucent renders the RAF's declared crop 6240x4160 at (6, 13) (RawImageCropTopLeft / RawImageCroppedSize, read by Lucent: LibRaw reports top 18 after moving the edge to its X-Trans period of 6) from LibRaw's 6246x4170 visible area."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-fujifilm-x-t4-raf-lossless", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG",
+    "status": "verified",
+    "sources": ["rawspeed-fujifilm-x-t4", "spec-fujifilm-x-t4"],
+    "note": "RawSpeed's 6x6 X-Trans tile at the raw origin; LibRaw's visible origin (0, 6) is a whole period down"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["xtrans_baseline_demosaic"]
+   }
+  },
+  {
+   "id": "nikon-z-6-nef-lossless",
+   "camera": {
+    "family": "nikon",
+    "file_make": "NIKON CORPORATION",
+    "file_model": "NIKON Z 6",
+    "product": "Nikon Z 6",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-nikon-z-6-nef-lossless"]
+    }
+   },
+   "mode": {
+    "key": "mk1|nikon|z-6|tiff|nikon-nef-lossless|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "NEF 14-bit lossless compressed",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "raw IFD Compression 34713 is shared by Nikon's lossless and lossy modes; the mode is the decoder's reading of the maker note and the archive's label (file 30.2 MB versus 26.0 MB for the lossy file of the same scene)"
+    }
+   },
+   "dimensions": {
+    "rendered": [6048, 4024],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [8, 8, 6048, 4024],
+    "camera_image_area": {
+     "size": [6048, 4024],
+     "status": "verified",
+     "sources": ["spec-nikon-z-6"]
+    },
+    "note": "LibRaw's reading of the NEF's crop (6048x4024 at (8, 8)) equals Nikon's recorded size; Lucent renders it from the 6064x4040 stored frame, LibRaw's visible area (RawSpeed crops nothing)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-nikon-z-6-nef-lossless", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-nikon-z-6-nef-lossless", "rawspeed-nikon-z-6"],
+    "note": "CFAPattern RG/GB in the raw IFD and the EXIF CFAPattern; RawSpeed RGGB"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "canon-eos-r5-cr3-craw",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS R5",
+    "product": "Canon EOS R5",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-craw"]
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "CR3 C-RAW (lossy CRX), full frame, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-craw", "spec-canon-eos-r5"],
+     "note": "CMP1 wavelet levels 3 = C-RAW"
+    }
+   },
+   "dimensions": {
+    "rendered": [8191, 5463],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [8192, 5464],
+     "status": "verified",
+     "sources": ["spec-canon-eos-r5"]
+    },
+    "note": "As canon-eos-r5-cr3-raw: the camera's area 8192x5464 lies one column and one row beyond the visible area 8191x5463, which is rendered."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-craw", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-craw"],
+    "note": "CMP1 CFA layout 0 (RGGB); visible origin (144, 112)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "canon-eos-r5-cr3-raw-crop",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS R5",
+    "product": "Canon EOS R5",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-raw-crop"]
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "CR3 RAW (lossless CRX), 1.6x crop, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-raw-crop", "spec-canon-eos-r5"],
+     "note": "CMP1 wavelet levels 0 = lossless RAW"
+    }
+   },
+   "dimensions": {
+    "rendered": [5087, 3391],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [5088, 3392],
+     "status": "verified",
+     "sources": ["spec-canon-eos-r5"]
+    },
+    "note": "LibRaw's crop reading (5088x3392 at (144, 108)) is Canon's 1.6x recorded size, one column and one row beyond LibRaw's visible area 5087x3391, which is rendered (1-pixel shortfall)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-raw-crop", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-raw-crop"],
+    "note": "CMP1 CFA layout 0 (RGGB); visible origin (144, 108)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "canon-eos-r5-cr3-craw-crop-dualpixel",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS R5",
+    "product": "Canon EOS R5",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-craw-crop-dualpixel"]
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/2",
+    "label": "CR3 C-RAW (lossy CRX), 1.6x crop, Dual Pixel RAW: image 0 of 2",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-r5-cr3-craw-crop-dualpixel", "spec-canon-eos-r5"],
+     "note": "CMP1 wavelet levels 3 = C-RAW; three CMP1 boxes: preview track and two full-size tracks (Dual Pixel)"
+    }
+   },
+   "dimensions": {
+    "rendered": [5087, 3391],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [5088, 3392],
+     "status": "verified",
+     "sources": ["spec-canon-eos-r5"]
+    },
+    "note": "As canon-eos-r5-cr3-raw-crop."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-craw-crop-dualpixel", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-canon-eos-r5-cr3-craw-crop-dualpixel"],
+    "note": "CMP1 CFA layout 0 (RGGB); visible origin (144, 108)"
+   },
+   "mandatory_steps": [
+    {
+     "id": "subimage:select_primary",
+     "lucent_support": "applied",
+     "description": "Image 0 is the photograph; image 1 is the Dual Pixel component frame, refused as a photograph (SubimageNotAPhotograph)."
+    }
+   ],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["dual_pixel_not_processed"]
+   },
+   "notes": "Blueprint section 3: 'do not promise Dual Pixel processing merely because ordinary RAW decoding works'."
+  },
+  {
+   "id": "canon-eos-5d-mark-iv-cr2-raw",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS 5D Mark IV",
+    "product": "Canon EOS 5D Mark IV",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-5d-mark-iv-cr2-raw"]
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg|6744x4502|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "CR2 RAW (lossless JPEG), 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-5d-mark-iv-cr2-raw", "spec-canon-eos-5d-mark-iv", "rawspeed-canon-eos-5d-mark-iv"],
+     "note": "CR2 raw IFD Compression 6 holds Canon's lossless JPEG (decoded as such by RawSpeed); Canon: 'RAW (14-bit Canon original)'"
+    }
+   },
+   "dimensions": {
+    "rendered": [6720, 4480],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 12, 6720, 4480],
+    "camera_image_area": {
+     "size": [6720, 4480],
+     "status": "verified",
+     "sources": ["spec-canon-eos-5d-mark-iv", "file-canon-eos-5d-mark-iv-cr2-raw"],
+     "note": "the embedded full-size JPEG is also 6720x4480"
+    },
+    "note": "LibRaw's crop reading (Canon's sensor information, 6720x4480 at (148, 54)) equals Canon's recorded size and the embedded JPEG's; Lucent renders it from LibRaw's 6744x4502 visible area (RawSpeed: 6744x4500)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-5d-mark-iv-cr2-raw", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["rawspeed-canon-eos-5d-mark-iv"],
+    "note": "RawSpeed CFA RGGB at the raw origin; LibRaw's visible origin (136, 42) has even offsets"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "canon-eos-5d-mark-iv-cr2-sraw",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS 5D Mark IV",
+    "product": "Canon EOS 5D Mark IV",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-5d-mark-iv-cr2-sraw"]
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg-canon-sraw-mraw-subsampled-ycbcr|3360x2240|14bit|linear-rgb|uint16|single-view|primary:0/1",
+    "label": "CR2 S-RAW (YCbCr, lossless JPEG), 3360x2240",
+    "compression": {
+     "status": "verified",
+     "sources": ["spec-canon-eos-5d-mark-iv", "rawspeed-canon-eos-5d-mark-iv", "file-canon-eos-5d-mark-iv-cr2-sraw"],
+     "note": "S-RAW mode (Canon specification) with the raw IFD at 3360x2240; RawSpeed decodes the mode as sRaw (YCbCr)"
+    }
+   },
+   "dimensions": {
+    "rendered": [3360, 2240],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [3360, 2240],
+     "status": "verified",
+     "sources": ["spec-canon-eos-5d-mark-iv", "file-canon-eos-5d-mark-iv-cr2-sraw"]
+    },
+    "note": "Rendered size equals Canon's S-RAW recorded size (LibRaw's crop reading is the whole 3360x2240 image)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-5d-mark-iv-cr2-sraw", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "linear-rgb",
+    "status": "verified",
+    "sources": ["rawspeed-canon-eos-5d-mark-iv"],
+    "note": "sRAW stores YCbCr, which the decoder converts to camera RGB (full colour, no CFA)"
+   },
+   "mandatory_steps": [
+    {
+     "id": "decoder:ycbcr_to_rgb",
+     "lucent_support": "decoder",
+     "description": "LibRaw converts the subsampled YCbCr to camera RGB while unpacking (prior processing: demosaiced, ycbcr_converted)."
+    }
+   ],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7m4-arw-uncompressed",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7M4",
+    "product": "Sony A7 IV (ILCE-7M4)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-uncompressed"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ARW uncompressed, full frame, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-uncompressed", "spec-sony-ilce-7m4-raw-file-type"],
+     "note": "raw IFD Compression 1 (uncompressed)"
+    }
+   },
+   "dimensions": {
+    "rendered": [7008, 4672],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 7008, 4672],
+    "camera_image_area": {
+     "size": [7008, 4672],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-uncompressed", "spec-sony-ilce-7m4-image-size"]
+    },
+    "note": "As the compressed mode: the ARW DefaultCrop 7008x4672 at (12, 8) is rendered from LibRaw's 7028x4688."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-uncompressed", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-uncompressed", "rawspeed-sony-ilce-7m4"],
+    "note": "CFAPattern RG/GB in the raw IFD; RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7m4-arw-lossless-l",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7M4",
+    "product": "Sony A7 IV (ILCE-7M4)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-l"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ARW lossless compressed, size L, full frame, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-l", "spec-sony-ilce-7m4-raw-file-type"],
+     "note": "raw IFD Compression 7 (lossless JPEG), PhotometricInterpretation 32803 (CFA)"
+    }
+   },
+   "dimensions": {
+    "rendered": [7008, 4672],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 7008, 4672],
+    "camera_image_area": {
+     "size": [7008, 4672],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-l", "spec-sony-ilce-7m4-image-size"]
+    },
+    "note": "ARW DefaultCropSize 7008x4672 at (12, 8); the stored frame is 7168x5120 and LibRaw's visible area 7028x4688; Lucent renders the DefaultCrop."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-lossless-l", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-lossless-l", "rawspeed-sony-ilce-7m4"],
+    "note": "CFAPattern RG/GB in the raw IFD; RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7m4-arw-lossless-m",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7M4",
+    "product": "Sony A7 IV (ILCE-7M4)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-m"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|4624x3080|15bit|linear-rgb|uint16|single-view|primary:0/1",
+    "label": "ARW lossless compressed, size M (YCbCr, white balance applied in camera)",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-m", "spec-sony-ilce-7m4-raw-file-type"],
+     "note": "raw IFD Compression 7, PhotometricInterpretation 6 (YCbCr), SamplesPerPixel 3, BitsPerSample 15"
+    }
+   },
+   "dimensions": {
+    "rendered": [4608, 3072],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [8, 4, 4608, 3072],
+    "camera_image_area": {
+     "size": [4608, 3072],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-m", "spec-sony-ilce-7m4-image-size", "spec-sony-ilce-7m4-raw-file-type"]
+    },
+    "note": "ARW DefaultCropSize 4608x3072 at (8, 4) equals Sony's M size; Lucent renders it from LibRaw's 4624x3080 visible area."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-lossless-m", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "linear-rgb",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-lossless-m"],
+    "note": "PhotometricInterpretation 6 (YCbCr) with 3 samples per pixel: no CFA; the decoder converts to camera RGB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "decoder:ycbcr_to_rgb",
+     "lucent_support": "decoder",
+     "description": "LibRaw converts Sony's YCbCr to camera RGB while unpacking; the camera already applied its white balance (prior processing: white_balance_applied)."
+    }
+   ],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7m4-arw-lossless-s",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7M4",
+    "product": "Sony A7 IV (ILCE-7M4)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-s"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|3516x2344|15bit|linear-rgb|uint16|single-view|primary:0/1",
+    "label": "ARW lossless compressed, size S (YCbCr, white balance applied in camera)",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-s", "spec-sony-ilce-7m4-raw-file-type"],
+     "note": "raw IFD Compression 7, PhotometricInterpretation 6 (YCbCr), SamplesPerPixel 3, BitsPerSample 15"
+    }
+   },
+   "dimensions": {
+    "rendered": [3504, 2336],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 4, 3504, 2336],
+    "camera_image_area": {
+     "size": [3504, 2336],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-lossless-s", "spec-sony-ilce-7m4-image-size", "spec-sony-ilce-7m4-raw-file-type"]
+    },
+    "note": "ARW DefaultCropSize 3504x2336 at (6, 4) equals Sony's S size; Lucent renders it from LibRaw's 3516x2344 visible area."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-lossless-s", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "linear-rgb",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-lossless-s"],
+    "note": "PhotometricInterpretation 6 (YCbCr) with 3 samples per pixel: no CFA; the decoder converts to camera RGB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "decoder:ycbcr_to_rgb",
+     "lucent_support": "decoder",
+     "description": "LibRaw converts Sony's YCbCr to camera RGB while unpacking; the camera already applied its white balance (prior processing: white_balance_applied)."
+    }
+   ],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7m4-arw-compressed-apsc",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7M4",
+    "product": "Sony A7 IV (ILCE-7M4)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-compressed-apsc"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|4692x3132|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ARW compressed (lossy), APS-C crop, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-compressed-apsc", "spec-sony-ilce-7m4-raw-file-type"],
+     "note": "raw IFD Compression 32767 (Sony ARW compressed)"
+    }
+   },
+   "dimensions": {
+    "rendered": [4608, 3072],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [44, 30, 4608, 3072],
+    "camera_image_area": {
+     "size": [4608, 3072],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7m4-arw-compressed-apsc", "spec-sony-ilce-7m4-image-size"]
+    },
+    "note": "ARW DefaultCropSize 4608x3072 at (44, 30); Sony: the L size cannot be selected in APS-C, M is 4608x3072. Lucent renders the DefaultCrop from LibRaw's 4692x3132 visible area (1.8 % wider and 2.0 % taller)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-compressed-apsc", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7m4-arw-compressed-apsc", "rawspeed-sony-ilce-7m4"],
+    "note": "CFAPattern RG/GB in the raw IFD; RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "sony-ilce-7rm5-arw-compressed",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "ILCE-7RM5",
+    "product": "Sony A7R V (ILCE-7RM5)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7rm5-arw-compressed"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|ilce-7rm5|tiff|sony-arw-compressed-lossy|9564x6376|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ARW compressed (lossy), full frame, 14-bit",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-ilce-7rm5-arw-compressed"],
+     "note": "raw IFD Compression 32767 (Sony ARW compressed)"
+    }
+   },
+   "dimensions": {
+    "rendered": [9504, 6336],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [32, 20, 9504, 6336],
+    "camera_image_area": {
+     "size": [9504, 6336],
+     "status": "verified",
+     "sources": ["file-sony-ilce-7rm5-arw-compressed", "spec-sony-ilce-7rm5-image-size"]
+    },
+    "note": "ARW DefaultCropSize 9504x6336 at (32, 20) equals Sony's L size; Lucent renders it from LibRaw's 9564x6376 visible area."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-sony-ilce-7rm5-arw-compressed", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-sony-ilce-7rm5-arw-compressed", "rawspeed-sony-ilce-7rm5"],
+    "note": "CFAPattern RG/GB; RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "dji-fc220-dng",
+   "camera": {
+    "family": "dji",
+    "file_make": "DJI",
+    "file_model": "FC220",
+    "product": "DJI Mavic Pro",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-dji-fc220-dng"],
+     "note": "FC220 is the Mavic Pro camera module (archive; consistent with DJI's 12.35 MP, 4000x3000 specification)"
+    }
+   },
+   "mode": {
+    "key": "mk1|dji|fc220|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG, uncompressed, 16-bit, OpcodeList1 FixBadPixelsList, OpcodeList3 FixVignetteRadial",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-dji-fc220-dng"],
+     "note": "raw IFD Compression 1"
+    }
+   },
+   "dimensions": {
+    "rendered": [3992, 2992],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 3992, 2992],
+    "camera_image_area": {
+     "size": [3992, 2992],
+     "status": "verified",
+     "sources": ["file-dji-fc220-dng", "spec-dji-mavic-pro"],
+     "note": "DNG DefaultCropSize 3992x2992 at (4, 4); DJI's image size is 4000x3000"
+    },
+    "note": "DJI's image size 4000x3000 is the DNG's whole image; Lucent renders the DefaultCrop 3992x2992 at (4, 4)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-dji-fc220-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-dji-fc220-dng"],
+    "note": "CFAPattern RG/GB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "dng_opcode:1:0:FixBadPixelsList",
+     "lucent_support": "applied",
+     "description": "2169 listed bad pixels (ADR 0014)."
+    },
+    {
+     "id": "dng_opcode:3:0:FixVignetteRadial",
+     "lucent_support": "applied",
+     "description": "Radial vignette correction (ADR 0014)."
+    }
+   ],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "pass",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "hasselblad-l2d-20c-dng",
+   "camera": {
+    "family": "dji",
+    "file_make": "Hasselblad",
+    "file_model": "L2D-20c",
+    "product": "DJI Mavic 3 series Hasselblad camera (L2D-20c)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-hasselblad-l2d-20c-dng"],
+     "note": "UniqueCameraModel 'Hasselblad L2D-20c'; DJI's Mavic 3 Hasselblad camera (4/3 CMOS, 20 MP, 5280x3956)"
+    }
+   },
+   "mode": {
+    "key": "mk1|hasselblad|l2d-20c|dng|uncompressed|5280x3956|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG, uncompressed, 16-bit, OpcodeList3 GainMap, WarpRectilinear",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-hasselblad-l2d-20c-dng"],
+     "note": "raw IFD Compression 1"
+    }
+   },
+   "dimensions": {
+    "rendered": [5272, 3948],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 5272, 3948],
+    "camera_image_area": {
+     "size": [5272, 3948],
+     "status": "verified",
+     "sources": ["file-hasselblad-l2d-20c-dng", "spec-dji-mavic-3"],
+     "note": "DNG DefaultCropSize 5272x3948 at (4, 4) inside the ActiveArea 5280x3956, which equals DJI's maximum image size"
+    },
+    "note": "The ActiveArea 5280x3956 equals DJI's maximum image size; Lucent renders the DefaultCrop 5272x3948 at (4, 4) inside it."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-hasselblad-l2d-20c-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-hasselblad-l2d-20c-dng"],
+    "note": "CFAPattern RG/GB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "dng_opcode:3:0:GainMap",
+     "lucent_support": "applied",
+     "description": "Lens shading (ADR 0014)."
+    },
+    {
+     "id": "dng_opcode:3:1:WarpRectilinear",
+     "lucent_support": "applied",
+     "description": "Distortion and lateral chromatic aberration (ADR 0014)."
+    }
+   ],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "pass",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "dji-fc7303-dng",
+   "camera": {
+    "family": "dji",
+    "file_make": "DJI",
+    "file_model": "FC7303",
+    "product": "DJI Mini 2",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-dji-fc7303-dng"],
+     "note": "FC7303 is the Mini 2 camera module (archive; consistent with DJI's 12 MP, 4000x3000 specification)"
+    }
+   },
+   "mode": {
+    "key": "mk1|dji|fc7303|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG, uncompressed, 16-bit, 4:3, OpcodeList3 FixVignetteRadial, WarpRectilinear, GainMap",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-dji-fc7303-dng"],
+     "note": "raw IFD Compression 1"
+    }
+   },
+   "dimensions": {
+    "rendered": [4000, 3000],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [4000, 3000],
+     "status": "verified",
+     "sources": ["file-dji-fc7303-dng", "spec-dji-mini-2"],
+     "note": "DNG DefaultCrop 4000x3000 at (0, 0) equals DJI's 4:3 image size"
+    },
+    "note": "Rendered size equals the DefaultCrop (4000x3000 at (0, 0), the whole image) and DJI's image size."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-dji-fc7303-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-dji-fc7303-dng"],
+    "note": "CFAPattern RG/GB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "dng_opcode:3:0:FixVignetteRadial",
+     "lucent_support": "applied",
+     "description": "ADR 0014"
+    },
+    {
+     "id": "dng_opcode:3:1:WarpRectilinear",
+     "lucent_support": "applied",
+     "description": "ADR 0014"
+    },
+    {
+     "id": "dng_opcode:3:2:GainMap",
+     "lucent_support": "applied",
+     "description": "ADR 0014"
+    }
+   ],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "pass",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "Every check passes; colour evidence is weak because Lucent applies the DNG camera profile and the rawpy reference LibRaw's matrix (gross errors only). The Mini 4 Pro (FC8482) target remains absent."
+  },
+  {
+   "id": "insta360-one-x-dng",
+   "camera": {
+    "family": "insta360",
+    "file_make": "Arashi Vision",
+    "file_model": "Insta360 One2",
+    "product": "Insta360 'One2' (the archive labels it One X; the file says Insta360 One2, probably the ONE X2)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-insta360-one-x-dng"],
+     "note": "The file identifies itself as 'Insta360 One2'; the archive's label 'Insta360 One X' disagrees, so the product is not independently established"
+    }
+   },
+   "mode": {
+    "key": "mk1|insta360|one2|dng|uncompressed|3040x6080|16bit|mosaic:GRBG|uint16|dual-fisheye-360|primary:0/1",
+    "label": "DNG, unstitched dual-fisheye 360 source, 3040x6080",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-insta360-one-x-dng"],
+     "note": "IFD 0 Compression 1"
+    }
+   },
+   "dimensions": {
+    "rendered": [3040, 6080],
+    "image_area_source": "dng_default_whole_image",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": null,
+     "status": "unverified",
+     "sources": [],
+     "note": "No manufacturer page could be retrieved (insta360.com answered 403); the frame holds two fisheye circles, not a planar image"
+    },
+    "note": "Rendered 3040x6080: both fisheye circles stacked vertically; the DNG has no DefaultCrop tags (the specification's default: the whole image)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-insta360-one-x-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:GRBG",
+    "status": "verified",
+    "sources": ["file-insta360-one-x-dng"],
+    "note": "CFAPattern GR/BG"
+   },
+   "mandatory_steps": [
+    {
+     "id": "stitch:dual_fisheye_360",
+     "lucent_support": "unsupported",
+     "description": "A two-lens 360 source must be stitched; Lucent recognises it (MultiViewSource) and refuses planar export (blueprint section 3)."
+    }
+   ],
+   "expected": {
+    "state": "unsupported",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "fail",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "The Ace / Ace Pro / Ace Pro 2 planar DNG target remains absent."
+  },
+  {
+   "id": "nikon-z-8-nef-he",
+   "camera": {
+    "family": "nikon",
+    "file_make": "NIKON CORPORATION",
+    "file_model": "NIKON Z 8",
+    "product": "Nikon Z 8",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-nikon-z-8-nef-he"]
+    }
+   },
+   "mode": {
+    "key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "NEF High Efficiency (HE)",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "spec-nikon-z-8", "rawpy-reference"],
+     "note": "Nikon offers HE and HE*; which one this file is comes from the archive's label and the decoder's maker-note reading"
+    }
+   },
+   "dimensions": {
+    "rendered": null,
+    "image_area_source": "decoder_inset_crop",
+    "camera_image_area": {
+     "size": [8256, 5504],
+     "status": "verified",
+     "sources": ["spec-nikon-z-8"]
+    },
+    "note": "Not rendered: LibRaw 0.22.2 cannot decode HE/HE* data (the stored frame is 8280x5520; LibRaw's crop reading is 8256x5504 at (12, 8))."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-nikon-z-8-nef-he"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-nikon-z-8-nef-he", "rawspeed-nikon-z-8"],
+    "note": "CFAPattern RG/GB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "decoder:nikon_high_efficiency",
+     "lucent_support": "unsupported",
+     "description": "Decoding Nikon's TicoRAW-based High Efficiency data; LibRaw 0.22.2 (the reference's 0.22.1 too) refuses it."
+    }
+   ],
+   "expected": {
+    "state": "unsupported",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "fail",
+     "cfa": "not_run",
+     "black_white": "not_run",
+     "colour": "not_run",
+     "dimensions": "not_run",
+     "orientation": "not_run",
+     "required_corrections": "not_run",
+     "numerical_validity": "not_run",
+     "export_round_trip": "not_run",
+     "determinism": "not_run"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "nikon-z-8-nef-he-star",
+   "camera": {
+    "family": "nikon",
+    "file_make": "NIKON CORPORATION",
+    "file_model": "NIKON Z 8",
+    "product": "Nikon Z 8",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-nikon-z-8-nef-he-star"]
+    }
+   },
+   "mode": {
+    "key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he-star|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "NEF High Efficiency* (HE*)",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "spec-nikon-z-8", "rawpy-reference"],
+     "note": "Nikon offers HE and HE*; which one this file is comes from the archive's label and the decoder's maker-note reading"
+    }
+   },
+   "dimensions": {
+    "rendered": null,
+    "image_area_source": "decoder_inset_crop",
+    "camera_image_area": {
+     "size": [8256, 5504],
+     "status": "verified",
+     "sources": ["spec-nikon-z-8"]
+    },
+    "note": "Not rendered: LibRaw 0.22.2 cannot decode HE/HE* data (the stored frame is 8280x5520; LibRaw's crop reading is 8256x5504 at (12, 8))."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-nikon-z-8-nef-he-star"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-nikon-z-8-nef-he-star", "rawspeed-nikon-z-8"],
+    "note": "CFAPattern RG/GB"
+   },
+   "mandatory_steps": [
+    {
+     "id": "decoder:nikon_high_efficiency",
+     "lucent_support": "unsupported",
+     "description": "Decoding Nikon's TicoRAW-based High Efficiency data; LibRaw 0.22.2 (the reference's 0.22.1 too) refuses it."
+    }
+   ],
+   "expected": {
+    "state": "unsupported",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "fail",
+     "cfa": "not_run",
+     "black_white": "not_run",
+     "colour": "not_run",
+     "dimensions": "not_run",
+     "orientation": "not_run",
+     "required_corrections": "not_run",
+     "numerical_validity": "not_run",
+     "export_round_trip": "not_run",
+     "determinism": "not_run"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "nikon-z-6-nef-compressed",
+   "camera": {
+    "family": "nikon",
+    "file_make": "NIKON CORPORATION",
+    "file_model": "NIKON Z 6",
+    "product": "Nikon Z 6",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-nikon-z-6-nef-compressed"]
+    }
+   },
+   "mode": {
+    "key": "mk1|nikon|z-6|tiff|nikon-nef-lossy-type-2|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "NEF 14-bit compressed (lossy)",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "as nikon-z-6-nef-lossless: lossy versus lossless is not visible in the tags read independently"
+    }
+   },
+   "dimensions": {
+    "rendered": [6048, 4024],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [8, 8, 6048, 4024],
+    "camera_image_area": {
+     "size": [6048, 4024],
+     "status": "verified",
+     "sources": ["spec-nikon-z-6"]
+    },
+    "note": "As nikon-z-6-nef-lossless."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-nikon-z-6-nef-compressed", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-nikon-z-6-nef-compressed", "rawspeed-nikon-z-6"],
+    "note": "CFAPattern RG/GB; RawSpeed RGGB"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "fujifilm-x-t4-raf-compressed",
+   "camera": {
+    "family": "fujifilm",
+    "file_make": "FUJIFILM",
+    "file_model": "X-T4",
+    "product": "Fujifilm X-T4",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-fujifilm-x-t4-raf-compressed"]
+    }
+   },
+   "mode": {
+    "key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-compressed-lossy|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+    "label": "RAF 14-bit compressed (lossy), X-Trans",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "the compression mode comes from the decoder (RAF compressed-data header) and the archive's label"
+    }
+   },
+   "dimensions": {
+    "rendered": [6240, 4160],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 7, 6240, 4160],
+    "camera_image_area": {
+     "size": [6240, 4160],
+     "status": "verified",
+     "sources": ["file-fujifilm-x-t4-raf-compressed", "spec-fujifilm-x-t4"],
+     "note": "RAF RawImageCroppedSize 6240x4160 equals Fujifilm's L 3:2 size"
+    },
+    "note": "As fujifilm-x-t4-raf-lossless."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-fujifilm-x-t4-raf-compressed", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG",
+    "status": "verified",
+    "sources": ["rawspeed-fujifilm-x-t4", "spec-fujifilm-x-t4"],
+    "note": "RawSpeed's 6x6 X-Trans tile at the raw origin; LibRaw's visible origin (0, 6) is a whole period down"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["xtrans_baseline_demosaic"]
+   }
+  },
+  {
+   "id": "fujifilm-gfx-50s-ii-raf-compressed",
+   "camera": {
+    "family": "fujifilm",
+    "file_make": "FUJIFILM",
+    "file_model": "GFX50S II",
+    "product": "Fujifilm GFX 50S II",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-fujifilm-gfx-50s-ii-raf-compressed"]
+    }
+   },
+   "mode": {
+    "key": "mk1|fujifilm|gfx50s-ii|raf|fujifilm-raf-compressed-lossy|8280x6208|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "RAF 14-bit compressed (lossy), Bayer, 4:3",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "from the decoder (RAF compressed-data header) and the archive's label"
+    }
+   },
+   "dimensions": {
+    "rendered": [8256, 6192],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 8256, 6192],
+    "camera_image_area": {
+     "size": [8256, 6192],
+     "status": "verified",
+     "sources": ["file-fujifilm-gfx-50s-ii-raf-compressed", "spec-fujifilm-gfx50s-ii"],
+     "note": "RAF RawImageCroppedSize 8256x6192 equals Fujifilm's L 4:3 size"
+    },
+    "note": "The RAF's declared crop 8256x6192 at (12, 8) (LibRaw's reading equals it) is rendered from LibRaw's 8280x6208 visible area."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-fujifilm-gfx-50s-ii-raf-compressed", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["rawspeed-fujifilm-gfx50s-ii", "spec-fujifilm-gfx50s-ii"],
+    "note": "Bayer array (Fujifilm); RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "panasonic-dc-s5m2-rw2",
+   "camera": {
+    "family": "other",
+    "file_make": "Panasonic",
+    "file_model": "DC-S5M2",
+    "product": "Panasonic LUMIX S5 II (DC-S5M2)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-panasonic-dc-s5m2-rw2"]
+    }
+   },
+   "mode": {
+    "key": "mk1|panasonic|dc-s5m2|rw2|panasonicc8-load-raw-lossiness-not-established|6008x4008|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "RW2 14-bit, mechanical shutter",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us"],
+     "note": "Lucent's own contract cannot establish the lossiness of this RW2 encoding (panasonicC8_load_raw)"
+    }
+   },
+   "dimensions": {
+    "rendered": [6000, 4000],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [4, 4, 6000, 4000],
+    "camera_image_area": {
+     "size": [6000, 4000],
+     "status": "verified",
+     "sources": ["file-panasonic-dc-s5m2-rw2", "spec-panasonic-dc-s5m2"],
+     "note": "RW2 sensor borders (4, 4)-(6004, 4004) give 6000x4000, Panasonic's L 3:2 size"
+    },
+    "note": "The RW2 sensor borders give 6000x4000 at (4, 4), Panasonic's L 3:2 size; Lucent renders them from LibRaw's 6008x4008 visible area (the whole sensor)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-panasonic-dc-s5m2-rw2", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-panasonic-dc-s5m2-rw2"],
+    "note": "PanasonicRaw CFAPattern 1 (RGGB, ExifTool's table)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "om-system-om-1-orf",
+   "camera": {
+    "family": "other",
+    "file_make": "OM Digital Solutions",
+    "file_model": "OM-1",
+    "product": "OM System OM-1",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-om-system-om-1-orf"],
+     "note": "Make 'OM Digital Solutions'"
+    }
+   },
+   "mode": {
+    "key": "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ORF 12-bit, standard 20 MP",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "the ORF tags read independently do not state the compression"
+    }
+   },
+   "dimensions": {
+    "rendered": [5184, 3888],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 12, 5184, 3888],
+    "camera_image_area": {
+     "size": [5184, 3888],
+     "status": "verified",
+     "sources": ["spec-om-system-om-1"]
+    },
+    "note": "LibRaw's reading of the ORF's crop (5184x3888 at (12, 12)) equals OM System's size; Lucent renders it from LibRaw's 5220x3912 visible area (RawSpeed crops 12 columns on the right)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-om-system-om-1-orf", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-om-system-om-1-orf"],
+    "note": "EXIF CFAPattern RG/GB (its origin is not specified by EXIF; consistent with the visible origin (0, 0))"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "pentax-k-3-mark-iii-pef",
+   "camera": {
+    "family": "other",
+    "file_make": "RICOH IMAGING COMPANY, LTD.",
+    "file_model": "PENTAX K-3 Mark III",
+    "product": "Pentax K-3 Mark III",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-pentax-k-3-mark-iii-pef"],
+     "note": "Make 'RICOH IMAGING COMPANY, LTD.'"
+    }
+   },
+   "mode": {
+    "key": "mk1|pentax|k-3-mark-iii|tiff|pentax-pef-lossless-compressed|6224x4160|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "PEF 14-bit",
+    "compression": {
+     "status": "unverified",
+     "sources": ["raw-pixls-us", "rawpy-reference"],
+     "note": "PEF Compression 65535 (Pentax); lossless per the decoder only"
+    }
+   },
+   "dimensions": {
+    "rendered": [6224, 4160],
+    "image_area_source": "unknown",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [6192, 4128],
+     "status": "verified",
+     "sources": ["spec-pentax-k-3-mark-iii", "file-pentax-k-3-mark-iii-pef"],
+     "note": "the embedded full-size JPEG is 6192x4128 as well"
+    },
+    "note": "LibRaw 0.22.2 reads no crop for this PEF (raw_inset_crops not set), so the area is unknown and Lucent renders the 6224x4160 visible area, which exceeds Pentax's 6192x4128."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-pentax-k-3-mark-iii-pef", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-pentax-k-3-mark-iii-pef"],
+    "note": "EXIF CFAPattern RG/GB; LibRaw's visible origin (26, 34) has even offsets"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["default_crop_not_applied"]
+   }
+  },
+  {
+   "id": "pentax-k-3-mark-iii-monochrome-dng",
+   "camera": {
+    "family": "other",
+    "file_make": "RICOH IMAGING COMPANY, LTD.",
+    "file_model": "PENTAX K-3 Mark III Monochrome",
+    "product": "Pentax K-3 Mark III Monochrome",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-pentax-k-3-mark-iii-monochrome-dng"],
+     "note": "Make 'RICOH IMAGING COMPANY, LTD.'"
+    }
+   },
+   "mode": {
+    "key": "mk1|pentax|k-3-mark-iii-monochrome|dng|lossless-jpeg|6224x4160|14bit|monochrome|uint16|single-view|primary:0/1",
+    "label": "DNG 14-bit LinearRaw, monochrome sensor",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-pentax-k-3-mark-iii-monochrome-dng"],
+     "note": "raw IFD Compression 7 (lossless JPEG)"
+    }
+   },
+   "dimensions": {
+    "rendered": [6192, 4128],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [28, 24, 6192, 4128],
+    "camera_image_area": {
+     "size": [6192, 4128],
+     "status": "verified",
+     "sources": ["file-pentax-k-3-mark-iii-monochrome-dng", "spec-pentax-k-3-mark-iii-monochrome"],
+     "note": "DNG DefaultCropSize 6192x4128 at (28, 24) equals Pentax's L size"
+    },
+    "note": "DNG DefaultCropSize 6192x4128 at (28, 24) of the ActiveArea equals Pentax's L size; Lucent renders it (LibRaw's visible area is the ActiveArea 6224x4160)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-pentax-k-3-mark-iii-monochrome-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "monochrome",
+    "status": "verified",
+    "sources": ["file-pentax-k-3-mark-iii-monochrome-dng", "spec-pentax-k-3-mark-iii-monochrome"],
+    "note": "LinearRaw with one sample per pixel; monochromatic sensor (Pentax)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "leica-m10-dng",
+   "camera": {
+    "family": "other",
+    "file_make": "Leica Camera AG",
+    "file_model": "LEICA M10",
+    "product": "Leica M10",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-leica-m10-dng"],
+     "note": "Make 'Leica Camera AG'"
+    }
+   },
+   "mode": {
+    "key": "mk1|leica|m10|dng|lossless-jpeg|5984x3992|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG 14-bit CFA, lossless JPEG",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-leica-m10-dng"],
+     "note": "IFD 0 Compression 7 (lossless JPEG)"
+    }
+   },
+   "dimensions": {
+    "rendered": [5976, 3984],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 5976, 3984],
+    "camera_image_area": {
+     "size": [5976, 3984],
+     "status": "verified",
+     "sources": ["file-leica-m10-dng"],
+     "note": "DNG DefaultCropSize 5976x3984 at (4, 4). Leica's technical data could not be retrieved on 2026-10-05 (HTTP 502); a search engine quotes it as 'DNG 5976 x 3992', which this file's DefaultCrop does not match"
+    },
+    "note": "Lucent renders the DNG DefaultCrop 5976x3984 at (4, 4) of the 5984x3992 frame (LibRaw's visible area)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-leica-m10-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-leica-m10-dng"],
+    "note": "CFAPattern RG/GB"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "The file declares WhiteLevel 15000 while 5.2 % of its samples lie above it (up to 16383); Lucent, like LibRaw and the DNG specification, treats them as saturated. Colour evidence is weak (DNG profile versus LibRaw's matrix)."
+  },
+  {
+   "id": "leica-m-monochrom-typ-246-dng",
+   "camera": {
+    "family": "other",
+    "file_make": "Leica Camera AG",
+    "file_model": "LEICA M MONOCHROM (Typ 246)",
+    "product": "Leica M Monochrom (Typ 246)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-leica-m-monochrom-typ-246-dng"],
+     "note": "Make 'Leica Camera AG'"
+    }
+   },
+   "mode": {
+    "key": "mk1|leica|m-monochrom-typ-246|dng|lossless-jpeg|5984x4000|12bit|monochrome|uint16|single-view|primary:0/1",
+    "label": "DNG 12-bit LinearRaw (big-endian), monochrome sensor",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-leica-m-monochrom-typ-246-dng"],
+     "note": "raw IFD Compression 7 (lossless JPEG)"
+    }
+   },
+   "dimensions": {
+    "rendered": [5976, 3992],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 5976, 3992],
+    "camera_image_area": {
+     "size": [5976, 3992],
+     "status": "verified",
+     "sources": ["file-leica-m-monochrom-typ-246-dng"],
+     "note": "DNG DefaultCropSize 5976x3992 at (4, 4); Leica's technical data could not be retrieved (a search engine quotes 'DNG 5976 x 3992')"
+    },
+    "note": "Lucent renders the DNG DefaultCrop 5976x3992 at (4, 4) of the 5984x4000 frame (LibRaw's visible area)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-leica-m-monochrom-typ-246-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "monochrome",
+    "status": "verified",
+    "sources": ["file-leica-m-monochrom-typ-246-dng"],
+    "note": "LinearRaw with one sample per pixel"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   }
+  },
+  {
+   "id": "hasselblad-x1d-ii-50c-3fr",
+   "camera": {
+    "family": "other",
+    "file_make": "Hasselblad",
+    "file_model": "X1D II 50C",
+    "product": "Hasselblad X1D II 50C",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-hasselblad-x1d-ii-50c-3fr"]
+    }
+   },
+   "mode": {
+    "key": "mk1|hasselblad|x1d-ii-50c|tiff|uncompressed|8278x6208|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "3FR 16-bit, uncompressed",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-hasselblad-x1d-ii-50c-3fr"],
+     "note": "raw IFD Compression 1 (uncompressed)"
+    }
+   },
+   "dimensions": {
+    "rendered": [8278, 6208],
+    "image_area_source": "unknown",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [8272, 6200],
+     "status": "verified",
+     "sources": ["file-hasselblad-x1d-ii-50c-3fr", "spec-hasselblad-x1d-ii-50c"],
+     "note": "3FR raw IFD DefaultCropSize 8272x6200 at (50, 100) equals the data sheet's 8272 x 6200"
+    },
+    "note": "The 3FR raw IFD declares the crop, but LibRaw 0.22.2 reads DefaultCrop tags outside DNG files only for Sony (src/metadata/tiff.cpp), so the area is unknown and Lucent renders LibRaw's 8278x6208 visible area."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-hasselblad-x1d-ii-50c-3fr", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["rawspeed-hasselblad-x1d-ii-50c"],
+    "note": "RawSpeed RGGB at the raw origin; LibRaw's visible origin (48, 96) has even offsets"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["default_crop_not_applied"]
+   }
+  },
+  {
+   "id": "adobe-dng-canon-eos-5d-mark-iii-linear-dng",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS 5D Mark III",
+    "product": "Canon EOS 5D Mark III M-RAW via Adobe DNG Converter 9.8",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-adobe-dng-canon-eos-5d-mark-iii-linear-dng"],
+     "note": "Software 'Adobe DNG Converter 9.8 (Windows)'; the archive names the source an M-RAW CR2 (sample 772)"
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1",
+    "label": "LinearRaw DNG (3 samples per pixel, lossless JPEG)",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-adobe-dng-canon-eos-5d-mark-iii-linear-dng"],
+     "note": "raw IFD Compression 7 (lossless JPEG), PhotometricInterpretation 34892 (LinearRaw)"
+    }
+   },
+   "dimensions": {
+    "rendered": [3960, 2640],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [3960, 2640],
+     "status": "verified",
+     "sources": ["file-adobe-dng-canon-eos-5d-mark-iii-linear-dng", "spec-canon-eos-5d-mark-iii"],
+     "note": "DNG DefaultCrop 3960x2640 at (0, 0) equals Canon's M-RAW size"
+    },
+    "note": "Rendered size equals the DefaultCrop (3960x2640 at (0, 0), the whole image) and Canon's M-RAW size."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-adobe-dng-canon-eos-5d-mark-iii-linear-dng", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "linear-rgb",
+    "status": "verified",
+    "sources": ["file-adobe-dng-canon-eos-5d-mark-iii-linear-dng"],
+    "note": "LinearRaw with SamplesPerPixel 3: already demosaiced camera RGB"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "Colour evidence is weak: Lucent applies the DNG ForwardMatrix profile while the rawpy reference uses LibRaw's D65 matrix, so the comparison detects gross errors only (ADR 0006)."
+  },
+  {
+   "id": "canon-eos-7d-mark-ii-dng-jxl",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS 7D Mark II",
+    "product": "Canon EOS 7D Mark II (Lightroom Classic 13 Denoise DNG)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-7d-mark-ii-dng-jxl"],
+     "note": "Software 'Adobe Photoshop Lightroom Classic 13.0.1'; UniqueCameraModel 'Canon EOS 7D Mark II'"
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-7d-mark-ii|dng|lossless-jpeg|5496x3670|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG 1.7 CFA original (lossless JPEG) beside a JPEG XL Enhanced image",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-7d-mark-ii-dng-jxl"],
+     "note": "raw IFD Compression 7 (lossless JPEG)"
+    }
+   },
+   "dimensions": {
+    "rendered": [5472, 3648],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [12, 12, 5472, 3648],
+    "camera_image_area": {
+     "size": [5472, 3648],
+     "status": "verified",
+     "sources": ["file-canon-eos-7d-mark-ii-dng-jxl", "spec-canon-eos-7d-mark-ii"],
+     "note": "DNG DefaultCropSize 5472x3648 at (12, 12) equals Canon's recorded RAW size"
+    },
+    "note": "DNG DefaultCropSize 5472x3648 at (12, 12) of the ActiveArea equals Canon's recorded RAW size; Lucent renders it (LibRaw's visible area is the ActiveArea 5496x3670)."
+   },
+   "orientation": {
+    "exif": 1,
+    "status": "verified",
+    "sources": ["file-canon-eos-7d-mark-ii-dng-jxl", "visual-2026-10-05"],
+    "note": "IFD 0 / EXIF Orientation 1 (top-left); the preview is upright"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-canon-eos-7d-mark-ii-dng-jxl"],
+    "note": "CFAPattern RG/GB, anchored at the ActiveArea origin (72, 38) as DNG specifies"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["dng_enhanced_image_not_offered"]
+   }
+  }
+ ]
+}

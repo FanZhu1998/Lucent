@@ -97,6 +97,8 @@ public:
     void start_import(const QStringList& paths, const ImportOptions& options) override;
     [[nodiscard]] bool is_importing() const override { return active_imports_ > 0; }
     [[nodiscard]] bool is_busy() const override;
+    // A simulated camera support database 1.0.0 (Help > About, W10).
+    [[nodiscard]] CameraSupportInfo camera_support() const override;
 
     // The current snapshot of every item, in library order (for tests).
     [[nodiscard]] const std::vector<LibraryItem>& items() const noexcept { return items_; }
@@ -216,9 +218,10 @@ public:
     void cancel_auto(ItemId item) override;
     [[nodiscard]] bool is_auto_running(ItemId item = 0) const override;
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
-    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const override;
-    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const override;
-    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size,
+                                           QRect frame) const override;
+    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize frame_size) const override;
+    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize frame_size,
                                                double aspect) const override;
     [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
     [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;

@@ -577,6 +577,29 @@ Expected<bool> Inspector::interpret_entry(const TagRef& tag, TiffIfdSummary& s, 
             return assign(positive_reals(tag, 2, 2), [&](std::vector<double> v) {
                 s.default_crop_size = std::array<double, 2>{v[0], v[1]};
             });
+        case t::kDefaultUserCrop: {
+            // Advisory (a user crop's initial value): a malformed tag is skipped with a warning.
+            auto crop = reals(tag, 4, 4);
+            if (!crop && crop.error().code != ErrorCode::Corrupt) {
+                return Unexpected(std::move(crop.error()));  // limits and I/O errors stay errors
+            }
+            if (!crop) {
+                warn(detail::kWhereTag, std::format("{}: tag {} skipped: {}", tag.path,
+                                                    describe_tag(tag.entry.tag), crop.error().message));
+                return true;
+            }
+            const std::vector<double>& v = *crop;
+            const auto unit = [](double x) { return std::isfinite(x) && x >= 0.0 && x <= 1.0; };
+            if (!std::all_of(v.begin(), v.end(), unit) || !(v[0] < v[2]) || !(v[1] < v[3])) {
+                warn(detail::kWhereTag,
+                     std::format("{}: tag {} skipped: top {}, left {}, bottom {}, right {} is not ordered "
+                                 "inside [0, 1]",
+                                 tag.path, describe_tag(tag.entry.tag), v[0], v[1], v[2], v[3]));
+                return true;
+            }
+            s.default_user_crop = std::array<double, 4>{v[0], v[1], v[2], v[3]};
+            return true;
+        }
         case t::kBlackLevelRepeatDim: {
             auto dims = unsigneds(tag, kUnsignedTypes, 1, 2, kMaxU16);
             if (dims && dims->size() == 1) {

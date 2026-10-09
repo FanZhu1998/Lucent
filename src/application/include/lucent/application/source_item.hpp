@@ -4,22 +4,27 @@
 // capture time, support status and flags; section 3, "User-visible compatibility states").
 //
 // A SourceItem is one photograph of one source file: the file's canonical path, its subimage,
-// the file identity captured when it was probed, a summary of the probe and the support status
-// derived from the decoded-RAW contract's interpretation assessment (raw::Interpretation, ADR
-// 0005).
+// the file identity captured when it was probed, a summary of the probe and its support status.
 //
-// Support status. Lucent has no qualification data yet (blueprint section 10; W10), so no item is
-// ever "Verified":
-//   Supported    the decoder identified the file and the probe found nothing required missing
-//                (Interpretation Complete): the blueprint's "Compatible, unverified" state.
-//   Limited      only optional operations are unavailable (OptionalOperationsSkipped): a
-//                conservative path exists; the reasons say what is missing.
-//   Unsupported  a mandatory interpretation step is unavailable (RequiresUnsupportedOperation),
-//                Lucent cannot tell what the file requires (Ambiguous), the data cannot be
-//                decoded (NotDecodable), or the file could not be identified at all (probe
-//                failure). Automatic processing must skip such items and show the reasons.
-// The status comes from the probe (metadata stage AfterOpen); a render reports the final
-// interpretation after unpacking in its RenderReport.
+// Support status: the blueprint's four states (W10 phase 3, ADR 0018), assessed when the file is
+// probed (metadata stage AfterOpen) by combining the decoded-RAW contract's interpretation
+// (raw::Interpretation, ADR 0005) with the camera support database's entry for the probe's mode
+// key (lucent/assets/camera_support.hpp; the rules are in camera_support.hpp of this module):
+//   Verified              the exact model and capture mode passed Lucent's qualification, the
+//                         database's basis is this build's, and nothing required is missing.
+//   CompatibleUnverified  the decoder identified the file and nothing required is missing, but
+//                         the mode has no quality evidence (not in the database, listed as
+//                         Compatible, unverified, or qualified with another decoder or pipeline).
+//   Limited               a known optional feature is unavailable: optional operations the file
+//                         asks for (OptionalOperationsSkipped), or a limitation the database lists
+//                         (X-Trans baseline demosaicing, an image area Lucent cannot read, ...); a
+//                         conservative path exists and the reasons name what is missing.
+//   Unsupported           a mandatory interpretation step is unavailable (RequiresUnsupportedOperation),
+//                         Lucent cannot tell what the file requires (Ambiguous), the data cannot be
+//                         decoded (NotDecodable), the file could not be identified at all (probe
+//                         failure), or the database lists the mode as Unsupported. Automatic
+//                         processing skips such items and shows the reasons.
+// A render reports the final interpretation after unpacking in its RenderReport.
 //
 // Source facts (W4, blueprint sections 2 and 7: "File path alone is not image identity"). Besides
 // the probe, an item carries what the library knows about its source file: the content hash
@@ -42,6 +47,7 @@
 #include <string_view>
 #include <vector>
 
+#include <lucent/assets/camera_support.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/core/file.hpp>
 #include <lucent/core/hash.hpp>
@@ -68,43 +74,108 @@ struct ItemIdHash {
     }
 };
 
-// Persisted values (a catalog stores them); append only.
-enum class SupportStatus : std::uint8_t {
-    Supported = 1,
-    Limited = 2,
-    Unsupported = 3,
-};
+// The blueprint's four states (see the file comment): the camera support database's states, in
+// order of severity (a larger value is worse; assets::worse() combines two). Their spellings
+// ("verified", "compatible_unverified", "limited", "unsupported"; assets::to_string()) appear in
+// the application's records; the catalog's status column keeps the three spellings every catalog
+// reader knows (catalog_mapping.hpp).
+using SupportStatus = assets::SupportState;
 
-[[nodiscard]] std::string_view to_string(
-    SupportStatus status) noexcept;  // "supported", "limited", "unsupported"
+// Version of the support rules (camera_support.hpp) an assessment was made with.
+//   2 (2026-10-08, review of W10): engine limitations derived from the probe (X-Trans baseline
+//     demosaicing, unprocessed Dual Pixel data), a Verified entry only for the qualified file's image
+//     area and DNG opcodes, the database's manifest SHA-256 in the record, and a database that is
+//     missing or refused never improving a stored state. Records of rules 1 are probed again.
+inline constexpr std::uint32_t kSupportRulesVersion = 2;
 
 // Where a support reason comes from (append only).
 enum class SupportReasonKind : std::uint8_t {
     InterpretationIssue = 1,   // one raw::InterpretationIssue of the probed image
     InterpretationStatus = 2,  // only a status is known (an image described by a probe of another)
     ProbeFailed = 3,           // the file could not be identified; see error_code
+    CameraLimitation = 4,      // a limitation the camera support database lists for the mode
+    CameraUnsupported = 5,     // the camera support database lists the mode as Unsupported
+    // A known optional capability Lucent's engine lacks for this file, derived from its probe
+    // without a database (rules 2): X-Trans data is demosaiced with the baseline route, a Dual Pixel
+    // RAW's second image is not processed. Kept with the live reasons when the item is re-assessed.
+    EngineLimitation = 6,
 };
 
 struct SupportReason {
     SupportReasonKind kind = SupportReasonKind::InterpretationIssue;
     std::optional<raw::InterpretationIssueKind> issue;  // InterpretationIssue
     std::optional<ErrorCode> error_code;                // ProbeFailed
-    std::string message;                                // developer-facing English
+    std::string limitation;                             // CameraLimitation, EngineLimitation: its stable code
+    // Developer-facing English for the interpretation kinds. For the Camera and Engine limitation
+    // kinds, user-facing English ("<summary>: <meaning>"; the database's words, or this build's
+    // assets::standard_limitation_text()), which reports and review notes show as is.
+    std::string message;
+};
+
+// True for the reasons the probe gave (interpretation, failure and engine limitations): a
+// re-assessment against another database keeps them and recomputes the database's.
+[[nodiscard]] bool is_live_reason(SupportReasonKind kind) noexcept;
+
+// How the camera support database was consulted for an item (ADR 0018). Kept with the assessment
+// (and in the catalog) so that another database version can assess the item again without reading
+// its file (reassess_support()).
+struct CameraSupportEvaluation {
+    std::uint32_t rules = kSupportRulesVersion;
+    // The mode key of the probe the item was assessed with (assets::derive_mode_key()).
+    std::string mode_key;
+    // The probe's facts beside the key (assets::derive_mode_variant(), rules 2): its image area and
+    // DNG opcodes, compared with a Verified entry's.
+    std::string image_area;
+    std::vector<std::string> dng_opcodes;
+    // The interpretation status of that probe: the live part of the assessment.
+    raw::InterpretationStatus interpretation = raw::InterpretationStatus::Complete;
+    // The database consulted: its asset id, version, manifest SHA-256 (lower-case hex; rules 2: a
+    // content change under the same version is noticed) and its qualification date; all empty when
+    // no database was active.
+    std::string database_id;
+    std::string database_version;
+    std::string database_sha256;
+    std::string qualified_on;
+    // The database's Verified entries held for the build that assessed (assets::CameraSupport::
+    // verified_entries_hold()); false downgrades a Verified entry to Compatible, unverified.
+    bool basis_matches = true;
+    // The probe's image area and DNG opcodes are those the matching entry was qualified with (rules
+    // 2); false downgrades a Verified entry to Compatible, unverified. True when not listed.
+    bool variant_matches = true;
+    // The database's answer for mode_key; std::nullopt when the mode is not in the database. With no
+    // database active (database_id empty) it is the answer of the database the item was last assessed
+    // with, kept so that a missing or refused database never improves the item's state (AST-01).
+    std::optional<SupportStatus> listed;
+    // The matching entry's decoded key, labels and evidence (empty when not listed).
+    std::string qualified_key;
+    std::string camera;
+    std::string mode;
+    std::string evidence;
+
+    friend bool operator==(const CameraSupportEvaluation&, const CameraSupportEvaluation&) = default;
 };
 
 struct SupportAssessment {
     SupportStatus status = SupportStatus::Unsupported;
     // The contract's status; std::nullopt when the probe failed.
     std::optional<raw::InterpretationStatus> interpretation;
-    // Empty exactly when status is Supported.
+    // Why the item is Limited or Unsupported (empty for Verified and Compatible, unverified):
+    // interpretation reasons first, then the database's.
     std::vector<SupportReason> reasons;
+    // How the camera support database was consulted; std::nullopt when the probe failed, and for
+    // assessments made before the database existed (such items are probed again,
+    // probe_outdated()).
+    std::optional<CameraSupportEvaluation> camera;
 };
 
-// The status an interpretation status maps to (see the file comment). Unknown values (for example
-// from a newer contract) are Unsupported.
+// The status an interpretation status alone maps to: Complete is Compatible, unverified (nothing
+// required is missing, but the interpretation alone proves no quality), OptionalOperationsSkipped
+// Limited, the rest Unsupported. Unknown values (for example from a newer contract) are
+// Unsupported.
 [[nodiscard]] SupportStatus support_status_for(raw::InterpretationStatus status) noexcept;
 
-// Assessment from a probe's interpretation: one reason per issue.
+// Assessment from a probe's interpretation alone: one reason per issue, no database consulted
+// (camera stays empty). assess_support() (camera_support.hpp) is the import's assessment.
 [[nodiscard]] SupportAssessment assess_interpretation(const raw::Interpretation& interpretation);
 
 // Assessment when only the status of an image is known (raw::SubimageInfo::interpretation).
@@ -218,8 +289,12 @@ struct SourceItem {
 // True when the item's support status came from an older interpretation than this build's: it
 // has a probe whose decoded-RAW contract is unknown or older than raw::kDecodedRawContractVersion
 // (a contract change can change what a file requires and what Lucent supports; W9 made DNG
-// opcodes supported). Source maintenance probes such items again (refresh_sources). An item whose
-// probe failed carries no interpretation and is not outdated.
+// opcodes supported), or a probe made with another version of the LibRaw decoder (AST-08: a decoder
+// upgrade can move the mode key), or its assessment has no camera support evaluation (made before
+// ADR 0018: without the probe's mode key it cannot be assessed against the database), one of older
+// support rules, or one whose mode key is not of this build's mode-key version. Source maintenance
+// probes such items again (refresh_sources); refresh_support() does not re-assess them from their
+// stale record. An item whose probe failed carries no interpretation and is not outdated.
 [[nodiscard]] bool probe_outdated(const SourceItem& item) noexcept;
 
 }  // namespace lucent::app

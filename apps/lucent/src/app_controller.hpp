@@ -20,13 +20,15 @@
 //
 // Thread-safety: UI thread only.
 
-#include <functional>
-#include <memory>
-
 #include <QHash>
 #include <QObject>
 #include <QStringList>
 #include <QUrl>
+#include <QVariantList>
+#include <QVariantMap>
+#include <functional>
+#include <memory>
+
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include "imaging/frame_store.hpp"
@@ -103,6 +105,12 @@ class AppController : public QObject {
     // Batches the service paused by itself (disk full, drive removed, ...): the Exports tab is
     // flagged wherever the photographer is.
     Q_PROPERTY(int exportAttentionCount READ export_attention_count NOTIFY activeExportCountChanged FINAL)
+    // W10 (ADR 0018). Help > About: Lucent's version, the camera support database the session uses
+    // (presentation::camera_support_map) and the meaning of the four support states
+    // (presentation::support_states).
+    Q_PROPERTY(QString appVersion READ app_version CONSTANT FINAL)
+    Q_PROPERTY(QVariantMap cameraSupport READ camera_support CONSTANT FINAL)
+    Q_PROPERTY(QVariantList supportStates READ support_states CONSTANT FINAL)
 
 public:
     enum View { Library = 0, Edit = 1, Exports = 2 };
@@ -267,6 +275,9 @@ public:
     [[nodiscard]] bool can_back_up() const;
     [[nodiscard]] QString library_notice() const;
     [[nodiscard]] QString background_activity() const { return background_activity_; }
+    [[nodiscard]] QString app_version() const;
+    [[nodiscard]] QVariantMap camera_support() const;
+    [[nodiscard]] QVariantList support_states() const;
 
 signals:
     void currentViewChanged();

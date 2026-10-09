@@ -99,7 +99,9 @@ std::filesystem::path to_path(const QString& path) {
 
 SupportStatus to_ui_support(app::SupportStatus status) noexcept {
     switch (status) {
-        case app::SupportStatus::Supported:
+        case app::SupportStatus::Verified:
+            return SupportStatus::Verified;
+        case app::SupportStatus::CompatibleUnverified:
             return SupportStatus::CompatibleUnverified;
         case app::SupportStatus::Limited:
             return SupportStatus::Limited;
@@ -107,6 +109,38 @@ SupportStatus to_ui_support(app::SupportStatus status) noexcept {
             return SupportStatus::Unsupported;
     }
     return SupportStatus::Unsupported;
+}
+
+QString describe_limitation(const QString& code, const QString& fallback) {
+    if (code == QLatin1String("default_crop_not_applied")) {
+        return tr_text(
+            "Lucent cannot read this camera's image area, so the photo keeps a narrow border of extra "
+            "pixels around it.");
+    }
+    if (code == QLatin1String("xtrans_baseline_demosaic")) {
+        return tr_text(
+            "X-Trans files use Lucent's baseline demosaicing: fine detail can look softer, with colour "
+            "artefacts in fine patterns.");
+    }
+    if (code == QLatin1String("dual_pixel_not_processed")) {
+        return tr_text("The camera's second Dual Pixel image is not used.");
+    }
+    if (code == QLatin1String("dng_enhanced_image_not_offered")) {
+        return tr_text("The DNG's enhanced version is not used; Lucent develops the original raw image.");
+    }
+    if (code == QLatin1String("optional_operations_skipped")) {
+        return tr_text("An optional processing step this file asks for is not available in Lucent.");
+    }
+    if (code == QLatin1String("non_square_pixels")) {
+        return tr_text(
+            "Lucent does not correct this camera's non-square pixels: proportions can look slightly "
+            "stretched.");
+    }
+    if (code == QLatin1String("pixel_shift_not_combined")) {
+        return tr_text("Pixel-shift frames are developed one by one, not combined.");
+    }
+    return fallback.isEmpty() ? tr_text("An optional feature is not available for this camera mode.")
+                              : fallback;
 }
 
 QString describe_issue(raw::InterpretationIssueKind kind) {
@@ -138,7 +172,9 @@ QString describe_issue(raw::InterpretationIssueKind kind) {
         case K::SubimageRoleUnknown:
             return tr_text("Lucent cannot tell what this image of a multi-image file is.");
         case K::MultiViewSource:
-            return tr_text("Unstitched multi-lens (360°) images are not supported.");
+            return tr_text(
+                "This is an unstitched multi-lens (360°) image. Stitch it into one panorama with the camera "
+                "maker's software first; Lucent does not stitch lens views.");
         case K::UnrepresentedBlackLevelCorrection:
             return tr_text("The file's black-level corrections cannot be applied exactly.");
     }
@@ -178,16 +214,82 @@ QString describe_reason(const app::SupportReason& reason) {
             error.where = "raw.probe";
             return describe_error(error);
         }
+        case app::SupportReasonKind::CameraLimitation:
+        case app::SupportReasonKind::EngineLimitation:
+            return describe_limitation(QString::fromStdString(reason.limitation),
+                                       QString::fromStdString(reason.message));
+        case app::SupportReasonKind::CameraUnsupported:
+            return tr_text("Lucent's quality tests found that this camera mode cannot be developed faithfully.");
     }
     return {};
+}
+
+// "Sony A7 IV, ARW compressed (lossy)" from the database entry's labels.
+QString camera_mode(const app::CameraSupportEvaluation& camera) {
+    const QString name = QString::fromStdString(camera.camera);
+    const QString mode = QString::fromStdString(camera.mode);
+    if (name.isEmpty()) {
+        return mode;
+    }
+    return mode.isEmpty() ? name : name + QStringLiteral(", ") + mode;
+}
+
+// Why a photo that decodes cleanly is (or is not) verified.
+QString verification_detail(const app::SupportAssessment& support) {
+    if (!support.camera) {
+        return tr_text(
+            "Lucent decodes this file, but has not verified this camera model with its quality tests yet.");
+    }
+    const app::CameraSupportEvaluation& camera = *support.camera;
+    if (camera.database_id.empty()) {
+        if (camera.listed && *camera.listed == app::SupportStatus::Verified) {
+            // AST-01: kept from the last database while none is active.
+            return tr_text(
+                       "Lucent's camera support database is not available, so it cannot confirm that %1 is "
+                       "verified; the photo counts as compatible but unverified until the database is back.")
+                .arg(camera_mode(camera));
+        }
+        return tr_text(
+            "Lucent decodes this file, but its camera support database is not available, so no camera "
+            "is verified.");
+    }
+    const QString version = QString::fromStdString(camera.database_version);
+    const QString date = QString::fromStdString(camera.qualified_on);
+    if (support.status == app::SupportStatus::Verified) {
+        return tr_text("Lucent's quality tests verified %1 (camera support database %2, qualified %3).")
+            .arg(camera_mode(camera), version, date);
+    }
+    if (!camera.listed) {
+        const QString text = tr_text(
+            "This camera mode is not in Lucent's camera support database %1: it decodes, but Lucent has no "
+            "test photos for it yet.");
+        return text.arg(version);
+    }
+    if (*camera.listed == app::SupportStatus::Verified && !camera.basis_matches) {
+        const QString text = tr_text(
+            "Lucent verified %1 with another version of its decoder or processing; this version has not "
+            "been tested with it yet.");
+        return text.arg(camera_mode(camera));
+    }
+    if (*camera.listed == app::SupportStatus::Verified && !camera.variant_matches) {
+        // QUA-08: the same mode, but another image area or other DNG corrections than the test photo.
+        const QString text = tr_text(
+            "Lucent verified %1 with test photos whose image area or built-in corrections differ from this "
+            "photo's (for example another in-camera aspect ratio), so this photo is not covered by that test.");
+        return text.arg(camera_mode(camera));
+    }
+    const QString text = tr_text(
+        "Lucent decodes %1, but its quality tests for this mode are not complete (camera support database "
+        "%2).");
+    return text.arg(camera_mode(camera), version);
 }
 
 }  // namespace
 
 QString support_detail(const app::SupportAssessment& support) {
-    if (support.status == app::SupportStatus::Supported) {
-        return tr_text(
-            "Lucent decodes this file, but has not verified this camera model with its quality tests yet.");
+    if (support.status == app::SupportStatus::Verified ||
+        support.status == app::SupportStatus::CompatibleUnverified) {
+        return verification_detail(support);
     }
     QStringList sentences;
     for (const app::SupportReason& reason : support.reasons) {
@@ -207,6 +309,76 @@ QString support_detail(const app::SupportAssessment& support) {
         sentences << tr_text("Lucent cannot interpret part of this file.");
     }
     return sentences.join(u' ');
+}
+
+CameraSupportInfo to_camera_support_info(const app::CameraSupportRef& active,
+                                         const assets::CameraSupportLoad& load) {
+    CameraSupportInfo info;
+    for (const assets::AssetCandidate& candidate : load.candidates) {
+        if (candidate.origin == assets::AssetOrigin::UserDataPack && candidate.present && candidate.refused) {
+            info.notes
+                << tr_text(
+                       "A camera support data pack in %1 was not used: this version of Lucent only uses "
+                       "the database installed with it, because it cannot check a data pack's signature "
+                       "yet.")
+                       .arg(QDir::toNativeSeparators(to_qstring(candidate.folder)));
+        }
+    }
+    if (!active) {
+        if (load.problem) {
+            switch (load.problem->code) {
+                case ErrorCode::NotFound:
+                    info.problem = tr_text(
+                        "Lucent's camera support database is not installed. Reinstall Lucent to "
+                        "restore it; until then no camera counts as verified.");
+                    break;
+                case ErrorCode::VersionMismatch:
+                    info.problem = tr_text(
+                        "The installed camera support database needs a newer version of Lucent, "
+                        "so it is not used; no camera counts as verified.");
+                    break;
+                case ErrorCode::PermissionDenied:
+                case ErrorCode::IoError:
+                case ErrorCode::SourceChanged:
+                case ErrorCode::OutOfMemory:
+                case ErrorCode::LimitExceeded:
+                case ErrorCode::Timeout:
+                    // AST-04: unreadable is not tampered with (access denied, a sharing violation, an
+                    // I/O error).
+                    info.problem =
+                        tr_text(
+                            "The installed camera support database could not be read (%1), so it is not used; "
+                            "no camera counts as verified. Check that Lucent's installation folder is "
+                            "readable, or reinstall Lucent.")
+                            .arg(QString::fromStdString(std::string(to_string(load.problem->code))));
+                    break;
+                default:
+                    info.problem = tr_text(
+                        "The installed camera support database failed its integrity check and is "
+                        "not used. Reinstall Lucent to restore it; until then no camera counts as "
+                        "verified.");
+                    break;
+            }
+            // AST-04: which step refused it (pin, hash, missing file, version), for support.
+            info.notes << tr_text("Technical detail: %1").arg(QString::fromStdString(load.problem->describe()));
+        }
+        return info;
+    }
+    const assets::CameraSupportDatabase& db = active->database;
+    info.available = true;
+    info.version = QString::fromStdString(active->version_text());
+    info.qualified_on = QString::fromStdString(db.date);
+    info.decoder = QString::fromStdString(db.basis.decoder) + QStringLiteral(", decoded-RAW ") +
+                   QString::fromStdString(db.basis.decoded_raw_contract);
+    info.location = QDir::toNativeSeparators(to_qstring(active->folder));
+    info.bundled = active->origin == assets::AssetOrigin::Bundled;
+    info.modes = static_cast<int>(db.summary.modes);
+    info.verified = static_cast<int>(db.summary.verified);
+    info.compatible_unverified = static_cast<int>(db.summary.compatible_unverified);
+    info.limited = static_cast<int>(db.summary.limited);
+    info.unsupported = static_cast<int>(db.summary.unsupported);
+    info.verified_entries_hold = active->verified_entries_hold();
+    return info;
 }
 
 ItemFlags source_flags(const app::SourceItem& source) noexcept {
@@ -396,6 +568,7 @@ ImportSummary summarize_import(const QStringList& sources, const app::ImportRepo
     ImportSummary summary;
     summary.sources = sources;
     summary.added = static_cast<int>(report.added.size());
+    summary.verified = static_cast<int>(report.verified);
     summary.limited = static_cast<int>(report.limited);
     summary.unsupported = static_cast<int>(report.unsupported);
     summary.updated = static_cast<int>(report.refreshed.size());

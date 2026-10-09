@@ -161,6 +161,8 @@ std::string_view tiff_tag_name(std::uint16_t tag) noexcept {
             return "OpcodeList3";
         case t::kNoiseProfile:
             return "NoiseProfile";
+        case t::kDefaultUserCrop:
+            return "DefaultUserCrop";
         case t::kProfileGainTableMap:
             return "ProfileGainTableMap";
         case t::kCalibrationIlluminant3:

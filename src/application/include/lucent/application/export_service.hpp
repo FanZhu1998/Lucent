@@ -145,7 +145,7 @@ struct ExportRecord {
     std::uint64_t settings_revision = 0;               // the request's tag
     engine::DevelopSettings settings;                  // rendered
     RecipeIdentity recipe;                             // their identity (see the file comment)
-    SupportStatus support = SupportStatus::Supported;  // of the item when it was exported
+    SupportStatus support = SupportStatus::CompatibleUnverified;  // of the item when it was exported
     exporter::ExportReceipt receipt;  // published path, SHA-256, dimensions, profile, encoder
     std::uint32_t name_index = 1;     // 1: no "_{n}" suffix
     std::uint32_t publication_attempts = 1;

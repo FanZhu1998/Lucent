@@ -635,6 +635,13 @@ void AppBatchService::apply_status(const std::vector<StatusResult>& results) {
             continue;
         }
         BatchSnapshot fresh = *result.snapshot;
+        // A finished batch whose jobs hold no lease runs nothing: an attempt still returning after
+        // its job was recorded (the service writes the batch's report meanwhile) is not listed, as
+        // flush() does for terminal counts. A finished batch is not read again, so a listed attempt
+        // would stay.
+        if (fresh.finished_state() && fresh.running == 0) {
+            fresh.running_jobs.clear();
+        }
         const auto found = snapshots_.find(result.id);
         if (found == snapshots_.end()) {
             // A new batch: the status is its first snapshot; its running jobs come from the events

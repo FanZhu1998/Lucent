@@ -261,6 +261,10 @@ CommandLine parse_command_line(const QStringList& arguments) {
     const QCommandLineOption dialog_option(QStringLiteral("show-export-dialog"),
                                            QStringLiteral("With --open-first, open the Export dialog before the "
                                                           "screenshot."));
+    const QCommandLineOption about_option(
+        QStringLiteral("show-about"),
+        QStringLiteral("Open the About dialog (camera support database, support "
+                       "states) before the screenshot."));
     const QCommandLineOption data_root_option(
         QStringLiteral("data-root"),
         QStringLiteral("Keep the catalog and caches in <folder> instead of "
@@ -355,14 +359,16 @@ CommandLine parse_command_line(const QStringList& arguments) {
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
-    parser.addOptions({import_option, subfolders_option, open_first_option, view_option, export_option,
-                       screenshot_option, quit_option, timeout_option, format_option, color_option,
-                       quality_option, zoom_option, measure_option, dialog_option, data_root_option, set_option,
-                       drag_option, drag_steps_option, compare_option, clipping_option, scroll_option,
-                       batch_option, to_option, preset_option, batch_dialog_option, running_option, done_option,
-                       auto_option, automatic_option, consistent_option, turn_option, straighten_option,
-                       crop_option, add_mask_option, mask_set_option, mask_exposure_option, brush_option,
-                       brush_size_option, mask_overlay_option, tool_option});
+    parser.addOptions(
+        {import_option,        subfolders_option, open_first_option, view_option,         export_option,
+         screenshot_option,    quit_option,       timeout_option,    format_option,       color_option,
+         quality_option,       zoom_option,       measure_option,    dialog_option,       data_root_option,
+         set_option,           drag_option,       drag_steps_option, compare_option,      clipping_option,
+         scroll_option,        batch_option,      to_option,         preset_option,       batch_dialog_option,
+         running_option,       done_option,       auto_option,       automatic_option,    consistent_option,
+         turn_option,          straighten_option, crop_option,       add_mask_option,     mask_set_option,
+         mask_exposure_option, brush_option,      brush_size_option, mask_overlay_option, tool_option,
+         about_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -457,6 +463,7 @@ CommandLine parse_command_line(const QStringList& arguments) {
     if (options.show_export_dialog && !options.open_first) {
         return fail(QStringLiteral("--show-export-dialog needs --open-first."));
     }
+    options.show_about = parser.isSet(about_option);
     if (parser.isSet(data_root_option)) {
         options.data_root = parser.value(data_root_option).trimmed();
         if (options.data_root.isEmpty()) {
@@ -738,6 +745,22 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
 
 void DeveloperAutomation::start() {
     clock_.start();
+    // W10 (ADR 0018): which camera support database the session uses (the packaging smoke run
+    // checks the installed one is found and verified).
+    const CameraSupportInfo support = controller_.library_service().camera_support();
+    if (support.available) {
+        report(QStringLiteral("camera support database %1 (qualified %2): %3 modes, %4 verified, from %5")
+                   .arg(support.version, support.qualified_on)
+                   .arg(support.modes)
+                   .arg(support.verified)
+                   .arg(support.location));
+    } else {
+        report(QStringLiteral("camera support database unavailable: %1")
+                   .arg(support.problem.isEmpty() ? QStringLiteral("none configured") : support.problem));
+    }
+    for (const QString& note : support.notes) {
+        report(QStringLiteral("camera support note: %1").arg(note));
+    }
     if (options_.measure) {
         report(QStringLiteral("measure: window loaded %1 ms after the process started")
                    .arg(milliseconds_since_process_start()));
@@ -1729,6 +1752,11 @@ void DeveloperAutomation::start_settling() {
     }
     if (options_.show_export_dialog) {
         if (QObject* dialog = window_.findChild<QObject*>(QStringLiteral("exportDialog")); dialog != nullptr) {
+            QMetaObject::invokeMethod(dialog, "open");
+        }
+    }
+    if (options_.show_about) {
+        if (QObject* dialog = window_.findChild<QObject*>(QStringLiteral("aboutDialog")); dialog != nullptr) {
             QMetaObject::invokeMethod(dialog, "open");
         }
     }

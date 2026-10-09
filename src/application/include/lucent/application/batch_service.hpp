@@ -157,6 +157,7 @@
 #include <vector>
 
 #include <lucent/application/batch_destination.hpp>
+#include <lucent/application/camera_support.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/application/source_item.hpp>
 #include <lucent/catalog/catalog.hpp>
@@ -167,8 +168,8 @@
 #include <lucent/core/storage.hpp>
 #include <lucent/engine/develop_settings.hpp>
 #include <lucent/export/export.hpp>
-#include <lucent/raw/decoder_registry.hpp>
 #include <lucent/raw/decoded_raw.hpp>
+#include <lucent/raw/decoder_registry.hpp>
 #include <lucent/workers/protocol.hpp>
 
 namespace lucent::app {
@@ -455,6 +456,10 @@ struct ReceiptDetails {
     bool replaced_existing = false;
     bool allow_unsupported = false;
     std::vector<std::string> review;
+    // W10 (ADR 0018): the photo's support status when it was exported and the camera support
+    // database version it was assessed with (empty: none). std::nullopt in receipts written before.
+    std::optional<SupportStatus> support;
+    std::string camera_support_version;
 };
 
 enum class ReportOutcome : std::uint8_t {
@@ -502,6 +507,9 @@ struct ReportEntry {
     std::string reason;           // user-facing English: what happened
     std::string action;           // user-facing English: what to do (empty: nothing)
     std::vector<std::string> review;  // why a review is recommended (empty: not recommended)
+    // W10 (ADR 0018): the photo's support status as the batch knew it (its receipt for exported
+    // photos; Unsupported for photos skipped as unsupported); std::nullopt when not recorded.
+    std::optional<SupportStatus> support;
     std::uint32_t attempts = 0;
     std::optional<ReceiptDetails> details;  // Exported: what the receipt records
     std::optional<AutomaticReport> automatic;  // automatic batches
@@ -608,6 +616,9 @@ struct BatchServiceOptions {
     // For folder batches (imports); without it a BatchRequest::folder is refused.
     std::shared_ptr<const raw::DecoderRegistry> registry;
     std::vector<std::filesystem::path> lucent_directories;  // never imported (folder batches)
+    // W10 (ADR 0018): the camera support database the photos a folder batch imports are assessed
+    // against (null: none).
+    CameraSupportRef camera_support;
     // Exporter temporaries ("~lucent-<hex>.tmp") older than this are removed by the leftover sweep.
     std::chrono::seconds stale_temporary_age{3600};
     std::function<catalog::Timestamp()> clock;  // empty: catalog::current_time

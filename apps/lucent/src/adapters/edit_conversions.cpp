@@ -622,41 +622,62 @@ QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboa
 
 // ---- Geometry and masks ------------------------------------------------------------------------------
 
-GeometryMap geometry_map(const EditGeometry& geometry, QSize upright_size) {
+GeometryMap geometry_map(const EditGeometry& geometry, QSize upright_size, QRect frame) {
     GeometryMap out;
+    if (upright_size.isEmpty()) {
+        return out;
+    }
     const engine::GeometrySetting setting = to_geometry_setting(geometry);
-    auto mapping = engine::GeometryMapping::create(setting, to_image_size(upright_size));
+    const image::Size upright = to_image_size(upright_size);
+    // F: the camera's image area for geometry version 2, else the whole upright image (ADR 0017).
+    const image::PixelRect f = frame.isEmpty() ? image::PixelRect::from_size(upright)
+                                               : image::PixelRect{frame.x(), frame.y(), frame.width(), frame.height()};
+    auto mapping = engine::GeometryMapping::create(setting, upright, f);
     if (!mapping) {
         return out;
     }
-    // The crop frame: the same crop and orientation without the straightening maps the
-    // straightened canvas (in U's coordinates) to the output.
+    // The crop frame: the same crop and orientation without the straightening maps the straightened
+    // canvas (normalised in F, whose origin is F's top-left corner in U) to the output.
     engine::GeometrySetting level = setting;
     level.straighten_degrees = 0.0;
-    auto straightened = engine::GeometryMapping::create(level, to_image_size(upright_size));
+    auto straightened = engine::GeometryMapping::create(level, upright, f);
     if (!straightened) {
         return out;
     }
     out.valid = true;
     out.upright_size = upright_size;
+    out.frame = QRect(f.x, f.y, f.width, f.height);
     out.output_size = QSize(mapping->output_size().width, mapping->output_size().height);
     const image::PixelRect crop = mapping->crop_pixels();
     out.crop_pixels = QRect(crop.x, crop.y, crop.width, crop.height);
     out.normalized_to_output =
         affine_of([&](double x, double y) { return mapping->output_from_normalized(engine::MaskPoint{x, y}); });
-    out.straightened_to_output =
-        affine_of([&](double x, double y) { return straightened->output_from_normalized(engine::MaskPoint{x, y}); });
+    out.straightened_to_output = affine_of([&](double x, double y) {
+        return straightened->output_from_upright(image::PointD{f.x + x * f.width, f.y + y * f.height});
+    });
     out.pixels_per_unit_length = mapping->pixels_per_unit_length();
     return out;
 }
 
-bool geometry_crop_inside(const EditGeometry& geometry, QSize upright_size) {
-    return engine::crop_inside_image(to_geometry_setting(geometry), to_image_size(upright_size));
+bool geometry_crop_inside(const EditGeometry& geometry, QSize frame_size) {
+    return engine::crop_inside_image(to_geometry_setting(geometry), to_image_size(frame_size));
 }
 
-EditCrop geometry_largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect) {
-    const engine::CropRect crop = engine::largest_inside_crop(straighten_degrees, to_image_size(upright_size), aspect);
+EditCrop geometry_largest_inside_crop(double straighten_degrees, QSize frame_size, double aspect) {
+    const engine::CropRect crop = engine::largest_inside_crop(straighten_degrees, to_image_size(frame_size), aspect);
     return EditCrop{crop.left, crop.top, crop.right, crop.bottom};
+}
+
+QRect full_geometry_frame(const engine::DevelopReport& report) {
+    if (report.full_size.empty()) {
+        return {};
+    }
+    auto mapping = engine::geometry_mapping(report.settings, report.full_size, report.full_size, report.image_area);
+    if (!mapping) {
+        return {};
+    }
+    const image::PixelRect f = mapping->frame();
+    return QRect(f.x, f.y, f.width, f.height);
 }
 
 EditGeometry geometry_turned(const EditGeometry& geometry, GeometryTurn turn) {
@@ -697,15 +718,26 @@ QList<QPolygonF> mask_outline_of(const EditMask& mask, QSize upright_size) {
 
 QImage mask_overlay_image(const engine::LocalAdjustment& adjustment, const engine::GeometrySetting& geometry,
                           image::Size upright, int max_long_edge) {
-    if (upright.empty() || max_long_edge < 1) {
+    if (upright.empty()) {
         return {};
     }
-    // The frame's own mapping: the overlay is stretched over the frame's output, so each overlay
-    // pixel's centre is mapped back through it (no crop rounding of the overlay's own).
     auto mapping = engine::GeometryMapping::create(geometry, upright);
     if (!mapping) {
         return {};
     }
+    return mask_overlay_image(adjustment, *mapping, max_long_edge);
+}
+
+QImage mask_overlay_image(const engine::LocalAdjustment& adjustment, const engine::GeometryMapping& frame,
+                          int max_long_edge) {
+    const image::Size upright = frame.upright_size();
+    if (upright.empty() || max_long_edge < 1) {
+        return {};
+    }
+    // The frame's own mapping (its frame F included, QUA-05): the overlay is stretched over the
+    // frame's output, so each overlay pixel's centre is mapped back through it (no crop rounding of
+    // the overlay's own).
+    const engine::GeometryMapping* mapping = &frame;
     const image::Size out = mapping->output_size();
     const double scale = std::min(1.0, double(max_long_edge) / double(std::max(out.width, out.height)));
     const image::Size size{std::max(1, static_cast<int>(std::lround(out.width * scale))),
@@ -813,6 +845,7 @@ std::shared_ptr<EditFrame> to_edit_frame(const app::DevelopFrame& frame, bool cl
         if (frame.report) {
             out->full_upright_size = QSize(frame.report->full_size.width, frame.report->full_size.height);
             out->geometry = to_edit_geometry(frame.report->settings.geometry);
+            out->full_frame = full_geometry_frame(*frame.report);
         }
         const double width = std::max(1, frame.image.width);
         const double height = std::max(1, frame.image.height);

@@ -38,11 +38,15 @@
 //   8. base look "neutral" v1 with white point W = gain * clip * neutral_scale (a fully clipped
 //      neutral is display white at every exposure) -> display-linear Rec.2020 / D65
 //      (display_linear_rec2020(), the exporter's input);
-//   9. geometry: straighten, crop, quarter turns and flip (DevelopReport::output_size is the
-//      result's size, DevelopReport::upright_size the size of the stage-one image).
-// Operations 2-8 work on the upright image (stage one's frame, in which masks are defined), so
-// the crop and the rotation never move a mask relative to the content; GeometryMapping
-// (develop_geometry.hpp) maps mask coordinates to output pixels for overlays.
+//   9. geometry: straighten, crop, quarter turns and flip within the geometry's frame: the
+//      camera's image area for geometry version 2 (StageOneImage::image_area, image_area.hpp; the
+//      identity geometry renders the area), the whole upright image for version 1 or when the area
+//      is unknown (DevelopReport::output_size is the result's size, DevelopReport::upright_size the
+//      size of the stage-one image).
+// Operations 2-8 work on the whole upright image (stage one's frame, in which masks are defined,
+// the camera's border pixels included), so the crop, the rotation and the geometry version never
+// move a mask relative to the content; GeometryMapping (develop_geometry.hpp, geometry_mapping()
+// below) maps mask coordinates to output pixels for overlays.
 // An operation whose settings are the identity is skipped (recorded with applied = false).
 //
 // Preview versus export (measured in develop_fixture_test.cpp and stated in the W6 report):
@@ -83,6 +87,7 @@
 #include <lucent/engine/develop_settings.hpp>
 #include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/guided_filter.hpp>
+#include <lucent/engine/image_area.hpp>
 #include <lucent/engine/local_adjustments.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/engine/sensor.hpp>
@@ -107,13 +112,15 @@ inline constexpr std::uint32_t kBoxDownscaleVersion = 1;
 // Every semantic version of the pipeline's own algorithms that a recipe does not carry (a recipe
 // carries its operation and base-look versions): the stage graph, sensor normalisation, white
 // balance, the demosaic routes, camera colour, the working space, the guided filter, the proxy
-// downscale and DNG opcode processing. Pixels persisted under a recipe identity (rendered
-// thumbnails) are keyed by these as well, so a newer engine never shows an older engine's
-// rendering. Append new versions here.
-inline constexpr std::array<std::uint32_t, 11> kDevelopEngineVersions{
-    kDevelopPipelineVersion, kSensorNormalizationVersion, kWhiteBalanceVersion, kMalvarHeCutlerVersion,
-    kXTransBaselineVersion,  kBypassVersion,              kCameraColorVersion,  kWorkingSpaceVersion,
-    kGuidedFilterVersion,    kBoxDownscaleVersion,        kDngOpcodeProcessingVersion};
+// downscale, DNG opcode processing and the placement of the camera's image area (which geometry
+// version 2 renders; ADR 0017). Pixels persisted under a recipe identity (rendered thumbnails) are
+// keyed by these as well, so a newer engine never shows an older engine's rendering. Append new
+// versions here.
+inline constexpr std::array<std::uint32_t, 12> kDevelopEngineVersions{
+    kDevelopPipelineVersion, kSensorNormalizationVersion, kWhiteBalanceVersion,
+    kMalvarHeCutlerVersion,  kXTransBaselineVersion,      kBypassVersion,
+    kCameraColorVersion,     kWorkingSpaceVersion,        kGuidedFilterVersion,
+    kBoxDownscaleVersion,    kDngOpcodeProcessingVersion, kImageAreaPlacementVersion};
 
 // How stage one balanced its samples (persisted; append only).
 enum class StageOneKind : std::uint8_t {
@@ -229,6 +236,12 @@ struct StageOneImage {
     std::vector<StageRecord> stages;                               // decode .. orientation
     // Every DNG opcode and the geometry changes it made, in stored orientation (ADR 0014).
     DngOpcodeReport dng_opcodes;
+    // The camera's image area in the full-resolution upright image (full_size), placed after the
+    // DNG opcodes and turned with the camera orientation (image_area.hpp); std::nullopt when the
+    // file declares none, or when it cannot be applied (a warning says why). Geometry version 2
+    // works within it. Code that cuts `pixels` to part of the image (not a proxy of all of it)
+    // must reset it: stage two refuses an area on an image that is not the whole frame.
+    std::optional<ImageAreaPlacement> image_area;
     std::optional<DownscaleRecord> downscale;                      // proxies only
     // Developer-facing English: everything that makes the result less than a faithful
     // interpretation (interpretation issues, baseline routes, unbalanced data, ...).
@@ -292,6 +305,12 @@ struct DevelopReport {
     std::optional<LocalToneRecord> local_tone;                // when applied
     std::optional<LocalAdjustmentsRecord> local_adjustments;  // when applied
     BaseLookRecord base_look;
+    // The geometry operation version rendered (geometry_operation_version() of the settings) and
+    // its frame F in the upright render (the camera's image area at the render scale for version 2
+    // when the stage one has one, the whole upright image otherwise).
+    std::uint32_t geometry_version = kGeometryOperationVersion;
+    image::PixelRect geometry_frame;
+    std::optional<ImageAreaPlacement> image_area;  // the stage one's (full-resolution upright pixels)
     std::optional<GeometryRecord> geometry;  // when applied
     std::vector<OperationRecord> operations;  // in execution order
     // Stage one, copied from the StageOneImage.
@@ -378,6 +397,21 @@ struct DevelopMemoryEstimate {
 [[nodiscard]] Expected<StageOneImage> make_proxy(const StageOneImage& source, std::int32_t long_edge,
                                                  const DevelopOptions& options = {},
                                                  const core::CancellationToken& cancel = {});
+
+// The geometry mapping stage two renders `settings` with on `image`: GeometryMapping::create() of
+// the settings' geometry for the image's size and the frame of their geometry version (version 2
+// and an image area: scale_area() of the area at the image's scale; otherwise the whole image).
+// Errors: InvalidArgument (engine.develop.geometry) for an invalid geometry, or an image area on an
+// image that is not the whole frame at its scale (its size is not proxy_size() of full_size).
+[[nodiscard]] Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings,
+                                                         const StageOneImage& image);
+
+// The same for an upright render of `render_size` pixels of an image whose full-resolution upright
+// size is `full_size` and whose image area (full-resolution upright pixels) is `area` (e.g. from a
+// DevelopReport: upright_size or output size, full_size and image_area).
+[[nodiscard]] Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings,
+                                                         image::Size render_size, image::Size full_size,
+                                                         const std::optional<ImageAreaPlacement>& area);
 
 // Stage two on a cached stage one (not modified; the result is a new image of its size).
 [[nodiscard]] Expected<DevelopResult> render_stage_two(const StageOneImage& stage_one,

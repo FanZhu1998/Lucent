@@ -254,6 +254,12 @@ public:
     // The records of one list (a view into report().opcodes).
     [[nodiscard]] std::vector<DngOpcodeRecord> records_of(raw::DngOpcodeListId list) const;
 
+    // The stage image of List 3 as it stands now (raw::dng_opcode_frame(), then re-based by every
+    // TrimBounds applied so far: its size and Lucent's buffer origin in it). After run_list3() (or
+    // without a List 3) this is the DNG SDK's stage-3 image, to which the DNG default crop applies
+    // (image_area.hpp).
+    [[nodiscard]] const raw::DngOpcodeFrame& stage3_frame() const noexcept { return list3_frame_; }
+
 private:
     const raw::RawMetadata* metadata_;
     DngOpcodeOptions options_;

@@ -523,8 +523,9 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
                                     summarize_render(rendered->report, source->metadata.interpretation);
                                 out->summary.estimated_peak_bytes = bytes;
                                 out->stage_two_seconds = rendered->report.stage_two_seconds;
-                                if (auto mapping =
-                                        engine::GeometryMapping::create(settings.geometry, source->pixels.size())) {
+                                // The geometry's frame: the camera's image area for geometry
+                                // version 2 (ADR 0017), the whole upright image otherwise.
+                                if (auto mapping = engine::geometry_mapping(settings, *source)) {
                                     out->masks = mask_overlays(settings, *mapping);
                                     out->geometry = std::move(*mapping);
                                 }

@@ -85,6 +85,65 @@ TEST(Presentation, SupportStatesUseTheBlueprintWording) {
     EXPECT_EQ(support_key(static_cast<SupportStatus>(200)), QStringLiteral("unknown"));
 }
 
+TEST(Presentation, EverySupportStateSaysWhatItMeans) {
+    QStringList meanings;
+    for (const SupportStatus status :
+         {SupportStatus::Verified, SupportStatus::CompatibleUnverified, SupportStatus::Limited,
+          SupportStatus::Unsupported, SupportStatus::Unknown}) {
+        const QString meaning = support_meaning(status);
+        EXPECT_FALSE(meaning.isEmpty());
+        EXPECT_FALSE(meanings.contains(meaning));
+        meanings << meaning;
+    }
+    EXPECT_TRUE(support_meaning(SupportStatus::Limited).contains(QStringLiteral("review note")));
+    EXPECT_TRUE(support_meaning(SupportStatus::Unsupported).contains(QStringLiteral("skip")));
+    // QUA-10, AST-05: the Compatible, unverified meaning also covers listed modes whose tests are not
+    // complete, and does not claim there is no test photo at all.
+    EXPECT_TRUE(support_meaning(SupportStatus::CompatibleUnverified)
+                    .contains(QStringLiteral("lacks representative quality evidence")));
+    EXPECT_FALSE(support_meaning(SupportStatus::CompatibleUnverified).contains(QStringLiteral("no test photos")));
+    // QUA-03: Verified says what its colour test compares with.
+    EXPECT_TRUE(support_meaning(SupportStatus::Verified).contains(QStringLiteral("camera calibration")));
+
+    // Help > About lists the four states best first, each with its key, label and meaning.
+    const QVariantList states = support_states();
+    ASSERT_EQ(states.size(), 4);
+    EXPECT_EQ(states[0].toMap().value(QStringLiteral("key")).toString(), QStringLiteral("verified"));
+    EXPECT_EQ(states[3].toMap().value(QStringLiteral("label")).toString(), QStringLiteral("Unsupported"));
+    EXPECT_EQ(states[2].toMap().value(QStringLiteral("meaning")).toString(),
+              support_meaning(SupportStatus::Limited));
+}
+
+TEST(Presentation, AboutSummarisesTheCameraSupportDatabase) {
+    CameraSupportInfo info;
+    info.available = true;
+    info.version = QStringLiteral("1.0.0");
+    info.qualified_on = QStringLiteral("2026-10-08");
+    info.modes = 34;
+    info.verified = 14;
+    info.compatible_unverified = 11;
+    info.limited = 6;
+    info.unsupported = 3;
+    QVariantMap map = camera_support_map(info);
+    EXPECT_TRUE(map.value(QStringLiteral("available")).toBool());
+    EXPECT_EQ(map.value(QStringLiteral("version")).toString(), QStringLiteral("1.0.0"));
+    const QString summary = map.value(QStringLiteral("summary")).toString();
+    EXPECT_TRUE(summary.contains(QStringLiteral("Version 1.0.0, qualified 2026-10-08")))
+        << summary.toStdString();
+    EXPECT_TRUE(summary.contains(QStringLiteral("14 verified")));
+    info.verified_entries_hold = false;
+    EXPECT_TRUE(camera_support_map(info)
+                    .value(QStringLiteral("summary"))
+                    .toString()
+                    .contains(QStringLiteral("another version")));
+
+    CameraSupportInfo none;
+    none.problem = QStringLiteral("The installed camera support database failed its integrity check.");
+    map = camera_support_map(none);
+    EXPECT_FALSE(map.value(QStringLiteral("available")).toBool());
+    EXPECT_EQ(map.value(QStringLiteral("summary")).toString(), none.problem);
+}
+
 TEST(Presentation, FlagsAreListedInBitOrder) {
     EXPECT_TRUE(flag_labels(0).isEmpty());
     const ItemFlags all = flag_bit(ItemFlag::ReviewRecommended) | flag_bit(ItemFlag::MissingSource) |

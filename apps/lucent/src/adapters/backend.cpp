@@ -14,6 +14,51 @@ namespace {
 
 constexpr std::string_view kLog = "ui.backend";
 
+// W10 (ADR 0018): finds and verifies the camera support database, logging what was found and
+// what was refused.
+assets::CameraSupportLoad load_camera_support(const BackendOptions& options) {
+    assets::AssetLocations locations;
+    if (options.asset_locations) {
+        locations = *options.asset_locations;
+    } else {
+        core::AppDirectories directories;
+        directories.data = options.user_data_directory;
+        locations =
+            assets::default_asset_locations(options.user_data_directory.empty() ? nullptr : &directories);
+    }
+    assets::CameraSupportLoad load;
+    auto request = assets::bundled_asset_request(assets::kCameraSupportAssetId);
+    if (request) {
+        load = assets::load_camera_support(locations, *request);
+    } else {
+        load.problem = request.error();
+    }
+    for (const assets::AssetCandidate& candidate : load.candidates) {
+        if (candidate.present && candidate.refused && candidate.origin == assets::AssetOrigin::UserDataPack) {
+            core::log_warn(kLog, "camera support data pack refused: {}", candidate.refused->describe());
+        }
+    }
+    if (load.active) {
+        const assets::SupportSummary& summary = load.active->database.summary;
+        core::log_info(kLog,
+                       "camera support database {} (qualified {}) active from {}: {} modes, {} verified, {} "
+                       "compatible unverified, {} limited, {} unsupported",
+                       load.active->version_text(), load.active->database.date,
+                       core::path_to_utf8_lossy(load.active->folder), summary.modes, summary.verified,
+                       summary.compatible_unverified, summary.limited, summary.unsupported);
+        for (const std::string& difference : load.active->basis_differences) {
+            core::log_warn(kLog,
+                           "camera support database basis differs from this build ({}); its Verified modes "
+                           "count as Compatible, unverified",
+                           difference);
+        }
+    } else {
+        core::log_error(kLog, "no camera support database is active: {}",
+                        load.problem ? load.problem->describe() : std::string("unknown reason"));
+    }
+    return load;
+}
+
 }  // namespace
 
 void OutputFolders::add(const std::filesystem::path& folder) {
@@ -113,6 +158,25 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             }
         }
 
+        // W10: the camera support database, then the stored assessments that name another one.
+        backend->camera_support_load_ = load_camera_support(options);
+        backend->camera_support_ = backend->camera_support_load_.active;
+        if (!backend->catalog_ || !backend->catalog_->is_read_only()) {
+            auto refreshed = app::refresh_support(*backend->library_, backend->camera_support_.get());
+            if (refreshed) {
+                if (refreshed->reassessed > 0 || refreshed->needs_probe > 0) {
+                    core::log_info(
+                        kLog,
+                        "support of {} library items re-assessed against the camera support database "
+                        "({} changed); {} items will be read again",
+                        refreshed->reassessed, refreshed->changed, refreshed->needs_probe);
+                }
+            } else {
+                core::log_warn(kLog, "the library's support states could not be re-assessed: {}",
+                               refreshed.error().describe());
+            }
+        }
+
         // Recipes: the catalog's revisions with the persistent library, memory otherwise.
         if (backend->catalog_) {
             auto store = app::create_catalog_recipe_store(backend->catalog_);
@@ -135,6 +199,7 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             app::BatchServiceOptions batch = options.batch;
             batch.registry = backend->registry_;
             batch.lucent_directories = backend->lucent_directories_;
+            batch.camera_support = backend->camera_support_;
             if (!batch.interactive_busy) {
                 batch.interactive_busy = [activity = &backend->interactive_] { return activity->busy(); };
             }
@@ -219,6 +284,7 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         if (backend->library_->capabilities().source_maintenance) {
             app::MaintenanceServiceOptions maintenance = options.maintenance;
             maintenance.hashing.thumbnails = backend->thumbnails_;
+            maintenance.refresh.camera_support = backend->camera_support_;
             maintenance.observer = [relay = backend->relay_](const app::MaintenanceEvent& event) {
                 const std::lock_guard lock(relay->mutex);
                 if (relay->sink) {

@@ -68,6 +68,11 @@ set(LUCENT_ENGINE_SOURCES
     src/local_adjustments.cpp
     include/lucent/engine/develop_geometry.hpp
     src/develop_geometry.cpp
+
+    # The camera's image area (W10, ADR 0017): placement, geometry version 2, the W2 camera_area
+    # stage.
+    include/lucent/engine/image_area.hpp
+    src/image_area.cpp
 )
 
 lucent_add_library(engine
@@ -110,6 +115,8 @@ set(LUCENT_ENGINE_TEST_SOURCES
     tests/local_adjustments_test.cpp
     tests/chroma_denoise_test.cpp
     tests/develop_v2_test.cpp
+    # Geometry versions and the camera's image area (ADR 0017).
+    tests/geometry_version_test.cpp
 )
 
 lucent_add_test(lucent_engine_tests

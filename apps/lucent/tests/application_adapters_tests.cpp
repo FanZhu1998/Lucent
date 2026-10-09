@@ -7,9 +7,11 @@
 // export tests use the engine itself.
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QThread>
 #include <memory>
 #include <thread>
@@ -165,8 +167,10 @@ TEST_F(ApplicationAdaptersTest, ImportListsPhotosOnTheUiThreadWithMetadataSuppor
     EXPECT_EQ(a.pixel_width, 64);
     EXPECT_EQ(a.pixel_height, 48);
     EXPECT_GT(a.file_size_bytes, 0);
-    EXPECT_EQ(a.support, SupportStatus::CompatibleUnverified);  // never Verified before W10
-    EXPECT_TRUE(a.support_detail.contains(QStringLiteral("not verified")));
+    // The synthetic camera is not in the bundled camera support database (W10, ADR 0018).
+    EXPECT_EQ(a.support, SupportStatus::CompatibleUnverified);
+    EXPECT_TRUE(a.support_detail.contains(QStringLiteral("not in Lucent's camera support database")))
+        << a.support_detail.toStdString();
     EXPECT_EQ(a.thumbnail_generation, kCameraPreviewGeneration);
     EXPECT_TRUE(a.thumbnail_is_camera_preview);
     EXPECT_EQ(a.preview_generation, 1u);
@@ -198,6 +202,36 @@ TEST_F(ApplicationAdaptersTest, ImportListsPhotosOnTheUiThreadWithMetadataSuppor
     ASSERT_EQ(failed.errors.size(), 1);
     EXPECT_TRUE(failed.errors[0].contains(QStringLiteral("missing.dng was not found")))
         << failed.errors[0].toStdString();
+}
+
+// W10 (ADR 0018): the services find and verify the bundled camera support database next to the
+// executable, and say why when there is none.
+TEST_F(ApplicationAdaptersTest, TheBundledCameraSupportDatabaseIsActive) {
+    create();
+    const CameraSupportInfo info = library_->camera_support();
+    EXPECT_TRUE(info.available) << info.problem.toStdString();
+    EXPECT_FALSE(info.version.isEmpty());
+    EXPECT_FALSE(info.qualified_on.isEmpty());
+    EXPECT_GT(info.modes, 0);
+    EXPECT_EQ(info.modes, info.verified + info.compatible_unverified + info.limited + info.unsupported);
+    EXPECT_TRUE(info.bundled);
+    EXPECT_TRUE(info.location.endsWith(QStringLiteral("assets\\camera-support")))
+        << info.location.toStdString();
+    EXPECT_TRUE(info.problem.isEmpty());
+}
+
+TEST(ApplicationAdaptersCameraSupport, AMissingDatabaseIsReportedNotReplaced) {
+    QTemporaryDir empty;
+    ASSERT_TRUE(empty.isValid());
+    adapters::BackendOptions options = testing::test_backend_options();
+    assets::AssetLocations locations;
+    locations.bundled = std::filesystem::path(QDir::toNativeSeparators(empty.path()).toStdWString());
+    options.asset_locations = locations;
+    auto services = adapters::create_application_services(options);
+    ASSERT_TRUE(services) << services.error().describe();
+    const CameraSupportInfo info = services->library->camera_support();
+    EXPECT_FALSE(info.available);
+    EXPECT_TRUE(info.problem.contains(QStringLiteral("not installed"))) << info.problem.toStdString();
 }
 
 TEST_F(ApplicationAdaptersTest, SupportedSuffixesAreTheImportRawExtensions) {

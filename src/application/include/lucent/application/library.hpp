@@ -24,6 +24,10 @@
 //     calls refresh(), which replaces the item's identity, probe and support in place (blueprint
 //     section 7: "reimport a changed source instead of using stale diagnostics").
 //   * Snapshots. items() and find() return copies consistent with one committed state.
+//   * Support assessments (W10, ADR 0018). set_support() replaces the support assessment of
+//     existing items when the camera support database changed (refresh_support() in
+//     camera_support.hpp): nothing about their files changed, so it publishes Updated, not
+//     Refreshed, and caches stay valid.
 //   * Source maintenance (W4; libraries whose capabilities() say so, the others fail with
 //     Unsupported): the content hash, the presence state and the location of a source file are
 //     facts of the FILE, so set_content_hash(), set_source_state() and relocate_source() name any
@@ -66,8 +70,9 @@ namespace lucent::app {
 
 enum class LibraryChangeKind : std::uint8_t {
     Added = 1,
-    // Mutable state of existing items changed: flags, or source facts (content hash, presence
-    // state, location after a relink, content duplicates). The pixels of the photograph did not.
+    // Mutable state of existing items changed: flags, source facts (content hash, presence
+    // state, location after a relink, content duplicates) or the support assessment against a new
+    // camera support database. The pixels of the photograph did not.
     Updated = 2,
     Removed = 3,
     // The source files of existing items changed on disk and were probed again (refresh()):
@@ -125,6 +130,12 @@ struct AddOutcome {
     ItemId id;  // the new item, or the existing item it duplicates
     bool added = false;
     DuplicateKind duplicate = DuplicateKind::None;
+};
+
+// A new support assessment of an existing item (Library::set_support).
+struct SupportUpdate {
+    ItemId id;
+    SupportAssessment support;
 };
 
 // What an implementation supports beyond the W3 contract.
@@ -226,6 +237,13 @@ public:
     // unknown; duplicate ids are removed once.
     [[nodiscard]] virtual Status remove(std::span<const ItemId> ids) = 0;
 
+    // W10 (ADR 0018). Replaces the support assessment of existing items, all or nothing (a
+    // persistent library stores them in one transaction); identity, probe, flags and source facts
+    // stay. Publishes one Updated change listing the items (revision + 1 each); nothing when
+    // `updates` is empty. NotFound ("app.library.support", nothing changed) when an id is unknown;
+    // the store's errors otherwise (a read-only catalog: VersionMismatch). Default: Unsupported.
+    [[nodiscard]] virtual Status set_support(std::span<const SupportUpdate> updates);
+
     // Registers an observer (see the file comment). A null observer yields an inactive
     // Subscription.
     [[nodiscard]] virtual Subscription subscribe(LibraryObserver observer) = 0;
@@ -299,6 +317,7 @@ public:
     [[nodiscard]] Status set_flags(ItemId id, const ItemFlags& flags) override;
     [[nodiscard]] Status refresh(const SourceItem& fresh) override;
     [[nodiscard]] Status remove(std::span<const ItemId> ids) override;
+    [[nodiscard]] Status set_support(std::span<const SupportUpdate> updates) override;
     [[nodiscard]] Subscription subscribe(LibraryObserver observer) override;
 
 private:

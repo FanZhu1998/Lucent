@@ -97,8 +97,20 @@ Affine output_to_upright_affine(const GeometryMapping& m) noexcept {
 // ---- GeometryMapping ------------------------------------------------------------------------------
 
 Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometry, image::Size upright_size) {
+    return create(geometry, upright_size, image::PixelRect::from_size(upright_size));
+}
+
+Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometry, image::Size upright_size,
+                                                  const image::PixelRect& frame) {
     if (upright_size.empty()) {
         return fail(ErrorCode::InvalidArgument, "the geometry needs a non-empty upright image size", kWhere);
+    }
+    if (!image::PixelRect::from_size(upright_size).contains(frame)) {
+        return fail(
+            ErrorCode::InvalidArgument,
+            std::format("the geometry's frame {}x{}+{}+{} is not inside the {} x {} upright image",
+                        frame.width, frame.height, frame.x, frame.y, upright_size.width, upright_size.height),
+            kWhere);
     }
     const CropRect& c = geometry.crop;
     if (!std::isfinite(geometry.straighten_degrees) || std::abs(geometry.straighten_degrees) > kMaxStraightenDegrees ||
@@ -113,6 +125,8 @@ Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometr
     GeometryMapping m;
     m.setting_ = geometry;
     m.upright_ = upright_size;
+    m.frame_ = frame;
+    const image::Size frame_size = frame.size();
     const double radians = geometry.straighten_degrees * std::numbers::pi / 180.0;
     m.cos_ = std::cos(radians);
     m.sin_ = std::sin(radians);
@@ -120,20 +134,20 @@ Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometr
     std::int32_t w = 0;
     std::int32_t y0 = 0;
     std::int32_t h = 0;
-    crop_span(c.left, c.right, upright_size.width, false, x0, w);
-    crop_span(c.top, c.bottom, upright_size.height, false, y0, h);
+    crop_span(c.left, c.right, frame_size.width, false, x0, w);
+    crop_span(c.top, c.bottom, frame_size.height, false, y0, h);
     // A straightened crop on the image's edge keeps every output pixel covered: when rounding to the
     // nearest pixels moves an edge beyond the image and rounding inward does not, the crop rounds
     // inward (also at a proxy, whose aspect ratio differs from the full image's by the rounding of
     // its sides, so a crop inside the full image may reach a fraction of a pixel beyond it).
-    if (geometry.straighten_degrees != 0.0 && !covers(upright_size, m.cos_, m.sin_, x0, y0, x0 + w, y0 + h)) {
+    if (geometry.straighten_degrees != 0.0 && !covers(frame_size, m.cos_, m.sin_, x0, y0, x0 + w, y0 + h)) {
         std::int32_t ix = 0;
         std::int32_t iw = 0;
         std::int32_t iy = 0;
         std::int32_t ih = 0;
-        crop_span(c.left, c.right, upright_size.width, true, ix, iw);
-        crop_span(c.top, c.bottom, upright_size.height, true, iy, ih);
-        if (covers(upright_size, m.cos_, m.sin_, ix, iy, ix + iw, iy + ih)) {
+        crop_span(c.left, c.right, frame_size.width, true, ix, iw);
+        crop_span(c.top, c.bottom, frame_size.height, true, iy, ih);
+        if (covers(frame_size, m.cos_, m.sin_, ix, iy, ix + iw, iy + ih)) {
             x0 = ix;
             w = iw;
             y0 = iy;
@@ -144,8 +158,15 @@ Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometr
     m.orientation_ = user_orientation(geometry);
     m.output_ = image::oriented_size(image::Size{w, h}, m.orientation_);
     std::uint64_t r = geometry_revision(geometry);
-    for (const std::int32_t v : {upright_size.width, upright_size.height}) {
+    const auto mix = [&r](std::int32_t v) {
         r ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(v)) + 0x9e3779b97f4a7c15ull + (r << 6) + (r >> 2);
+    };
+    mix(upright_size.width);
+    mix(upright_size.height);
+    if (frame != image::PixelRect::from_size(upright_size)) {
+        for (const std::int32_t v : {frame.x, frame.y, frame.width, frame.height}) {
+            mix(v);
+        }
     }
     m.revision_ = r;
     return m;
@@ -153,28 +174,30 @@ Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometr
 
 bool GeometryMapping::identity() const noexcept {
     return setting_.straighten_degrees == 0.0 && orientation_ == image::Orientation::Normal &&
-           crop_ == image::PixelRect::from_size(upright_);
+           frame_ == image::PixelRect::from_size(upright_) && crop_ == image::PixelRect::from_size(upright_);
 }
 
 double GeometryMapping::pixels_per_unit_length() const noexcept { return static_cast<double>(long_edge(upright_)); }
 
+// With F = U (frame_ at the origin) every expression below is exactly version 1's: adding and
+// subtracting the frame's zero origin changes no bit.
 image::PointD GeometryMapping::output_from_upright(image::PointD p) const noexcept {
-    const double cx = 0.5 * upright_.width;
-    const double cy = 0.5 * upright_.height;
-    const double dx = p.x - cx;
-    const double dy = p.y - cy;
-    const image::PointD s{cx + cos_ * dx + sin_ * dy, cy - sin_ * dx + cos_ * dy};
+    const double hx = 0.5 * frame_.width;  // F's centre in S
+    const double hy = 0.5 * frame_.height;
+    const double dx = p.x - (frame_.x + hx);
+    const double dy = p.y - (frame_.y + hy);
+    const image::PointD s{hx + cos_ * dx + sin_ * dy, hy - sin_ * dx + cos_ * dy};
     const image::PointD q{s.x - crop_.x, s.y - crop_.y};
     return image::map_to_oriented(q, crop_.size(), orientation_);
 }
 
 image::PointD GeometryMapping::upright_from_output(image::PointD o) const noexcept {
     const image::PointD q = image::map_from_oriented(o, crop_.size(), orientation_);
-    const double cx = 0.5 * upright_.width;
-    const double cy = 0.5 * upright_.height;
-    const double dx = q.x + crop_.x - cx;
-    const double dy = q.y + crop_.y - cy;
-    return image::PointD{cx + cos_ * dx - sin_ * dy, cy + sin_ * dx + cos_ * dy};
+    const double hx = 0.5 * frame_.width;
+    const double hy = 0.5 * frame_.height;
+    const double dx = q.x + crop_.x - hx;
+    const double dy = q.y + crop_.y - hy;
+    return image::PointD{(frame_.x + hx) + cos_ * dx - sin_ * dy, (frame_.y + hy) + sin_ * dx + cos_ * dy};
 }
 
 image::PointD GeometryMapping::output_from_normalized(MaskPoint p) const noexcept {
@@ -237,6 +260,7 @@ Expected<GeometryRecord> apply_geometry(ColorImage& image, const GeometryMapping
     }
     GeometryRecord record;
     record.straighten_degrees = mapping.setting().straighten_degrees;
+    record.frame = mapping.frame();
     record.crop = mapping.crop_pixels();
     record.orientation = mapping.orientation();
     record.input_size = image.pixels.size();
@@ -256,6 +280,11 @@ Expected<GeometryRecord> apply_geometry(ColorImage& image, const GeometryMapping
     const Affine a = output_to_upright_affine(mapping);
     const std::int32_t width = src.width();
     const std::int32_t height = src.height();
+    // F's edges (U's for version 1): coverage is measured against them.
+    const double fx0 = mapping.frame().x;
+    const double fy0 = mapping.frame().y;
+    const double fx1 = fx0 + mapping.frame().width;
+    const double fy1 = fy0 + mapping.frame().height;
     std::vector<std::uint64_t> uncovered;
     try {
         uncovered.assign(static_cast<std::size_t>(out_size.height), 0);
@@ -291,8 +320,8 @@ Expected<GeometryRecord> apply_geometry(ColorImage& image, const GeometryMapping
                 const double oy = y + 0.5;
                 const double px = a.origin.x + ox * a.dx.x + oy * a.dy.x;
                 const double py = a.origin.y + ox * a.dx.y + oy * a.dy.y;
-                // Coverage: the signed distance of the sample point to the image's edge.
-                const double d = std::min(std::min(px, width - px), std::min(py, height - py));
+                // Coverage: the signed distance of the sample point to the frame's edge.
+                const double d = std::min(std::min(px - fx0, fx1 - px), std::min(py - fy0, fy1 - py));
                 const double coverage = d >= 0.5 - kCoverageSlack ? 1.0 : std::clamp(0.5 + d, 0.0, 1.0);
                 if (coverage < 1.0) {
                     ++partial;

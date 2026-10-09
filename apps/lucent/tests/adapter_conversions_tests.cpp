@@ -17,15 +17,161 @@ namespace {
 
 namespace rts = lucent::raw::test_support;
 
-TEST(AdapterConversions, SupportStatusIsNeverVerified) {
-    EXPECT_EQ(to_ui_support(app::SupportStatus::Supported), SupportStatus::CompatibleUnverified);
+TEST(AdapterConversions, TheFourSupportStatesMapOneToOne) {
+    EXPECT_EQ(to_ui_support(app::SupportStatus::Verified), SupportStatus::Verified);
+    EXPECT_EQ(to_ui_support(app::SupportStatus::CompatibleUnverified), SupportStatus::CompatibleUnverified);
     EXPECT_EQ(to_ui_support(app::SupportStatus::Limited), SupportStatus::Limited);
     EXPECT_EQ(to_ui_support(app::SupportStatus::Unsupported), SupportStatus::Unsupported);
 }
 
+// An evaluation against camera support database 1.0.0 (ADR 0018).
+app::CameraSupportEvaluation evaluation(std::optional<app::SupportStatus> listed, bool basis_matches = true) {
+    app::CameraSupportEvaluation camera;
+    camera.mode_key =
+        "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1";
+    camera.database_id = "camera-support";
+    camera.database_version = "1.0.0";
+    camera.qualified_on = "2026-10-08";
+    camera.basis_matches = basis_matches;
+    camera.listed = listed;
+    if (listed) {
+        camera.camera = "Sony A7 IV";
+        camera.mode = "ARW uncompressed";
+    }
+    return camera;
+}
+
+TEST(AdapterConversions, SupportDetailSaysHowLucentKnows) {
+    app::SupportAssessment verified;
+    verified.status = app::SupportStatus::Verified;
+    verified.camera = evaluation(app::SupportStatus::Verified);
+    const QString v = support_detail(verified);
+    EXPECT_TRUE(v.contains(QStringLiteral("Sony A7 IV, ARW uncompressed"))) << v.toStdString();
+    EXPECT_TRUE(v.contains(QStringLiteral("1.0.0")));
+    EXPECT_TRUE(v.contains(QStringLiteral("2026-10-08")));
+
+    app::SupportAssessment unknown;
+    unknown.status = app::SupportStatus::CompatibleUnverified;
+    unknown.camera = evaluation(std::nullopt);
+    EXPECT_TRUE(
+        support_detail(unknown).contains(QStringLiteral("not in Lucent's camera support database 1.0.0")));
+
+    app::SupportAssessment stale;
+    stale.status = app::SupportStatus::CompatibleUnverified;
+    stale.camera = evaluation(app::SupportStatus::Verified, false);
+    EXPECT_TRUE(support_detail(stale).contains(QStringLiteral("another version")));
+
+    app::SupportAssessment listed;
+    listed.status = app::SupportStatus::CompatibleUnverified;
+    listed.camera = evaluation(app::SupportStatus::CompatibleUnverified);
+    EXPECT_TRUE(support_detail(listed).contains(QStringLiteral("not complete")));
+
+    app::SupportAssessment no_database;
+    no_database.status = app::SupportStatus::CompatibleUnverified;
+    no_database.camera = app::CameraSupportEvaluation{};
+    EXPECT_TRUE(support_detail(no_database).contains(QStringLiteral("not available")));
+}
+
+TEST(AdapterConversions, LimitationsAreNamedInTheirOwnWords) {
+    app::SupportAssessment limited;
+    limited.status = app::SupportStatus::Limited;
+    limited.interpretation = raw::InterpretationStatus::Complete;
+    limited.camera = evaluation(app::SupportStatus::Limited);
+    app::SupportReason xtrans;
+    xtrans.kind = app::SupportReasonKind::CameraLimitation;
+    xtrans.limitation = "xtrans_baseline_demosaic";
+    xtrans.message = "X-Trans demosaicing is baseline quality: ...";
+    limited.reasons = {xtrans};
+    EXPECT_EQ(support_detail(limited), describe_limitation(QStringLiteral("xtrans_baseline_demosaic")));
+    EXPECT_TRUE(support_detail(limited).contains(QStringLiteral("baseline demosaicing")));
+
+    // A code of a later database: its own English words.
+    EXPECT_EQ(describe_limitation(QStringLiteral("new_code"), QStringLiteral("Words from the database.")),
+              QStringLiteral("Words from the database."));
+    EXPECT_FALSE(describe_limitation(QStringLiteral("new_code")).isEmpty());
+    QStringList sentences;
+    for (const char* code :
+         {"default_crop_not_applied", "xtrans_baseline_demosaic", "dual_pixel_not_processed",
+          "dng_enhanced_image_not_offered", "optional_operations_skipped", "non_square_pixels",
+          "pixel_shift_not_combined"}) {
+        const QString sentence = describe_limitation(QString::fromLatin1(code));
+        EXPECT_FALSE(sentences.contains(sentence)) << code;
+        sentences << sentence;
+    }
+
+    app::SupportAssessment unsupported;
+    unsupported.status = app::SupportStatus::Unsupported;
+    unsupported.interpretation = raw::InterpretationStatus::Complete;
+    app::SupportReason failed;
+    failed.kind = app::SupportReasonKind::CameraUnsupported;
+    unsupported.reasons = {failed};
+    EXPECT_TRUE(support_detail(unsupported).contains(QStringLiteral("cannot be developed faithfully")));
+    EXPECT_FALSE(support_detail(unsupported).contains(QStringLiteral("yet"))) << "AST-05: no promise of a fix";
+
+    // AST-03: an engine limitation reads like the database's limitation of the same code.
+    app::SupportAssessment engine_limited;
+    engine_limited.status = app::SupportStatus::Limited;
+    engine_limited.interpretation = raw::InterpretationStatus::Complete;
+    app::SupportReason engine;
+    engine.kind = app::SupportReasonKind::EngineLimitation;
+    engine.limitation = "xtrans_baseline_demosaic";
+    engine_limited.reasons = {engine};
+    EXPECT_EQ(support_detail(engine_limited), describe_limitation(QStringLiteral("xtrans_baseline_demosaic")));
+
+    // AST-05: a multi-view source says what to do first.
+    EXPECT_TRUE(describe_issue(raw::InterpretationIssueKind::MultiViewSource).contains(QStringLiteral("Stitch")));
+}
+
+TEST(AdapterConversions, AboutDescribesTheCameraSupportDatabase) {
+    auto support = std::make_shared<assets::CameraSupport>();
+    support->asset_id = "camera-support";
+    support->version = *core::SemanticVersion::parse("1.0.0");
+    support->folder = LR"(C:\Program Files\Lucent\assets\camera-support)";
+    support->database.date = "2026-10-08";
+    support->database.basis.decoder = "LibRaw 0.22.2-Release";
+    support->database.basis.decoded_raw_contract = "1.4";
+    support->database.summary = {34, 14, 11, 6, 3};
+    assets::CameraSupportLoad load;
+    assets::AssetCandidate pack;
+    pack.origin = assets::AssetOrigin::UserDataPack;
+    pack.folder = LR"(C:\Users\Ann\AppData\Local\Lucent\data\assets\camera-support)";
+    pack.present = true;
+    pack.refused = Error{ErrorCode::Unsupported, "unsigned", "assets.load.unsigned", 0};
+    load.candidates = {pack};
+    const CameraSupportInfo info = to_camera_support_info(support, load);
+    EXPECT_TRUE(info.available);
+    EXPECT_EQ(info.version, QStringLiteral("1.0.0"));
+    EXPECT_EQ(info.qualified_on, QStringLiteral("2026-10-08"));
+    EXPECT_EQ(info.modes, 34);
+    EXPECT_EQ(info.verified, 14);
+    EXPECT_EQ(info.unsupported, 3);
+    EXPECT_TRUE(info.decoder.contains(QStringLiteral("LibRaw 0.22.2-Release")));
+    EXPECT_TRUE(info.verified_entries_hold);
+    ASSERT_EQ(info.notes.size(), 1);
+    EXPECT_TRUE(info.notes.front().contains(QStringLiteral("was not used")));
+
+    assets::CameraSupportLoad failed;
+    failed.problem = Error{ErrorCode::Corrupt, "hash", "assets.load.hash", 0};
+    const CameraSupportInfo none = to_camera_support_info(nullptr, failed);
+    EXPECT_FALSE(none.available);
+    EXPECT_TRUE(none.problem.contains(QStringLiteral("integrity check")));
+    // AST-04: About names the step that refused it.
+    ASSERT_EQ(none.notes.size(), 1);
+    EXPECT_TRUE(none.notes.front().contains(QStringLiteral("assets.load.hash"))) << none.notes.front().toStdString();
+    failed.problem = Error{ErrorCode::VersionMismatch, "newer", "assets.load.app_version", 0};
+    EXPECT_TRUE(to_camera_support_info(nullptr, failed).problem.contains(QStringLiteral("newer version")));
+    // AST-04: a file Lucent may not read is not reported as tampered with.
+    for (const ErrorCode code : {ErrorCode::PermissionDenied, ErrorCode::IoError, ErrorCode::SourceChanged}) {
+        failed.problem = Error{code, "cannot read", "core.file", 5};
+        const CameraSupportInfo unreadable = to_camera_support_info(nullptr, failed);
+        EXPECT_TRUE(unreadable.problem.contains(QStringLiteral("could not be read"))) << to_string(code);
+        EXPECT_FALSE(unreadable.problem.contains(QStringLiteral("integrity"))) << to_string(code);
+    }
+}
+
 TEST(AdapterConversions, SupportDetailExplainsEveryDistinctReason) {
     app::SupportAssessment supported;
-    supported.status = app::SupportStatus::Supported;
+    supported.status = app::SupportStatus::CompatibleUnverified;
     EXPECT_TRUE(support_detail(supported).contains(QStringLiteral("not verified")));
 
     app::SupportAssessment limited;
@@ -122,7 +268,7 @@ TEST(AdapterConversions, LibraryItemsCarryTheProbeFactsAndStartWithTheCameraPrev
     probe.focal_length_mm = 35.0f;
     probe.upright_size = image::Size{5464, 8192};
     source.probe = probe;
-    source.support.status = app::SupportStatus::Supported;
+    source.support.status = app::SupportStatus::CompatibleUnverified;
 
     const LibraryItem item = to_library_item(source);
     EXPECT_EQ(item.id, 7u);
@@ -312,6 +458,7 @@ TEST(AdapterConversions, ExportOptionsMapToTheExporterSettings) {
 TEST(AdapterConversions, ImportSummariesCountAndExplainSkippedPaths) {
     app::ImportReport report;
     report.added = {app::ItemId{1}, app::ItemId{2}};
+    report.verified = 1;
     report.unsupported = 1;
     report.ignored_non_raw = 3;
     report.cancelled = true;
@@ -330,6 +477,7 @@ TEST(AdapterConversions, ImportSummariesCountAndExplainSkippedPaths) {
     const ImportSummary summary = summarize_import({QStringLiteral("C:/")}, report);
     EXPECT_EQ(summary.added, 2);
     EXPECT_EQ(summary.unsupported, 1);
+    EXPECT_EQ(summary.verified, 1);
     EXPECT_EQ(summary.already_in_library, 1);
     EXPECT_EQ(summary.updated, 1);
     EXPECT_EQ(summary.restored, 2);

@@ -7,9 +7,10 @@
 //     recipes (version 1, upgraded, and version 2 with masks, geometry and chroma denoising), the
 //     develop pipeline by default with its recipe identity and every operation record in the result
 //     and report,
-//     the W2 path (--legacy-neutral-v0) with report and dump, output directories beyond MAX_PATH,
-//     and no-clobber on a second run (the render cases skip when dji-fc4382-dng, the smallest
-//     smoke fixture, is not downloaded).
+//     the W2 path (--legacy-neutral-v0) with report and dump, the camera's image area and
+//     --no-camera-crop (ADR 0017), output directories beyond MAX_PATH, and no-clobber on a second
+//     run (the render cases skip when dji-fc4382-dng, the smallest smoke fixture, is not
+//     downloaded).
 
 #include <algorithm>
 #include <array>
@@ -497,15 +498,29 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
         EXPECT_EQ(render["operations"][i]["operation"], operations[i]);
     }
     EXPECT_FALSE(render["operations"][5]["applied"].get<bool>());  // no highlights/shadows as shot
-    for (const std::size_t i : {std::size_t{4}, std::size_t{6}, std::size_t{11}}) {
+    for (const std::size_t i : {std::size_t{4}, std::size_t{6}}) {
         EXPECT_FALSE(render["operations"][i]["applied"].get<bool>()) << operations[i];
     }
-    // As shot, the version-2 records are null and the output is the upright image.
+    // As shot, the denoising and mask records are null; the geometry (version 2) renders the
+    // camera's image area, the DNG's DefaultCrop 4 pixels inside each side of the 4032 x 3024 image
+    // (ADR 0017).
     EXPECT_TRUE(render["chroma_denoise"].is_null());
     EXPECT_TRUE(render["local_adjustments"].is_null());
-    EXPECT_TRUE(render["geometry"].is_null());
     EXPECT_EQ(render["upright_size"], render["full_size"]);
-    EXPECT_EQ(render["output_size"], render["upright_size"]);
+    EXPECT_EQ(render["upright_size"], (Json{{"width", 4032}, {"height", 3024}}));
+    EXPECT_EQ(render["geometry_version"], 2);
+    EXPECT_EQ(render["image_area"]["source"], "dng_default_crop");
+    EXPECT_EQ(render["image_area"]["provenance"], "dng_tag");
+    const Json area_rect = {{"x", 4}, {"y", 4}, {"width", 4024}, {"height", 3016}};
+    EXPECT_EQ(render["image_area"]["rect"], area_rect);
+    EXPECT_EQ(render["geometry_frame"], area_rect);
+    EXPECT_TRUE(render["operations"][11]["applied"].get<bool>());
+    ASSERT_FALSE(render["geometry"].is_null());
+    EXPECT_EQ(render["geometry"]["version"], 2);
+    EXPECT_EQ(render["geometry"]["frame"], area_rect);
+    EXPECT_EQ(render["output_size"], (Json{{"width", 4024}, {"height", 3016}}));
+    EXPECT_EQ(result["width"], 4024);
+    EXPECT_EQ(result["height"], 3016);
     EXPECT_EQ(render["color"]["path"], "dng_color_matrix");
     EXPECT_FALSE(report["metadata"].is_null());
 
@@ -531,7 +546,22 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     EXPECT_TRUE(edit_report["render"]["operations"][5]["applied"].get<bool>());
     EXPECT_FALSE(edit_report["render"]["white_balance"]["target_temperature"].is_null());
 
-    // The same recipe as a version-1 document reads as its upgrade: same identity, same pixels.
+    // The same recipe as a version-1 document reads as its upgrade, which keeps rendering the whole
+    // visible area (geometry version 1, ADR 0017): the identity and pixels of the version-2
+    // document with geometry version 1, not those of the version-2 recipe above.
+    engine::DevelopSettings edited_g1 = edited;
+    edited_g1.operations.geometry = engine::kOldestGeometryOperationVersion;
+    const auto document_g1 = app::write_recipe(edited_g1);
+    ASSERT_TRUE(document_g1);
+    const std::filesystem::path settings_g1 = dir / L"edit-g1.json";
+    write_text(settings_g1, document_g1->json);
+    const RunResult developed_g1 =
+        run_tool({input->wstring(), L"--out", (dir / L"g1").wstring(), L"--develop", settings_g1.wstring()});
+    ASSERT_EQ(developed_g1.exit_code, 0u) << developed_g1.out;
+    const Json g1_result = last_line(developed_g1.out);
+    EXPECT_EQ(g1_result["settings_sha256"], core::to_hex(document_g1->sha256));
+    EXPECT_EQ(g1_result["width"], 4032);  // the whole visible area
+    EXPECT_NE(g1_result["sha256"], edit_result["sha256"]);
     Json version1 = Json::parse(document->json);
     version1["version"] = 1;
     version1.erase("chroma_denoise");
@@ -546,12 +576,14 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
         run_tool({input->wstring(), L"--out", (dir / L"v1").wstring(), L"--develop", settings_v1.wstring(),
                   L"--report", (dir / L"v1-report.json").wstring()});
     ASSERT_EQ(developed_v1.exit_code, 0u) << developed_v1.out;
-    EXPECT_EQ(last_line(developed_v1.out)["settings_sha256"], edit_result["settings_sha256"]);
-    EXPECT_EQ(last_line(developed_v1.out)["sha256"], edit_result["sha256"]);
+    EXPECT_EQ(last_line(developed_v1.out)["settings_sha256"], g1_result["settings_sha256"]);
+    EXPECT_EQ(last_line(developed_v1.out)["sha256"], g1_result["sha256"]);
     const Json v1_report = read_json(dir / L"v1-report.json");
     EXPECT_EQ(v1_report["recipe"]["file_version"], 1);
     EXPECT_EQ(v1_report["recipe"]["version"], app::kRecipeSchemaVersion);
-    EXPECT_EQ(v1_report["recipe"]["document"], Json::parse(document->json));
+    EXPECT_EQ(v1_report["recipe"]["document"], Json::parse(document_g1->json));
+    EXPECT_EQ(v1_report["render"]["geometry_version"], 1);
+    EXPECT_TRUE(v1_report["render"]["geometry"].is_null());  // the identity of version 1
 
     // Renders are deterministic: the same recipe gives the same file.
     const RunResult again =
@@ -621,11 +653,17 @@ TEST(LucentRender, MasksGeometryAndDenoisingAreRenderedAndReported) {
         }
         EXPECT_TRUE(applied) << operation;
     }
-    // The output: the upright image cropped and turned, and the export has its size.
+    // The output: the camera's image area (geometry version 2, the DNG's DefaultCrop) cropped and
+    // turned, and the export has its size.
     const image::Size upright{render["upright_size"]["width"].get<std::int32_t>(),
                               render["upright_size"]["height"].get<std::int32_t>()};
     EXPECT_EQ(render["upright_size"], render["full_size"]);
-    auto mapping = engine::GeometryMapping::create(settings.geometry, upright);
+    const Json& f = render["geometry_frame"];
+    const image::PixelRect frame{f["x"].get<std::int32_t>(), f["y"].get<std::int32_t>(),
+                                 f["width"].get<std::int32_t>(), f["height"].get<std::int32_t>()};
+    EXPECT_EQ(frame, (image::PixelRect{4, 4, 4024, 3016}));
+    EXPECT_EQ(render["geometry"]["frame"], f);
+    auto mapping = engine::GeometryMapping::create(settings.geometry, upright, frame);
     ASSERT_TRUE(mapping);
     EXPECT_EQ(render["output_size"]["width"], mapping->output_size().width);
     EXPECT_EQ(render["output_size"]["height"], mapping->output_size().height);
@@ -672,17 +710,22 @@ TEST(LucentRender, RendersExportsReportsAndNeverOverwrites) {
     EXPECT_TRUE(report["recipe"].is_null());
     EXPECT_EQ(report["status"], "ok");
     EXPECT_EQ(report["export"]["sha256"], result["sha256"]);
-    // dji-fc4382-dng carries an OpcodeList3 WarpRectilinear, applied after demosaicing (ADR 0014).
+    // dji-fc4382-dng carries an OpcodeList3 WarpRectilinear, applied after demosaicing (ADR 0014),
+    // and a DefaultCrop 4 pixels inside each side, cut right after it (ADR 0017).
     const std::vector<std::string> expected = {
-        "decode",       "normalize",     "white_balance",     "demosaic",   "dng_opcode_list3",
-        "camera_color", "working_space", "display_rendering", "orientation"};
+        "decode",      "normalize",    "white_balance", "demosaic",          "dng_opcode_list3",
+        "camera_area", "camera_color", "working_space", "display_rendering", "orientation"};
     ASSERT_EQ(report["render"]["stages"].size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(report["render"]["stages"][i]["stage"], expected[i]);
     }
     EXPECT_EQ(report["render"]["stages"][4]["parameters"]["applied"], "WarpRectilinear");
+    EXPECT_EQ(report["render"]["stages"][5]["parameters"]["source"], "dng_default_crop");
+    EXPECT_TRUE(report["render"]["camera_area_applied"].get<bool>());
+    EXPECT_TRUE(report["render"]["settings"]["apply_camera_area"].get<bool>());
+    EXPECT_EQ(report["render"]["output_size"], (Json{{"width", 4024}, {"height", 3016}}));
     EXPECT_EQ(report["render"]["color"]["path"], "dng_color_matrix");
-    EXPECT_TRUE(report["render"]["stages"][7]["provisional"].get<bool>());
+    EXPECT_TRUE(report["render"]["stages"][8]["provisional"].get<bool>());
     EXPECT_GT(report["process"]["peak_working_set_bytes"].get<std::uint64_t>(), 0u);
 
     auto dump = render_tool::read_float_tiff(dump_path);
@@ -747,6 +790,76 @@ TEST(LucentRender, NoDngOpcodesRecordsTheOpcodesAsDisabled) {
         }
     }
     EXPECT_TRUE(found);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// --no-camera-crop: the decoder's whole visible area, for comparisons with decoders that render it
+// (render_reference.py, ADR 0017). The W2 path records the area as not applied; the develop
+// pipeline renders the settings with geometry version 1 (the recipe identity says so), refusing a
+// version-2 crop or straighten angle, which is relative to the camera's area.
+TEST(LucentRender, NoCameraCropRendersTheWholeVisibleArea) {
+    const std::optional<std::filesystem::path> fixture = small_fixture();
+    if (!fixture) {
+        GTEST_SKIP() << "fixture 'dji-fc4382-dng' is not downloaded; run tools\\fetch-fixtures.ps1";
+    }
+    const std::filesystem::path dir = scratch_dir("no-camera-crop");
+    // W2 path.
+    const RunResult w2 =
+        run_tool({fixture->wstring(), L"--out", (dir / L"w2").wstring(), L"--legacy-neutral-v0",
+                  L"--no-dng-opcodes", L"--no-camera-crop", L"--report", (dir / L"w2.json").wstring()});
+    ASSERT_EQ(w2.exit_code, 0u) << w2.out;
+    EXPECT_EQ(last_line(w2.out)["width"], 4032);
+    EXPECT_EQ(last_line(w2.out)["height"], 3024);
+    const Json w2_report = read_json(dir / L"w2.json");
+    EXPECT_FALSE(w2_report["render"]["settings"]["apply_camera_area"].get<bool>());
+    EXPECT_FALSE(w2_report["render"]["camera_area_applied"].get<bool>());
+    EXPECT_EQ(w2_report["render"]["image_area"]["source"], "dng_default_crop");
+    for (const Json& stage : w2_report["render"]["stages"]) {
+        EXPECT_NE(stage["stage"], "camera_area");
+    }
+    bool warned = false;
+    for (const Json& w : w2_report["render"]["warnings"]) {
+        warned = warned || w.get<std::string>().find("is not applied (settings)") != std::string::npos;
+    }
+    EXPECT_TRUE(warned);
+
+    // Develop pipeline: as-shot settings render with geometry version 1, the identity W9 wrote.
+    const RunResult whole = run_tool({fixture->wstring(), L"--out", (dir / L"whole").wstring(),
+                                      L"--no-camera-crop", L"--report", (dir / L"whole.json").wstring()});
+    ASSERT_EQ(whole.exit_code, 0u) << whole.out;
+    engine::DevelopSettings g1;
+    g1.operations.geometry = engine::kOldestGeometryOperationVersion;
+    const auto g1_document = app::write_recipe(g1);
+    ASSERT_TRUE(g1_document);
+    EXPECT_EQ(last_line(whole.out)["settings_sha256"], core::to_hex(g1_document->sha256));
+    EXPECT_EQ(last_line(whole.out)["width"], 4032);
+    EXPECT_EQ(last_line(whole.out)["height"], 3024);
+    EXPECT_EQ(read_json(dir / L"whole.json")["render"]["geometry_version"], 1);
+
+    // A version-2 crop is refused; a quarter turn alone does not depend on the frame.
+    engine::DevelopSettings cropped;
+    cropped.geometry.crop = engine::CropRect{0.1, 0.1, 0.9, 0.9};
+    const auto cropped_document = app::write_recipe(cropped);
+    ASSERT_TRUE(cropped_document);
+    write_text(dir / L"cropped.json", cropped_document->json);
+    const RunResult refused =
+        run_tool({fixture->wstring(), L"--out", (dir / L"cropped").wstring(), L"--develop",
+                  (dir / L"cropped.json").wstring(), L"--no-camera-crop"});
+    EXPECT_EQ(refused.exit_code, 1u) << refused.out;
+    EXPECT_NE(last_line(refused.out)["error"]["message"].get<std::string>().find("--no-camera-crop"),
+              std::string::npos);
+    engine::DevelopSettings turned;
+    turned.geometry.quarter_turns = 1;
+    const auto turned_document = app::write_recipe(turned);
+    ASSERT_TRUE(turned_document);
+    write_text(dir / L"turned.json", turned_document->json);
+    const RunResult turned_run =
+        run_tool({fixture->wstring(), L"--out", (dir / L"turned").wstring(), L"--develop",
+                  (dir / L"turned.json").wstring(), L"--no-camera-crop"});
+    ASSERT_EQ(turned_run.exit_code, 0u) << turned_run.out;
+    EXPECT_EQ(last_line(turned_run.out)["width"], 3024);
+    EXPECT_EQ(last_line(turned_run.out)["height"], 4032);
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }

@@ -14,6 +14,8 @@
 #include <gtest/gtest.h>
 
 #include <lucent/application/batch_service.hpp>
+#include <lucent/engine/image_area.hpp>
+#include <lucent/raw/libraw_decoder.hpp>
 
 #include "batch_test_support.hpp"
 
@@ -33,6 +35,28 @@ std::vector<std::filesystem::path> smoke_fixtures() {
         }
     }
     return files;
+}
+
+// The upright size the as-shot recipe (geometry version 2) exports for `file`: the camera's image
+// area the file declares, placed as the engine places it (ADR 0017; the corpus has no TrimBounds),
+// or `catalogued` (the decoder's visible area) when the file declares none.
+image::Size as_shot_output(const std::filesystem::path& file, image::Size catalogued) {
+    auto decoder = raw::create_libraw_decoder();
+    EXPECT_TRUE(decoder);
+    if (!decoder) {
+        return catalogued;
+    }
+    auto probe = (*decoder)->probe(file, {}, {});
+    EXPECT_TRUE(probe) << probe.error().describe();
+    if (!probe) {
+        return catalogued;
+    }
+    const raw::RawMetadata& m = probe->metadata;
+    const image::Size stored = m.geometry.visible_area.size();
+    if (auto placed = engine::place_image_area(m, stored); placed && placed->applicable()) {
+        return engine::oriented_placement(std::move(*placed), stored, m.geometry.orientation).rect.size();
+    }
+    return catalogued;
 }
 
 BatchServiceOptions fixture_options() {
@@ -90,7 +114,8 @@ TEST(BatchFixtures, SmokeFixturesExportThroughWorkers) {
     EXPECT_EQ(record.state, catalog::BatchState::Completed);
     EXPECT_EQ(record.counts.complete, files.size() - unsupported);
 
-    // Every output has its photo's full size and matches its receipt.
+    // Every output has its photo's as-shot size (the camera's image area, or the whole visible area
+    // when the file declares none) and matches its receipt.
     for (const ItemId item : ids) {
         const auto source = h.library().find(item);
         ASSERT_TRUE(source && source->probe);
@@ -103,8 +128,14 @@ TEST(BatchFixtures, SmokeFixturesExportThroughWorkers) {
                 found = true;
                 auto details = read_receipt_details(receipt.settings_json);
                 ASSERT_TRUE(details);
-                EXPECT_EQ(static_cast<std::int32_t>(details->width), source->probe->upright_size.width);
-                EXPECT_EQ(static_cast<std::int32_t>(details->height), source->probe->upright_size.height);
+                const image::Size expected = as_shot_output(source->path, source->probe->upright_size);
+                EXPECT_EQ(static_cast<std::int32_t>(details->width), expected.width) << source->path.string();
+                EXPECT_EQ(static_cast<std::int32_t>(details->height), expected.height)
+                    << source->path.string();
+                // Within the camera border tolerance: no review note about the size.
+                for (const std::string& note : details->review) {
+                    EXPECT_EQ(note.find("pixels; the photo was catalogued"), std::string::npos) << note;
+                }
                 EXPECT_EQ(ts::file_sha256(receipt.final_path), receipt.output_sha256);
             }
         }

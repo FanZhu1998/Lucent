@@ -55,6 +55,21 @@ bool FakeLibraryService::is_busy() const {
     return active_imports_ > 0 || !render_queue_.empty();
 }
 
+CameraSupportInfo FakeLibraryService::camera_support() const {
+    CameraSupportInfo info;
+    info.available = true;
+    info.version = QStringLiteral("1.0.0");
+    info.qualified_on = QStringLiteral("2026-10-08");
+    info.decoder = QStringLiteral("Simulated decoder, decoded-RAW 1.4");
+    info.location = QStringLiteral("(simulated)");
+    info.modes = 4;
+    info.verified = 1;
+    info.compatible_unverified = 1;
+    info.limited = 1;
+    info.unsupported = 1;
+    return info;
+}
+
 void FakeLibraryService::start_import(const QStringList& paths, const ImportOptions& options) {
     const bool include_subfolders = options.include_subfolders;
     ++active_imports_;

@@ -346,7 +346,8 @@ bool MaskEditor::add(const QString& kind) {
     session_.setTool(QStringLiteral("masks"));
     // Placed on the photo as it is about to be shown: the settings' geometry, not the newest frame's
     // (still the crop tool's uncropped frame when the mask is added from it).
-    GeometryMap map = session_.service().map_geometry(session_.settings().geometry, session_.frame_full_upright_size());
+    GeometryMap map = session_.service().map_geometry(session_.settings().geometry, session_.frame_full_upright_size(),
+                                                      session_.frame_full_frame());
     bool invertible = false;
     QTransform inverse = map.normalized_to_output.inverted(&invertible);
     if (!map.valid || !invertible || map.output_size.isEmpty()) {

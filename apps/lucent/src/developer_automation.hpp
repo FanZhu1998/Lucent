@@ -21,6 +21,10 @@
 //   --zoom <fit|100>           With --open-first: after the Fit preview is shown, switch the Edit
 //                              view to this zoom (100 renders the full-resolution preview).
 //   --show-export-dialog       With --open-first: open the Export dialog before the screenshot.
+//   --show-about               W10: open the About dialog (the camera support database and the
+//                              meaning of the support states) before the screenshot. At start-up
+//                              every run reports the camera support database it uses on stderr
+//                              ("lucent: camera support database 1.0.0 ..." or "... unavailable:").
 //   --measure                  Report timings on stderr: start-up, first visible thumbnail after
 //                              the import started, preview latency (visible, and the services'
 //                              render and preview times), and UI-thread responsiveness (gaps
@@ -149,6 +153,7 @@ struct DeveloperOptions {
     std::optional<bool> zoom_full;  // --zoom: true for 100 %, false for fit
     bool measure = false;
     bool show_export_dialog = false;
+    bool show_about = false;  // --show-about (W10)
     QString screenshot_path;
     bool quit_after_screenshot = false;
     int settle_timeout_ms = 60000;

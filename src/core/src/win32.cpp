@@ -13,6 +13,9 @@ constexpr std::wstring_view kVerbatimPrefix = L"\\\\?\\";          // \\?\    (n
 constexpr std::wstring_view kDevicePrefix = L"\\\\.\\";            // \\.\    (device namespace)
 constexpr std::wstring_view kVerbatimUncPrefix = L"\\\\?\\UNC\\";  // \\?\UNC\ (verbatim UNC)
 constexpr std::size_t kMaxWin32PathChars = 32767;  // longest path the wide Win32 file APIs accept
+// CreateDirectoryW refuses a path of MAX_PATH - 12 characters or more (room for an 8.3 name must
+// remain), so the "\\?\" form starts there rather than at MAX_PATH.
+constexpr std::size_t kVerbatimFromChars = MAX_PATH - 12;
 
 }  // namespace
 
@@ -30,7 +33,7 @@ Expected<std::wstring> win32_api_path(const std::filesystem::path& path, std::st
                     "path is longer than the Windows limit of 32767 characters: " + quoted(path),
                     std::string(where));
     }
-    if (native.size() < MAX_PATH || native.starts_with(kVerbatimPrefix) ||
+    if (native.size() < kVerbatimFromChars || native.starts_with(kVerbatimPrefix) ||
         native.starts_with(kDevicePrefix)) {
         return native;
     }

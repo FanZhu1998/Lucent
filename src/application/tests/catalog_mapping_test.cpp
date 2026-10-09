@@ -59,7 +59,7 @@ TEST(CatalogMapping, StatusAndProbeFailureReasonsRoundTrip) {
 
 TEST(CatalogMapping, SupportedItemsStoreAnEmptyArray) {
     SupportAssessment supported;
-    supported.status = SupportStatus::Supported;
+    supported.status = SupportStatus::CompatibleUnverified;
     supported.interpretation = raw::InterpretationStatus::Complete;
     EXPECT_EQ(detail::encode_support_reasons(supported), "[]");
     const SupportAssessment restored = detail::decode_support(catalog::SupportStatus::Supported, "[]");
@@ -95,7 +95,7 @@ TEST(CatalogMapping, OnlyWellFormedCaptureTimesAreStored) {
 TEST(CatalogMapping, ProbeSummarySurvivesWhatTheCatalogStores) {
     SourceItem item;
     item.path = L"C:\\Photos\\IMG_0001.CR3";
-    item.support.status = SupportStatus::Supported;
+    item.support.status = SupportStatus::CompatibleUnverified;
     item.support.interpretation = raw::InterpretationStatus::Complete;
     ProbeSummary probe;
     probe.extension_hint = "cr3";
@@ -138,7 +138,7 @@ TEST(CatalogMapping, ProbeSummarySurvivesWhatTheCatalogStores) {
 TEST(CatalogMapping, TheProbeContractIsStoredWithTheDecoderVersion) {
     SourceItem item;
     item.path = L"C:\\Photos\\DJI_0001.DNG";
-    item.support.status = SupportStatus::Supported;
+    item.support.status = SupportStatus::CompatibleUnverified;
     item.support.interpretation = raw::InterpretationStatus::Complete;
     ProbeSummary probe;
     probe.extension_hint = "dng";
@@ -154,7 +154,21 @@ TEST(CatalogMapping, TheProbeContractIsStoredWithTheDecoderVersion) {
     EXPECT_EQ(restored->decoder_version, "0.22.2-Release");
     EXPECT_EQ(restored->contract, raw::kDecodedRawContractVersion);
     item.probe = restored;
+    EXPECT_TRUE(probe_outdated(item));  // no camera support record (ADR 0018): probed again
+    item.support.camera = CameraSupportEvaluation{};
+    item.support.camera->mode_key =
+        "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1";
     EXPECT_FALSE(probe_outdated(item));
+    // AST-08: a probe of another LibRaw version, or a key of another mode-key version, is probed again
+    // instead of being looked up under a key the database may no longer list.
+    item.probe->decoder_version = "0.21.4-Release";
+    EXPECT_TRUE(probe_outdated(item));
+    item.probe->decoder_version = "0.22.2-Release";
+    item.support.camera->mode_key =
+        "mk0|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1";
+    EXPECT_TRUE(probe_outdated(item));
+    item.support.camera->mode_key =
+        "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1";
 
     // What a build before W9 stored: no contract, so the support status is outdated.
     catalog::ItemMetadata old = metadata;

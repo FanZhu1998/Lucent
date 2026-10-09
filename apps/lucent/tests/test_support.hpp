@@ -241,9 +241,10 @@ public:
     // Piecewise linear (the real curve is the renderer's monotone cubic).
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
     // The engine's own geometry and mask helpers (the adapters'), so models are tested against them.
-    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const override;
-    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const override;
-    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+    [[nodiscard]] GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size,
+                                           QRect frame) const override;
+    [[nodiscard]] bool crop_inside_image(const EditGeometry& geometry, QSize frame_size) const override;
+    [[nodiscard]] EditCrop largest_inside_crop(double straighten_degrees, QSize frame_size,
                                                double aspect) const override;
     [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
     [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;

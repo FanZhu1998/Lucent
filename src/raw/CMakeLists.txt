@@ -109,6 +109,7 @@ lucent_add_test(lucent_raw_decoder_tests
         tests/libraw_metadata_test.cpp
         tests/libraw_decoder_test.cpp
         tests/libraw_fixture_test.cpp
+        tests/image_area_test.cpp
         tests/capture_metadata_fixture_test.cpp
         tests/test_jpegs.hpp
         tests/jpeg_header_test.cpp

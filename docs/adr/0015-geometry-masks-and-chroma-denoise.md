@@ -1,7 +1,8 @@
 # ADR 0015: Geometry, masks and guided chroma denoising (DevelopSettings v2)
 
 - **Status:** Accepted (amended 2026-10-05: "Amendment: phase 2 of 4, the application" and
-  "Amendment: the closing review of W9 part 2" below)
+  "Amendment: the closing review of W9 part 2"; amended 2026-10-07: "Amendment: geometry version 2,
+  the camera's image area (W10)"; all below)
 - **Date:** 2026-10-05
 - **Workflow:** W9 part 2 (Masks, geometry, chroma denoise), phase 1 of 4 (engine)
 - **Amends:** ADR 0010 decision 1 (stage two gains three operations) and its recipe contract
@@ -592,3 +593,46 @@ silently. The editor's own findings are recorded in ADR 0007 (decision 15).
   of showing darkened pixels there; their output is a pixel smaller at most.
 - Copy settings no longer pastes masks unless asked; pasting "Masks" from a photo without masks
   clears them.
+
+## Amendment: geometry version 2, the camera's image area (W10, 2026-10-07)
+
+- **Workflow:** W10 phase 2 (ADR 0017)
+- **Amends:** decisions 1 (operation versions), 2 (frames), 3 and 4 (the geometry); the phase-2
+  amendment's decisions 1 (recipes), 2 (paste), 5 (Auto) and 6 (editor frames)
+
+### Context
+
+The camera's intended image area (DNG DefaultCrop, the decoder's reading of a camera's crop tags)
+is now part of the decoded-RAW contract (ADR 0017). Applying it by default must not change any
+existing recipe, and masks must stay on their content.
+
+### Decision
+
+1. **`kGeometryOperationVersion` is 2; version 1 is still rendered** (`kOldestGeometryOperationVersion`).
+   `DevelopSettings::validate()` accepts geometry versions 1 and 2; the recipe document reads both
+   and writes the version the settings hold. Version-1 settings convert to geometry version 1
+   (`upgrade_develop_settings()`), and render as version 1 even unconverted
+   (`geometry_operation_version()`); new settings and `DevelopSettings{}` use version 2.
+2. **Frames (decision 2).** Between U and S comes F, the geometry's frame: all of U for version 1,
+   the camera's image area inside U for version 2 (all of U when the file declares none). S is F
+   rotated about F's centre on F's canvas, and the crop is normalised in that canvas. Masks stay
+   defined in U, before the camera area, for both versions: the same mask is on the same content in
+   a version-1 and a version-2 rendering, and stage-two operations 2 to 8 still run on all of U.
+   `GeometryMapping` gains `frame()`/`frame_size()` and `create(geometry, size, frame)`;
+   `crop_inside_image()` and `largest_inside_crop()` take the frame's size; `geometry_mapping()`
+   (develop.hpp) is the mapping stage two renders with.
+3. **Rendering (decisions 3, 4).** The geometry runs last as before. Its coverage weighting is
+   measured against F's edges; interpolation taps may read U's border pixels outside F. With F = U
+   every result is bit-identical to version 1 (pinned renders, ADR 0017).
+4. **Recipes, paste, Auto, editor frames (phase-2 amendment).** A recipe keeps its geometry version;
+   the geometry paste part carries it. Auto evaluates the whole upright image whatever the version
+   (the analysis drops the area from its own stage one) and its full-resolution check measures the
+   version's real output frame. Editor frames and their mask overlays use `geometry_mapping()`.
+
+### Consequences
+
+- The identity of default settings changes (geometry 2); every stored recipe keeps its identity and
+  its pixels.
+- The editor's own crop and mask tools must use the frame (ADR 0017, Consequences); until then a
+  version-2 recipe of a file with a camera area is edited with handles and brush points offset by the
+  area's origin.

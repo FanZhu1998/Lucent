@@ -8,15 +8,19 @@
        then deleted, so they can never be paired with a different layout.
     2. Lays out the installation folder with `cmake --install`: Lucent.exe, lucent-worker.exe (the
        isolated export worker it starts, W7 / ADR 0012), Qt deployed by windeployqt,
-       every other runtime DLL and an installed-layout qt.conf (cmake/LucentPackaging.cmake).
+       every other runtime DLL, an installed-layout qt.conf and the bundled data assets
+       (assets\<id>: the camera support database, W10 / ADR 0018) (cmake/LucentPackaging.cmake).
     3. Audits that folder with dumpbin: every import of every DLL and executable must resolve to the
        folder, to Windows or to the Visual C++ runtime installed by Microsoft's redistributable, every
        DLL in the folder must be imported, the required Qt plugins and every QML module Lucent uses
        (with its plugin DLL) must be present, and every file must be Lucent's build output or an
        unmodified file of a vcpkg port; the only executables are Lucent.exe and lucent-worker.exe,
-       both GUI-subsystem programs identical to the build. Then it starts the staged Lucent.exe with a
-       Windows-only PATH (smoke run): Qt loads plugins and QML modules by name, which no import
-       table shows. Any error stops the packaging.
+       both GUI-subsystem programs identical to the build. Every bundled asset is verified as
+       Lucent.exe verifies it: its manifest has the SHA-256 the build pinned, and every listed file
+       its listed size and SHA-256, with nothing unlisted beside them. Then it starts the staged
+       Lucent.exe with a Windows-only PATH (smoke run): Qt loads plugins and QML modules by name,
+       which no import table shows, and Lucent must report the camera support database of the
+       folder as active. Any error stops the packaging.
     4. Signs Lucent.exe and lucent-worker.exe when signing is configured (see NOTES; off by default).
     5. Writes licenses\: Lucent's licence, the copyright file of every shipped vcpkg port, licence
        texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, LGPL-NOTICE.txt, THIRD-PARTY-NOTICES.txt
@@ -191,6 +195,7 @@ Write-Host ("    {0} files, {1} PE files, ports: {2}" -f $report.Files.Count, $r
 Write-Host ("    Visual C++ runtime imports: {0}" -f ($report.VcRuntimeImports -join ', '))
 Write-Host ("    Windows DLL imports: {0}" -f (($report.WindowsDlls | ForEach-Object Name) -join ', '))
 Write-Host ("    QML modules checked: {0}" -f ($report.QmlModules -join ', '))
+Write-Host ("    Bundled assets verified: {0}" -f ((@($report.Assets) | ForEach-Object { "$($_.Id) $($_.Version)" }) -join ', '))
 foreach ($warning in $report.Warnings) { Write-Warning $warning }
 if ($report.Errors.Count -gt 0) {
     foreach ($problem in $report.Errors) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
@@ -205,6 +210,7 @@ if ($smoke.Errors.Count -gt 0) {
     throw "The smoke run of the installation folder failed; see $($smoke.Log)."
 }
 Write-Host "    Exit code 0, screenshot $($smoke.Screenshot), no Qt or QML loading errors"
+Write-Host "    $($smoke.CameraSupport)"
 
 $fileIndex = Get-VcpkgFileIndex -InstalledDir ($info.vcpkgInstalledDir.Replace('/', '\')) -Triplet $info.vcpkgTriplet
 $staticLibraries = @(Get-StaticVcpkgLibraries -Info $info -FileIndex $fileIndex)

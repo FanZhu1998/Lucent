@@ -19,7 +19,13 @@
 //   Version 1 (W2) had no "pipeline" and "recipe" and always held a RenderReport. W9 (ADR 0015)
 //     added, within version 2, the develop report's "upright_size" (the stage-one image, before
 //     the geometry; "output_size" is after it) and its "chroma_denoise", "local_adjustments" and
-//     "geometry" records (null when the operation was not applied).
+//     "geometry" records (null when the operation was not applied). W10 (ADR 0017) added, within
+//     version 2, the camera's image area: the develop report's "image_area" (the stage one's
+//     placement, full-resolution upright pixels; null when the file declares none),
+//     "geometry_version" and "geometry_frame" (the frame the geometry worked in), the geometry
+//     record's "frame", and the RenderReport's "image_area" (stored orientation),
+//     "camera_area_applied", settings "apply_camera_area" and memory "opcode_peak" /
+//     "camera_area_peak".
 //
 // Numbers: finite doubles are written as JSON numbers; non-finite values as the strings "nan",
 // "inf", "-inf" (as lucent-probe does). Enumerations use the modules' stable to_string() names.

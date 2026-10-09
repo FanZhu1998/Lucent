@@ -363,3 +363,94 @@ TEST_F(LibRawFixtures, FullColourModesCarryTheirPriorProcessing) {
 
 }  // namespace
 }  // namespace lucent::raw
+
+namespace lucent::raw {
+namespace {
+
+// The camera image area of every corpus fixture (contract 1.4, ADR 0017), from the probe. The
+// values were read 2026-10-05 with LibRaw 0.22.2 and agree with the cited sources of
+// fixtures/qualification/expectations.json (manufacturer sizes, the files' own crop tags) except
+// where noted; Unknown means the decoder reads no crop declaration for the file.
+TEST_F(LibRawFixtures, CameraImageAreasOfTheCorpus) {
+    using S = ImageAreaSource;
+    using P = Provenance;
+    struct Case {
+        const char* id;
+        S source;
+        P provenance;
+        AreaRect rect;
+    };
+    const Case cases[] = {
+        // Canon CR3: 8192 x 5464 (Canon's recorded size), one column and row beyond LibRaw's visible
+        // area (the engine clips it to the visible area).
+        {"canon-eos-r5-cr3-raw", S::DecoderInsetCrop, P::Decoder, {144, 112, 8192, 5464}},
+        {"canon-eos-r5-cr3-craw", S::DecoderInsetCrop, P::Decoder, {144, 112, 8192, 5464}},
+        {"canon-eos-r5-cr3-raw-crop", S::DecoderInsetCrop, P::Decoder, {144, 108, 5088, 3392}},
+        {"canon-eos-r5-cr3-craw-crop-dualpixel", S::DecoderInsetCrop, P::Decoder, {144, 108, 5088, 3392}},
+        {"canon-eos-5d-mark-iv-cr2-raw", S::DecoderInsetCrop, P::Decoder, {148, 54, 6720, 4480}},
+        {"canon-eos-5d-mark-iv-cr2-sraw", S::DecoderInsetCrop, P::Decoder, {0, 0, 3360, 2240}},
+        {"sony-ilce-7m4-arw-compressed", S::DecoderInsetCrop, P::Decoder, {12, 8, 7008, 4672}},
+        {"sony-ilce-7m4-arw-uncompressed", S::DecoderInsetCrop, P::Decoder, {12, 8, 7008, 4672}},
+        {"sony-ilce-7m4-arw-lossless-l", S::DecoderInsetCrop, P::Decoder, {12, 8, 7008, 4672}},
+        {"sony-ilce-7m4-arw-lossless-m", S::DecoderInsetCrop, P::Decoder, {8, 4, 4608, 3072}},
+        {"sony-ilce-7m4-arw-lossless-s", S::DecoderInsetCrop, P::Decoder, {6, 4, 3504, 2336}},
+        {"sony-ilce-7m4-arw-compressed-apsc", S::DecoderInsetCrop, P::Decoder, {44, 30, 4608, 3072}},
+        {"sony-ilce-7rm5-arw-compressed", S::DecoderInsetCrop, P::Decoder, {32, 20, 9504, 6336}},
+        {"nikon-z-6-nef-lossless", S::DecoderInsetCrop, P::Decoder, {8, 8, 6048, 4024}},
+        {"nikon-z-6-nef-compressed", S::DecoderInsetCrop, P::Decoder, {8, 8, 6048, 4024}},
+        {"nikon-z-8-nef-he", S::DecoderInsetCrop, P::Decoder, {12, 8, 8256, 5504}},
+        {"nikon-z-8-nef-he-star", S::DecoderInsetCrop, P::Decoder, {12, 8, 8256, 5504}},
+        // X-Trans: LibRaw moves the RAF's top edge 13 to 18 (its X-Trans period); Lucent restores
+        // the file's RawImageCropTopLeft / RawImageCroppedSize.
+        {"fujifilm-x-t4-raf-lossless", S::DecoderInsetCrop, P::LucentRule, {6, 13, 6240, 4160}},
+        {"fujifilm-x-t4-raf-compressed", S::DecoderInsetCrop, P::LucentRule, {6, 13, 6240, 4160}},
+        {"fujifilm-gfx-50s-ii-raf-compressed", S::DecoderInsetCrop, P::Decoder, {12, 8, 8256, 6192}},
+        {"panasonic-dc-s5m2-rw2", S::DecoderInsetCrop, P::Decoder, {4, 4, 6000, 4000}},
+        {"om-system-om-1-orf", S::DecoderInsetCrop, P::Decoder, {12, 12, 5184, 3888}},
+        // LibRaw reads no crop for the K-3 Mark III PEF (no maker-note tags 0x0038/0x0039) and does
+        // not read the 3FR raw IFD's DefaultCrop tags (it promotes them for Sony only).
+        {"pentax-k-3-mark-iii-pef", S::Unknown, P::LucentRule, {}},
+        {"hasselblad-x1d-ii-50c-3fr", S::Unknown, P::LucentRule, {}},
+        {"dji-fc4382-dng", S::DngDefaultCrop, P::DngTag, {4, 4, 4024, 3016}},
+        {"dji-fc220-dng", S::DngDefaultCrop, P::DngTag, {4, 4, 3992, 2992}},
+        {"dji-fc7303-dng", S::DngDefaultCrop, P::DngTag, {0, 0, 4000, 3000}},
+        {"hasselblad-l2d-20c-dng", S::DngDefaultCrop, P::DngTag, {4, 4, 5272, 3948}},
+        {"insta360-one-x-dng", S::DngDefaultWholeImage, P::LucentRule, {0, 0, 3040, 6080}},
+        {"pentax-k-3-mark-iii-monochrome-dng", S::DngDefaultCrop, P::DngTag, {54, 58, 6192, 4128}},
+        {"leica-m10-dng", S::DngDefaultCrop, P::DngTag, {4, 4, 5976, 3984}},
+        {"leica-m-monochrom-typ-246-dng", S::DngDefaultCrop, P::DngTag, {4, 4, 5976, 3992}},
+        {"adobe-dng-canon-eos-5d-mark-iii-linear-dng", S::DngDefaultCrop, P::DngTag, {0, 0, 3960, 2640}},
+        {"canon-eos-7d-mark-ii-dng-jxl", S::DngDefaultCrop, P::DngTag, {84, 50, 5472, 3648}},
+    };
+    int tested = 0;
+    for (const Case& c : cases) {
+        const auto path = ts::fixture_file(c.id);
+        if (!path) {
+            continue;
+        }
+        SCOPED_TRACE(c.id);
+        ProbeOptions options;
+        options.subimage = 0;
+        options.describe_subimages = false;
+        auto probe = decoder_->probe(*path, options, {});
+        ASSERT_TRUE(probe) << probe.error().describe();
+        const ImageArea& a = probe->metadata.image_area;
+        EXPECT_EQ(a.source, c.source) << a.basis;
+        EXPECT_FALSE(a.basis.empty());
+        if (c.source == S::Unknown) {
+            EXPECT_FALSE(a.rect);
+        } else {
+            EXPECT_EQ(a.provenance, c.provenance) << a.basis;
+            ASSERT_TRUE(a.rect) << a.basis;
+            EXPECT_EQ(*a.rect, c.rect)
+                << a.rect->x << "," << a.rect->y << " " << a.rect->width << "x" << a.rect->height;
+        }
+        ++tested;
+    }
+    if (tested == 0) {
+        GTEST_SKIP() << "no fixture of this test is downloaded; run tools\fetch-fixtures.ps1";
+    }
+}
+
+}  // namespace
+}  // namespace lucent::raw

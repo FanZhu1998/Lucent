@@ -352,6 +352,60 @@ public:
             }
         }
 
+        // ---- camera image area (ADR 0017) ----------------------------------------------------------
+        if (auto area =
+                place_image_area(decoded.metadata, demosaiced->pixels.size(), &opcodes.stage3_frame())) {
+            const image::PixelRect whole = image::PixelRect::from_size(demosaiced->pixels.size());
+            const image::PixelRect a = area->rect;
+            if (!area->applicable()) {
+                report.warnings.push_back(
+                    std::format("the camera's image area ({}: {}) lies outside the decoded "
+                                "image and cannot be applied",
+                                raw::to_string(area->source), area->basis));
+            } else if (!settings_.apply_camera_area && a != whole) {
+                report.warnings.push_back(
+                    std::format("the camera's image area {}x{}+{}+{} ({}) is not applied "
+                                "(settings); the whole visible area is rendered",
+                                a.width, a.height, a.x, a.y, raw::to_string(area->source)));
+            } else if (a != whole) {
+                t = Clock::now();
+                const image::Size before = demosaiced->pixels.size();
+                if (auto status = crop_to_area(demosaiced->pixels, a, options_.limits, cancel_); !status) {
+                    return Unexpected(std::move(status.error()));
+                }
+                StageRecord s;
+                s.stage = RenderStage::CameraArea;
+                s.algorithm = "camera-image-area";
+                s.version = area->version;
+                s.input = demosaiced->encoding;
+                s.output = demosaiced->encoding;
+                s.input_size = before;
+                s.output_size = demosaiced->pixels.size();
+                s.parameters = {
+                    param("source", std::string(raw::to_string(area->source))),
+                    param("provenance", std::string(raw::to_string(area->provenance))),
+                    param("rect",
+                          std::vector<double>{static_cast<double>(a.x), static_cast<double>(a.y),
+                                              static_cast<double>(a.width), static_cast<double>(a.height)}),
+                    param("clipped", std::vector<double>{static_cast<double>(area->clipped[0]),
+                                                         static_cast<double>(area->clipped[1]),
+                                                         static_cast<double>(area->clipped[2]),
+                                                         static_cast<double>(area->clipped[3])}),
+                    param("moved_inside", area->moved_inside),
+                    param("basis", area->basis),
+                };
+                s.seconds = seconds_since(t);
+                report.camera_area_applied = true;
+                if (auto pushed = finish_stage(report, std::move(s), demosaiced->encoding); !pushed) {
+                    return Unexpected(std::move(pushed.error()));
+                }
+                if (auto cancelled = cancel_.check(kWhereStage); !cancelled) {
+                    return Unexpected(std::move(cancelled.error()));
+                }
+            }
+            report.image_area = std::move(area);
+        }
+
         // ---- 5. camera colour ---------------------------------------------------------------------
         t = Clock::now();
         if (!demosaiced->white_balance) {
@@ -628,6 +682,8 @@ std::string_view to_string(RenderStage stage) noexcept {
             return "dng_opcode_list2";
         case RenderStage::DngOpcodeList3:
             return "dng_opcode_list3";
+        case RenderStage::CameraArea:
+            return "camera_area";
     }
     return "invalid";
 }
@@ -724,7 +780,19 @@ Expected<MemoryEstimate> estimate_render_memory(const raw::RawMetadata& metadata
         opcode_stage = RenderStage::DngOpcodeList2;
     }
 
-    const std::array<std::pair<std::uint64_t, RenderStage>, 7> peaks = {{
+    if (settings.apply_camera_area) {
+        if (const auto area = place_image_area(metadata, image::Size{visible.width, visible.height});
+            area && area->applicable() && area->rect != image::PixelRect::from_size(visible.size())) {
+            auto cut = buffer_bytes(area->rect.width, area->rect.height, 3, sizeof(float), options.limits,
+                                    "camera image area");
+            if (!cut) {
+                return Unexpected(std::move(cut.error()));
+            }
+            e.camera_area_peak = e.rgb_bytes + *cut;
+        }
+    }
+
+    const std::array<std::pair<std::uint64_t, RenderStage>, 8> peaks = {{
         {e.decode_peak, RenderStage::Decode},
         {e.normalize_peak, RenderStage::Normalize},
         {e.demosaic_peak, RenderStage::Demosaic},
@@ -732,6 +800,7 @@ Expected<MemoryEstimate> estimate_render_memory(const raw::RawMetadata& metadata
         {e.rendering_peak, RenderStage::DisplayRendering},
         {e.orientation_peak, RenderStage::Orientation},
         {e.opcode_peak, opcode_stage},
+        {e.camera_area_peak, RenderStage::CameraArea},
     }};
     for (const auto& [bytes, stage] : peaks) {
         if (bytes > e.peak_bytes) {

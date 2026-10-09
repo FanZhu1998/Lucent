@@ -15,6 +15,10 @@
 //     while a DNG saved as ".tif" still is.
 //   * Otherwise the probe decides: a file the decoder rejects is still listed, as Unsupported
 //     with the probe's error as its reason.
+//   * Support status (W10, ADR 0018): every probed image is assessed with assess_support()
+//     (camera_support.hpp): its interpretation combined with ImportRequest::camera_support's answer
+//     for the probe's mode key (none: every mode is "not listed", so at best Compatible,
+//     unverified).
 //   * Paths are canonicalised (every junction, symbolic link and mount point resolved; the
 //     on-disk spelling) before anything else, so one file reached through different paths is one
 //     item. Duplicates of library items (same canonical path or same file version, and same
@@ -107,6 +111,7 @@
 #include <string_view>
 #include <vector>
 
+#include <lucent/application/camera_support.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
@@ -145,6 +150,9 @@ struct ImportRequest {
     // instead of being skipped as a duplicate, so an outdated support status (probe_outdated())
     // is renewed. Ignored with copy_to.
     bool reprobe_known = false;
+    // W10 (ADR 0018): the camera support database the new items are assessed against; null: none
+    // (Lucent.exe passes the session's database; see the file comment).
+    CameraSupportRef camera_support;
 };
 
 // Why a path was not imported (append only).
@@ -199,7 +207,9 @@ struct ImportReport {
     // Existing items whose file was found again (see the file comment): Present again at their
     // path, or moved to where their file version was found. Not counted as duplicates.
     std::vector<ItemId> restored;
-    std::uint64_t supported = 0;
+    // Added items by support status (blueprint section 3).
+    std::uint64_t verified = 0;
+    std::uint64_t compatible_unverified = 0;
     std::uint64_t limited = 0;
     std::uint64_t unsupported = 0;
     std::vector<SkippedPath> skipped;

@@ -14,10 +14,11 @@
 //
 // Coordinates. Masks live in the normalised upright frame U; the pointer and the overlay work in
 // fractions (u, v) of the displayed image. The mapping between them is the engine's GeometryMapping
-// of the newest frame's geometry at full resolution (EditSession::frame_map(), EditService::
-// map_geometry()), so a handle sits where the engine puts that mask point whatever the crop,
-// straightening and quarter turns, and lengths (radii, the brush) are in the frame's isometric output
-// pixels.
+// of the newest frame's geometry at full resolution in the geometry's frame F (EditSession::
+// frame_map(), EditService::map_geometry(); F is the camera's image area for a geometry-version-2
+// recipe, ADR 0017), so a handle sits where the engine puts that mask point whatever the crop,
+// straightening, quarter turns and camera area, and lengths (radii, the brush) are in the frame's
+// isometric output pixels.
 //
 // Outlines (`outlines`, OverlayPaths) are the selected mask's: the frame's own (DevelopFrame::masks,
 // what was rendered) while nothing moves the mask, and during a handle drag the engine's
