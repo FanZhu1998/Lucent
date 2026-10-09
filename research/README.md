@@ -27,6 +27,7 @@ research\.venv\Scripts\python.exe -c "import rawpy; print(rawpy.__version__, raw
 | `probe_reference.py` | Writes `lucent.probe-report` v1 reports with rawpy. `--decode` adds `raw_data_sha256`. With `--manifest` it probes the cached fixtures, checking each file's SHA-256 against the manifest first. |
 | `compare_probe.py` | Compares the `parity` blocks of a Lucent report and a reference report, prints a table, exits non-zero on mismatch; supports a reviewed allowance file. |
 | `raw_pixls_index.py` | Searches the raw.pixls.us archive index, drafts manifest entries, and verifies `fixtures/manifest.json` against the live index (licence, id, published hash). Standard library only. |
+| `chart_reference.py` | The independent colour reference of camera qualification (ADR 0020): measures the colour charts of the chart fixtures (`fixtures/qualification/charts.json`) on LibRaw's own rendering with colour-science, CIEDE2000 against the charts' published values; `--lucent-render` adds Lucent's W2 scene-linear dump as a cross-check, `--write-charts` records the independent statistics, `locate` finds a new chart's sample boxes. |
 
 ```powershell
 $py = "research\.venv\Scripts\python.exe"
@@ -63,6 +64,10 @@ research\.venv\Scripts\python.exe -m unittest discover -s research\tests -v
   size mismatches, HTTP errors and manifest/usage errors.
 - `test_raw_pixls_index.py`: index parsing, mirror joining, file-name sanitising and manifest
   verification on synthetic data, plus structural checks of `fixtures/manifest.json`.
+- `test_chart_reference.py`: the chart evaluation (published colours measure zero, chart balancing
+  removes a white-balance cast, numpy's percentile), LibRaw's matrix derivation, the committed
+  `fixtures/qualification/charts.json` (boxes inside their frames, stable layout) and `locate` on a
+  synthetic chart.
 
 ## Probe report contract (`lucent.probe-report`, schema version 1)
 

@@ -16,6 +16,13 @@
 // (where the develop render put it, not only its size) must equal the expectation's
 // "image_area_applied".
 //
+// W12 (ADR 0020): ColourReferenceFixture measures the develop path on every fixture that shows a
+// colour chart (fixtures/qualification/charts.json): within the gate against the chart's published
+// values, alike to LibRaw's own rendering measured without Lucent's code, and failing for gross
+// errors made from the same measured patches. The rotated fixtures (orientation 6 and 8, one per
+// image-area source) run through OutcomeMatchesItsExpectation like every fixture, with their
+// placement asserted.
+//
 // W10 phase 3 (ADR 0018): the application assesses a library item by the mode key of the probe it
 // makes at import, not of a decode. ProbeKeyFindsTheQualifiedState probes every cached fixture as
 // the importer does (any tier: a probe takes milliseconds) and asserts that the bundled camera
@@ -26,9 +33,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -41,8 +51,12 @@
 
 #include <lucent/assets/asset_store.hpp>
 #include <lucent/assets/camera_support.hpp>
+#include <lucent/core/text.hpp>
+#include <lucent/image/color_math.hpp>
 #include <lucent/raw/decoder_registry.hpp>
 
+#include "charts.hpp"
+#include "colour_reference.hpp"
 #include "expectations.hpp"
 #include "mode_key.hpp"
 #include "qualification.hpp"
@@ -167,8 +181,26 @@ TEST_P(QualificationFixture, OutcomeMatchesItsExpectation) {
 }
 
 // The bundled database, as Lucent.exe loads it (next to this executable, verified against the pin).
+// LUCENT_CAMERA_SUPPORT_DIR names a regenerated asset folder instead (its camera-support.json, parsed
+// as the application parses it; no pin), to verify a change that adds fixtures against the database it
+// regenerates before that is committed from a clean build (docs/qualification/README.md).
 std::shared_ptr<const assets::CameraSupport> bundled_database() {
     static const std::shared_ptr<const assets::CameraSupport> loaded = [] {
+        char* value = nullptr;
+        std::size_t length = 0;
+        if (_dupenv_s(&value, &length, "LUCENT_CAMERA_SUPPORT_DIR") == 0 && value != nullptr) {
+            const std::filesystem::path folder(core::utf8_to_wide_lossy(value));
+            std::free(value);
+            std::ifstream in(folder / std::filesystem::path(assets::kCameraSupportFileName), std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            auto parsed = assets::parse_camera_support(text);
+            if (!parsed) {
+                return std::shared_ptr<const assets::CameraSupport>();
+            }
+            auto support = std::make_shared<assets::CameraSupport>();
+            support->database = std::move(*parsed);
+            return std::shared_ptr<const assets::CameraSupport>(std::move(support));
+        }
         auto request = assets::bundled_asset_request(assets::kCameraSupportAssetId);
         if (!request) {
             return std::shared_ptr<const assets::CameraSupport>();
@@ -220,6 +252,92 @@ TEST_P(QualificationFixture, ProbeKeyFindsTheQualifiedState) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Manifest, QualificationFixture, ::testing::ValuesIn(manifest_fixtures()),
+                         [](const ::testing::TestParamInfo<ManifestFixture>& info) {
+                             std::string name = info.param.id;
+                             for (char& ch : name) {
+                                 if (ch == '-') {
+                                     ch = '_';
+                                 }
+                             }
+                             return name;
+                         });
+
+// ---- Colour reference (ADR 0020) ----------------------------------------------------------------------
+
+std::vector<ManifestFixture> chart_fixtures() {
+    auto charts = load_charts(paths().charts());
+    if (!charts) {
+        throw std::runtime_error("charts: " + charts.error().describe());
+    }
+    std::vector<ManifestFixture> out;
+    for (const ManifestFixture& fixture : manifest_fixtures()) {
+        if (charts->find(fixture.id) != nullptr) {
+            out.push_back(fixture);
+        }
+    }
+    return out;
+}
+
+class ColourReferenceFixture : public ::testing::TestWithParam<ManifestFixture> {};
+
+// The develop path measured on a chart fixture: within the gate against the chart's published
+// values, alike to the same measurement of LibRaw's own rendering (research/tools/chart_reference.py,
+// recorded in charts.json), and sensitive: the measured patches turned into gross interpretation
+// errors (red and blue exchanged, no camera matrix, a display curve on scene-linear values) fail it.
+TEST_P(ColourReferenceFixture, DevelopPathMatchesThePublishedValuesAndTheIndependentRendering) {
+    const ManifestFixture& fixture = GetParam();
+    const QualifyCorpus& c = corpus();
+    ASSERT_TRUE(c.expectations.has_value());
+    ASSERT_TRUE(c.charts.has_value());
+    const FixtureExpectation* expectation = c.expectations->find(fixture.id);
+    ASSERT_NE(expectation, nullptr);
+    if (fixture.tier != "smoke" && expectation->expected_state != "verified" && !qualification_tier_enabled()) {
+        GTEST_SKIP() << "qualification-tier fixture that is not Verified; set LUCENT_TEST_FIXTURE_TIER=all";
+    }
+    const std::filesystem::path file = c.paths.cached_file(fixture);
+    if (!std::filesystem::exists(file)) {
+        GTEST_SKIP() << "fixture '" << fixture.id << "' is not downloaded";
+    }
+    const ChartFixture& chart = *c.charts->find(fixture.id);
+    auto registry = raw::create_default_registry();
+    ASSERT_TRUE(registry) << registry.error().describe();
+    auto measured = measure_chart(*registry, file, chart);
+    ASSERT_TRUE(measured) << measured.error().describe();
+    const ChartEvaluation e = evaluate_chart(*c.charts, chart, measured->samples, rec2020_to_xyz(), image::kD65White);
+    ASSERT_TRUE(e.measurable) << e.problem;
+    std::cout << "[ chart    ] " << fixture.id << ": " << e.summary() << "\n";
+    EXPECT_TRUE(e.passes) << e.summary();
+
+    ASSERT_TRUE(chart.independent.has_value());
+    const IndependentChartMeasurement& independent = *chart.independent;
+    EXPECT_NEAR(e.balanced.mean, independent.chart_balanced.mean, 0.25);
+    EXPECT_NEAR(e.balanced.p90, independent.chart_balanced.p90, 0.5);
+    EXPECT_NEAR(e.balanced.max, independent.chart_balanced.max, 0.5);
+    EXPECT_NEAR(e.as_shot.mean, independent.as_shot.mean, 0.25);
+
+    const auto distorted = [&](const auto& camera_to_working) {
+        std::vector<ChartSample> samples = measured->samples;
+        for (ChartSample& s : samples) {
+            s.working_mean = camera_to_working(s.camera_mean);
+        }
+        return evaluate_chart(*c.charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    };
+    const image::Matrix3d& m = measured->camera_to_working;
+    const ChartEvaluation swapped =
+        distorted([&](const image::Vec3d& v) { return m * image::Vec3d{v[2], v[1], v[0]}; });
+    EXPECT_FALSE(swapped.passes) << "red and blue exchanged: " << swapped.summary();
+    const ChartEvaluation no_matrix =
+        distorted([&](const image::Vec3d& v) { return measured->gain * v; });
+    EXPECT_FALSE(no_matrix.passes) << "camera RGB taken for the working space: " << no_matrix.summary();
+    const ChartEvaluation display_curve = distorted([&](const image::Vec3d& v) {
+        const image::Vec3d w = m * v;
+        return image::Vec3d{std::pow(std::max(w[0], 0.0), 1.0 / 2.2), std::pow(std::max(w[1], 0.0), 1.0 / 2.2),
+                            std::pow(std::max(w[2], 0.0), 1.0 / 2.2)};
+    });
+    EXPECT_FALSE(display_curve.passes) << "a display curve on scene-linear values: " << display_curve.summary();
+}
+
+INSTANTIATE_TEST_SUITE_P(Charts, ColourReferenceFixture, ::testing::ValuesIn(chart_fixtures()),
                          [](const ::testing::TestParamInfo<ManifestFixture>& info) {
                              std::string name = info.param.id;
                              for (char& ch : name) {

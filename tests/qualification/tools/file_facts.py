@@ -10,6 +10,13 @@ RAW file declares about itself that fixtures/qualification/expectations.json cit
     BitsPerSample, Compression, PhotometricInterpretation, SamplesPerPixel, TIFF/EP and EXIF
     CFAPattern (33421/33422, 41730), DNG CFAPlaneColor/CFALayout, ActiveArea, DefaultCropOrigin
     and DefaultCropSize, DefaultUserCrop, and Panasonic RW2 sensor borders and CFA code.
+  * The camera's own crop declaration in two maker notes (W12, rotated fixtures; names as in
+    ExifTool's tables): Canon SensorInfo (Canon maker note tag 0x00e0, int16u: [1] SensorWidth,
+    [2] SensorHeight, [5] SensorLeftBorder, [6] SensorTopBorder, [7] SensorRightBorder,
+    [8] SensorBottomBorder, borders inclusive; https://exiftool.org/TagNames/Canon.html#SensorInfo)
+    and Olympus ImageProcessing (maker note tag 0x2040, a sub-IFD) tags 0x0612 CropLeft, 0x0613
+    CropTop, 0x0614 CropWidth and 0x0615 CropHeight
+    (https://exiftool.org/TagNames/Olympus.html#ImageProcessing).
   * CR3: the CMT1 TIFF stream (Make, Model, Orientation) and every CMP1 box (CRX image width,
     height, bits per sample, plane count, CFA layout and wavelet levels, as documented by
     https://github.com/lclevy/canon_cr3 "CMP1": CFA layout 0 = RGGB, 1 = GRBG, 2 = GBRG,
@@ -111,6 +118,8 @@ def walk_tiff(data: bytes, base: int, little: bool, first: int, rw2: bool = Fals
                 continue
             if tag == 330:
                 subs = values(r, typ, count, voff)
+            elif tag == 37500:  # MakerNote (Exif IFD): located for the readers below
+                entry["MakerNote"] = {"offset": voff, "count": count}
             elif tag == 34665:
                 exif = values(r, typ, count, voff)[0]
             elif rw2 and depth == 0 and tag in RW2_TAGS:
@@ -130,6 +139,62 @@ def walk_tiff(data: bytes, base: int, little: bool, first: int, rw2: bool = Fals
         offset = ifd(offset, f"ifd{index}", 0)
         index += 1
     return out
+
+
+def read_ifd(data: bytes, little: bool, at: int, value_base: int) -> dict[int, object]:
+    """Tag -> values of the IFD at absolute offset `at` (out-of-line values at value_base + offset)."""
+    r = Reader(data, little)
+    out: dict[int, object] = {}
+    if at + 2 > len(data):
+        return out
+    n = r.u16(at)
+    for k in range(min(n, 512)):
+        e = at + 2 + 12 * k
+        if e + 12 > len(data):
+            break
+        tag, typ, count = r.u16(e), r.u16(e + 2), r.u32(e + 4)
+        size = TIFF_TYPES.get(typ, 0) * count
+        voff = e + 8 if size <= 4 else value_base + r.u32(e + 8)
+        if size == 0 or voff + size > len(data) or size > 65536:
+            continue
+        out[tag] = values(r, 4 if typ == 13 else typ, count, voff)
+    return out
+
+
+def canon_sensor_info(data: bytes, little: bool, maker_note: dict) -> dict | None:
+    """Canon SensorInfo (maker note tag 0x00e0). Canon maker notes are a plain IFD whose values lie
+    at offsets from the TIFF header."""
+    tags = read_ifd(data, little, maker_note["offset"], 0)
+    info = tags.get(0x00E0)
+    if not isinstance(info, list) or len(info) < 9:
+        return None
+    left, top, right, bottom = info[5], info[6], info[7], info[8]
+    return {"tag": "Canon SensorInfo (0x00e0)", "SensorWidth": info[1], "SensorHeight": info[2],
+            "SensorLeftBorder": left, "SensorTopBorder": top, "SensorRightBorder": right,
+            "SensorBottomBorder": bottom,
+            "declared_area": {"x": left, "y": top, "width": right - left + 1, "height": bottom - top + 1}}
+
+
+def olympus_crop(data: bytes, maker_note: dict) -> dict | None:
+    """Olympus ImageProcessing crop (maker note tag 0x2040 -> tags 0x0612-0x0615). A maker note
+    "OLYMPUS\0" + byte order + version holds an IFD at +12 whose offsets are relative to its start."""
+    start = maker_note["offset"]
+    head = data[start:start + 12]
+    if not head.startswith(b"OLYMPUS\0") or head[8:10] not in (b"II", b"MM"):
+        return None
+    little = head[8:10] == b"II"
+    tags = read_ifd(data, little, start + 12, start)
+    sub = tags.get(0x2040)
+    if not isinstance(sub, list) or not sub:
+        return None
+    ip = read_ifd(data, little, start + sub[0], start)
+    names = {0x0612: "CropLeft", 0x0613: "CropTop", 0x0614: "CropWidth", 0x0615: "CropHeight"}
+    crop = {name: ip[t][0] for t, name in names.items() if isinstance(ip.get(t), list) and ip[t]}
+    if len(crop) != 4:
+        return None
+    return {"tag": "Olympus ImageProcessing (0x2040) 0x0612-0x0615", **crop,
+            "declared_area": {"x": crop["CropLeft"], "y": crop["CropTop"], "width": crop["CropWidth"],
+                              "height": crop["CropHeight"]}}
 
 
 def tiff_header(data: bytes, base: int = 0):
@@ -281,6 +346,16 @@ def file_facts(path: Path) -> dict:
     rw2 = magic == b"IIU\0"
     kind = "rw2" if rw2 else "orf" if magic in (b"IIRO", b"IIRS", b"MMOR") else "tiff"
     facts = summarise_tiff(walk_tiff(data, 0, little, first, rw2=rw2))
+    maker_note = next((i["MakerNote"] for i in facts["ifds"] if "MakerNote" in i), None)
+    make = str(facts.get("Make", ""))
+    if maker_note and make.startswith("Canon"):
+        info = canon_sensor_info(data, little, maker_note)
+        if info:
+            facts["camera_crop_declared"] = info
+    elif maker_note and make.startswith("OLYMPUS"):
+        crop = olympus_crop(data, maker_note)
+        if crop:
+            facts["camera_crop_declared"] = crop
     if rw2:
         main = facts["ifds"][0]
         if "CFAPattern" in main:

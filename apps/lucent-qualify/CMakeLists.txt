@@ -8,13 +8,18 @@
 #   * lucent-probe's parity block and raw-buffer hash (lucent_probe_report),
 #   * the worker's export-metadata mapping (lucent_worker_job), i.e. the product's export path,
 #   * the CIEDE2000 / CIELAB helpers of the render integration tests
-#     (tests/integration/color_difference.cpp), so the colour gates are the same as ADR 0006's.
+#     (tests/integration/color_difference.cpp), so the colour gates are the same as ADR 0006's
+#     and the colour_reference check (ADR 0020) uses the same CIEDE2000.
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(TIFF REQUIRED)
 
 add_library(lucent_qualify STATIC
+    charts.cpp
+    charts.hpp
+    colour_reference.cpp
+    colour_reference.hpp
     expectations.cpp
     expectations.hpp
     mode_key.hpp

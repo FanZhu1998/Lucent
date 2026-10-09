@@ -24,13 +24,23 @@
 //                         WhiteLevel; no clip plateau below the white level (which would leave
 //                         clipped highlights short of white); at most 0.1 % of samples more than
 //                         2 % of the range below black. Samples above white are recorded, not
-//                         failed: the engine treats them as saturated
+//                         failed: the engine treats them as saturated. Evaluated on the camera's
+//                         image area when the file declares one (check suite 3), else on the
+//                         visible area: border pixels outside the area may be padding
 //   colour                the W2 render without DNG opcodes (like the reference decoder) against
 //                         the committed rawpy region statistics
 //                         (tests/integration/data/render_reference.json): the outer gross-error
 //                         gates and the per-fixture regression gates of ADR 0006. Evidence is
 //                         strong only when both use the same calibration (decoder matrix or
-//                         monochrome); DNG camera-profile files are weak (gross errors only)
+//                         monochrome); DNG camera-profile files are weak (gross errors only).
+//                         This is agreement with LibRaw's calibration, not an independent
+//                         measurement of it
+//   colour_reference      (fixtures that show a colour chart, fixtures/qualification/charts.json;
+//                         ADR 0020) the develop path's as-shot scene-linear colours of the chart's
+//                         patches against the chart manufacturer's published values: chart-balanced
+//                         CIEDE2000 mean, 90th percentile and maximum within the gate of
+//                         colour_reference.hpp. Evidence "independent" (of LibRaw and of Lucent);
+//                         not applicable without a chart
 //   dimensions            the develop render's upright size equals the expectation; the camera's
 //                         image area lies inside it (at most 1 px smaller per side, at most 3 %
 //                         larger); the outer 4-pixel bands are not dark or garbage
@@ -66,6 +76,7 @@
 
 #include <lucent/core/error.hpp>
 
+#include "charts.hpp"
 #include "expectations.hpp"
 #include "mode_key.hpp"
 
@@ -78,8 +89,14 @@ using OrderedJson = nlohmann::ordered_json;
 //      dimensions check measures that output, a DNG DefaultCropSize counts as applied when the
 //      output has its size, the orientation check compares the stage-one image with the visible
 //      area, and the colour check renders without the area (like the rawpy reference).
-inline constexpr std::uint32_t kCheckSuiteVersion = 2;
-inline constexpr std::uint32_t kStateRulesVersion = 1;
+//   3: the colour_reference check (ADR 0020); black_white evaluates the camera's image area when the
+//      file declares one (padding columns outside a DNG DefaultCrop are not image data).
+// State rules:
+//   2: evidence "independent" (stronger than "strong": independent of LibRaw and of Lucent) and
+//      each fixture's colour evidence (FixtureResult::colour_evidence); the rules themselves are
+//      those of version 1, so a chart fixture is Verified only when colour_reference passes too.
+inline constexpr std::uint32_t kCheckSuiteVersion = 3;
+inline constexpr std::uint32_t kStateRulesVersion = 2;
 
 // Permissible geometry difference (ADR 0016): Lucent's upright output may be at most this many
 // pixels smaller than the camera's image area per dimension, and at most kMaxAreaExcess larger.
@@ -87,7 +104,9 @@ inline constexpr std::int32_t kAreaShortfallTolerancePx = 1;
 inline constexpr double kMaxAreaExcess = 0.03;
 
 enum class CheckStatus : std::uint8_t { Pass = 1, Fail = 2, NotApplicable = 3, NotRun = 4 };
-enum class Evidence : std::uint8_t { Strong = 1, Weak = 2, None = 3 };
+// Independent: the reference depends on neither LibRaw nor Lucent (a chart's published values);
+// it satisfies every rule that asks for strong evidence.
+enum class Evidence : std::uint8_t { Strong = 1, Weak = 2, None = 3, Independent = 4 };
 enum class SupportState : std::uint8_t {
     Verified = 1,
     CompatibleUnverified = 2,
@@ -98,6 +117,8 @@ enum class SupportState : std::uint8_t {
 
 [[nodiscard]] std::string_view to_string(CheckStatus status) noexcept;  // "pass", ...
 [[nodiscard]] std::string_view to_string(Evidence evidence) noexcept;   // "strong", ...
+// Strong or independent.
+[[nodiscard]] bool at_least_strong(Evidence evidence) noexcept;
 [[nodiscard]] std::string_view to_string(SupportState state) noexcept;  // "verified", ...
 // User-facing name ("Verified", "Compatible, unverified", "Limited", "Unsupported").
 [[nodiscard]] std::string_view display_name(SupportState state) noexcept;
@@ -166,6 +187,11 @@ struct FixtureResult {
     std::vector<std::string> state_reasons;
     std::vector<std::string> evidence_gaps;
     std::optional<std::string> expected_state;
+    // What the fixture's colour rests on (ADR 0020): "independent_chart" (colour_reference passed),
+    // "decoder_calibration_agreement" (the colour check passed like for like with LibRaw),
+    // "monochrome" (a monochrome sensor: neutral by construction, like for like), "gross_errors_only"
+    // (it passed, not like for like: DNG profiles) or "none".
+    std::string colour_evidence = "none";
     // Differences from the expectation's expected outcome (state, check statuses, limitations,
     // mode key); empty when the result is exactly as expected or there is no expectation.
     std::vector<std::string> expectation_mismatches;
@@ -201,6 +227,7 @@ struct CorpusPaths {
     [[nodiscard]] std::filesystem::path reference_dir() const;  // fixtures/reference
     [[nodiscard]] std::filesystem::path expectations() const;   // fixtures/qualification/expectations.json
     [[nodiscard]] std::filesystem::path families() const;       // fixtures/qualification/families.json
+    [[nodiscard]] std::filesystem::path charts() const;         // fixtures/qualification/charts.json
     [[nodiscard]] std::filesystem::path render_reference()
         const;  // tests/integration/data/render_reference.json
     [[nodiscard]] std::filesystem::path cached_file(const ManifestFixture& fixture) const;
@@ -223,6 +250,7 @@ struct QualifyCorpus {
     std::vector<ManifestFixture> manifest;
     std::optional<Expectations> expectations;
     nlohmann::json render_reference;  // lucent.render-reference v2
+    std::optional<ChartDefinitions> charts;  // fixtures/qualification/charts.json, when present
 
     // Loads manifest, expectations (optional: a run without them proposes states only from
     // checks and reports every fact as unverified) and the render reference.
@@ -243,10 +271,12 @@ struct QualifyCorpus {
 //                          interpretation check means a mandatory step is unavailable);
 //   limited                every check passed (or does not apply) but a known optional capability
 //                          is missing (a limitation);
-//   verified               additionally: every check that applies passed with strong evidence, and
-//                          the expectation exists, its mode key equals the derived one, and its
-//                          identity, compression, camera image area, orientation and
-//                          representation facts are all verified;
+//   verified               additionally: every check that applies passed with strong (or
+//                          independent) evidence, and the expectation exists, its mode key equals
+//                          the derived one, and its identity, compression, camera image area,
+//                          orientation and representation facts are all verified (a chart fixture
+//                          therefore needs colour_reference to pass; other fixtures' colour rests
+//                          on the like-for-like agreement with LibRaw, colour_evidence says which);
 //   compatible_unverified  otherwise (decoding and interpretation succeed, the evidence is
 //                          insufficient; the gaps are listed).
 void propose_state(FixtureResult& result, const FixtureExpectation* expectation);

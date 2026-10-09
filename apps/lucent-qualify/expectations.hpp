@@ -58,6 +58,8 @@ inline constexpr std::string_view kCheckInterpretation = "interpretation";
 inline constexpr std::string_view kCheckCfa = "cfa";
 inline constexpr std::string_view kCheckBlackWhite = "black_white";
 inline constexpr std::string_view kCheckColour = "colour";
+// ADR 0020: the develop path's colours against a chart's published values (chart fixtures only).
+inline constexpr std::string_view kCheckColourReference = "colour_reference";
 inline constexpr std::string_view kCheckDimensions = "dimensions";
 inline constexpr std::string_view kCheckOrientation = "orientation";
 inline constexpr std::string_view kCheckRequiredCorrections = "required_corrections";
@@ -130,7 +132,8 @@ struct FixtureExpectation {
     std::string mode_key;  // canonical text, mode_key.hpp
     std::string mode_label;
     Fact compression;
-    // Dimensions (upright pixels; every corpus file has orientation 1).
+    // Dimensions, in upright pixels (a file shot in portrait lists the manufacturer's landscape sizes
+    // with width and height exchanged).
     std::optional<Size2> rendered;           // absent when the decoder refuses the file
     std::optional<Size2> camera_image_area;  // the camera's own image size for this mode
     Fact camera_image_area_fact;
