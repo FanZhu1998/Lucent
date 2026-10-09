@@ -906,6 +906,94 @@ TEST_F(BatchFailureTest, CancelStopsQueuedAndRunningJobs) {
     EXPECT_TRUE(std::filesystem::exists(out_ / std::format(L"Lucent-batch-{}-report.html", submitted->id.value)));
 }
 
+// The workers' hard aggregate memory limit (ADR 0012, amendment "Aggregate worker memory limit"):
+// two real workers that each hold 600 MiB under a 1 GiB worker budget. Whichever allocates second
+// is stopped by the limit: a clean transient failure (its temporary output removed, its publication
+// abandoned), retried alone, so every photo is exported once with exactly one receipt.
+TEST_F(BatchFailureTest, TwoWorkersAboveTheAggregateLimitRetryTheStoppedPhotoAlone) {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.max_workers = 2;
+    options.memory.total_bytes = std::uint64_t{2} << 30;
+    options.memory.interactive_reserve_bytes = std::uint64_t{1} << 30;  // worker budget: 1 GiB
+    options.test.admit_before_calibration = true;                        // both workers from the start
+    options.test.worker_hooks_by_start = {{"allocate:629145600", "hold-allocation:3000"},
+                                          {"allocate:629145600", "hold-allocation:3000"}};
+    open(options);
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 2));
+    const catalog::BatchId id = h().run(h().request(ids, out_));
+    const catalog::BatchRecord record = h().record(id);
+    EXPECT_EQ(record.counts.complete, 2u);
+    EXPECT_EQ(record.counts.failed, 0u);
+
+    const BatchSchedulerStats stats = h().batches().stats();
+    EXPECT_EQ(stats.aggregate_limit_bytes, std::uint64_t{1} << 30);
+    EXPECT_EQ(stats.peak_active_workers, 2u);
+    EXPECT_EQ(stats.aggregate_limit_hits, 1u);
+    EXPECT_EQ(stats.exclusive_attempts, 1u);
+    std::printf("  aggregate limit %llu MiB: group peak commit %llu MiB (includes the refused allocation), largest "
+                "worker commit %llu MiB\n",
+                static_cast<unsigned long long>(stats.aggregate_limit_bytes >> 20),
+                static_cast<unsigned long long>(stats.peak_aggregate_commit_bytes >> 20),
+                static_cast<unsigned long long>(stats.peak_worker_commit_bytes >> 20));
+
+    // Exactly one job was stopped once (transient, not a failure of the photo) and retried.
+    std::uint32_t stopped = 0;
+    for (const catalog::JobRecord& job : h().jobs(id)) {
+        EXPECT_EQ(job.stage, catalog::JobStage::Complete);
+        if (job.attempts == 2) {
+            ++stopped;
+            EXPECT_EQ(job.transient_failures, 1u);
+            catalog::EventQuery query;
+            query.job = job.id;
+            auto events = h().catalog().query([&](catalog::ReadTransaction& tx) { return tx.list_job_events(query); });
+            ASSERT_TRUE(events);
+            bool aggregate = false;
+            for (const catalog::JobEvent& event : *events) {
+                aggregate = aggregate || (event.error && event.error->where == "workers.worker.group_memory_limit");
+            }
+            EXPECT_TRUE(aggregate);
+            auto journal =
+                h().catalog().query([&](catalog::ReadTransaction& tx) { return tx.publication_journal(job.id); });
+            ASSERT_TRUE(journal);
+            bool abandoned = false;
+            for (const catalog::PublicationRecord& entry : *journal) {
+                abandoned = abandoned || (entry.attempt == 1 && entry.step == catalog::PublicationStep::Abandoned);
+            }
+            EXPECT_TRUE(abandoned);
+        } else {
+            EXPECT_EQ(job.attempts, 1u);
+        }
+    }
+    EXPECT_EQ(stopped, 1u);
+    // One receipt per photo, each for the file in the folder; nothing left behind.
+    const std::vector<catalog::ReceiptRecord> receipts = h().receipts(id);
+    ASSERT_EQ(receipts.size(), 2u);
+    for (const catalog::ReceiptRecord& receipt : receipts) {
+        EXPECT_EQ(ts::file_sha256(receipt.final_path), receipt.output_sha256);
+    }
+    EXPECT_EQ(count_with_extension(out_, L".jpg"), 2u);
+    EXPECT_TRUE(ts::leftovers(out_).empty());
+}
+
+// A single worker within the aggregate limit is not stopped by it.
+TEST_F(BatchFailureTest, AWorkerWithinTheAggregateLimitIsNotStopped) {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.max_workers = 1;
+    options.memory.total_bytes = std::uint64_t{2} << 30;
+    options.memory.interactive_reserve_bytes = std::uint64_t{1} << 30;
+    options.test.worker_hooks_by_start = {{"allocate:629145600"}};
+    open(options);
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 1));
+    const catalog::BatchId id = h().run(h().request(ids, out_));
+    const catalog::JobRecord job = job_at(id, 0);
+    EXPECT_EQ(job.stage, catalog::JobStage::Complete);
+    EXPECT_EQ(job.attempts, 1u);
+    const BatchSchedulerStats stats = h().batches().stats();
+    EXPECT_EQ(stats.aggregate_limit_hits, 0u);
+    EXPECT_GE(stats.peak_aggregate_commit_bytes, std::uint64_t{600} << 20);
+    EXPECT_LE(stats.peak_aggregate_commit_bytes, std::uint64_t{1} << 30);
+}
+
 TEST_F(BatchFailureTest, InteractiveWorkHoldsBackAdmission) {
     BatchServiceOptions options = ts::fast_batch_options();
     auto busy = std::make_shared<std::atomic<bool>>(true);

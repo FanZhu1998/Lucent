@@ -170,14 +170,33 @@ void BatchService::Impl::coordinator_main() {
 void BatchService::Impl::slot_main(detail::Slot& slot) {
     for (;;) {
         std::optional<detail::Assignment> work;
+        bool release = false;
         {
             std::unique_lock lock(mutex);
-            slot.cv.wait(lock, [&] { return stopping || slot.assignment.has_value(); });
-            if (!slot.assignment) {
+            slot.cv.wait(lock, [&] { return stopping || slot.assignment.has_value() || slot.release_requested; });
+            if (!slot.assignment && stopping) {
                 break;
             }
-            work = std::move(slot.assignment);
-            slot.assignment.reset();
+            if (slot.assignment) {
+                work = std::move(slot.assignment);
+                slot.assignment.reset();
+            } else {
+                release = true;
+            }
+        }
+        if (release) {
+            // The coordinator needs the room this idle worker holds under the aggregate limit.
+            if (slot.host) {
+                slot.host->shutdown();
+            }
+            {
+                std::lock_guard lock(mutex);
+                slot.release_requested = false;
+                slot.idle_commit = 0;
+                slot.pid = 0;
+            }
+            request_wake();
+            continue;
         }
         try {
             run_attempt(slot, *work);
@@ -188,6 +207,7 @@ void BatchService::Impl::slot_main(detail::Slot& slot) {
             core::log_error(kWhere, "a batch attempt raised an unknown exception");
         }
         bool reclaim = false;
+        const std::uint64_t idle = slot.host && slot.host->info().running ? slot.host->info().idle_commit_bytes : 0;
         {
             std::lock_guard lock(mutex);
             slot.busy = false;
@@ -197,6 +217,8 @@ void BatchService::Impl::slot_main(detail::Slot& slot) {
             slot.owner.clear();
             slot.estimate_bytes = 0;
             slot.observed_commit = 0;
+            slot.exclusive = false;
+            slot.idle_commit = idle;
             reclaim = std::exchange(slot.reclaim_after, false);
         }
         if (reclaim) {
@@ -383,8 +405,14 @@ void BatchService::Impl::dispatch() {
             if (stopping) {
                 return;
             }
-            for (const auto& slot : slots) {
-                if (!slot->busy) {
+            // A free slot whose worker is running (it is reused) first, then any free slot that is not
+            // shutting its worker down, then any free slot.
+            for (int pass = 0; pass < 3 && idle == nullptr; ++pass) {
+                for (const auto& slot : slots) {
+                    if (slot->busy || slot->assignment || (pass < 2 && slot->release_requested) ||
+                        (pass == 0 && slot->idle_commit == 0)) {
+                        continue;
+                    }
                     idle = slot.get();
                     break;
                 }
@@ -454,29 +482,61 @@ void BatchService::Impl::dispatch() {
                 continue;
             }
             const bool interactive = options.interactive_busy && options.interactive_busy();
-            const auto admit = [&](std::uint64_t estimate) {
+            const auto admit = [&](std::uint64_t estimate, bool exclusive) {
                 // (mutex held)
                 std::uint32_t busy = 0;
                 std::uint64_t reserved = 0;
+                // Idle workers of other slots: what they hold counts against the aggregate limit.
+                std::uint64_t idle_held = 0;
+                std::vector<detail::Slot*> holders;
                 for (const auto& slot : slots) {
                     if (slot->busy) {
                         ++busy;
                         reserved += std::max(slot->estimate_bytes, slot->observed_commit);
+                    } else if (slot.get() != idle && slot->idle_commit > 0) {
+                        idle_held += slot->idle_commit;
+                        holders.push_back(slot.get());
                     }
                 }
+                // Asks the idle workers to leave; admission is tried again once they are gone.
+                const auto release_holders = [&] {
+                    for (detail::Slot* holder : holders) {
+                        if (!holder->release_requested) {
+                            holder->release_requested = true;
+                            ++counters.idle_workers_released;
+                            holder->cv.notify_all();
+                        }
+                    }
+                    ++counters.deferred_for_memory;
+                    return false;
+                };
                 if (interactive) {
                     ++counters.deferred_for_interactive;
                     return false;
                 }
+                if (exclusive) {
+                    // The job's last attempt hit the aggregate limit beside other workers: it runs
+                    // alone, with the other workers' memory released.
+                    if (busy > 0) {
+                        ++counters.deferred_for_memory;
+                        return false;
+                    }
+                    return holders.empty() ? true : release_holders();
+                }
                 if (busy == 0) {
-                    return true;  // one worker always runs; the engine refuses what exceeds the budget
+                    // One worker always runs (the engine refuses what exceeds the budget), with the
+                    // room idle workers would take from it under the aggregate limit.
+                    return holders.empty() || estimate + idle_held <= worker_budget ? true : release_holders();
                 }
                 if (busy >= options.max_workers) {
                     return false;
                 }
-                if (!calibrated || reserved + estimate > worker_budget) {
+                if ((!calibrated && !options.test.admit_before_calibration) || reserved + estimate > worker_budget) {
                     ++counters.deferred_for_memory;
                     return false;
+                }
+                if (reserved + estimate + idle_held > worker_budget) {
+                    return release_holders();
                 }
                 const detail::PhysicalMemory memory = detail::physical_memory();
                 if (memory.available != 0 && memory.available < estimate + options.memory.free_memory_margin_bytes) {
@@ -488,7 +548,7 @@ void BatchService::Impl::dispatch() {
             std::string owner;
             {
                 std::lock_guard lock(mutex);
-                if (!admit(estimate_bytes(pixels, analysis))) {
+                if (!admit(estimate_bytes(pixels, analysis), exclusive_jobs.contains(next->id.value))) {
                     return;
                 }
                 owner = std::format("{}/slot{}/{}", session, idle->index, ++attempt_counter);
@@ -513,8 +573,9 @@ void BatchService::Impl::dispatch() {
                 analysis = needs_analysis((*claimed)->job);
             }
             std::unique_lock lock(mutex);
+            const bool exclusive = exclusive_jobs.contains((*claimed)->job.id.value);
             const std::uint64_t estimate = estimate_bytes(pixels, analysis);
-            if (stopping || ((*claimed)->job.id != next->id && !admit(estimate))) {
+            if (stopping || ((*claimed)->job.id != next->id && !admit(estimate, exclusive))) {
                 // Give it back untouched (no failure is counted).
                 lock.unlock();
                 const catalog::JobLease lease = (*claimed)->lease;
@@ -526,7 +587,14 @@ void BatchService::Impl::dispatch() {
             idle->batch = record.id;
             idle->cancel = core::CancellationSource();
             idle->stop = detail::StopReason::None;
-            idle->estimate_bytes = estimate;
+            // An exclusive attempt reserves the whole worker budget: nothing is admitted beside it.
+            idle->exclusive = exclusive;
+            idle->release_requested = false;  // its worker is used for this attempt instead
+            idle->estimate_bytes = exclusive ? std::max(estimate, worker_budget) : estimate;
+            if (exclusive) {
+                exclusive_jobs.erase((*claimed)->job.id.value);
+                ++counters.exclusive_attempts;
+            }
             idle->observed_commit = 0;
             idle->running = RunningJob{};
             idle->running.job = (*claimed)->job.id;
@@ -1198,6 +1266,7 @@ void Attempt::ensure_host() {
         workers::WorkerHostOptions options;
         options.executable = s_.options.worker_executable;
         options.memory_limit_bytes = s_.worker_budget;
+        options.group = s_.worker_group;
         options.heartbeat_interval = s_.options.heartbeat_interval;
         options.heartbeat_timeout = s_.options.heartbeat_timeout;
         options.cancel_grace = s_.options.cancel_grace;
@@ -1269,6 +1338,13 @@ void Attempt::worker_failed(const workers::JobFailure& failure) {
     }
     if (failure.fault == workers::WorkerFault::MemoryLimit || error.code == ErrorCode::LimitExceeded) {
         error.where = error.where.empty() ? std::string(detail::kWhereMemory) : error.where;
+    }
+    if (failure.fault == workers::WorkerFault::GroupMemoryLimit) {
+        // The workers together reached the aggregate limit and this one allocated at it: alone it
+        // may well fit, so its retry (transient) is admitted alone.
+        std::lock_guard lock(s_.mutex);
+        s_.exclusive_jobs.insert(job_.id.value);
+        ++s_.counters.aggregate_limit_hits;
     }
     diagnose(std::move(error), to_catalog(failure.failure_class));
 }

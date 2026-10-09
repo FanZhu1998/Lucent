@@ -129,6 +129,15 @@ struct Slot {
     std::uint64_t observed_commit = 0;  // largest commit heartbeats reported in this attempt
     std::uint32_t pid = 0;
     bool reclaim_after = false;  // the attempt left its job leased: reconcile it once the slot is free
+    // What the slot's worker holds while it waits for the next job (workers::WorkerInfo::
+    // idle_commit_bytes); 0 without a running worker. It counts against the workers' aggregate
+    // limit, so admission counts it too.
+    std::uint64_t idle_commit = 0;
+    // The coordinator asked the slot thread to shut its idle worker down (to make room under the
+    // aggregate limit); cleared once it is gone.
+    bool release_requested = false;
+    // The running attempt was admitted alone (after its job hit the aggregate limit beside others).
+    bool exclusive = false;
 };
 
 // Where the batch's output folder stands (recovery decides nothing about outputs it cannot see).
@@ -190,6 +199,13 @@ struct BatchService::Impl {
     bool calibrated = false;
     double measured_bytes_per_pixel = 0.0;
     std::uint64_t measured_floor = 0;  // largest commit of a job below the calibration size
+    // The hard aggregate limit of all workers' commit (the worker budget; ADR 0012, amendment
+    // "Aggregate worker memory limit"); null when the group could not be created (per-process
+    // limits only).
+    std::shared_ptr<workers::WorkerGroup> worker_group;
+    // (mutex) Jobs whose last attempt the aggregate limit stopped beside other workers: the next
+    // attempt of each runs alone (consumed when it is admitted).
+    std::unordered_set<std::int64_t> exclusive_jobs;
     double measured_auto_bytes_per_pixel = 0.0;  // of attempts that ran an automatic analysis
     BatchSchedulerStats counters;      // (mutex) cumulative members only
     RecoveryReport recovery;           // (mutex)

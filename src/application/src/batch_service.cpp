@@ -1167,6 +1167,16 @@ Expected<std::unique_ptr<BatchService>> BatchService::open(Library& library, std
             kGiB, total > impl->options.memory.interactive_reserve_bytes ? total - impl->options.memory.interactive_reserve_bytes : 0);
         impl->counters.total_budget_bytes = impl->total_budget;
         impl->counters.worker_budget_bytes = impl->worker_budget;
+        // The worker budget as a limit Windows enforces on all workers together (nested Job
+        // Objects): without it only admission bounds the sum (each worker's own limit is the whole
+        // budget).
+        if (auto group = workers::WorkerGroup::create(impl->worker_budget)) {
+            impl->worker_group = std::move(*group);
+            impl->counters.aggregate_limit_bytes = impl->worker_budget;
+        } else {
+            core::log_warn(kWhereOpen, "the workers' aggregate memory limit is not available: {}",
+                           group.error().describe());
+        }
         impl->counters.interactive_reserve_bytes = impl->options.memory.interactive_reserve_bytes;
         impl->counters.max_workers = impl->options.max_workers;
         // Recovery runs first on the coordinator thread (see "Recovery"): checking outputs on a slow
@@ -2117,6 +2127,9 @@ BatchSchedulerStats BatchService::stats() const {
         if (slot->pid != 0) {
             stats.worker_pids.push_back(slot->pid);
         }
+    }
+    if (impl_->worker_group) {
+        stats.peak_aggregate_commit_bytes = impl_->worker_group->stats().peak_commit_bytes;
     }
     return stats;
 }

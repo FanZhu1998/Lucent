@@ -219,6 +219,7 @@ if(LUCENT_BUILD_TESTS)
     add_executable(lucent_application_fixture_tests
         tests/app_test_support.hpp
         tests/application_fixture_test.cpp
+        tests/auto_large_photo_test.cpp
     )
     target_link_libraries(lucent_application_fixture_tests PRIVATE
         Lucent::compiler_options

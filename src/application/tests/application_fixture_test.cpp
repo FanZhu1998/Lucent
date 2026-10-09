@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,6 +22,7 @@
 #include <psapi.h>
 // clang-format on
 
+#include <lucent/application/auto_develop.hpp>
 #include <lucent/application/auto_service.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/display_image.hpp>
@@ -511,6 +513,75 @@ TEST_F(ApplicationFixtures, CanonR5InteractiveEditing) {
     RecordProperty("full_ms", static_cast<int>(full_seconds * 1000));
     RecordProperty("proxy_mib", static_cast<int>(mb(after_open.proxy_bytes)));
     RecordProperty("full_mib", static_cast<int>(mb(at_full.full_bytes)));
+}
+
+// The cost and the decisions of one run_automatic() (analysis and full-resolution final check, in
+// process, default options), for the performance report and for comparing builds: run it once per
+// file and process (the memory figures are the process's peaks), with
+//   LUCENT_AUTO_MEASURE_FILE  the photo
+//   LUCENT_AUTO_MEASURE_OUT   where the JSON goes: {"file", "seconds", "analysis_s", "check_s",
+//                             "estimate_bytes", "commit_before", "peak_commit", "peak_working_set",
+//                             "run": <the "lucent.auto-run" document>}
+// --gtest_also_run_disabled_tests --gtest_filter=AutoMeasurement.DISABLED_OneFile
+TEST(AutoMeasurement, DISABLED_OneFile) {
+    const auto variable = [](const char* name) {
+        char* value = nullptr;
+        std::size_t length = 0;
+        std::string text;
+        if (_dupenv_s(&value, &length, name) == 0 && value != nullptr) {
+            text = value;
+        }
+        std::free(value);
+        return text;
+    };
+    const std::string file = variable("LUCENT_AUTO_MEASURE_FILE");
+    const std::string out = variable("LUCENT_AUTO_MEASURE_OUT");
+    if (file.empty() || out.empty()) {
+        GTEST_SKIP() << "set LUCENT_AUTO_MEASURE_FILE and LUCENT_AUTO_MEASURE_OUT";
+    }
+    const auto memory = [] {
+        PROCESS_MEMORY_COUNTERS_EX counters{};
+        counters.cb = sizeof(counters);
+        ::GetProcessMemoryInfo(::GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                               sizeof(counters));
+        return counters;
+    };
+    const std::filesystem::path photo(std::u8string(reinterpret_cast<const char8_t*>(file.c_str())));
+    const auto registry = ts::default_registry();
+    const PROCESS_MEMORY_COUNTERS_EX before = memory();
+    const auto start = std::chrono::steady_clock::now();
+    auto run = run_automatic(*registry, photo, 0, engine::DevelopSettings{}, AutoRunRequest{});
+    const double seconds = seconds_since(start);
+    const PROCESS_MEMORY_COUNTERS_EX after = memory();
+    std::FILE* f = nullptr;
+    ASSERT_EQ(fopen_s(&f, out.c_str(), "wb"), 0);
+    ASSERT_NE(f, nullptr);
+    if (!run) {
+        // A refusal is a decision too (an unsupported or oversized photo): recorded, not a failure.
+        const std::string json = std::format("{{\"file\": \"{}\", \"error\": \"{}\", \"where\": \"{}\"}}\n",
+                                             photo.filename().string(), to_string(run.error().code),
+                                             run.error().where);
+        std::fwrite(json.data(), 1, json.size(), f);
+        std::fclose(f);
+        std::printf("  %s: %s\n", file.c_str(), run.error().describe().c_str());
+        return;
+    }
+    auto document = write_auto_run(*run);
+    ASSERT_TRUE(document) << document.error().describe();
+    const std::string json = std::format(
+        "{{\"file\": \"{}\", \"seconds\": {}, \"analysis_s\": {}, \"check_s\": {}, \"estimate_bytes\": {}, "
+        "\"commit_before\": {}, \"peak_commit\": {}, \"peak_working_set\": {}, \"run\": {}}}\n",
+        photo.filename().string(), seconds, run->analysis_seconds, run->check_seconds,
+        run->estimated_peak_bytes, before.PagefileUsage, after.PeakPagefileUsage, after.PeakWorkingSetSize,
+        *document);
+    std::fwrite(json.data(), 1, json.size(), f);
+    std::fclose(f);
+    std::printf("  %s: %.2f s (analysis %.2f s, check %.2f s); estimate %.0f MiB, peak commit %.0f MiB, peak "
+                "working set %.0f MiB\n",
+                file.c_str(), seconds, run->analysis_seconds, run->check_seconds,
+                static_cast<double>(run->estimated_peak_bytes) / 1048576.0,
+                static_cast<double>(after.PeakPagefileUsage) / 1048576.0,
+                static_cast<double>(after.PeakWorkingSetSize) / 1048576.0);
 }
 
 }  // namespace
