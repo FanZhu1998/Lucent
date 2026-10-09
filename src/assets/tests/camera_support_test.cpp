@@ -1,9 +1,11 @@
+#include <algorithm>
 #include <string>
 
 #include <gtest/gtest.h>
 
 #include <lucent/assets/camera_support.hpp>
 #include <lucent/assets/mode_key.hpp>
+#include <lucent/engine/develop.hpp>
 
 #include "asset_test_support.hpp"
 
@@ -104,6 +106,7 @@ TEST(CameraSupport, LookupTakesTheWorstMatchAndTheMostSpecificLabels) {
     CameraSupportEntry broad;
     broad.match = "mk1|canon|eos-r5|*|*|*|*|*|*|*|*";
     broad.qualified_key = broad.match;
+    broad.image_area = "*";  // any image area: a curated entry, never Verified
     broad.state = SupportState::Limited;
     broad.camera = "Canon EOS R5 (any mode)";
     broad.limitations = {{"dual_pixel_not_processed", ""}};
@@ -157,6 +160,15 @@ TEST(CameraSupport, RefusesInconsistentDatabases) {
     db = sample_database();
     db.date = "2026-10-09";
     refused(db, "a date that is not the run's");
+    db = sample_database();
+    db.entries[0].image_area = "*";
+    refused(db, "a Verified entry for any image area");
+    db = sample_database();
+    db.entries[1].image_area.clear();
+    refused(db, "an entry without its image area");
+    db = sample_database();
+    db.basis.develop_engine.clear();
+    refused(db, "a basis without the develop-engine versions");
 }
 
 TEST(CameraSupport, ParserIsStrict) {
@@ -181,9 +193,19 @@ TEST(CameraSupport, ParserIsStrict) {
     corrupt(state, "an unknown state");
     corrupt("{}", "an empty object");
 
+    std::string probe_facts = *text;
+    probe_facts.replace(probe_facts.find("\"dng_opcodes\": []"), 17, "\"dng_opcodes\": 3");
+    corrupt(probe_facts, "DNG opcodes that are not a list");
+
     std::string newer = *text;
-    newer.replace(newer.find("\"schema_version\": 1"), 19, "\"schema_version\": 2");
+    newer.replace(newer.find("\"schema_version\": 2"), 19, "\"schema_version\": 3");
     auto parsed = parse_camera_support(newer);
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().code, ErrorCode::VersionMismatch);
+    // Version 1 lacked the basis and the probe facts a Verified state needs (QUA-02, QUA-08).
+    std::string older = *text;
+    older.replace(older.find("\"schema_version\": 2"), 19, "\"schema_version\": 1");
+    parsed = parse_camera_support(older);
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().code, ErrorCode::VersionMismatch);
 }
@@ -205,13 +227,92 @@ TEST(CameraSupport, BasisDifferencesIgnoreHowEvidenceWasWeighed) {
     EXPECT_NE(differences[1].find("render pipeline"), std::string::npos);
 }
 
+// QUA-02: every version of what a Verified state certifies is part of the basis, so changing any of
+// them demotes Verified until the mode is qualified again.
+TEST(CameraSupport, TheBasisCoversEveryEngineDecoderAndExportVersion) {
+    const QualificationBasis running = running_basis();
+    EXPECT_EQ(running.develop_engine.size(), engine::kDevelopEngineVersions.size());
+    EXPECT_GT(running.neutral_look, 0u);
+    EXPECT_GT(running.export_version, 0u);
+    EXPECT_TRUE(std::is_sorted(running.decoder_capabilities.begin(), running.decoder_capabilities.end()));
+    for (std::size_t i = 0; i < running.develop_engine.size(); ++i) {
+        QualificationBasis qualified = running;
+        ++qualified.develop_engine[i];
+        const auto differences = basis_differences(qualified, running);
+        ASSERT_EQ(differences.size(), 1u) << "develop engine version " << i;
+        EXPECT_NE(differences[0].find("develop engine"), std::string::npos) << differences[0];
+    }
+    QualificationBasis look = running;
+    ++look.neutral_look;
+    EXPECT_EQ(basis_differences(look, running).size(), 1u);
+    QualificationBasis exported = running;
+    ++exported.export_version;
+    EXPECT_EQ(basis_differences(exported, running).size(), 1u);
+    QualificationBasis codecs = running;
+    codecs.decoder_capabilities.push_back("zz-test-codec");
+    ASSERT_EQ(basis_differences(codecs, running).size(), 1u);
+    EXPECT_NE(basis_differences(codecs, running)[0].find("zz-test-codec"), std::string::npos);
+    QualificationBasis fewer = running;
+    fewer.develop_engine.pop_back();
+    EXPECT_EQ(basis_differences(fewer, running).size(), 1u) << "an appended engine version differs";
+}
+
+// QUA-08: the probe facts beside the key a Verified entry is qualified for.
+TEST(ModeVariant, NamesTheImageAreaAndTheDngOpcodes) {
+    raw::RawMetadata m;
+    EXPECT_EQ(derive_mode_variant(m).image_area, "unknown");
+    EXPECT_TRUE(derive_mode_variant(m).dng_opcodes.empty());
+    EXPECT_EQ(to_string(derive_mode_variant(m)), "unknown; no DNG opcodes");
+
+    m.image_area.source = raw::ImageAreaSource::DecoderInsetCrop;
+    m.image_area.rect = raw::AreaRect{144.0, 112.0, 8192.0, 5464.0};
+    m.image_area.user_crop = raw::NormalizedCrop{0.0, 0.1665, 1.0, 0.8335};  // not part of the variant
+    EXPECT_EQ(derive_mode_variant(m).image_area, "decoder_inset_crop 8192x5464");
+    m.image_area.source = raw::ImageAreaSource::DngDefaultCrop;
+    m.image_area.rect = raw::AreaRect{8.0, 8.0, 6000.5, 4000.0};
+    EXPECT_EQ(derive_mode_variant(m).image_area, "dng_default_crop 6000.5x4000");
+
+    raw::RequiredOperation warp;
+    warp.kind = raw::RequiredOperationKind::DngOpcode;
+    warp.stage = raw::OperationStage::AfterDemosaic;
+    warp.name = "WarpRectilinear";
+    raw::RequiredOperation vignette = warp;
+    vignette.name = "FixVignetteRadial";
+    vignette.mandatory = false;
+    raw::RequiredOperation gain = warp;
+    gain.stage = raw::OperationStage::LinearRaw;
+    gain.name = "GainMap";
+    m.required_operations = {gain, warp, vignette};
+    const ModeVariant variant = derive_mode_variant(m);
+    EXPECT_EQ(variant.dng_opcodes,
+              (std::vector<std::string>{"list2:GainMap", "list3:WarpRectilinear", "list3:FixVignetteRadial optional"}));
+    EXPECT_EQ(to_string(variant),
+              "dng_default_crop 6000.5x4000; list2:GainMap, list3:WarpRectilinear, list3:FixVignetteRadial optional");
+    ModeVariant other = variant;
+    other.dng_opcodes.pop_back();
+    EXPECT_NE(other, variant);
+}
+
+TEST(CameraSupport, StandardLimitationTextsCoverEveryCode) {
+    for (const std::string_view code :
+         {kLimitationDefaultCrop, kLimitationXTransBaseline, kLimitationDualPixel, kLimitationEnhancedImage,
+          kLimitationOptionalOperations, kLimitationNonSquarePixels, kLimitationPixelShift}) {
+        const auto text = standard_limitation_text(code);
+        ASSERT_TRUE(text.has_value()) << code;
+        EXPECT_EQ(text->code, code);
+        EXPECT_FALSE(text->summary.empty());
+        EXPECT_FALSE(text->meaning.empty());
+    }
+    EXPECT_FALSE(standard_limitation_text("not_a_code").has_value());
+}
+
 TEST(CameraSupport, ActivationChecksTheContentAndTheBasis) {
     auto text = write_camera_support(sample_database());
     ASSERT_TRUE(text.has_value());
     VerifiedAsset asset;
     asset.manifest.id = "camera-support";
     asset.manifest.version = test::version("1.0.0");
-    asset.manifest.content = {"lucent.camera-support", 1};
+    asset.manifest.content = {"lucent.camera-support", kCameraSupportSchemaVersion};
     asset.files.emplace("camera-support.json", *text);
     auto active = activate_camera_support(asset);
     ASSERT_TRUE(active.has_value()) << active.error().describe();
@@ -219,12 +320,12 @@ TEST(CameraSupport, ActivationChecksTheContentAndTheBasis) {
     EXPECT_TRUE((*active)->verified_entries_hold());
     EXPECT_EQ((*active)->database.entries.size(), 3u);
 
-    asset.manifest.content.schema_version = 2;
+    asset.manifest.content.schema_version = kCameraSupportSchemaVersion + 1;
     auto newer = activate_camera_support(asset);
     ASSERT_FALSE(newer.has_value());
     EXPECT_EQ(newer.error().code, ErrorCode::VersionMismatch);
 
-    asset.manifest.content = {"lucent.camera-support", 1};
+    asset.manifest.content = {"lucent.camera-support", kCameraSupportSchemaVersion};
     asset.files.clear();
     auto missing = activate_camera_support(asset);
     ASSERT_FALSE(missing.has_value());
@@ -247,7 +348,7 @@ TEST(CameraSupport, LoadsFromAssetFoldersEndToEnd) {
     locations.bundled = dir.path() / "assets";
     test::AssetSpec spec;
     spec.id = "camera-support";
-    spec.content = {"lucent.camera-support", 1};
+    spec.content = {"lucent.camera-support", kCameraSupportSchemaVersion};
     auto text = write_camera_support(sample_database());
     ASSERT_TRUE(text.has_value());
     spec.files = {{"camera-support.json", *text}};
@@ -262,7 +363,7 @@ TEST(CameraSupport, LoadsFromAssetFoldersEndToEnd) {
     EXPECT_FALSE(load.problem.has_value());
 
     // A database file that is not a valid database is refused even with correct hashes.
-    spec.files = {{"camera-support.json", "{\"schema\": \"lucent.camera-support\", \"schema_version\": 1}"}};
+    spec.files = {{"camera-support.json", "{\"schema\": \"lucent.camera-support\", \"schema_version\": 2}"}};
     test::write_asset(locations.bundled / "camera-support", spec);
     request.pinned_manifest.reset();
     load = load_camera_support(locations, request);

@@ -115,6 +115,16 @@ Expected<AssetRequest> bundled_asset_request(std::string_view id) {
     request.id = std::string(id);
     request.app_version = std::move(*version);
     request.pinned_manifest = bundled_manifest_pin(id);
+    if (!request.pinned_manifest) {
+        // AST-09: an asset the build has no pin for would be trusted on its own hashes, which "do not
+        // authenticate" (blueprint section 8). Unpinned verification is for tools and tests that
+        // build their own AssetRequest.
+        return fail(ErrorCode::NotFound,
+                    std::format("this build bundles no asset '{}' (it has no pin for it; add it to "
+                                "LUCENT_BUNDLED_ASSETS)",
+                                id),
+                    "assets.load.unpinned");
+    }
     return request;
 }
 

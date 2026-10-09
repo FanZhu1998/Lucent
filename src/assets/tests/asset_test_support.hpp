@@ -156,6 +156,9 @@ inline CameraSupportDatabase sample_database() {
     for (CameraSupportEntry* entry : {&verified, &limited, &unsupported}) {
         entry->qualified_key = entry->match;
     }
+    verified.image_area = "decoder_inset_crop 8192x5464";
+    limited.image_area = "decoder_inset_crop 6240x4160";
+    unsupported.image_area = "decoder_inset_crop 8256x5504";
     db.entries = {verified, limited, unsupported};
     db.summary = db.count();
     return db;

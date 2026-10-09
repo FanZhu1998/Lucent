@@ -50,6 +50,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <lucent/raw/decoded_raw.hpp>
 
@@ -105,5 +106,33 @@ struct ModeKey {
 
 // Derives the key from decoded (or, for refused files, probed) metadata.
 [[nodiscard]] ModeKey derive_mode_key(const raw::RawMetadata& metadata);
+
+// The probe facts beside the mode key that a Verified state also depends on (QUA-08; ADR 0018
+// amendment of 2026-10-08): two files of one mode key can still be rendered differently when their
+// declared image area or their DNG opcode lists differ (a Canon aspect-ratio setting, a firmware
+// that omits the crop tags, a DNG with a gain map). The qualification records the variant of each
+// qualified file's probe in the camera support database; the application compares it with the
+// variant of the file it assesses, and a Verified entry holds only when they are equal. Not part of
+// the key: keys stay stable, and a differing variant is reported, not "not listed".
+struct ModeVariant {
+    // "<ImageAreaSource> <width>x<height>" of RawMetadata::image_area (the rectangle's size in raw-frame
+    // pixels as stored: "decoder_inset_crop 8192x5464", "dng_default_crop 6000x4000",
+    // "dng_default_crop 6000.5x4000"), or "unknown". The user crop is not part of it (it is never
+    // applied).
+    std::string image_area;
+    // Every DNG opcode and profile gain table map the file asks for (RawMetadata::required_operations),
+    // in processing order: "list<1|2|3>:<name>" for opcodes ("list3:WarpRectilinear"; "optional" is
+    // appended for opcodes the file marks optional: "list3:FixVignetteRadial optional"),
+    // "profile_gain_table_map" for the profile map. Empty for files without any.
+    std::vector<std::string> dng_opcodes;
+
+    friend bool operator==(const ModeVariant&, const ModeVariant&) = default;
+};
+
+// The variant of `metadata` (see ModeVariant).
+[[nodiscard]] ModeVariant derive_mode_variant(const raw::RawMetadata& metadata);
+
+// "<image_area>; <opcode>, <opcode>" (or "; no DNG opcodes"), for messages and reports.
+[[nodiscard]] std::string to_string(const ModeVariant& variant);
 
 }  // namespace lucent::assets

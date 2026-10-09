@@ -11,6 +11,7 @@
 #include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/image_area.hpp>
 #include <lucent/engine/render.hpp>
+#include <lucent/export/export.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 #include <lucent/raw/libraw_decoder.hpp>
 
@@ -72,6 +73,10 @@ std::string database_problem(const CameraSupportDatabase& database) {
         !core::ContractVersion::parse(database.basis.decoded_raw_contract) || database.basis.mode_key == 0) {
         return "qualification.basis names no decoder, contract or mode-key version";
     }
+    if (database.basis.develop_engine.empty() || database.basis.neutral_look == 0 ||
+        database.basis.export_version == 0) {
+        return "qualification.basis names no develop-engine, neutral-look or export version";
+    }
     std::set<std::string_view> codes;
     for (std::size_t i = 0; i < database.limitations.size(); ++i) {
         const LimitationText& text = database.limitations[i];
@@ -105,6 +110,12 @@ std::string database_problem(const CameraSupportDatabase& database) {
         if (entry.state == SupportState::Verified && qualified->wildcards() > 0) {
             return std::format("{} is Verified but its qualified_key is not an exact mode key",
                                entry_name(entry));
+        }
+        if (entry.image_area.empty()) {
+            return std::format("{} names no image area", entry_name(entry));
+        }
+        if (entry.state == SupportState::Verified && entry.image_area == "*") {
+            return std::format("{} is Verified but its image area is a wildcard", entry_name(entry));
         }
         const bool limited = entry.state == SupportState::Limited;
         const bool clean =
@@ -298,13 +309,20 @@ Expected<CameraSupportDatabase> parse_camera_support(std::string_view json) {
                                         std::format("schema '{}' is not '{}'", schema, kCameraSupportSchema)};
         }
         const std::uint64_t version = detail::unsigned_number(in, "schema_version", "database");
+        if (version == 0) {
+            detail::corrupt("schema_version 0 is not a version");
+        }
         if (version > kCameraSupportSchemaVersion) {
             throw detail::DocumentError{ErrorCode::VersionMismatch,
                                         std::format("schema_version {} is newer than this build reads ({})",
                                                     version, kCameraSupportSchemaVersion)};
         }
-        if (version == 0) {
-            detail::corrupt("schema_version 0 is not a version");
+        if (version < kOldestCameraSupportSchemaVersion) {
+            throw detail::DocumentError{
+                ErrorCode::VersionMismatch,
+                std::format("schema_version {} is older than this build reads ({}): it lacks the basis and the "
+                            "probe facts a Verified state needs",
+                            version, kOldestCameraSupportSchemaVersion)};
         }
         detail::only_members(in, {"schema", "schema_version", "qualification", "limitations", "entries"},
                              "database");
@@ -319,13 +337,15 @@ Expected<CameraSupportDatabase> parse_camera_support(std::string_view json) {
         database.report = detail::text(q, "report", "qualification");
         const Json& b = detail::member(q, "basis", "qualification");
         detail::require_object(b, "qualification.basis");
-        detail::only_members(
-            b,
-            {"decoder", "decoded_raw_contract", "mode_key", "check_suite", "state_rules", "render_pipeline",
-             "develop_pipeline", "dng_opcode_processing", "geometry_operation", "image_area_placement"},
-            "qualification.basis");
+        detail::only_members(b,
+                             {"decoder", "decoder_capabilities", "decoded_raw_contract", "mode_key", "check_suite",
+                              "state_rules", "render_pipeline", "develop_pipeline", "dng_opcode_processing",
+                              "geometry_operation", "image_area_placement", "develop_engine", "neutral_look",
+                              "export"},
+                             "qualification.basis");
         QualificationBasis& basis = database.basis;
         basis.decoder = detail::text(b, "decoder", "basis");
+        basis.decoder_capabilities = detail::strings(b, "decoder_capabilities", "basis");
         basis.decoded_raw_contract = detail::text(b, "decoded_raw_contract", "basis");
         basis.mode_key = detail::small_number(b, "mode_key", "basis");
         basis.check_suite = detail::small_number(b, "check_suite", "basis");
@@ -335,6 +355,9 @@ Expected<CameraSupportDatabase> parse_camera_support(std::string_view json) {
         basis.dng_opcode_processing = detail::small_number(b, "dng_opcode_processing", "basis");
         basis.geometry_operation = detail::small_number(b, "geometry_operation", "basis");
         basis.image_area_placement = detail::small_number(b, "image_area_placement", "basis");
+        basis.develop_engine = detail::small_numbers(b, "develop_engine", "basis");
+        basis.neutral_look = detail::small_number(b, "neutral_look", "basis");
+        basis.export_version = detail::small_number(b, "export", "basis");
         const Json& s = detail::member(q, "summary", "qualification");
         detail::require_object(s, "qualification.summary");
         detail::only_members(s, {"modes", "verified", "compatible_unverified", "limited", "unsupported"},
@@ -355,12 +378,14 @@ Expected<CameraSupportDatabase> parse_camera_support(std::string_view json) {
         for (const Json& e : detail::array(in, "entries", "database")) {
             detail::require_object(e, "an entry");
             detail::only_members(e,
-                                 {"match", "qualified_key", "state", "camera", "mode", "family",
-                                  "limitations", "evidence", "evidence_gaps", "fixtures"},
+                                 {"match", "qualified_key", "image_area", "dng_opcodes", "state", "camera", "mode",
+                                  "family", "limitations", "evidence", "evidence_gaps", "fixtures"},
                                  "an entry");
             CameraSupportEntry entry;
             entry.match = detail::text(e, "match", "entry");
             entry.qualified_key = detail::text(e, "qualified_key", "entry");
+            entry.image_area = detail::text(e, "image_area", "entry");
+            entry.dng_opcodes = detail::strings(e, "dng_opcodes", "entry");
             const std::string state = detail::text(e, "state", "entry");
             const std::optional<SupportState> parsed = parse_support_state(state);
             if (!parsed) {
@@ -410,7 +435,12 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
         q["tool"] = database.tool;
         q["report"] = database.report;
         const QualificationBasis& basis = database.basis;
+        OrderedJson engine_versions = OrderedJson::array();
+        for (const std::uint32_t version : basis.develop_engine) {
+            engine_versions.push_back(version);
+        }
         q["basis"] = OrderedJson{{"decoder", basis.decoder},
+                                 {"decoder_capabilities", strings_json(basis.decoder_capabilities)},
                                  {"decoded_raw_contract", basis.decoded_raw_contract},
                                  {"mode_key", basis.mode_key},
                                  {"check_suite", basis.check_suite},
@@ -419,7 +449,10 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
                                  {"develop_pipeline", basis.develop_pipeline},
                                  {"dng_opcode_processing", basis.dng_opcode_processing},
                                  {"geometry_operation", basis.geometry_operation},
-                                 {"image_area_placement", basis.image_area_placement}};
+                                 {"image_area_placement", basis.image_area_placement},
+                                 {"develop_engine", std::move(engine_versions)},
+                                 {"neutral_look", basis.neutral_look},
+                                 {"export", basis.export_version}};
         q["summary"] = OrderedJson{{"modes", database.summary.modes},
                                    {"verified", database.summary.verified},
                                    {"compatible_unverified", database.summary.compatible_unverified},
@@ -437,6 +470,8 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
             OrderedJson e = OrderedJson::object();
             e["match"] = entry.match;
             e["qualified_key"] = entry.qualified_key;
+            e["image_area"] = entry.image_area;
+            e["dng_opcodes"] = strings_json(entry.dng_opcodes);
             e["state"] = to_string(entry.state);
             e["camera"] = entry.camera;
             e["mode"] = entry.mode;
@@ -460,7 +495,10 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
 
 QualificationBasis running_basis() {
     QualificationBasis basis;
-    basis.decoder = "LibRaw " + raw::libraw_build_info().version;
+    const raw::LibRawBuildInfo decoder = raw::libraw_build_info();
+    basis.decoder = "LibRaw " + decoder.version;
+    basis.decoder_capabilities = decoder.capabilities;
+    std::sort(basis.decoder_capabilities.begin(), basis.decoder_capabilities.end());
     basis.decoded_raw_contract = raw::kDecodedRawContractVersion.to_string();
     basis.mode_key = kModeKeyVersion;
     basis.render_pipeline = engine::kRenderPipelineVersion;
@@ -468,6 +506,9 @@ QualificationBasis running_basis() {
     basis.dng_opcode_processing = engine::kDngOpcodeProcessingVersion;
     basis.geometry_operation = engine::kGeometryOperationVersion;
     basis.image_area_placement = engine::kImageAreaPlacementVersion;
+    basis.develop_engine.assign(engine::kDevelopEngineVersions.begin(), engine::kDevelopEngineVersions.end());
+    basis.neutral_look = engine::kNeutralLookVersion;
+    basis.export_version = exporter::kExportVersion;
     return basis;
 }
 
@@ -485,7 +526,18 @@ std::vector<std::string> basis_differences(const QualificationBasis& qualified,
                 std::format("{}: qualified with version {}, this build uses version {}", what, a, b));
         }
     };
+    const auto list = [](const auto& values) {
+        std::string joined;
+        for (const auto& value : values) {
+            joined += (joined.empty() ? "" : ", ") + std::format("{}", value);
+        }
+        return "[" + joined + "]";
+    };
     text("decoder", qualified.decoder, running.decoder);
+    if (qualified.decoder_capabilities != running.decoder_capabilities) {
+        out.push_back(std::format("decoder capabilities: qualified with {}, this build has {}",
+                                  list(qualified.decoder_capabilities), list(running.decoder_capabilities)));
+    }
     text("decoded-RAW contract", qualified.decoded_raw_contract, running.decoded_raw_contract);
     number("mode key", qualified.mode_key, running.mode_key);
     number("render pipeline", qualified.render_pipeline, running.render_pipeline);
@@ -493,7 +545,56 @@ std::vector<std::string> basis_differences(const QualificationBasis& qualified,
     number("DNG opcode processing", qualified.dng_opcode_processing, running.dng_opcode_processing);
     number("geometry operation", qualified.geometry_operation, running.geometry_operation);
     number("image area placement", qualified.image_area_placement, running.image_area_placement);
+    if (qualified.develop_engine != running.develop_engine) {
+        out.push_back(std::format(
+            "develop engine (stage graph, sensor normalisation, white balance, demosaicing, camera colour, "
+            "working space, guided filter, proxy downscale, DNG opcodes, image area): qualified with versions "
+            "{}, this build uses {}",
+            list(qualified.develop_engine), list(running.develop_engine)));
+    }
+    number("neutral look", qualified.neutral_look, running.neutral_look);
+    number("export", qualified.export_version, running.export_version);
     return out;
+}
+
+// ---- Limitation wording -------------------------------------------------------------------------
+
+std::optional<LimitationText> standard_limitation_text(std::string_view code) {
+    struct Words {
+        std::string_view code;
+        std::string_view summary;
+        std::string_view meaning;
+    };
+    static constexpr Words kWords[] = {
+        {kLimitationDefaultCrop, "The camera's image area is not applied",
+         "Lucent cannot find where this camera's intended image area lies in the file, so the photo "
+         "keeps the narrow border of extra pixels the sensor records around it. Crop the edges if they "
+         "look different."},
+        {kLimitationXTransBaseline, "X-Trans demosaicing is baseline quality",
+         "Fujifilm X-Trans files are developed with Lucent's baseline demosaicing: fine detail can look "
+         "softer, and fine patterns can show colour artefacts."},
+        {kLimitationDualPixel, "Dual Pixel data is not processed",
+         "Lucent develops the photograph; the camera's second Dual Pixel image stays in the file unused, "
+         "so Dual Pixel adjustments are not available."},
+        {kLimitationEnhancedImage, "The DNG's enhanced image is not used",
+         "This DNG also holds an enhanced, already processed version of the photo. Lucent develops the "
+         "original raw image instead."},
+        {kLimitationOptionalOperations, "Optional processing is skipped",
+         "The file asks for an optional processing step that Lucent does not have yet; the photo is "
+         "developed without it."},
+        {kLimitationNonSquarePixels, "Non-square pixels are not corrected",
+         "This camera records pixels that are not square. Lucent does not resample them, so the photo's "
+         "proportions can look slightly stretched."},
+        {kLimitationPixelShift, "Pixel-shift frames are not combined",
+         "Each frame of a pixel-shift capture is developed on its own; Lucent does not merge them into one "
+         "higher-resolution image."},
+    };
+    for (const Words& words : kWords) {
+        if (words.code == code) {
+            return LimitationText{std::string(words.code), std::string(words.summary), std::string(words.meaning)};
+        }
+    }
+    return std::nullopt;
 }
 
 // ---- Activation ---------------------------------------------------------------------------------

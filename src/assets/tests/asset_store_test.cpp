@@ -213,9 +213,11 @@ TEST(AssetStore, BundledRequestsCarryTheBuildsVersionAndPin) {
     EXPECT_EQ(request->id, "camera-support");
     EXPECT_EQ(request->app_version.to_string(), std::string(core::build_info().version));
     EXPECT_TRUE(request->pinned_manifest.has_value());
+    // AST-09: an id the build has no pin for is refused instead of being verified on hashes alone.
     auto unknown = bundled_asset_request("not-bundled");
-    ASSERT_TRUE(unknown.has_value());
-    EXPECT_FALSE(unknown->pinned_manifest.has_value());
+    ASSERT_FALSE(unknown.has_value());
+    EXPECT_EQ(unknown.error().code, ErrorCode::NotFound);
+    EXPECT_EQ(unknown.error().where, "assets.load.unpinned");
 }
 
 }  // namespace

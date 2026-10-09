@@ -86,8 +86,9 @@ struct AssetRequest {
 };
 
 // The request for asset `id` as this build makes it: the build's version (core::build_info())
-// and the pin recorded for `id` at configure time (bundled_manifest_pin(); none when the build
-// bundles no such asset).
+// and the pin recorded for `id` at configure time (bundled_manifest_pin()). NotFound
+// ("assets.load.unpinned") when the build bundles no such asset: an asset without a pin would be
+// trusted on its own hashes (AST-09), so only tools and tests build unpinned requests themselves.
 [[nodiscard]] Expected<AssetRequest> bundled_asset_request(std::string_view id);
 
 // An activated asset: its manifest and the verified bytes of every listed file.

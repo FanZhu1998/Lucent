@@ -113,6 +113,17 @@ inline std::vector<std::string> strings(const Json& object, std::string_view key
     return out;
 }
 
+inline std::vector<std::uint32_t> small_numbers(const Json& object, std::string_view key, std::string_view what) {
+    std::vector<std::uint32_t> out;
+    for (const Json& value : array(object, key, what)) {
+        if (!value.is_number_unsigned() || value.get<std::uint64_t>() > 0xFFFFFFFFu) {
+            corrupt(std::format("{}.{} holds a value that is not a version number", what, key));
+        }
+        out.push_back(static_cast<std::uint32_t>(value.get<std::uint64_t>()));
+    }
+    return out;
+}
+
 // Runs `body`, converting DocumentError, nlohmann exceptions and allocation failures into errors
 // at `where`.
 template <class F>

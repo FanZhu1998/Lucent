@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
 #include <utility>
 
 #include <lucent/assets/mode_key.hpp>
@@ -184,6 +185,55 @@ ModeKey derive_mode_key(const raw::RawMetadata& metadata) {
     key.subimage_count = metadata.subimage_count;
     key.stage = std::string(raw::to_string(metadata.stage));
     return key;
+}
+
+ModeVariant derive_mode_variant(const raw::RawMetadata& metadata) {
+    ModeVariant variant;
+    const raw::ImageArea& area = metadata.image_area;
+    if (area.source == raw::ImageAreaSource::Unknown || !area.rect) {
+        variant.image_area = "unknown";
+    } else {
+        variant.image_area = std::format("{} {}x{}", raw::to_string(area.source), area.rect->width,
+                                         area.rect->height);
+    }
+    for (const raw::RequiredOperation& op : metadata.required_operations) {
+        std::string text;
+        if (op.kind == raw::RequiredOperationKind::ProfileGainTableMap) {
+            text = "profile_gain_table_map";
+        } else {
+            int list = 0;
+            switch (op.stage) {
+                case raw::OperationStage::StoredRaw:
+                    list = 1;
+                    break;
+                case raw::OperationStage::LinearRaw:
+                    list = 2;
+                    break;
+                case raw::OperationStage::AfterDemosaic:
+                    list = 3;
+                    break;
+                case raw::OperationStage::ProfileRendering:
+                    break;
+            }
+            text = std::format("list{}:{}", list, op.name);
+        }
+        if (!op.mandatory) {
+            text += " optional";
+        }
+        variant.dng_opcodes.push_back(std::move(text));
+    }
+    return variant;
+}
+
+std::string to_string(const ModeVariant& variant) {
+    std::string text = variant.image_area;
+    if (variant.dng_opcodes.empty()) {
+        return text + "; no DNG opcodes";
+    }
+    for (std::size_t i = 0; i < variant.dng_opcodes.size(); ++i) {
+        text += (i == 0 ? "; " : ", ") + variant.dng_opcodes[i];
+    }
+    return text;
 }
 
 }  // namespace lucent::assets

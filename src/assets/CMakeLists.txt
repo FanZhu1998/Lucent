@@ -6,8 +6,9 @@
 #                        folder next to the executable), lookup order and verification before activation
 #   bundled_assets.hpp   the manifests this build was made with (pins, generated below)
 #   mode_key.hpp         the qualification mode key (ADR 0016; moved from apps/lucent-qualify)
-#   camera_support.hpp   the camera support database "lucent.camera-support" v1: mode-key patterns to
-#                        the blueprint's four states, limitations, evidence and qualification basis
+#   camera_support.hpp   the camera support database "lucent.camera-support" v2: mode-key patterns to
+#                        the blueprint's four states, limitations, evidence, the qualified files' probe
+#                        facts (image area, DNG opcodes) and the qualification basis
 #
 # The bundled assets themselves live in the source tree's assets/ folder (LUCENT_BUNDLED_ASSETS and
 # lucent_asset_files() in cmake/LucentPackaging.cmake). For each one this file records the SHA-256 of
@@ -58,6 +59,7 @@ lucent_add_library(assets
         Lucent::raw
         Lucent::engine
     PRIVATE_DEPS
+        Lucent::export
         nlohmann_json::nlohmann_json
 )
 # Everything that links the library finds the bundled assets next to its executable.
