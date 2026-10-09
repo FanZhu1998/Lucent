@@ -1,0 +1,1618 @@
+{
+  "schema": "lucent.lut-research.demo-reproduction",
+  "schema_version": 1,
+  "run_date": "2026-10-09",
+  "purpose": "Blueprint Appendix D2 steps 2-4: reproduce the sRGB demo of Image-Adaptive-3DLUT on CPU.",
+  "upstream": {
+    "repository": "https://github.com/HuiZeng/Image-Adaptive-3DLUT",
+    "commit": "b491f6df64a588864739a157db271e5c848e1805",
+    "commit_date": "2022-11-26T12:22:59+08:00",
+    "clean": true
+  },
+  "environment": {
+    "python": "3.12.10",
+    "python_build": "MSC v.1943 64 bit (AMD64)",
+    "os": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "AMD64 Family 23 Model 104 Stepping 1, AuthenticAMD",
+    "logical_cpus": 12,
+    "torch": "2.14.1+cpu",
+    "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+    "torch_cuda_available": false,
+    "torch_cpu_capability": "AVX2",
+    "torch_num_threads": 6,
+    "torch_mkldnn": true,
+    "torchvision": "0.29.1+cpu",
+    "numpy": "2.5.3",
+    "pillow": "12.3.0",
+    "libjpeg_turbo": "3.1.4.1"
+  },
+  "extension_build": {
+    "built": true,
+    "module": "trilinear.cp312-win_amd64.pyd",
+    "module_sha256": "2c93e920b731664ad91bf680d204c5197ecff40bcb6d6d279838c4a39436a8af",
+    "source": "trilinear_cpp/src/trilinear.cpp at the pinned commit, unmodified, through the repository's trilinear_cpp/setup.py (CppExtension, no CUDA)",
+    "compile_flags": [],
+    "fp_model": "/fp:precise (MSVC default)",
+    "arch": "none (x64 SSE2 baseline)",
+    "warnings": [],
+    "msvc_toolset": "14.44.35207"
+  },
+  "command": {
+    "historical": "python demo_eval.py --input_color_space sRGB",
+    "run_as": "runpy of a copy of demo_eval.py with the README's two PyTorch 1.x substitutions and map_location='cpu' on its two torch.load calls; working directory = the checkout",
+    "readme_substitutions": [
+      [
+        "from models import *",
+        "from models_x import *"
+      ],
+      [
+        "result = trilinear_(LUT, img)",
+        "_, result = trilinear_(LUT, img)"
+      ]
+    ],
+    "cpu_only_substitutions": [
+      [
+        "LUTs = torch.load(\"%s/LUTs.pth\" % opt.model_dir)",
+        "LUTs = torch.load(\"%s/LUTs.pth\" % opt.model_dir, map_location=\"cpu\")"
+      ],
+      [
+        "classifier.load_state_dict(torch.load(\"%s/classifier.pth\" % opt.model_dir))",
+        "classifier.load_state_dict(torch.load(\"%s/classifier.pth\" % opt.model_dir, map_location=\"cpu\"))"
+      ]
+    ],
+    "demo_eval_patch": {
+      "original_sha256": "6d41a39d39041a098cccef085571816935955f9bba42810d4059e3d01dce5bcd",
+      "patched_sha256": "305e52ac12ee642df12c254ed03b0190bfdd0c7cac1628537bdf181cc6b5993f",
+      "diff": [
+        "--- demo_eval.py",
+        "+++ demo_eval.py (README substitutions)",
+        "@@ -8 +8 @@",
+        "-from models import *",
+        "+from models_x import *",
+        "@@ -49 +49 @@",
+        "-LUTs = torch.load(\"%s/LUTs.pth\" % opt.model_dir)",
+        "+LUTs = torch.load(\"%s/LUTs.pth\" % opt.model_dir, map_location=\"cpu\")",
+        "@@ -60 +60 @@",
+        "-classifier.load_state_dict(torch.load(\"%s/classifier.pth\" % opt.model_dir))",
+        "+classifier.load_state_dict(torch.load(\"%s/classifier.pth\" % opt.model_dir, map_location=\"cpu\"))",
+        "@@ -89 +89 @@",
+        "-result = trilinear_(LUT, img)",
+        "+_, result = trilinear_(LUT, img)"
+      ]
+    },
+    "xyz_only_imports_stubbed": [
+      "cv2",
+      "torchvision_x_functional"
+    ]
+  },
+  "checkpoints": {
+    "LUTs.pth": {
+      "file_sha256": "c1bb2bc4b7239c1a7e96159f5923123ba796b1fceb0b8c3132b423ea825b821a",
+      "bytes": 1294452,
+      "serialization": "legacy pickle (PyTorch < 1.6)",
+      "saved_storage_locations": [
+        "cuda:0"
+      ],
+      "loaded_with": "torch.load(map_location=cpu, weights_only=True)",
+      "git_added": "05d5748 2020-09-28T11:35:57+08:00 Add files via upload",
+      "state": {
+        "sha256": "cf7d66b9f1e946256fd1f2e8eca79280864590106811dc4aa45fc13339f91258",
+        "tensors": {
+          "0.LUT": {
+            "sha256": "c9d60c3723d37fcf372da5fd2dee40f8953da62a07abd4c9ea1529784e6bfa36",
+            "dtype": "<f4",
+            "shape": [
+              3,
+              33,
+              33,
+              33
+            ]
+          },
+          "1.LUT": {
+            "sha256": "9d82623e29c9c1e79e6680528eb1eb5a7ed1f5f1b93773c7a2e966305e260cf6",
+            "dtype": "<f4",
+            "shape": [
+              3,
+              33,
+              33,
+              33
+            ]
+          },
+          "2.LUT": {
+            "sha256": "9b74c25153a4be1802264a44c0384a09f4abd1808f42f7869484a2b4e808f6cc",
+            "dtype": "<f4",
+            "shape": [
+              3,
+              33,
+              33,
+              33
+            ]
+          }
+        }
+      }
+    },
+    "classifier.pth": {
+      "file_sha256": "bae9865395625ecae58cfe86147e521093bb1e29e7b2544e02adb238b8035021",
+      "bytes": 1083261,
+      "serialization": "legacy pickle (PyTorch < 1.6)",
+      "saved_storage_locations": [
+        "cuda:0"
+      ],
+      "loaded_with": "torch.load(map_location=cpu, weights_only=True)",
+      "git_added": "05d5748 2020-09-28T11:35:57+08:00 Add files via upload",
+      "state": {
+        "sha256": "223abb43a05d606111184cdc076ce5a3dbbe1d14efac70f15f039c662c50025f",
+        "tensors": {
+          "model.1.bias": {
+            "sha256": "0f5af5fdb3c8574b9a5814cafe25a0725fd855b56a65a6a486675cd7577fe57b",
+            "dtype": "<f4",
+            "shape": [
+              16
+            ]
+          },
+          "model.1.weight": {
+            "sha256": "3fbde0b7f0cafef5de3276bea9fcd5a23778445d9ce5761982e9072ba409ee27",
+            "dtype": "<f4",
+            "shape": [
+              16,
+              3,
+              3,
+              3
+            ]
+          },
+          "model.10.bias": {
+            "sha256": "a5afbf0e15ef4ca3f7fe3b9df48d77c8349c1dd6432f4ef4883f1e87bdfc7675",
+            "dtype": "<f4",
+            "shape": [
+              128
+            ]
+          },
+          "model.10.weight": {
+            "sha256": "bc75d8d9d9873474e727cba554aea76c369991f94c384c5d8465e146c3c0b9f8",
+            "dtype": "<f4",
+            "shape": [
+              128,
+              64,
+              3,
+              3
+            ]
+          },
+          "model.12.bias": {
+            "sha256": "625d98ec9d532f25fe28bcc1c06afde7e93ef3e440e894ec732455ff7224d0d0",
+            "dtype": "<f4",
+            "shape": [
+              128
+            ]
+          },
+          "model.12.weight": {
+            "sha256": "e9cebab5a59718d643ca75a0bb4d2ebaf6337fd4e153ad318d1dbae3fa38f083",
+            "dtype": "<f4",
+            "shape": [
+              128
+            ]
+          },
+          "model.13.bias": {
+            "sha256": "625e861f83e57d8560cf8770b0c53cd5b71be20d79f3cc9b0ef8e4c22525a8fb",
+            "dtype": "<f4",
+            "shape": [
+              128
+            ]
+          },
+          "model.13.weight": {
+            "sha256": "ae39daf06cf7d2f1376458d4145fbb22f4484a6609daa487b50f94bd8847a42d",
+            "dtype": "<f4",
+            "shape": [
+              128,
+              128,
+              3,
+              3
+            ]
+          },
+          "model.16.bias": {
+            "sha256": "b5c9bbbbdff7d8f01053adb062ad2e028fdaae6b31e1a525dbdfcbfb9de8b4b4",
+            "dtype": "<f4",
+            "shape": [
+              3
+            ]
+          },
+          "model.16.weight": {
+            "sha256": "7f8dd40bf57569a20e3c9f98c6faee3a929710d2f9524aeeef5ead77967759a8",
+            "dtype": "<f4",
+            "shape": [
+              3,
+              128,
+              8,
+              8
+            ]
+          },
+          "model.3.bias": {
+            "sha256": "63f621432ba98a339c222056493f1bca6f0f4cf58d5b3e4287ab75a30168cda7",
+            "dtype": "<f4",
+            "shape": [
+              16
+            ]
+          },
+          "model.3.weight": {
+            "sha256": "6e7d00f11685e0e64ecbe8ad440bd4c99564b3a82a82d3ba23eb56a9a2a83de2",
+            "dtype": "<f4",
+            "shape": [
+              16
+            ]
+          },
+          "model.4.bias": {
+            "sha256": "223ef1ec49371573e8ad37fa7a5bc687250abd66041f6daad9b1f7b3a54d2d28",
+            "dtype": "<f4",
+            "shape": [
+              32
+            ]
+          },
+          "model.4.weight": {
+            "sha256": "68830c17cf7d1c0720984f926e82dd8dbc4441673705601ad82087a148180433",
+            "dtype": "<f4",
+            "shape": [
+              32,
+              16,
+              3,
+              3
+            ]
+          },
+          "model.6.bias": {
+            "sha256": "aeb42c210c478ec6ef567d54b9b21570c3565aec7f769ba8cabc656fbbe45392",
+            "dtype": "<f4",
+            "shape": [
+              32
+            ]
+          },
+          "model.6.weight": {
+            "sha256": "4a78108ffd2b123bd9655409cf4e8a15c1bc2ca64e4366354c4677b3a6d42fb1",
+            "dtype": "<f4",
+            "shape": [
+              32
+            ]
+          },
+          "model.7.bias": {
+            "sha256": "a140bf7ba0ade393a064256bb47afc26e9fd2442d3b825cfbaa76a987385851a",
+            "dtype": "<f4",
+            "shape": [
+              64
+            ]
+          },
+          "model.7.weight": {
+            "sha256": "f29950cc8cfa9e205204df185ab704e7b0f6e9038253d3a5c5aae0f3cd7fa624",
+            "dtype": "<f4",
+            "shape": [
+              64,
+              32,
+              3,
+              3
+            ]
+          },
+          "model.9.bias": {
+            "sha256": "b1d02e9fe38e16bd41602e18054f896ac662ada8c2df037d9755d80b266fbce1",
+            "dtype": "<f4",
+            "shape": [
+              64
+            ]
+          },
+          "model.9.weight": {
+            "sha256": "8f7c9d2d06a60e72678a8daec6c7d84f4e03259f6c13565efdc94e27890e4050",
+            "dtype": "<f4",
+            "shape": [
+              64
+            ]
+          }
+        }
+      }
+    }
+  },
+  "identity_lut_txt_sha256": "08baac3a763fba980efe4ad9c62b2246e56cedb6570c4e0c4f23a6978ffc0f1e",
+  "images": {
+    "a1629.jpg": {
+      "role": "the bundled sRGB demo input (demo_eval.py default)",
+      "input": {
+        "file": "a1629.jpg",
+        "file_sha256": "13b2259e0e84e7cc45e1cfd4376f80da2df646c2dcdd5f39e32804697235cf94",
+        "bytes": 1798489,
+        "format": "JPEG",
+        "mode": "RGB",
+        "size_wh": [
+          1620,
+          1080
+        ],
+        "jpeg_subsampling": "4:4:4",
+        "jpeg_progressive": false,
+        "icc_profile": "sRGB IEC61966-2.1",
+        "exif_make_model": [
+          "Canon",
+          "Canon EOS-1D Mark II"
+        ],
+        "exif_software": "Adobe Photoshop Lightroom Classic 8.0 (Windows)",
+        "exif_orientation": null,
+        "decoded_uint8": {
+          "sha256": "497974e1df0902cc900d4311bff9b7b1577f921146927081fed772934a30ae8c",
+          "dtype": "|u1",
+          "shape": [
+            1080,
+            1620,
+            3
+          ]
+        },
+        "decoded_value_range": [
+          0,
+          205
+        ],
+        "fivek_id": "a1629-JI2E5331",
+        "licence_file": "LicenseAdobeMIT.txt"
+      },
+      "backends": {
+        "extension": {
+          "output_float32": {
+            "sha256": "bc968771ba67fdb092e43a564a711793450f3c0f378be52ace0dc0c8a5fcff73",
+            "dtype": "<f4",
+            "shape": [
+              1,
+              3,
+              1080,
+              1620
+            ]
+          },
+          "output_uint8": {
+            "sha256": "a68b55139274abb6883bb5e7fa0256409d27226120d083ce128e432d6c142caf",
+            "dtype": "|u1",
+            "shape": [
+              1080,
+              1620,
+              3
+            ]
+          },
+          "result_jpg_sha256 (encoder-dependent, informational)": "2bb5e951565ed2dff213b34cca3727005d9a656ee51d036e04a619af5acf9b01",
+          "seconds_whole_demo": 0.311
+        },
+        "torch": {
+          "output_float32": {
+            "sha256": "bc968771ba67fdb092e43a564a711793450f3c0f378be52ace0dc0c8a5fcff73",
+            "dtype": "<f4",
+            "shape": [
+              1,
+              3,
+              1080,
+              1620
+            ]
+          },
+          "output_uint8": {
+            "sha256": "a68b55139274abb6883bb5e7fa0256409d27226120d083ce128e432d6c142caf",
+            "dtype": "|u1",
+            "shape": [
+              1080,
+              1620,
+              3
+            ]
+          },
+          "result_jpg_sha256 (encoder-dependent, informational)": "2bb5e951565ed2dff213b34cca3727005d9a656ee51d036e04a619af5acf9b01",
+          "seconds_whole_demo": 0.478
+        },
+        "numpy": {
+          "output_float32": {
+            "sha256": "bc968771ba67fdb092e43a564a711793450f3c0f378be52ace0dc0c8a5fcff73",
+            "dtype": "<f4",
+            "shape": [
+              1,
+              3,
+              1080,
+              1620
+            ]
+          },
+          "output_uint8": {
+            "sha256": "a68b55139274abb6883bb5e7fa0256409d27226120d083ce128e432d6c142caf",
+            "dtype": "|u1",
+            "shape": [
+              1080,
+              1620,
+              3
+            ]
+          },
+          "result_jpg_sha256 (encoder-dependent, informational)": "2bb5e951565ed2dff213b34cca3727005d9a656ee51d036e04a619af5acf9b01",
+          "seconds_whole_demo": 0.986
+        }
+      },
+      "all_backends_bit_identical": true,
+      "demo": {
+        "argv": [
+          "--image_dir",
+          "demo_images",
+          "--image_name",
+          "a1629.jpg",
+          "--input_color_space",
+          "sRGB",
+          "--model_dir",
+          "pretrained_models",
+          "--output_dir",
+          "C:\\Users\\Alcor\\Projects\\Lucent\\research\\lut\\build\\demo\\out\\extension\\a1629"
+        ],
+        "runtime_warnings": [
+          "ResourceWarning: unclosed file <_io.TextIOWrapper name='IdentityLUT33.txt' mode='r' encoding='cp1252'> (demo_eval_models_x.py)",
+          "UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch (models_x.py)"
+        ],
+        "input_tensor": {
+          "sha256": "58116b7a7209821891598182fffdd9bd6044f205aa49264dd69c498e2aa79e3e",
+          "dtype": "<f4",
+          "shape": [
+            1,
+            3,
+            1080,
+            1620
+          ]
+        },
+        "binsize_passed": 0.03125003125,
+        "binsize_float32_bits": "0x3d000008",
+        "weights": [
+          1.9081296920776367,
+          -0.34630629420280457,
+          -0.9284921288490295
+        ],
+        "weights_float32_bits": [
+          "0x3ff43d98",
+          "0xbeb14f0f",
+          "0xbf6db1a9"
+        ],
+        "weights_sum": 0.6333312392234802,
+        "recomputed_fused_lut_bit_identical": true,
+        "fused_lut": {
+          "sha256": "f1a2574d8e0ca7254ee900eeb87eec67724ff4cbeada9e7bde8f812f5bc16d6e",
+          "dtype": "<f4",
+          "shape": [
+            3,
+            33,
+            33,
+            33
+          ]
+        },
+        "output_float32": {
+          "sha256": "bc968771ba67fdb092e43a564a711793450f3c0f378be52ace0dc0c8a5fcff73",
+          "dtype": "<f4",
+          "shape": [
+            1,
+            3,
+            1080,
+            1620
+          ]
+        },
+        "output_uint8": {
+          "sha256": "a68b55139274abb6883bb5e7fa0256409d27226120d083ce128e432d6c142caf",
+          "dtype": "|u1",
+          "shape": [
+            1080,
+            1620,
+            3
+          ]
+        },
+        "output_fraction_below_0": 0.022820264101028442,
+        "output_fraction_above_1": 2.3052887627272867e-05,
+        "mean_rgb_in": [
+          0.27116,
+          0.37043,
+          0.23695
+        ],
+        "mean_rgb_out": [
+          0.37693,
+          0.59961,
+          0.28396
+        ]
+      },
+      "lut_diagnostics": {
+        "min_per_channel": [
+          -0.13705363869667053,
+          -0.11528858542442322,
+          -0.13019518554210663
+        ],
+        "max_per_channel": [
+          1.2755012512207031,
+          1.3226385116577148,
+          1.2778210639953613
+        ],
+        "fraction_below_0": 0.0325013217575201,
+        "fraction_above_1": 0.2896828709500886,
+        "own_axis_decreasing_steps": [
+          485,
+          250,
+          441
+        ],
+        "own_axis_steps_total": 34848,
+        "max_abs_deviation_from_identity": 0.8088768124580383,
+        "neutral_axis_nondecreasing": [
+          true,
+          true,
+          true
+        ],
+        "neutral_axis_max_channel_spread": 0.021765053272247314,
+        "neutral_axis": [
+          [
+            -0.137054,
+            -0.10689,
+            -0.075046,
+            -0.013408,
+            0.060069,
+            0.137259,
+            0.211583,
+            0.285587,
+            0.364872,
+            0.440411,
+            0.506442,
+            0.562835,
+            0.62099,
+            0.671436,
+            0.711549,
+            0.75653,
+            0.800331,
+            0.828984,
+            0.86461,
+            0.898392,
+            0.927853,
+            0.955482,
+            0.985808,
+            1.010202,
+            1.037454,
+            1.06984,
+            1.126358,
+            1.156847,
+            1.194584,
+            1.214611,
+            1.241759,
+            1.253641,
+            1.273022
+          ],
+          [
+            -0.115289,
+            -0.089125,
+            -0.054484,
+            0.001565,
+            0.0744,
+            0.150761,
+            0.221992,
+            0.297513,
+            0.37582,
+            0.449955,
+            0.511229,
+            0.565004,
+            0.621793,
+            0.672384,
+            0.709189,
+            0.752053,
+            0.794882,
+            0.821243,
+            0.856086,
+            0.889588,
+            0.915398,
+            0.944755,
+            0.972889,
+            0.997003,
+            1.02379,
+            1.056056,
+            1.129182,
+            1.160329,
+            1.205675,
+            1.228096,
+            1.250107,
+            1.270214,
+            1.273226
+          ],
+          [
+            -0.130195,
+            -0.09658,
+            -0.064941,
+            -0.007289,
+            0.066758,
+            0.144561,
+            0.217795,
+            0.289766,
+            0.368538,
+            0.442666,
+            0.507309,
+            0.564185,
+            0.623809,
+            0.676391,
+            0.716393,
+            0.758932,
+            0.802945,
+            0.833188,
+            0.868081,
+            0.900353,
+            0.929857,
+            0.957456,
+            0.987144,
+            1.011719,
+            1.039961,
+            1.068663,
+            1.133265,
+            1.165099,
+            1.203672,
+            1.22209,
+            1.247939,
+            1.261826,
+            1.277821
+          ]
+        ]
+      },
+      "legacy_binsize_models_py": {
+        "binsize": 0.031253125,
+        "note": "models.py (PyTorch 0.4.1 + trilinear_c) passes 1.0001/32; models_x.py passes 1.000001/32. Same fused LUT and input, applied with the extension.",
+        "max_abs_float_difference": 0.00013959407806396484,
+        "mean_abs_float_difference": 5.4128511692397296e-05,
+        "uint8_samples_differing": 69934,
+        "uint8_samples_differing_by_more_than_1": 0,
+        "uint8_max_difference": 1,
+        "uint8_samples_total": 5248800
+      },
+      "thread_determinism": {
+        "default_threads": 6,
+        "per_thread_count": {
+          "1": {
+            "repeat_runs_bit_identical": true,
+            "weights_bit_identical_to_default": false,
+            "max_abs_weight_difference_vs_default": 2.384185791015625e-07
+          },
+          "2": {
+            "repeat_runs_bit_identical": true,
+            "weights_bit_identical_to_default": true,
+            "max_abs_weight_difference_vs_default": 0.0
+          },
+          "6": {
+            "repeat_runs_bit_identical": true,
+            "weights_bit_identical_to_default": true,
+            "max_abs_weight_difference_vs_default": 0.0
+          }
+        },
+        "output_effect_of_1_thread_weights": {
+          "max_abs_float_difference": 2.384185791015625e-07,
+          "mean_abs_float_difference": 1.1713946257430052e-08,
+          "uint8_samples_differing": 6,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 1,
+          "uint8_samples_total": 5248800
+        }
+      },
+      "independent_numpy_predictor": {
+        "weights_float64": [
+          1.9081262689683354,
+          -0.34630622115454013,
+          -0.9284925595814457
+        ],
+        "max_abs_weight_difference_vs_torch": 3.4231093013481484e-06,
+        "max_abs_fused_lut_difference_vs_torch": 2.9802322387695312e-06,
+        "layer_trace": [
+          {
+            "layer": 0,
+            "op": "upsample_bilinear",
+            "out": [
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "layer": 1,
+            "op": "conv2d",
+            "out": [
+              16,
+              128,
+              128
+            ]
+          },
+          {
+            "layer": 2,
+            "op": "leaky_relu",
+            "out": [
+              16,
+              128,
+              128
+            ]
+          },
+          {
+            "layer": 3,
+            "op": "instance_norm",
+            "out": [
+              16,
+              128,
+              128
+            ]
+          },
+          {
+            "layer": 4,
+            "op": "conv2d",
+            "out": [
+              32,
+              64,
+              64
+            ]
+          },
+          {
+            "layer": 5,
+            "op": "leaky_relu",
+            "out": [
+              32,
+              64,
+              64
+            ]
+          },
+          {
+            "layer": 6,
+            "op": "instance_norm",
+            "out": [
+              32,
+              64,
+              64
+            ]
+          },
+          {
+            "layer": 7,
+            "op": "conv2d",
+            "out": [
+              64,
+              32,
+              32
+            ]
+          },
+          {
+            "layer": 8,
+            "op": "leaky_relu",
+            "out": [
+              64,
+              32,
+              32
+            ]
+          },
+          {
+            "layer": 9,
+            "op": "instance_norm",
+            "out": [
+              64,
+              32,
+              32
+            ]
+          },
+          {
+            "layer": 10,
+            "op": "conv2d",
+            "out": [
+              128,
+              16,
+              16
+            ]
+          },
+          {
+            "layer": 11,
+            "op": "leaky_relu",
+            "out": [
+              128,
+              16,
+              16
+            ]
+          },
+          {
+            "layer": 12,
+            "op": "instance_norm",
+            "out": [
+              128,
+              16,
+              16
+            ]
+          },
+          {
+            "layer": 13,
+            "op": "conv2d",
+            "out": [
+              128,
+              8,
+              8
+            ]
+          },
+          {
+            "layer": 14,
+            "op": "leaky_relu",
+            "out": [
+              128,
+              8,
+              8
+            ]
+          },
+          {
+            "layer": 15,
+            "op": "dropout(eval: identity)",
+            "out": [
+              128,
+              8,
+              8
+            ]
+          },
+          {
+            "layer": 16,
+            "op": "conv2d",
+            "out": [
+              3,
+              1,
+              1
+            ]
+          }
+        ],
+        "max_abs_float_difference": 2.384185791015625e-06,
+        "mean_abs_float_difference": 7.170866638261941e-07,
+        "uint8_samples_differing": 409,
+        "uint8_samples_differing_by_more_than_1": 0,
+        "uint8_max_difference": 1,
+        "uint8_samples_total": 5248800
+      },
+      "classifier_input_resolution_sensitivity": [
+        {
+          "classifier_input_wh": [
+            1620,
+            1080
+          ],
+          "weights": [
+            1.90813,
+            -0.346306,
+            -0.928492
+          ],
+          "max_abs_float_difference": 0.0,
+          "mean_abs_float_difference": 0.0,
+          "uint8_samples_differing": 0,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 0,
+          "uint8_samples_total": 5248800
+        },
+        {
+          "classifier_input_wh": [
+            1080,
+            720
+          ],
+          "weights": [
+            1.908411,
+            -0.327482,
+            -0.935279
+          ],
+          "max_abs_float_difference": 0.0017940700054168701,
+          "mean_abs_float_difference": 0.0010781961027532816,
+          "uint8_samples_differing": 1416129,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 1,
+          "uint8_samples_total": 5248800
+        },
+        {
+          "classifier_input_wh": [
+            720,
+            480
+          ],
+          "weights": [
+            1.917994,
+            -0.33746,
+            -0.928377
+          ],
+          "max_abs_float_difference": 0.007477760314941406,
+          "mean_abs_float_difference": 0.0016596538480371237,
+          "uint8_samples_differing": 2124056,
+          "uint8_samples_differing_by_more_than_1": 24615,
+          "uint8_max_difference": 2,
+          "uint8_samples_total": 5248800
+        },
+        {
+          "classifier_input_wh": [
+            540,
+            360
+          ],
+          "weights": [
+            1.930631,
+            -0.376728,
+            -0.918544
+          ],
+          "max_abs_float_difference": 0.012589573860168457,
+          "mean_abs_float_difference": 0.0063237580470740795,
+          "uint8_samples_differing": 4910509,
+          "uint8_samples_differing_by_more_than_1": 3203034,
+          "uint8_max_difference": 3,
+          "uint8_samples_total": 5248800
+        },
+        {
+          "classifier_input_wh": [
+            360,
+            240
+          ],
+          "weights": [
+            1.942723,
+            -0.408086,
+            -0.904429
+          ],
+          "max_abs_float_difference": 0.01883411407470703,
+          "mean_abs_float_difference": 0.010538452304899693,
+          "uint8_samples_differing": 5075882,
+          "uint8_samples_differing_by_more_than_1": 4670159,
+          "uint8_max_difference": 5,
+          "uint8_samples_total": 5248800
+        }
+      ],
+      "previews": {
+        "committed": {
+          "a1629_lut_on_synthetic_chart.png": {
+            "sha256": "1f727b9aa380811870f35836abdac984169809a68c90060bd37a085260990a1e",
+            "bytes": 40549
+          },
+          "a1629_lut_neutral_curves.png": {
+            "sha256": "0a2b803037dcf22a979bdddc47a0a6d0579e591029fbbe715e70b735583b4c42",
+            "bytes": 9462
+          }
+        },
+        "not_committed": "research/lut/build/previews/a1629_input_vs_output.png",
+        "chart_input_uint8": {
+          "sha256": "5bd021d9fea7f637628a1f6dd7d4e533556720a978e2ed717e328ffe9d13c9aa",
+          "dtype": "|u1",
+          "shape": [
+            256,
+            384,
+            3
+          ]
+        },
+        "chart_output_uint8": {
+          "sha256": "f39bf7428896f76f0bd3c7e62ada72a17b2db8b3cfa0c9ac07d7648685643684",
+          "dtype": "|u1",
+          "shape": [
+            256,
+            384,
+            3
+          ]
+        }
+      }
+    },
+    "a1509.jpg": {
+      "role": "another bundled sRGB FiveK image (local_tone_mapping/, used by upstream's MATLAB demo), run through the same demo for a second example",
+      "input": {
+        "file": "a1509.jpg",
+        "file_sha256": "61734686655c83593d69189169d30368acf44926c17c84d8abddaa215a9f878e",
+        "bytes": 309158,
+        "format": "JPEG",
+        "mode": "RGB",
+        "size_wh": [
+          720,
+          480
+        ],
+        "jpeg_subsampling": "4:4:4",
+        "jpeg_progressive": false,
+        "icc_profile": "sRGB IEC61966-2.1",
+        "exif_make_model": [
+          "Canon",
+          "Canon EOS 5D"
+        ],
+        "exif_software": "Adobe Photoshop Lightroom Classic 8.0 (Windows)",
+        "exif_orientation": null,
+        "decoded_uint8": {
+          "sha256": "2c96f336292d2f31d1e874e8767bad5bfe95185d6b1bc1599ca0fc921498170a",
+          "dtype": "|u1",
+          "shape": [
+            480,
+            720,
+            3
+          ]
+        },
+        "decoded_value_range": [
+          0,
+          255
+        ],
+        "fivek_id": "a1509-dvf_034",
+        "licence_file": "LicenseAdobe.txt"
+      },
+      "backends": {
+        "extension": {
+          "output_float32": {
+            "sha256": "e63f3156ea89a2da32e392e340639e039c21e4781272b663bd4b16406bd4cf29",
+            "dtype": "<f4",
+            "shape": [
+              1,
+              3,
+              480,
+              720
+            ]
+          },
+          "output_uint8": {
+            "sha256": "82b613064d7430f4f0f327543834e138f113b1afba30113518146cd32fb4c919",
+            "dtype": "|u1",
+            "shape": [
+              480,
+              720,
+              3
+            ]
+          },
+          "result_jpg_sha256 (encoder-dependent, informational)": "6e8a77ef3ea157e972d0c53d1b8405b108721a0f85b7fbbe2ececdd43635b230",
+          "seconds_whole_demo": 0.126
+        },
+        "torch": {
+          "output_float32": {
+            "sha256": "e63f3156ea89a2da32e392e340639e039c21e4781272b663bd4b16406bd4cf29",
+            "dtype": "<f4",
+            "shape": [
+              1,
+              3,
+              480,
+              720
+            ]
+          },
+          "output_uint8": {
+            "sha256": "82b613064d7430f4f0f327543834e138f113b1afba30113518146cd32fb4c919",
+            "dtype": "|u1",
+            "shape": [
+              480,
+              720,
+              3
+            ]
+          },
+          "result_jpg_sha256 (encoder-dependent, informational)": "6e8a77ef3ea157e972d0c53d1b8405b108721a0f85b7fbbe2ececdd43635b230",
+          "seconds_whole_demo": 0.149
+        },
+        "numpy": {
+          "output_float32": {
+            "sha256": "e63f3156ea89a2da32e392e340639e039c21e4781272b663bd4b16406bd4cf29",
+            "dtype": "<f4",
+            "shape": [
+              1,
+              3,
+              480,
+              720
+            ]
+          },
+          "output_uint8": {
+            "sha256": "82b613064d7430f4f0f327543834e138f113b1afba30113518146cd32fb4c919",
+            "dtype": "|u1",
+            "shape": [
+              480,
+              720,
+              3
+            ]
+          },
+          "result_jpg_sha256 (encoder-dependent, informational)": "6e8a77ef3ea157e972d0c53d1b8405b108721a0f85b7fbbe2ececdd43635b230",
+          "seconds_whole_demo": 0.289
+        }
+      },
+      "all_backends_bit_identical": true,
+      "demo": {
+        "argv": [
+          "--image_dir",
+          "C:\\Users\\Alcor\\Projects\\Lucent\\research\\lut\\build\\demo\\inputs",
+          "--image_name",
+          "a1509.jpg",
+          "--input_color_space",
+          "sRGB",
+          "--model_dir",
+          "pretrained_models",
+          "--output_dir",
+          "C:\\Users\\Alcor\\Projects\\Lucent\\research\\lut\\build\\demo\\out\\extension\\a1509"
+        ],
+        "runtime_warnings": [
+          "ResourceWarning: unclosed file <_io.TextIOWrapper name='IdentityLUT33.txt' mode='r' encoding='cp1252'> (demo_eval_models_x.py)",
+          "UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch (models_x.py)"
+        ],
+        "input_tensor": {
+          "sha256": "f818283e2758aa3ba6ba77d3dcec5bced7b8c3598fff66363d6b6d084e4a38c4",
+          "dtype": "<f4",
+          "shape": [
+            1,
+            3,
+            480,
+            720
+          ]
+        },
+        "binsize_passed": 0.03125003125,
+        "binsize_float32_bits": "0x3d000008",
+        "weights": [
+          1.681758999824524,
+          -0.8801310062408447,
+          -0.880094051361084
+        ],
+        "weights_float32_bits": [
+          "0x3fd743e1",
+          "0xbf615044",
+          "0xbf614dd8"
+        ],
+        "weights_sum": -0.07846605777740479,
+        "recomputed_fused_lut_bit_identical": true,
+        "fused_lut": {
+          "sha256": "efa7b30a6496c9c8607385ba9a82818f23f464313c565015269debb5e67a54f7",
+          "dtype": "<f4",
+          "shape": [
+            3,
+            33,
+            33,
+            33
+          ]
+        },
+        "output_float32": {
+          "sha256": "e63f3156ea89a2da32e392e340639e039c21e4781272b663bd4b16406bd4cf29",
+          "dtype": "<f4",
+          "shape": [
+            1,
+            3,
+            480,
+            720
+          ]
+        },
+        "output_uint8": {
+          "sha256": "82b613064d7430f4f0f327543834e138f113b1afba30113518146cd32fb4c919",
+          "dtype": "|u1",
+          "shape": [
+            480,
+            720,
+            3
+          ]
+        },
+        "output_fraction_below_0": 0.029393326491117477,
+        "output_fraction_above_1": 0.0,
+        "mean_rgb_in": [
+          0.23427,
+          0.25482,
+          0.27213
+        ],
+        "mean_rgb_out": [
+          0.28401,
+          0.32231,
+          0.36413
+        ]
+      },
+      "lut_diagnostics": {
+        "min_per_channel": [
+          -0.02192467451095581,
+          -0.016862571239471436,
+          -0.01997467875480652
+        ],
+        "max_per_channel": [
+          1.0204691886901855,
+          1.1543362140655518,
+          1.0146740674972534
+        ],
+        "fraction_below_0": 0.001289293300312584,
+        "fraction_above_1": 0.02309597350919665,
+        "own_axis_decreasing_steps": [
+          956,
+          392,
+          929
+        ],
+        "own_axis_steps_total": 34848,
+        "max_abs_deviation_from_identity": 0.7135061621665955,
+        "neutral_axis_nondecreasing": [
+          false,
+          false,
+          false
+        ],
+        "neutral_axis_max_channel_spread": 0.013063609600067139,
+        "neutral_axis": [
+          [
+            -0.019456,
+            0.004132,
+            0.027325,
+            0.077415,
+            0.139519,
+            0.204951,
+            0.265093,
+            0.320568,
+            0.383482,
+            0.438194,
+            0.483196,
+            0.521015,
+            0.56132,
+            0.595554,
+            0.621181,
+            0.652102,
+            0.682419,
+            0.700953,
+            0.726143,
+            0.747104,
+            0.766875,
+            0.785835,
+            0.808099,
+            0.824426,
+            0.842921,
+            0.86659,
+            0.914551,
+            0.937706,
+            0.960101,
+            0.97213,
+            0.985156,
+            0.989638,
+            0.985417
+          ],
+          [
+            -0.016863,
+            0.002338,
+            0.028284,
+            0.07423,
+            0.136499,
+            0.201993,
+            0.261769,
+            0.321786,
+            0.385834,
+            0.441481,
+            0.483555,
+            0.522241,
+            0.562952,
+            0.599492,
+            0.624883,
+            0.65408,
+            0.68405,
+            0.699954,
+            0.725154,
+            0.747378,
+            0.763798,
+            0.784799,
+            0.805035,
+            0.821311,
+            0.839858,
+            0.862015,
+            0.923402,
+            0.94544,
+            0.971937,
+            0.985194,
+            0.990521,
+            1.001232,
+            0.98515
+          ],
+          [
+            -0.019975,
+            0.005387,
+            0.028376,
+            0.075177,
+            0.13748,
+            0.203197,
+            0.264417,
+            0.3204,
+            0.384211,
+            0.439063,
+            0.482137,
+            0.521204,
+            0.562838,
+            0.599687,
+            0.626447,
+            0.654422,
+            0.684621,
+            0.703287,
+            0.726952,
+            0.748918,
+            0.768308,
+            0.787054,
+            0.808772,
+            0.825644,
+            0.84522,
+            0.864355,
+            0.918044,
+            0.942809,
+            0.966718,
+            0.977598,
+            0.989258,
+            0.992267,
+            0.986733
+          ]
+        ]
+      },
+      "legacy_binsize_models_py": {
+        "binsize": 0.031253125,
+        "note": "models.py (PyTorch 0.4.1 + trilinear_c) passes 1.0001/32; models_x.py passes 1.000001/32. Same fused LUT and input, applied with the extension.",
+        "max_abs_float_difference": 0.00027048587799072266,
+        "mean_abs_float_difference": 3.2400977943325415e-05,
+        "uint8_samples_differing": 7120,
+        "uint8_samples_differing_by_more_than_1": 0,
+        "uint8_max_difference": 1,
+        "uint8_samples_total": 1036800
+      },
+      "thread_determinism": {
+        "default_threads": 6,
+        "per_thread_count": {
+          "1": {
+            "repeat_runs_bit_identical": true,
+            "weights_bit_identical_to_default": false,
+            "max_abs_weight_difference_vs_default": 2.384185791015625e-07
+          },
+          "2": {
+            "repeat_runs_bit_identical": true,
+            "weights_bit_identical_to_default": true,
+            "max_abs_weight_difference_vs_default": 0.0
+          },
+          "6": {
+            "repeat_runs_bit_identical": true,
+            "weights_bit_identical_to_default": true,
+            "max_abs_weight_difference_vs_default": 0.0
+          }
+        },
+        "output_effect_of_1_thread_weights": {
+          "max_abs_float_difference": 2.384185791015625e-07,
+          "mean_abs_float_difference": 3.025504469178486e-08,
+          "uint8_samples_differing": 3,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 1,
+          "uint8_samples_total": 1036800
+        }
+      },
+      "independent_numpy_predictor": {
+        "weights_float64": [
+          1.6817568020491396,
+          -0.8801308566386825,
+          -0.8800936100196617
+        ],
+        "max_abs_weight_difference_vs_torch": 2.1977753843493986e-06,
+        "max_abs_fused_lut_difference_vs_torch": 1.7881393432617188e-06,
+        "layer_trace": [
+          {
+            "layer": 0,
+            "op": "upsample_bilinear",
+            "out": [
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "layer": 1,
+            "op": "conv2d",
+            "out": [
+              16,
+              128,
+              128
+            ]
+          },
+          {
+            "layer": 2,
+            "op": "leaky_relu",
+            "out": [
+              16,
+              128,
+              128
+            ]
+          },
+          {
+            "layer": 3,
+            "op": "instance_norm",
+            "out": [
+              16,
+              128,
+              128
+            ]
+          },
+          {
+            "layer": 4,
+            "op": "conv2d",
+            "out": [
+              32,
+              64,
+              64
+            ]
+          },
+          {
+            "layer": 5,
+            "op": "leaky_relu",
+            "out": [
+              32,
+              64,
+              64
+            ]
+          },
+          {
+            "layer": 6,
+            "op": "instance_norm",
+            "out": [
+              32,
+              64,
+              64
+            ]
+          },
+          {
+            "layer": 7,
+            "op": "conv2d",
+            "out": [
+              64,
+              32,
+              32
+            ]
+          },
+          {
+            "layer": 8,
+            "op": "leaky_relu",
+            "out": [
+              64,
+              32,
+              32
+            ]
+          },
+          {
+            "layer": 9,
+            "op": "instance_norm",
+            "out": [
+              64,
+              32,
+              32
+            ]
+          },
+          {
+            "layer": 10,
+            "op": "conv2d",
+            "out": [
+              128,
+              16,
+              16
+            ]
+          },
+          {
+            "layer": 11,
+            "op": "leaky_relu",
+            "out": [
+              128,
+              16,
+              16
+            ]
+          },
+          {
+            "layer": 12,
+            "op": "instance_norm",
+            "out": [
+              128,
+              16,
+              16
+            ]
+          },
+          {
+            "layer": 13,
+            "op": "conv2d",
+            "out": [
+              128,
+              8,
+              8
+            ]
+          },
+          {
+            "layer": 14,
+            "op": "leaky_relu",
+            "out": [
+              128,
+              8,
+              8
+            ]
+          },
+          {
+            "layer": 15,
+            "op": "dropout(eval: identity)",
+            "out": [
+              128,
+              8,
+              8
+            ]
+          },
+          {
+            "layer": 16,
+            "op": "conv2d",
+            "out": [
+              3,
+              1,
+              1
+            ]
+          }
+        ],
+        "max_abs_float_difference": 1.7881393432617188e-06,
+        "mean_abs_float_difference": 3.9508444160674117e-07,
+        "uint8_samples_differing": 61,
+        "uint8_samples_differing_by_more_than_1": 0,
+        "uint8_max_difference": 1,
+        "uint8_samples_total": 1036800
+      },
+      "classifier_input_resolution_sensitivity": [
+        {
+          "classifier_input_wh": [
+            720,
+            480
+          ],
+          "weights": [
+            1.681759,
+            -0.880131,
+            -0.880094
+          ],
+          "max_abs_float_difference": 0.0,
+          "mean_abs_float_difference": 0.0,
+          "uint8_samples_differing": 0,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 0,
+          "uint8_samples_total": 1036800
+        },
+        {
+          "classifier_input_wh": [
+            1080,
+            720
+          ],
+          "weights": [
+            1.678565,
+            -0.8827,
+            -0.884459
+          ],
+          "max_abs_float_difference": 0.004265427589416504,
+          "mean_abs_float_difference": 0.001054526655934751,
+          "uint8_samples_differing": 271523,
+          "uint8_samples_differing_by_more_than_1": 134,
+          "uint8_max_difference": 2,
+          "uint8_samples_total": 1036800
+        },
+        {
+          "classifier_input_wh": [
+            720,
+            480
+          ],
+          "weights": [
+            1.681759,
+            -0.880131,
+            -0.880094
+          ],
+          "max_abs_float_difference": 0.0,
+          "mean_abs_float_difference": 0.0,
+          "uint8_samples_differing": 0,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 0,
+          "uint8_samples_total": 1036800
+        },
+        {
+          "classifier_input_wh": [
+            540,
+            360
+          ],
+          "weights": [
+            1.686603,
+            -0.891033,
+            -0.876384
+          ],
+          "max_abs_float_difference": 0.002846360206604004,
+          "mean_abs_float_difference": 0.001238631783053279,
+          "uint8_samples_differing": 310770,
+          "uint8_samples_differing_by_more_than_1": 0,
+          "uint8_max_difference": 1,
+          "uint8_samples_total": 1036800
+        },
+        {
+          "classifier_input_wh": [
+            360,
+            240
+          ],
+          "weights": [
+            1.701087,
+            -0.925152,
+            -0.867771
+          ],
+          "max_abs_float_difference": 0.01058661937713623,
+          "mean_abs_float_difference": 0.0050595346838235855,
+          "uint8_samples_differing": 852084,
+          "uint8_samples_differing_by_more_than_1": 445627,
+          "uint8_max_difference": 3,
+          "uint8_samples_total": 1036800
+        }
+      ],
+      "previews": {
+        "committed": {
+          "a1509_lut_on_synthetic_chart.png": {
+            "sha256": "883e24bb20107aed8972f0f7e32c63fe4114f4fdc10993ef0b6a6d3a86ca27b7",
+            "bytes": 44682
+          },
+          "a1509_lut_neutral_curves.png": {
+            "sha256": "8c4e7e77ffadc6ac21ad5c0db899632e32fdf913776f855ab9caddf7581bece1",
+            "bytes": 9128
+          }
+        },
+        "not_committed": "research/lut/build/previews/a1509_input_vs_output.png",
+        "chart_input_uint8": {
+          "sha256": "5bd021d9fea7f637628a1f6dd7d4e533556720a978e2ed717e328ffe9d13c9aa",
+          "dtype": "|u1",
+          "shape": [
+            256,
+            384,
+            3
+          ]
+        },
+        "chart_output_uint8": {
+          "sha256": "5e2e82491b8e5d42765093e7dca6d9b9227b5cc162f959a232d01a2b1d991966",
+          "dtype": "|u1",
+          "shape": [
+            256,
+            384,
+            3
+          ]
+        }
+      }
+    }
+  }
+}

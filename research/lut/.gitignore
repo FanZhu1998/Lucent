@@ -1,0 +1,3 @@
+# Research-only artefacts that are never committed (see research/lut/README.md).
+/.venv/
+/build/

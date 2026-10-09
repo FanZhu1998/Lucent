@@ -1,0 +1,565 @@
+{
+  "schema": "lucent.lut-research.trilinear-parity",
+  "schema_version": 1,
+  "run_date": "2026-10-09",
+  "upstream": {
+    "repository": "https://github.com/HuiZeng/Image-Adaptive-3DLUT",
+    "commit": "b491f6df64a588864739a157db271e5c848e1805",
+    "commit_date": "2022-11-26T12:22:59+08:00",
+    "clean": true
+  },
+  "environment": {
+    "python": "3.12.10",
+    "python_build": "MSC v.1943 64 bit (AMD64)",
+    "os": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "AMD64 Family 23 Model 104 Stepping 1, AuthenticAMD",
+    "logical_cpus": 12,
+    "torch": "2.14.1+cpu",
+    "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+    "torch_cuda_available": false,
+    "torch_cpu_capability": "AVX2",
+    "torch_num_threads": 6,
+    "torch_mkldnn": true,
+    "torchvision": "0.29.1+cpu",
+    "numpy": "2.5.3",
+    "pillow": "12.3.0",
+    "libjpeg_turbo": "3.1.4.1"
+  },
+  "extension_build": {
+    "built": true,
+    "module": "trilinear.cp312-win_amd64.pyd",
+    "module_sha256": "2c93e920b731664ad91bf680d204c5197ecff40bcb6d6d279838c4a39436a8af",
+    "source": "trilinear_cpp/src/trilinear.cpp at the pinned commit, unmodified, through the repository's trilinear_cpp/setup.py (CppExtension, no CUDA)",
+    "compile_flags": [],
+    "fp_model": "/fp:precise (MSVC default)",
+    "arch": "none (x64 SSE2 baseline)",
+    "warnings": [],
+    "msvc_toolset": "14.44.35207"
+  },
+  "implementations": [
+    "extension",
+    "torch",
+    "numpy"
+  ],
+  "binsize": {
+    "value": 0.03125003125,
+    "float32_bits": "0x3d000008"
+  },
+  "luts": {
+    "a1629_demo": {
+      "sha256": "f1a2574d8e0ca7254ee900eeb87eec67724ff4cbeada9e7bde8f812f5bc16d6e",
+      "dtype": "<f4",
+      "shape": [
+        3,
+        33,
+        33,
+        33
+      ]
+    },
+    "random_uniform_-0.5_1.5": {
+      "sha256": "731b4ed79746ccb396e87b7d7bbfc87968cb01d0411af87e479e6c70b5ba69ff",
+      "dtype": "<f4",
+      "shape": [
+        3,
+        33,
+        33,
+        33
+      ]
+    },
+    "identity_txt": {
+      "sha256": "9449c7d536759c8c2e55e97882710901326472b335ed695428f7c6edd043cfb8",
+      "dtype": "<f4",
+      "shape": [
+        3,
+        33,
+        33,
+        33
+      ]
+    },
+    "identity_txt_details": {
+      "lines": 35937,
+      "equals_exact_k_over_32_grid": true,
+      "layout_check": "buffer[0] varies along the last (r) axis, buffer[2] along the first (b) axis"
+    },
+    "random_seed": 20261009,
+    "a1629_demo_matches_demo_reproduction_json": true
+  },
+  "exhaustive_8bit": {
+    "colours": 16777216,
+    "layout": "pixel n -> (r, g, b) = (n % 256, n // 256 % 256, n // 65536)",
+    "a1629_demo": {
+      "samples": 50331648,
+      "bit_mismatches_vs_numpy": {
+        "extension": 0,
+        "torch": 0
+      },
+      "max_ulp_vs_numpy": {
+        "extension": 0,
+        "torch": 0
+      },
+      "max_abs_difference_vs_float64_ideal": 1.1161059255471173e-05,
+      "quotient_fraction_variant": {
+        "float_samples_differing": 29077401,
+        "max_abs_difference": 5.960464477539062e-07,
+        "uint8_samples_differing": 303
+      },
+      "exact_remainder_variant": {
+        "float_samples_differing": 0
+      },
+      "seconds": {
+        "extension": 0.838,
+        "torch": 2.419,
+        "numpy": 6.269
+      },
+      "megapixels_per_second": {
+        "extension": 20.03,
+        "torch": 6.93,
+        "numpy": 2.68
+      }
+    },
+    "random_uniform_-0.5_1.5": {
+      "samples": 50331648,
+      "bit_mismatches_vs_numpy": {
+        "extension": 0,
+        "torch": 0
+      },
+      "max_ulp_vs_numpy": {
+        "extension": 0,
+        "torch": 0
+      },
+      "max_abs_difference_vs_float64_ideal": 0.00014420959596900262,
+      "quotient_fraction_variant": {
+        "float_samples_differing": 47168009,
+        "max_abs_difference": 4.32133674621582e-06,
+        "uint8_samples_differing": 3237
+      },
+      "exact_remainder_variant": {
+        "float_samples_differing": 0
+      },
+      "seconds": {
+        "extension": 0.83,
+        "torch": 2.38,
+        "numpy": 6.205
+      },
+      "megapixels_per_second": {
+        "extension": 20.22,
+        "torch": 7.05,
+        "numpy": 2.7
+      }
+    },
+    "identity_txt": {
+      "samples": 50331648,
+      "bit_mismatches_vs_numpy": {
+        "extension": 0,
+        "torch": 0
+      },
+      "max_ulp_vs_numpy": {
+        "extension": 0,
+        "torch": 0
+      },
+      "max_abs_difference_vs_float64_ideal": 1.1920928953967902e-06,
+      "quotient_fraction_variant": {
+        "float_samples_differing": 27726081,
+        "max_abs_difference": 4.172325134277344e-07,
+        "uint8_samples_differing": 0
+      },
+      "exact_remainder_variant": {
+        "float_samples_differing": 0
+      },
+      "seconds": {
+        "extension": 0.964,
+        "torch": 2.403,
+        "numpy": 6.266
+      },
+      "megapixels_per_second": {
+        "extension": 17.4,
+        "torch": 6.98,
+        "numpy": 2.68
+      },
+      "identity_round_trip": {
+        "uint8_samples_changed": 0,
+        "max_abs_float_error": 1.1920928955078125e-06,
+        "note": "with binsize = 1.000001/32 the identity cube maps x to about x / 1.000001; the error stays far below half a code value, so the 8-bit round trip is exact"
+      }
+    }
+  },
+  "index_census": {
+    "models_x": {
+      "binsize": 0.03125003125,
+      "binsize_float32_bits": "0x3d000008",
+      "label": "models_x.py, 1.000001 / 32 (reproduced path)",
+      "float32_values_tested": 1065353217,
+      "inconsistent_values": 8,
+      "inconsistent_fraction_reference_min": 0.9999990463256836,
+      "inconsistent_8bit_codes": 0,
+      "inconsistent_16bit_codes": 0,
+      "largest_in_range_input": 1.0000008344650269,
+      "examples": [
+        {
+          "x": 0.5312504768371582,
+          "bits": "0x3f080008",
+          "cell_reference": 17,
+          "cell_exact": 16,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.593750536441803,
+          "bits": "0x3f180009",
+          "cell_reference": 19,
+          "cell_exact": 18,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.6562505960464478,
+          "bits": "0x3f28000a",
+          "cell_reference": 21,
+          "cell_exact": 20,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.7187506556510925,
+          "bits": "0x3f38000b",
+          "cell_reference": 23,
+          "cell_exact": 22,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.7812507152557373,
+          "bits": "0x3f48000c",
+          "cell_reference": 25,
+          "cell_exact": 24,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.8437507748603821,
+          "bits": "0x3f58000d",
+          "cell_reference": 27,
+          "cell_exact": 26,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.9062508344650269,
+          "bits": "0x3f68000e",
+          "cell_reference": 29,
+          "cell_exact": 28,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.9687508940696716,
+          "bits": "0x3f78000f",
+          "cell_reference": 31,
+          "cell_exact": 30,
+          "fraction_reference": 0.9999990463256836
+        }
+      ]
+    },
+    "models_legacy": {
+      "binsize": 0.031253125,
+      "binsize_float32_bits": "0x3d000347",
+      "label": "models.py, 1.0001 / 32 (PyTorch 0.4.1 path)",
+      "float32_values_tested": 1065353217,
+      "inconsistent_values": 15,
+      "inconsistent_fraction_reference_min": 0.9999990463256836,
+      "inconsistent_8bit_codes": 0,
+      "inconsistent_16bit_codes": 0,
+      "largest_in_range_input": 1.0000998973846436,
+      "examples": [
+        {
+          "x": 0.09375937283039093,
+          "bits": "0x3dc004ea",
+          "cell_reference": 3,
+          "cell_exact": 2,
+          "fraction_reference": 0.9999998807907104
+        },
+        {
+          "x": 0.18751874566078186,
+          "bits": "0x3e4004ea",
+          "cell_reference": 6,
+          "cell_exact": 5,
+          "fraction_reference": 0.9999997615814209
+        },
+        {
+          "x": 0.21877187490463257,
+          "bits": "0x3e6005bc",
+          "cell_reference": 7,
+          "cell_exact": 6,
+          "fraction_reference": 0.9999998807907104
+        },
+        {
+          "x": 0.3750374913215637,
+          "bits": "0x3ec004ea",
+          "cell_reference": 12,
+          "cell_exact": 11,
+          "fraction_reference": 0.9999995231628418
+        },
+        {
+          "x": 0.40629062056541443,
+          "bits": "0x3ed00553",
+          "cell_reference": 13,
+          "cell_exact": 12,
+          "fraction_reference": 0.9999996423721313
+        },
+        {
+          "x": 0.43754374980926514,
+          "bits": "0x3ee005bc",
+          "cell_reference": 14,
+          "cell_exact": 13,
+          "fraction_reference": 0.9999997615814209
+        },
+        {
+          "x": 0.46879687905311584,
+          "bits": "0x3ef00625",
+          "cell_reference": 15,
+          "cell_exact": 14,
+          "fraction_reference": 0.9999998807907104
+        },
+        {
+          "x": 0.5313031077384949,
+          "bits": "0x3f08037b",
+          "cell_reference": 17,
+          "cell_exact": 16,
+          "fraction_reference": 0.9999991655349731
+        },
+        {
+          "x": 0.5938093662261963,
+          "bits": "0x3f1803e4",
+          "cell_reference": 19,
+          "cell_exact": 18,
+          "fraction_reference": 0.9999994039535522
+        },
+        {
+          "x": 0.6563156247138977,
+          "bits": "0x3f28044d",
+          "cell_reference": 21,
+          "cell_exact": 20,
+          "fraction_reference": 0.9999996423721313
+        },
+        {
+          "x": 0.7188218832015991,
+          "bits": "0x3f3804b6",
+          "cell_reference": 23,
+          "cell_exact": 22,
+          "fraction_reference": 0.9999998807907104
+        },
+        {
+          "x": 0.7500749826431274,
+          "bits": "0x3f4004ea",
+          "cell_reference": 24,
+          "cell_exact": 23,
+          "fraction_reference": 0.9999990463256836
+        },
+        {
+          "x": 0.8125812411308289,
+          "bits": "0x3f500553",
+          "cell_reference": 26,
+          "cell_exact": 25,
+          "fraction_reference": 0.9999992847442627
+        },
+        {
+          "x": 0.8750874996185303,
+          "bits": "0x3f6005bc",
+          "cell_reference": 28,
+          "cell_exact": 27,
+          "fraction_reference": 0.9999995231628418
+        },
+        {
+          "x": 0.9375937581062317,
+          "bits": "0x3f700625",
+          "cell_reference": 30,
+          "cell_exact": 29,
+          "fraction_reference": 0.9999997615814209
+        }
+      ]
+    }
+  },
+  "fraction_variants": {
+    "random_float32_pixels": 4194304,
+    "census_inputs": 8,
+    "a1629_demo": {
+      "exact_remainder_float_samples_differing": 9,
+      "quotient_float_samples_differing": 7275584,
+      "quotient_max_abs_difference": 0.028934478759765625,
+      "census_reference_max_abs_error_vs_float64_ideal": 0.0731246940615613,
+      "census_exact_remainder_max_abs_error_vs_float64_ideal": 2.2524661036360527e-06
+    },
+    "random_uniform_-0.5_1.5": {
+      "exact_remainder_float_samples_differing": 9,
+      "quotient_float_samples_differing": 11811096,
+      "quotient_max_abs_difference": 1.2095086574554443,
+      "census_reference_max_abs_error_vs_float64_ideal": 1.936107594334507,
+      "census_exact_remainder_max_abs_error_vs_float64_ideal": 8.921332889633149e-05
+    },
+    "identity_txt": {
+      "exact_remainder_float_samples_differing": 4,
+      "quotient_float_samples_differing": 6999234,
+      "quotient_max_abs_difference": 0.03125,
+      "census_reference_max_abs_error_vs_float64_ideal": 0.03124946355819702,
+      "census_exact_remainder_max_abs_error_vs_float64_ideal": 8.940696716308594e-07
+    }
+  },
+  "float_edge_cases": {
+    "values": 163,
+    "a1629_demo": {
+      "extension": 0,
+      "torch": 0
+    },
+    "random_uniform_-0.5_1.5": {
+      "extension": 0,
+      "torch": 0
+    },
+    "identity_txt": {
+      "extension": 0,
+      "torch": 0
+    }
+  },
+  "step5_checks": {
+    "implementation": "extension",
+    "ramp_neutral": {
+      "identity_max_abs_error": 9.5367431640625e-07,
+      "identity_uint8_round_trip_exact": true,
+      "a1629_demo_lut_per_output_channel": [
+        {
+          "float_decreasing_steps": 9,
+          "most_negative_step": -0.004903078079223633,
+          "lowest_output_at_a_decrease": 1.1899323463439941,
+          "uint8_decreasing_steps": 0
+        },
+        {
+          "float_decreasing_steps": 16,
+          "most_negative_step": -0.008004069328308105,
+          "lowest_output_at_a_decrease": 1.1232216358184814,
+          "uint8_decreasing_steps": 0
+        },
+        {
+          "float_decreasing_steps": 12,
+          "most_negative_step": -0.004629254341125488,
+          "lowest_output_at_a_decrease": 1.1316534280776978,
+          "uint8_decreasing_steps": 0
+        }
+      ]
+    },
+    "ramp_red": {
+      "identity_max_abs_error": 9.5367431640625e-07,
+      "identity_uint8_round_trip_exact": true,
+      "a1629_demo_lut_per_output_channel": [
+        {
+          "float_decreasing_steps": 0,
+          "most_negative_step": 0.0010528564453125,
+          "lowest_output_at_a_decrease": null,
+          "uint8_decreasing_steps": 0
+        },
+        {
+          "float_decreasing_steps": 31,
+          "most_negative_step": -0.000386655330657959,
+          "lowest_output_at_a_decrease": -0.09758465737104416,
+          "uint8_decreasing_steps": 1
+        },
+        {
+          "float_decreasing_steps": 55,
+          "most_negative_step": -0.0010689310729503632,
+          "lowest_output_at_a_decrease": -0.06747595220804214,
+          "uint8_decreasing_steps": 0
+        }
+      ]
+    },
+    "ramp_green": {
+      "identity_max_abs_error": 9.5367431640625e-07,
+      "identity_uint8_round_trip_exact": true,
+      "a1629_demo_lut_per_output_channel": [
+        {
+          "float_decreasing_steps": 37,
+          "most_negative_step": -0.000999409705400467,
+          "lowest_output_at_a_decrease": -0.1295776665210724,
+          "uint8_decreasing_steps": 0
+        },
+        {
+          "float_decreasing_steps": 0,
+          "most_negative_step": 0.0007188320159912109,
+          "lowest_output_at_a_decrease": null,
+          "uint8_decreasing_steps": 0
+        },
+        {
+          "float_decreasing_steps": 23,
+          "most_negative_step": -0.0004265531897544861,
+          "lowest_output_at_a_decrease": -0.12305472791194916,
+          "uint8_decreasing_steps": 0
+        }
+      ]
+    },
+    "ramp_blue": {
+      "identity_max_abs_error": 9.5367431640625e-07,
+      "identity_uint8_round_trip_exact": true,
+      "a1629_demo_lut_per_output_channel": [
+        {
+          "float_decreasing_steps": 54,
+          "most_negative_step": -0.0010604336857795715,
+          "lowest_output_at_a_decrease": -0.12172970175743103,
+          "uint8_decreasing_steps": 0
+        },
+        {
+          "float_decreasing_steps": 63,
+          "most_negative_step": -0.001297973096370697,
+          "lowest_output_at_a_decrease": -0.08965811878442764,
+          "uint8_decreasing_steps": 5
+        },
+        {
+          "float_decreasing_steps": 0,
+          "most_negative_step": 0.0008208155632019043,
+          "lowest_output_at_a_decrease": null,
+          "uint8_decreasing_steps": 0
+        }
+      ]
+    },
+    "cube_corners": {
+      "a1629_demo": {
+        "max_abs_difference_from_lut_corner": 4.589557647705078e-06,
+        "output_at_white_for_identity": null
+      },
+      "random_uniform_-0.5_1.5": {
+        "max_abs_difference_from_lut_corner": 0.00011733174324035645,
+        "output_at_white_for_identity": null
+      },
+      "identity_txt": {
+        "max_abs_difference_from_lut_corner": 9.5367431640625e-07,
+        "output_at_white_for_identity": [
+          0.9999990463256836,
+          0.9999990463256836,
+          0.9999990463256836
+        ]
+      }
+    },
+    "cell_midpoints": {
+      "a1629_demo": {
+        "max_abs_difference_vs_float64_ideal": 5.930662155151367e-06
+      },
+      "random_uniform_-0.5_1.5": {
+        "max_abs_difference_vs_float64_ideal": 9.000301361083984e-05
+      },
+      "identity_txt": {
+        "max_abs_difference_vs_float64_ideal": 9.5367431640625e-07
+      }
+    }
+  },
+  "tiled_vs_full": {
+    "image": "a1629.jpg",
+    "shape": [
+      3,
+      1080,
+      1620
+    ],
+    "extension": {
+      "tiles_256_bit_mismatches": 0,
+      "single_rows_bit_mismatches": 0
+    },
+    "torch": {
+      "tiles_256_bit_mismatches": 0,
+      "single_rows_bit_mismatches": 0
+    },
+    "numpy": {
+      "tiles_256_bit_mismatches": 0,
+      "single_rows_bit_mismatches": null
+    }
+  },
+  "all_parity_checks_bit_exact": true
+}

@@ -38,6 +38,8 @@ __pycache__/
 venv/
 research/.venv/
 research/output/
+# Third-party research checkouts (pinned commits recorded in research/lut/README.md); never committed.
+/research/third_party/
 .ipynb_checkpoints/
 *.egg-info/
 .pytest_cache/
