@@ -286,21 +286,27 @@ ImageArea dng_image_area(const TiffIfdSummary& ifd, image::Size raw_frame) {
             ? std::format("the ActiveArea {}x{}+{}+{} of {}", reference.width, reference.height, reference.x,
                           reference.y, ifd.path)
             : std::format("the whole {} x {} image of {} (no ActiveArea)", width, height, ifd.path);
-    if (ifd.default_crop_origin.has_value() != ifd.default_crop_size.has_value()) {
-        area.basis = std::format("{} has DefaultCrop{} without DefaultCrop{}", ifd.path,
-                                 ifd.default_crop_origin ? "Origin" : "Size",
-                                 ifd.default_crop_origin ? "Size" : "Origin");
-        return area;
-    }
     area.reference = reference;
-    if (ifd.default_crop_origin) {
-        const auto& origin = *ifd.default_crop_origin;
-        const auto& size = *ifd.default_crop_size;
+    if (ifd.default_crop_origin || ifd.default_crop_size) {
+        // Each tag has its own default (DNG 1.4.0.0 p. 31): DefaultCropOrigin (0, 0), DefaultCropSize
+        // ImageWidth x ImageLength. A rectangle that overruns the stage-3 image is moved back inside
+        // and cut when the engine places it (image_area.hpp, the DNG SDK's DefaultCropArea()).
+        const std::array<double, 2> origin = ifd.default_crop_origin.value_or(std::array<double, 2>{0.0, 0.0});
+        const std::array<double, 2> size = ifd.default_crop_size.value_or(
+            std::array<double, 2>{static_cast<double>(width), static_cast<double>(height)});
         area.source = ImageAreaSource::DngDefaultCrop;
         area.provenance = Provenance::DngTag;
         area.rect = AreaRect{reference.x + origin[0], reference.y + origin[1], size[0], size[1]};
         area.basis = std::format("DNG DefaultCropOrigin ({}, {}) and DefaultCropSize {} x {}, relative to {}",
                                  origin[0], origin[1], size[0], size[1], frame);
+        if (!ifd.default_crop_origin) {
+            area.basis += "; DefaultCropOrigin is absent: the specification's default (0, 0)";
+        } else if (!ifd.default_crop_size) {
+            area.basis += std::format(
+                "; DefaultCropSize is absent: the specification's default, the IFD's ImageWidth x ImageLength "
+                "{} x {}",
+                width, height);
+        }
     } else {
         area.source = ImageAreaSource::DngDefaultWholeImage;
         area.provenance = Provenance::LucentRule;

@@ -228,7 +228,8 @@ enum class ImageAreaSource : std::uint8_t {
     DngDefaultWholeImage = 3,
     // The decoder's reading of the camera's own crop declaration (LibRaw
     // imgdata.sizes.raw_inset_crops[0]: Sony DefaultCrop tags, Fujifilm RAF RawImageCroppedSize,
-    // Panasonic RW2 sensor borders or crop tags, Canon, Nikon, Olympus and Pentax maker-note crops).
+    // Panasonic RW2 sensor borders or crop tags, Canon, Nikon, Olympus and Pentax maker-note crops;
+    // for a Canon aspect-ratio setting other than 3:2, Canon's SensorInfo area instead).
     DecoderInsetCrop = 4,
 };
 
@@ -524,7 +525,10 @@ struct ImageArea {
     // is the initial value of a photographer's crop, which can be widened back to the whole area.
     // DNG: DefaultUserCrop (51125, added in DNG 1.4.0.0) when it is not the whole area. Other
     // files: the decoder's aspect-ratio crop (LibRaw raw_inset_crops[1], filled from an in-camera
-    // aspect-ratio setting that differs from the area's ratio by more than 2 %).
+    // aspect-ratio setting that differs from the area's ratio by more than 2 %), or, for Canon, whose
+    // AspectInfo rectangle LibRaw puts in raw_inset_crops[0] instead, that rectangle inside the
+    // SensorInfo area when the setting is not 3:2 (the area is then the SensorInfo area: the camera
+    // records the whole 3:2 image).
     std::optional<NormalizedCrop> user_crop;
     Provenance user_crop_provenance = Provenance::DngTag;
     // Developer-facing English: the tags and values the area was derived from, or why it is
@@ -714,7 +718,8 @@ struct DngOpcodeFrame {
 void assess_dng_opcode_operations(RawMetadata& metadata);
 
 // The image area a DNG raw IFD declares, in the frames ImageArea describes: DngDefaultCrop from
-// DefaultCropOrigin and DefaultCropSize (both needed; a lone tag is reported as Unknown), or
+// DefaultCropOrigin and DefaultCropSize (a lone tag takes the specification's default for the other:
+// origin (0, 0), size ImageWidth x ImageLength, noted in `basis`), or
 // DngDefaultWholeImage without either (the ActiveArea, or the whole IFD), with DefaultUserCrop as
 // the user crop when it is not (0, 0, 1, 1). `raw_frame` is the decoded raw frame's size: an IFD of
 // another size cannot be placed (Unknown). Decoders call it for DNG files whose raw IFD they matched.

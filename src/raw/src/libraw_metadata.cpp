@@ -934,6 +934,46 @@ InsetCrop libraw_adjusted_inset_crop(InsetCrop c, std::uint32_t period) noexcept
     return c;
 }
 
+void canon_aspect_crops(InsetCropFacts& facts, const CanonCropFacts& canon) {
+    // LIBRAW_IMAGE_ASPECT_UNKNOWN (0): AspectInfo was not parsed; LIBRAW_IMAGE_ASPECT_3to2 (1500):
+    // a 3:2 frame (including the APS-H and APS-C crop values), whose AspectInfo is the whole area.
+    constexpr std::uint32_t kAspectUnknown = 0;
+    constexpr std::uint32_t kAspect3to2 = (1000 * 3) / 2;
+    if (!canon.canon_non_dng || canon.raw_aspect == kAspectUnknown || canon.raw_aspect == kAspect3to2) {
+        return;
+    }
+    if (canon.sensor_left < 0 || canon.sensor_top < 0 || canon.sensor_right < canon.sensor_left ||
+        canon.sensor_bottom < canon.sensor_top) {
+        return;  // SensorInfo was not parsed: the AspectInfo rectangle cannot be told apart
+    }
+    const InsetCrop sensor{static_cast<std::uint32_t>(canon.sensor_left),
+                           static_cast<std::uint32_t>(canon.sensor_top),
+                           static_cast<std::uint32_t>(canon.sensor_right - canon.sensor_left + 1),
+                           static_cast<std::uint32_t>(canon.sensor_bottom - canon.sensor_top + 1)};
+    if (!inside_frame(sensor, facts.raw_frame)) {
+        return;
+    }
+    const auto ratio = [](std::uint32_t aspect) -> std::string {
+        switch (aspect) {
+            case 1000:
+                return "1:1";
+            case (1000 * 4) / 3:
+                return "4:3";
+            case (1000 * 16) / 9:
+                return "16:9";
+            case (1000 * 5) / 4:
+                return "5:4";
+            default:
+                return "another ratio than 3:2";
+        }
+    };
+    facts.user_crop = facts.crop;
+    facts.crop = sensor;
+    facts.crop_name = "Canon SensorInfo DefaultCropAbsolute, the sensor's image area";
+    facts.user_crop_name = "Canon AspectInfo " + ratio(canon.raw_aspect) +
+                           ", which LibRaw puts in raw_inset_crops[0]; the camera records the whole 3:2 image";
+}
+
 ImageArea image_area_from_inset_crops(const InsetCropFacts& facts) {
     ImageArea area;
     InsetCrop c = facts.crop;
@@ -982,9 +1022,9 @@ ImageArea image_area_from_inset_crops(const InsetCropFacts& facts) {
     area.rect = AreaRect{static_cast<double>(rect.x), static_cast<double>(rect.y),
                          static_cast<double>(rect.width), static_cast<double>(rect.height)};
     area.reference = image::PixelRect::from_size(facts.raw_frame);
-    area.basis =
-        std::format("the decoder's reading of the camera's crop declaration (LibRaw raw_inset_crops[0]): {}",
-                    describe(facts.crop));
+    area.basis = std::format("the decoder's reading of the camera's crop declaration ({}): {}",
+                             facts.crop_name.empty() ? std::string("LibRaw raw_inset_crops[0]") : facts.crop_name,
+                             describe(facts.crop));
     if (!restored.empty()) {
         area.provenance = Provenance::LucentRule;
         area.basis += restored;
@@ -1011,7 +1051,10 @@ ImageArea image_area_from_inset_crops(const InsetCropFacts& facts) {
                                         (u.top - c.top + static_cast<double>(u.height)) / h,
                                         (u.left - c.left + static_cast<double>(u.width)) / w};
         area.user_crop_provenance = Provenance::Decoder;
-        area.basis += std::format("; aspect-ratio crop (raw_inset_crops[1]) {}", describe(u));
+        area.basis += std::format("; aspect-ratio crop ({}) {}",
+                                  facts.user_crop_name.empty() ? std::string("raw_inset_crops[1]")
+                                                               : facts.user_crop_name,
+                                  describe(u));
     }
     return area;
 }
@@ -1381,6 +1424,15 @@ Expected<RawMetadata> extract_metadata(LibRaw& raw, const ExtractionContext& con
             facts.declared = context.raf_crop;
             facts.declared_name = "RAF RawImageCropTopLeft / RawImageCroppedSize";
         }
+        CanonCropFacts canon;
+        canon.canon_non_dng = id.maker_index == LIBRAW_CAMERAMAKER_Canon;
+        canon.raw_aspect = sizes.raw_aspect;
+        const libraw_area_t& sensor = raw.imgdata.makernotes.canon.DefaultCropAbsolute;
+        canon.sensor_left = sensor.l;
+        canon.sensor_top = sensor.t;
+        canon.sensor_right = sensor.r;
+        canon.sensor_bottom = sensor.b;
+        canon_aspect_crops(facts, canon);
         m.image_area = image_area_from_inset_crops(facts);
     }
 

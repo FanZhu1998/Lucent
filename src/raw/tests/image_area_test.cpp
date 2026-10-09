@@ -78,15 +78,30 @@ TEST(DngImageArea, WithoutTheTagsTheWholeActiveAreaIsTheDefault) {
     EXPECT_EQ(*a.rect, (AreaRect{3.0, 1.0, 96.0, 78.0}));
 }
 
-TEST(DngImageArea, ALoneTagOrAnotherFrameSizeIsUnknown) {
-    TiffIfdSummary lone = dng_ifd(100, 80);
+// QUA-09: each tag has its own default (DNG 1.4.0.0 p. 31): DefaultCropOrigin (0, 0), DefaultCropSize
+// ImageWidth x ImageLength.
+TEST(DngImageArea, ALoneTagTakesTheSpecificationsDefaultForTheOther) {
+    TiffIfdSummary lone = dng_ifd(100, 80, DngRect{2, 4, 78, 96});
     lone.default_crop_size = std::array<double, 2>{90.0, 70.0};
     const ImageArea a = dng_image_area(lone, image::Size{100, 80});
-    EXPECT_EQ(a.source, ImageAreaSource::Unknown);
-    EXPECT_FALSE(a.rect);
-    EXPECT_TRUE(a.reference.empty());
-    EXPECT_NE(a.basis.find("without DefaultCropOrigin"), std::string::npos) << a.basis;
+    EXPECT_EQ(a.source, ImageAreaSource::DngDefaultCrop);
+    ASSERT_TRUE(a.rect);
+    EXPECT_EQ(*a.rect, (AreaRect{4.0, 2.0, 90.0, 70.0})) << "origin (0, 0) of the ActiveArea";
+    EXPECT_EQ(a.reference, (image::PixelRect{4, 2, 92, 76}));
+    EXPECT_NE(a.basis.find("DefaultCropOrigin is absent"), std::string::npos) << a.basis;
 
+    // A lone origin: the size defaults to the IFD's size, which the placement moves back inside the
+    // stage-3 image and cuts (the DNG SDK's DefaultCropArea()).
+    TiffIfdSummary origin_only = dng_ifd(100, 80);
+    origin_only.default_crop_origin = std::array<double, 2>{3.0, 5.0};
+    const ImageArea b = dng_image_area(origin_only, image::Size{100, 80});
+    EXPECT_EQ(b.source, ImageAreaSource::DngDefaultCrop);
+    ASSERT_TRUE(b.rect);
+    EXPECT_EQ(*b.rect, (AreaRect{3.0, 5.0, 100.0, 80.0}));
+    EXPECT_NE(b.basis.find("DefaultCropSize is absent"), std::string::npos) << b.basis;
+}
+
+TEST(DngImageArea, AnotherFrameSizeIsUnknown) {
     TiffIfdSummary other = dng_ifd(100, 80);
     other.default_crop_origin = std::array<double, 2>{0.0, 0.0};
     other.default_crop_size = std::array<double, 2>{90.0, 70.0};
@@ -222,6 +237,85 @@ TEST(InsetCrops, TheAspectRatioCropBecomesTheUserCrop) {
     // A user crop outside the area, or the whole area, is not carried.
     f.user_crop = InsetCrop{0, 0, 6000, 4000};
     EXPECT_FALSE(image_area_from_inset_crops(f).user_crop);
+}
+
+// QUA-01: Canon's in-camera aspect-ratio setting. LibRaw 0.22 puts the AspectInfo rectangle (plus the
+// SensorInfo origin) in raw_inset_crops[0]; the camera records the whole 3:2 image and SensorInfo's
+// DefaultCropAbsolute is its area. A Canon EOS R5 set to 1:1: SensorInfo (144, 112) - (8335, 5575),
+// AspectInfo 5464 x 5464 at (1364, 0) of it, so raw_inset_crops[0] = 5464 x 5464 at (1508, 112).
+detail::CanonCropFacts canon_r5(std::uint32_t raw_aspect) {
+    detail::CanonCropFacts canon;
+    canon.canon_non_dng = true;
+    canon.raw_aspect = raw_aspect;
+    canon.sensor_left = 144;
+    canon.sensor_top = 112;
+    canon.sensor_right = 8335;
+    canon.sensor_bottom = 5575;
+    return canon;
+}
+
+InsetCropFacts r5_facts(InsetCrop crop) {
+    // LibRaw's visible area of the R5 (identify.cpp: SensorInfo with the margins rounded to 2).
+    return facts(crop, image::Size{8352, 5586}, image::PixelRect{144, 112, 8191, 5463});
+}
+
+TEST(InsetCrops, ACanonAspectRatioSettingIsTheUserCropOfTheWholeSensorArea) {
+    InsetCropFacts f = r5_facts(InsetCrop{1508, 112, 5464, 5464});
+    detail::canon_aspect_crops(f, canon_r5(1000));  // LIBRAW_IMAGE_ASPECT_1to1
+    const ImageArea a = image_area_from_inset_crops(f);
+    EXPECT_EQ(a.source, ImageAreaSource::DecoderInsetCrop);
+    ASSERT_TRUE(a.rect);
+    EXPECT_EQ(*a.rect, (AreaRect{144.0, 112.0, 8192.0, 5464.0})) << "the area is the whole 3:2 image";
+    ASSERT_TRUE(a.user_crop) << "the 1:1 setting is exposed as the user crop";
+    EXPECT_DOUBLE_EQ(a.user_crop->left, 1364.0 / 8192.0);
+    EXPECT_DOUBLE_EQ(a.user_crop->right, (1364.0 + 5464.0) / 8192.0);
+    EXPECT_DOUBLE_EQ(a.user_crop->top, 0.0);
+    EXPECT_DOUBLE_EQ(a.user_crop->bottom, 1.0);
+    EXPECT_NE(a.basis.find("SensorInfo"), std::string::npos) << a.basis;
+    EXPECT_NE(a.basis.find("AspectInfo 1:1"), std::string::npos) << a.basis;
+
+    // 16:9 (8192 x 4608 centred) and an aspect value LibRaw does not know (LIBRAW_IMAGE_ASPECT_OTHER)
+    // are user crops too.
+    InsetCropFacts wide = r5_facts(InsetCrop{144, 540, 8192, 4608});
+    detail::canon_aspect_crops(wide, canon_r5((1000 * 16) / 9));
+    const ImageArea w = image_area_from_inset_crops(wide);
+    ASSERT_TRUE(w.rect);
+    EXPECT_EQ(*w.rect, (AreaRect{144.0, 112.0, 8192.0, 5464.0}));
+    ASSERT_TRUE(w.user_crop);
+    EXPECT_DOUBLE_EQ(w.user_crop->top, 428.0 / 5464.0);
+    InsetCropFacts other = r5_facts(InsetCrop{1508, 112, 5464, 5464});
+    detail::canon_aspect_crops(other, canon_r5(1));
+    EXPECT_EQ(*image_area_from_inset_crops(other).rect, (AreaRect{144.0, 112.0, 8192.0, 5464.0}));
+}
+
+TEST(InsetCrops, CanonThreeToTwoFilesAndOtherMakersKeepLibRawsCrop) {
+    // 3:2 (the corpus R5 files): AspectInfo is the whole area, nothing changes.
+    InsetCropFacts f = r5_facts(InsetCrop{144, 112, 8192, 5464});
+    detail::canon_aspect_crops(f, canon_r5(1500));
+    EXPECT_EQ(f.crop.left, 144u);
+    EXPECT_EQ(f.user_crop.left, 0xffffu);
+    EXPECT_TRUE(f.crop_name.empty());
+    // No AspectInfo (LIBRAW_IMAGE_ASPECT_UNKNOWN): LibRaw's crop is SensorInfo already.
+    InsetCropFacts unknown = r5_facts(InsetCrop{144, 112, 8192, 5464});
+    detail::canon_aspect_crops(unknown, canon_r5(0));
+    EXPECT_TRUE(unknown.crop_name.empty());
+    // Not Canon, or a DNG: unchanged.
+    InsetCropFacts nikon = r5_facts(InsetCrop{1508, 112, 5464, 5464});
+    detail::CanonCropFacts not_canon = canon_r5(1000);
+    not_canon.canon_non_dng = false;
+    detail::canon_aspect_crops(nikon, not_canon);
+    EXPECT_EQ(nikon.crop.left, 1508u);
+    // SensorInfo not parsed, or outside the raw frame: the aspect crop cannot be told apart.
+    InsetCropFacts no_sensor = r5_facts(InsetCrop{1508, 112, 5464, 5464});
+    detail::CanonCropFacts missing = canon_r5(1000);
+    missing.sensor_left = -1;
+    detail::canon_aspect_crops(no_sensor, missing);
+    EXPECT_EQ(no_sensor.crop.left, 1508u);
+    InsetCropFacts beyond = r5_facts(InsetCrop{1508, 112, 5464, 5464});
+    detail::CanonCropFacts huge = canon_r5(1000);
+    huge.sensor_right = 9000;
+    detail::canon_aspect_crops(beyond, huge);
+    EXPECT_EQ(beyond.crop.left, 1508u);
 }
 
 // ---- RAF crop reader ------------------------------------------------------------------------------
