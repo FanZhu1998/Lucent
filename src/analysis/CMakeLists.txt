@@ -24,9 +24,14 @@ set(LUCENT_ANALYSIS_SOURCES
     include/lucent/analysis/source_diagnostics.hpp
     src/source_diagnostics.cpp
 
-    # Measurements of rendered candidates against the baseline in the declared output encoding.
+    # Measurements of rendered candidates against the baseline in the declared output encoding,
+    # and of full-resolution renders band by band (the application's final check), sharing one
+    # per-pixel kernel.
     include/lucent/analysis/render_metrics.hpp
+    src/render_kernel.hpp
     src/render_metrics.cpp
+    include/lucent/analysis/frame_measurement.hpp
+    src/frame_measurement.cpp
 
     # Exposure/headroom and white-balance proposals with their evidence.
     include/lucent/analysis/proposals.hpp
@@ -76,6 +81,7 @@ set(LUCENT_ANALYSIS_TEST_SOURCES
     tests/metric_contract_test.cpp
     tests/source_diagnostics_test.cpp
     tests/render_metrics_test.cpp
+    tests/frame_measurement_test.cpp
     tests/proposals_test.cpp
     tests/auto_settings_test.cpp
     tests/native_crops_test.cpp

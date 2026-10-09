@@ -201,6 +201,10 @@ struct RenderStats {
 // the render is the baseline: its relative values are zero and `features` (when not null) receives
 // its per-pixel features. Errors (analysis.metrics): InvalidArgument for another size, channel
 // count or encoding, or baseline features of another size; OutOfMemory; Cancelled.
+// Memory: planes of the whole render (the log luminance and the two box planes of local contrast,
+// 12 bytes per pixel, besides the context and the features): meant for images whose size the caller
+// bounds (the analysis image and the search proxy). Full-resolution renders are measured band by
+// band, with the same statistics, by FrameMeasurement (frame_measurement.hpp).
 [[nodiscard]] Expected<RenderStats> measure_render(const engine::ColorImage& display,
                                                    const ImageContext& context,
                                                    const BaselineFeatures* baseline,

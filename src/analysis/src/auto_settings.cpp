@@ -292,6 +292,13 @@ private:
     AutoResult independent_;
     std::vector<std::vector<MetricResult>> independent_metrics_;
     AutoResult independent_out_;
+
+    // AutoOptions::keep_full_resolution: the full-resolution stage one and its saturation classes,
+    // until take_full_resolution().
+    std::optional<FullResolution> full_;
+
+public:
+    Expected<FullResolution> take_full_resolution();
 };
 
 AutoResult AutoSession::Impl::with_user_parts(AutoResult result) const {
@@ -486,7 +493,8 @@ Status AutoSession::Impl::setup(raw::DecodedRaw&& decoded) {
     // 1. Source diagnostics, before stage one consumes the samples.
     auto t = Clock::now();
     const std::array<image::Size, 2> grids{analysis_size, proxy_size};
-    auto source = analyze_source(decoded, grids, options_.develop.parallel, cancel());
+    auto source =
+        analyze_source(decoded, grids, options_.develop.parallel, cancel(), options_.keep_full_resolution);
     if (!source) {
         return Unexpected(std::move(source.error()));
     }
@@ -503,6 +511,7 @@ Status AutoSession::Impl::setup(raw::DecodedRaw&& decoded) {
     // camera's image area is part of the geometry the evaluation sets aside, so every render here
     // (proxies, native crops, appearances) uses the whole frame whatever the settings' geometry
     // version; the application's full-resolution check measures the real output frame.
+    const std::optional<engine::ImageAreaPlacement> image_area = one->image_area;
     one->image_area.reset();
     result_.timing.stage_one_seconds = seconds_since(t);
     result_.full_size = one->full_size;
@@ -571,7 +580,20 @@ Status AutoSession::Impl::setup(raw::DecodedRaw&& decoded) {
             crop_halo_free_.push_back(std::move(*halo_free));
         }
     }
-    one->pixels = image::ImageBuffer<float>{};
+    if (options_.keep_full_resolution) {
+        // Kept for the caller's full-resolution check: the stage one exactly as rendered (its camera
+        // image area restored) and, when it is the upright visible area, its saturation classes.
+        FullResolution kept;
+        kept.stage_one = std::move(*one);
+        kept.stage_one.image_area = image_area;
+        if (coverage_ok && source->full_resolution.size == kept.stage_one.pixels.size()) {
+            kept.saturation = std::move(source->full_resolution);
+        }
+        result_.memory.kept_bytes = kept.stage_one.byte_size() + kept.saturation.classes.size();
+        full_ = std::move(kept);
+    } else {
+        one->pixels = image::ImageBuffer<float>{};
+    }
     result_.timing.crops_seconds = seconds_since(t);
 
     result_.memory.analysis_bytes = analysis_.byte_size();
@@ -584,7 +606,8 @@ Status AutoSession::Impl::setup(raw::DecodedRaw&& decoded) {
         result_.memory.analysis_bytes + result_.memory.proxy_bytes + result_.memory.crop_bytes + contexts;
     result_.memory.estimated_peak_bytes =
         std::max(result_.memory.stage_one_peak_estimate,
-                 result_.memory.full_resolution_bytes + result_.memory.retained_bytes);
+                 result_.memory.full_resolution_bytes + result_.memory.retained_bytes) +
+        (full_ ? full_->saturation.classes.size() : 0);
 
     if (color_) {
         auto model = engine::WhiteBalanceModel::create(analysis_.metadata);
@@ -2028,6 +2051,22 @@ std::uint64_t AutoSession::retained_bytes() const noexcept {
     return impl_->retained_bytes();
 }
 
+Expected<FullResolution> AutoSession::Impl::take_full_resolution() {
+    if (!full_) {
+        return fail(ErrorCode::InvalidArgument,
+                    "the session keeps no full-resolution stage one (AutoOptions::keep_full_resolution), or it was "
+                    "taken",
+                    kWhere);
+    }
+    FullResolution out = std::move(*full_);
+    full_.reset();
+    return out;
+}
+
+Expected<FullResolution> AutoSession::take_full_resolution() {
+    return impl_->take_full_resolution();
+}
+
 Expected<AutoResult> auto_develop(raw::DecodedRaw&& decoded, const engine::DevelopSettings& current,
                                   const AutoOptions& options, const core::CancellationToken& cancel) {
     try {
@@ -2124,7 +2163,11 @@ Expected<std::uint64_t> estimate_auto_memory(const raw::RawMetadata& metadata, c
     // (13 bytes) per analysis and proxy pixel.
     const auto per_pixel = static_cast<std::uint64_t>(analysis.area() + proxy.area()) * 21u;
     const std::uint64_t kept = plane(analysis) + plane(proxy) + crops + per_pixel;
-    return std::max(estimate->stage_one_peak, estimate->stage_one_bytes + kept);
+    // keep_full_resolution: the saturation classes of the full grid beside everything else (the
+    // stage one itself is the second term's, now through the whole search).
+    const std::uint64_t classes =
+        options.keep_full_resolution ? static_cast<std::uint64_t>(std::max<std::int64_t>(0, upright.area())) : 0;
+    return std::max(estimate->stage_one_peak, estimate->stage_one_bytes + kept) + classes;
 }
 
 }  // namespace lucent::analysis

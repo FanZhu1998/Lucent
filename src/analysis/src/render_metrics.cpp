@@ -12,6 +12,7 @@
 #include <lucent/image/color_math.hpp>
 
 #include "parallel_bands.hpp"
+#include "render_kernel.hpp"
 
 namespace lucent::analysis {
 
@@ -20,36 +21,14 @@ namespace {
 constexpr const char* kWhere = "analysis.metrics";
 using Clock = std::chrono::steady_clock;
 
-constexpr std::size_t kLightnessBins = 4096;  // over l in [0, 1]
-constexpr std::size_t kNoiseBins = 2000;      // over sigma_L in [0, 40) L* units
-constexpr double kNoiseBinWidth = 0.02;
+using detail::kLightnessBins;
+using detail::kMetricBandRows;
+using detail::kNoiseBins;
+using detail::kNoiseBinWidth;
+
 constexpr double kLabEpsilon = 216.0 / 24389.0;
 constexpr double kLabKappa = 24389.0 / 27.0;
 constexpr double kNoSignalFloor = 1.0 / 1024.0;
-constexpr std::int32_t kMetricBandRows = 32;
-
-struct Matrices {
-    image::Matrix3d to_xyz;   // display-linear Rec.2020 -> XYZ (D65, Y of white = 1)
-    image::Matrix3d to_srgb;  // display-linear Rec.2020 -> linear sRGB
-    image::Vec3d white;       // XYZ of RGB (1, 1, 1)
-};
-
-Expected<Matrices> matrices() {
-    Matrices m;
-    auto xyz = image::rgb_to_xyz(image::kRec2020Primaries, image::kD65White);
-    if (!xyz) {
-        return fail(ErrorCode::Internal, "no Rec.2020 matrix: " + xyz.error().message, kWhere);
-    }
-    auto srgb = image::conversion_matrix(image::ColorEncoding::scene_linear_rec2020_d65(),
-                                         image::ColorEncoding::linear_srgb());
-    if (!srgb) {
-        return fail(ErrorCode::Internal, "no Rec.2020 to sRGB matrix: " + srgb.error().message, kWhere);
-    }
-    m.to_xyz = *xyz;
-    m.to_srgb = *srgb;
-    m.white = m.to_xyz * image::Vec3d{1.0, 1.0, 1.0};
-    return m;
-}
 
 inline double lab_f(double t) noexcept {
     return t > kLabEpsilon ? std::cbrt(t) : (kLabKappa * t + 16.0) / 116.0;
@@ -63,39 +42,6 @@ inline double lightness_slope(double y) noexcept {
     }
     return kLabKappa / 100.0;
 }
-
-struct Partial {
-    std::vector<std::uint32_t> lightness_hist;
-    std::vector<std::uint32_t> noise_hist;
-    std::uint64_t nonfinite_samples = 0;
-    std::uint64_t pixels = 0;
-    std::uint64_t signal = 0;
-    std::uint64_t near_white = 0;
-    std::uint64_t dark = 0;
-    std::uint64_t hi = 0;
-    std::uint64_t lo = 0;
-    std::uint64_t gamut = 0;
-    std::uint64_t new_hi = 0;
-    std::uint64_t new_lo = 0;
-    std::uint64_t new_gamut = 0;
-    std::uint64_t saturated = 0;
-    std::uint64_t chromatic = 0;
-    std::uint64_t neutral = 0;
-    std::uint64_t shadow = 0;
-    double sum_l = 0.0;
-    double sum_grey = 0.0;
-    double sum_sat_c = 0.0;
-    double sum_sat_b = 0.0;
-    double sum_hue = 0.0;
-    double sum_hue_weight = 0.0;
-    double sum_chroma = 0.0;
-    double sum_da = 0.0;
-    double sum_db = 0.0;
-    std::uint64_t midtone = 0;
-    double sum_mx = 0.0;
-    double sum_my = 0.0;
-    double sum_mz = 0.0;
-};
 
 // Horizontal box means of `in` (w x h, row-major) over [x - r, x + r] clipped to the row, into `out`.
 Status horizontal_box(const std::vector<float>& in, std::vector<float>& out, std::int32_t w, std::int32_t h,
@@ -237,6 +183,342 @@ double histogram_quantile(const Hist& hist, std::uint64_t total, double q, doubl
 
 }  // namespace
 
+// ---- The per-pixel kernel (render_kernel.hpp) ---------------------------------------------------
+
+namespace detail {
+
+Expected<MetricMatrices> metric_matrices() {
+    MetricMatrices m;
+    auto xyz = image::rgb_to_xyz(image::kRec2020Primaries, image::kD65White);
+    if (!xyz) {
+        return fail(ErrorCode::Internal, "no Rec.2020 matrix: " + xyz.error().message, kWhere);
+    }
+    auto srgb = image::conversion_matrix(image::ColorEncoding::scene_linear_rec2020_d65(),
+                                         image::ColorEncoding::linear_srgb());
+    if (!srgb) {
+        return fail(ErrorCode::Internal, "no Rec.2020 to sRGB matrix: " + srgb.error().message, kWhere);
+    }
+    m.to_xyz = *xyz;
+    m.to_srgb = *srgb;
+    m.white = m.to_xyz * image::Vec3d{1.0, 1.0, 1.0};
+    return m;
+}
+
+Status make_partials(std::vector<MetricPartial>& partials, std::size_t count) {
+    try {
+        partials.clear();
+        partials.resize(count);
+        for (MetricPartial& p : partials) {
+            p.lightness_hist.assign(kLightnessBins, 0);
+            p.noise_hist.assign(kNoiseBins, 0);
+        }
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the metric histograms", kWhere);
+    }
+    return ok();
+}
+
+MetricKernel::MetricKernel(const MetricMatrices& matrices, const SensorNoiseModel& noise) noexcept
+    : m_(matrices),
+      noise_(noise),
+      noise_available_(noise.available()),
+      xn_(matrices.white[0]),
+      yn_(matrices.white[1]),
+      zn_(matrices.white[2]),
+      hi_level_(clip_high_linear()),
+      lo_level_(block_low_linear()),
+      floor_y_(std::exp2(kLocalContrastFloorEv)) {}
+
+void MetricKernel::features_row(const float* row, std::int32_t width, const FeatureRow& out) const noexcept {
+    const MetricMatrices& m = m_;
+    for (std::int32_t x = 0; x < width; ++x, row += 3) {
+        const double r = row[0];
+        const double g = row[1];
+        const double b = row[2];
+        if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
+            out.lightness[x] = 0.0f;
+            out.a[x] = 0.0f;
+            out.b[x] = 0.0f;
+            out.chroma[x] = 0.0f;
+            out.flags[x] = kFlagNonFinite;
+            continue;
+        }
+        const double X = m.to_xyz(0, 0) * r + m.to_xyz(0, 1) * g + m.to_xyz(0, 2) * b;
+        const double Y = m.to_xyz(1, 0) * r + m.to_xyz(1, 1) * g + m.to_xyz(1, 2) * b;
+        const double Z = m.to_xyz(2, 0) * r + m.to_xyz(2, 1) * g + m.to_xyz(2, 2) * b;
+        const double fx = lab_f(X / xn_);
+        const double fy = lab_f(Y / yn_);
+        const double fz = lab_f(Z / zn_);
+        const double l = static_cast<float>(1.16 * fy - 0.16);
+        const double A = static_cast<float>(500.0 * (fx - fy));
+        const double B = static_cast<float>(200.0 * (fy - fz));
+        const double deviation = std::sqrt((r - Y) * (r - Y) + (g - Y) * (g - Y) + (b - Y) * (b - Y));
+        const double linear_chroma = Y > 0.0 ? static_cast<float>(deviation / Y) : 0.0f;
+        const double sr = m.to_srgb(0, 0) * r + m.to_srgb(0, 1) * g + m.to_srgb(0, 2) * b;
+        const double sg = m.to_srgb(1, 0) * r + m.to_srgb(1, 1) * g + m.to_srgb(1, 2) * b;
+        const double sb = m.to_srgb(2, 0) * r + m.to_srgb(2, 1) * g + m.to_srgb(2, 2) * b;
+        const double smax = std::max({sr, sg, sb});
+        const double smin = std::min({sr, sg, sb});
+        std::uint8_t flags = 0;
+        if (smax >= hi_level_) {
+            flags |= kFlagHighlightClipped;
+        }
+        if (smax <= lo_level_) {
+            flags |= kFlagShadowBlocked;
+        }
+        if (smin < -kGamutTolerance * std::max(smax, 0.0) || smax > 1.0 + kGamutTolerance) {
+            flags |= kFlagOutOfGamut;
+        }
+        out.lightness[x] = static_cast<float>(l);
+        out.a[x] = static_cast<float>(A);
+        out.b[x] = static_cast<float>(B);
+        out.chroma[x] = static_cast<float>(linear_chroma);
+        out.flags[x] = flags;
+    }
+}
+
+void MetricKernel::measure_row(MetricPartial& p, const float* row, std::int32_t width, const ContextRow& context,
+                               const BaselineRow* baseline, const FeatureRow* features,
+                               float* log_y) const noexcept {
+    const MetricMatrices& m = m_;
+    const SensorNoiseModel& noise = noise_;
+    for (std::int32_t x = 0; x < width; ++x, row += 3) {
+        const double r = row[0];
+        const double g = row[1];
+        const double b = row[2];
+        if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
+            p.nonfinite_samples += static_cast<std::uint64_t>(!std::isfinite(r)) +
+                                   static_cast<std::uint64_t>(!std::isfinite(g)) +
+                                   static_cast<std::uint64_t>(!std::isfinite(b));
+            if (features != nullptr) {
+                features->lightness[x] = 0.0f;
+                features->a[x] = 0.0f;
+                features->b[x] = 0.0f;
+                features->chroma[x] = 0.0f;
+                features->flags[x] = kFlagNonFinite;
+            }
+            continue;
+        }
+        ++p.pixels;
+        const double X = m.to_xyz(0, 0) * r + m.to_xyz(0, 1) * g + m.to_xyz(0, 2) * b;
+        const double Y = m.to_xyz(1, 0) * r + m.to_xyz(1, 1) * g + m.to_xyz(1, 2) * b;
+        const double Z = m.to_xyz(2, 0) * r + m.to_xyz(2, 1) * g + m.to_xyz(2, 2) * b;
+        if (log_y != nullptr) {
+            log_y[x] = static_cast<float>(std::log2(std::max(Y / yn_, floor_y_)));
+        }
+        const double fx = lab_f(X / xn_);
+        const double fy = lab_f(Y / yn_);
+        const double fz = lab_f(Z / zn_);
+        // Rounded to float as the baseline features are stored, so a render compared with itself
+        // differs by exactly nothing.
+        const double l = static_cast<float>(1.16 * fy - 0.16);
+        const double A = static_cast<float>(500.0 * (fx - fy));
+        const double B = static_cast<float>(200.0 * (fy - fz));
+        const double C = std::hypot(A, B);
+        const double deviation = std::sqrt((r - Y) * (r - Y) + (g - Y) * (g - Y) + (b - Y) * (b - Y));
+        const double linear_chroma = Y > 0.0 ? static_cast<float>(deviation / Y) : 0.0f;
+
+        const double sr = m.to_srgb(0, 0) * r + m.to_srgb(0, 1) * g + m.to_srgb(0, 2) * b;
+        const double sg = m.to_srgb(1, 0) * r + m.to_srgb(1, 1) * g + m.to_srgb(1, 2) * b;
+        const double sb = m.to_srgb(2, 0) * r + m.to_srgb(2, 1) * g + m.to_srgb(2, 2) * b;
+        const double smax = std::max({sr, sg, sb});
+        const double smin = std::min({sr, sg, sb});
+        std::uint8_t flags = 0;
+        if (smax >= hi_level_) {
+            flags |= kFlagHighlightClipped;
+        }
+        if (smax <= lo_level_) {
+            flags |= kFlagShadowBlocked;
+        }
+        if (smin < -kGamutTolerance * std::max(smax, 0.0) || smax > 1.0 + kGamutTolerance) {
+            flags |= kFlagOutOfGamut;
+        }
+        const bool hi = (flags & kFlagHighlightClipped) != 0;
+        p.hi += hi ? 1 : 0;
+        p.lo += (flags & kFlagShadowBlocked) != 0 ? 1 : 0;
+        p.gamut += (flags & kFlagOutOfGamut) != 0 ? 1 : 0;
+
+        const double lm = engine::display_lightness(std::max({r, g, b}));
+        if (lm >= kNearWhiteLightness && !hi) {
+            ++p.near_white;
+        }
+        if (l < kDarkLightness) {
+            ++p.dark;
+        }
+        const double lc = std::clamp(l, 0.0, 1.0);
+        const auto bin = std::min(kLightnessBins - 1, static_cast<std::size_t>(lc * kLightnessBins));
+        ++p.lightness_hist[bin];
+        p.sum_l += l;
+        p.sum_chroma += C;
+
+        const double s = context.signal[x];
+        if (noise_available_ ? (s > 0.0 && s >= 3.0 * noise.sigma(s)) : s >= kNoSignalFloor) {
+            ++p.signal;
+        }
+
+        const double bl = baseline != nullptr ? baseline->lightness[x] : l;
+        const double ba = baseline != nullptr ? baseline->a[x] : A;
+        const double bb = baseline != nullptr ? baseline->b[x] : B;
+        const double bchroma = baseline != nullptr ? baseline->chroma[x] : linear_chroma;
+        const std::uint8_t bflags = baseline != nullptr ? baseline->flags[x] : flags;
+        if (baseline != nullptr) {
+            p.new_hi += hi && (bflags & kFlagHighlightClipped) == 0 ? 1 : 0;
+            p.new_lo += (flags & kFlagShadowBlocked) != 0 && (bflags & kFlagShadowBlocked) == 0 ? 1 : 0;
+            p.new_gamut += (flags & kFlagOutOfGamut) != 0 && (bflags & kFlagOutOfGamut) == 0 ? 1 : 0;
+        }
+        const float coverage = context.saturation == nullptr ? 0.0f : context.saturation[x];
+        if (coverage >= kSaturatedCoverage) {
+            ++p.saturated;
+            p.sum_grey += std::max(0.0, bl - l);
+        }
+        const double bc = std::hypot(ba, bb);
+        const bool base_hi = (bflags & kFlagHighlightClipped) != 0;
+        if (bc >= kChromaticChroma && bl > kChromaticLightnessLow && bl < 0.95 && !base_hi && !hi) {
+            ++p.chromatic;
+            p.sum_sat_c += linear_chroma;
+            p.sum_sat_b += bchroma;
+            const double dot = A * ba + B * bb;
+            const double cross = ba * B - bb * A;
+            p.sum_hue += bc * std::abs(std::atan2(cross, dot));
+            p.sum_hue_weight += bc;
+        }
+        const bool neutral_surface = context.neutral == nullptr ? bc < kNeutralChroma : context.neutral[x] != 0;
+        if (neutral_surface && bl > 0.15 && bl < 0.9 && !base_hi) {
+            ++p.neutral;
+            p.sum_da += A - ba;
+            p.sum_db += B - bb;
+        }
+        if (bl > kMidtoneLow && bl < kMidtoneHigh && !base_hi && !hi) {
+            ++p.midtone;
+            p.sum_mx += X;
+            p.sum_my += Y;
+            p.sum_mz += Z;
+        }
+        if (bl > kShadowMaskLow && bl < kShadowMaskHigh && coverage <= 0.0f && s > 0.0) {
+            ++p.shadow;
+            if (noise_available_ && Y > 0.0) {
+                const double sigma_l = 100.0 * lightness_slope(Y) * (Y / s) * noise.sigma(s);
+                const auto nb =
+                    std::min(kNoiseBins - 1, static_cast<std::size_t>(std::max(0.0, sigma_l) / kNoiseBinWidth));
+                ++p.noise_hist[nb];
+            }
+        }
+        if (features != nullptr) {
+            features->lightness[x] = static_cast<float>(l);
+            features->a[x] = static_cast<float>(A);
+            features->b[x] = static_cast<float>(B);
+            features->chroma[x] = static_cast<float>(linear_chroma);
+            features->flags[x] = flags;
+        }
+    }
+}
+
+void MetricTotal::merge(const MetricPartial& p) noexcept {
+    for (std::size_t k = 0; k < kLightnessBins; ++k) {
+        lightness_hist[k] += p.lightness_hist[k];
+    }
+    for (std::size_t k = 0; k < kNoiseBins; ++k) {
+        noise_hist[k] += p.noise_hist[k];
+    }
+    MetricPartial& t = sums;
+    t.nonfinite_samples += p.nonfinite_samples;
+    t.pixels += p.pixels;
+    t.signal += p.signal;
+    t.near_white += p.near_white;
+    t.dark += p.dark;
+    t.hi += p.hi;
+    t.lo += p.lo;
+    t.gamut += p.gamut;
+    t.new_hi += p.new_hi;
+    t.new_lo += p.new_lo;
+    t.new_gamut += p.new_gamut;
+    t.saturated += p.saturated;
+    t.chromatic += p.chromatic;
+    t.neutral += p.neutral;
+    t.shadow += p.shadow;
+    t.sum_l += p.sum_l;
+    t.sum_grey += p.sum_grey;
+    t.sum_sat_c += p.sum_sat_c;
+    t.sum_sat_b += p.sum_sat_b;
+    t.sum_hue += p.sum_hue;
+    t.sum_hue_weight += p.sum_hue_weight;
+    t.sum_chroma += p.sum_chroma;
+    t.sum_da += p.sum_da;
+    t.sum_db += p.sum_db;
+    t.midtone += p.midtone;
+    t.sum_mx += p.sum_mx;
+    t.sum_my += p.sum_my;
+    t.sum_mz += p.sum_mz;
+}
+
+RenderStats finish_stats(const std::vector<MetricPartial>& partials, image::Size size, bool noise_model_available) {
+    // Merge in band order.
+    MetricTotal total;
+    for (const MetricPartial& p : partials) {
+        total.merge(p);
+    }
+    return finish_stats(total, size, noise_model_available);
+}
+
+RenderStats finish_stats(const MetricTotal& total, image::Size size, bool noise_model_available) {
+    const std::vector<std::uint64_t>& lightness_hist = total.lightness_hist;
+    const std::vector<std::uint64_t>& noise_hist = total.noise_hist;
+    const MetricPartial& t = total.sums;
+
+    RenderStats s;
+    s.size = size;
+    s.pixels = t.pixels;
+    s.nonfinite_samples = t.nonfinite_samples;
+    const double bin_width = 1.0 / static_cast<double>(kLightnessBins);
+    s.quantiles.p01 = histogram_quantile(lightness_hist, t.pixels, 0.01, bin_width);
+    s.quantiles.p05 = histogram_quantile(lightness_hist, t.pixels, 0.05, bin_width);
+    s.quantiles.p10 = histogram_quantile(lightness_hist, t.pixels, 0.10, bin_width);
+    s.quantiles.p25 = histogram_quantile(lightness_hist, t.pixels, 0.25, bin_width);
+    s.quantiles.p50 = histogram_quantile(lightness_hist, t.pixels, 0.50, bin_width);
+    s.quantiles.p75 = histogram_quantile(lightness_hist, t.pixels, 0.75, bin_width);
+    s.quantiles.p90 = histogram_quantile(lightness_hist, t.pixels, 0.90, bin_width);
+    s.quantiles.p95 = histogram_quantile(lightness_hist, t.pixels, 0.95, bin_width);
+    s.quantiles.p99 = histogram_quantile(lightness_hist, t.pixels, 0.99, bin_width);
+    s.quantiles.p995 = histogram_quantile(lightness_hist, t.pixels, 0.995, bin_width);
+    const auto count = static_cast<double>(std::max<std::uint64_t>(1, t.pixels));
+    s.mean_lightness = t.sum_l / count;
+    s.signal_pixels = t.signal;
+    s.near_white = t.near_white;
+    s.dark = t.dark;
+    s.highlight_clipped = t.hi;
+    s.shadow_blocked = t.lo;
+    s.out_of_gamut = t.gamut;
+    s.new_highlight_clipped = t.new_hi;
+    s.new_shadow_blocked = t.new_lo;
+    s.new_out_of_gamut = t.new_gamut;
+    s.source_saturated = t.saturated;
+    s.saturated_greying = t.saturated == 0 ? 0.0 : t.sum_grey / static_cast<double>(t.saturated);
+    s.chromatic_pixels = t.chromatic;
+    s.saturation_log_ratio =
+        (t.sum_sat_c > 0.0 && t.sum_sat_b > 0.0) ? std::log(t.sum_sat_c / t.sum_sat_b) : 0.0;
+    s.hue_shift_degrees =
+        t.sum_hue_weight > 0.0 ? t.sum_hue / t.sum_hue_weight * 180.0 / std::numbers::pi : 0.0;
+    s.mean_chroma = t.sum_chroma / count;
+    s.neutral_pixels = t.neutral;
+    s.neutral_shift_de = t.neutral == 0 ? 0.0
+                                        : std::hypot(t.sum_da / static_cast<double>(t.neutral),
+                                                     t.sum_db / static_cast<double>(t.neutral));
+    s.noise_model_available = noise_model_available;
+    s.shadow_pixels = t.shadow;
+    std::uint64_t noise_count = 0;
+    for (const std::uint64_t h : noise_hist) {
+        noise_count += h;
+    }
+    s.shadow_noise_lstar = histogram_quantile(noise_hist, noise_count, 0.75, kNoiseBinWidth);
+    s.midtone_pixels = t.midtone;
+    s.midtone_x = t.sum_mx;
+    s.midtone_y = t.sum_my;
+    s.midtone_z = t.sum_mz;
+    return s;
+}
+
+}  // namespace detail
+
 std::int32_t local_contrast_radius(image::Size size) noexcept {
     const double edge = static_cast<double>(std::max(size.width, size.height));
     return std::max<std::int32_t>(1, static_cast<std::int32_t>(std::lround(engine::kLocalToneRadiusFraction * edge)));
@@ -370,7 +652,7 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
          baseline->b.size() != n || baseline->chroma.size() != n || baseline->flags.size() != n)) {
         return fail(ErrorCode::InvalidArgument, "the baseline features do not match the render", kWhere);
     }
-    auto mats = matrices();
+    auto mats = detail::metric_matrices();
     if (!mats) {
         return Unexpected(std::move(mats.error()));
     }
@@ -387,170 +669,46 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
         }
     }
 
-    const Matrices& m = *mats;
-    const double xn = m.white[0];
-    const double yn = m.white[1];
-    const double zn = m.white[2];
-    const double hi_level = clip_high_linear();
-    const double lo_level = block_low_linear();
-    const SensorNoiseModel& noise = context.noise;
-    const bool noise_available = noise.available();
     const std::int32_t width = context.size.width;
     const std::int32_t height = context.size.height;
-
-    const double floor_y = std::exp2(kLocalContrastFloorEv);
     std::vector<float> log_y;
-    std::vector<Partial> partials;
     try {
         log_y.assign(n, static_cast<float>(kLocalContrastFloorEv));
-        partials.resize(static_cast<std::size_t>(detail::band_count(height, kMetricBandRows)));
-        for (Partial& p : partials) {
-            p.lightness_hist.assign(kLightnessBins, 0);
-            p.noise_hist.assign(kNoiseBins, 0);
-        }
     } catch (const std::bad_alloc&) {
-        return fail(ErrorCode::OutOfMemory, "cannot allocate the metric histograms", kWhere);
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the log-luminance plane", kWhere);
+    }
+    std::vector<detail::MetricPartial> partials;
+    if (Status made =
+            detail::make_partials(partials, static_cast<std::size_t>(detail::band_count(height, kMetricBandRows)));
+        !made) {
+        return Unexpected(std::move(made.error()));
     }
 
+    const detail::MetricKernel kernel(*mats, context.noise);
     auto status = detail::for_each_band(
         height, parallel, cancel, kWhere,
         [&](std::int32_t band, std::int32_t begin, std::int32_t end) {
-            Partial& p = partials[static_cast<std::size_t>(band)];
+            detail::MetricPartial& p = partials[static_cast<std::size_t>(band)];
             for (std::int32_t y = begin; y < end; ++y) {
-                const float* row = px.row(y);
-                for (std::int32_t x = 0; x < width; ++x, row += 3) {
-                    const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
-                                          static_cast<std::size_t>(x);
-                    const double r = row[0];
-                    const double g = row[1];
-                    const double b = row[2];
-                    if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
-                        p.nonfinite_samples += static_cast<std::uint64_t>(!std::isfinite(r)) +
-                                               static_cast<std::uint64_t>(!std::isfinite(g)) +
-                                               static_cast<std::uint64_t>(!std::isfinite(b));
-                        if (features != nullptr) {
-                            features->flags[i] = kFlagNonFinite;
-                        }
-                        continue;
-                    }
-                    ++p.pixels;
-                    const double X = m.to_xyz(0, 0) * r + m.to_xyz(0, 1) * g + m.to_xyz(0, 2) * b;
-                    const double Y = m.to_xyz(1, 0) * r + m.to_xyz(1, 1) * g + m.to_xyz(1, 2) * b;
-                    const double Z = m.to_xyz(2, 0) * r + m.to_xyz(2, 1) * g + m.to_xyz(2, 2) * b;
-                    log_y[i] = static_cast<float>(std::log2(std::max(Y / yn, floor_y)));
-                    const double fx = lab_f(X / xn);
-                    const double fy = lab_f(Y / yn);
-                    const double fz = lab_f(Z / zn);
-                    // Rounded to float as the baseline features are stored, so a render compared
-                    // with itself differs by exactly nothing.
-                    const double l = static_cast<float>(1.16 * fy - 0.16);
-                    const double A = static_cast<float>(500.0 * (fx - fy));
-                    const double B = static_cast<float>(200.0 * (fy - fz));
-                    const double C = std::hypot(A, B);
-                    const double deviation =
-                        std::sqrt((r - Y) * (r - Y) + (g - Y) * (g - Y) + (b - Y) * (b - Y));
-                    const double linear_chroma = Y > 0.0 ? static_cast<float>(deviation / Y) : 0.0f;
-
-                    const double sr = m.to_srgb(0, 0) * r + m.to_srgb(0, 1) * g + m.to_srgb(0, 2) * b;
-                    const double sg = m.to_srgb(1, 0) * r + m.to_srgb(1, 1) * g + m.to_srgb(1, 2) * b;
-                    const double sb = m.to_srgb(2, 0) * r + m.to_srgb(2, 1) * g + m.to_srgb(2, 2) * b;
-                    const double smax = std::max({sr, sg, sb});
-                    const double smin = std::min({sr, sg, sb});
-                    std::uint8_t flags = 0;
-                    if (smax >= hi_level) {
-                        flags |= kFlagHighlightClipped;
-                    }
-                    if (smax <= lo_level) {
-                        flags |= kFlagShadowBlocked;
-                    }
-                    if (smin < -kGamutTolerance * std::max(smax, 0.0) || smax > 1.0 + kGamutTolerance) {
-                        flags |= kFlagOutOfGamut;
-                    }
-                    const bool hi = (flags & kFlagHighlightClipped) != 0;
-                    p.hi += hi ? 1 : 0;
-                    p.lo += (flags & kFlagShadowBlocked) != 0 ? 1 : 0;
-                    p.gamut += (flags & kFlagOutOfGamut) != 0 ? 1 : 0;
-
-                    const double lm = engine::display_lightness(std::max({r, g, b}));
-                    if (lm >= kNearWhiteLightness && !hi) {
-                        ++p.near_white;
-                    }
-                    if (l < kDarkLightness) {
-                        ++p.dark;
-                    }
-                    const double lc = std::clamp(l, 0.0, 1.0);
-                    const auto bin =
-                        std::min(kLightnessBins - 1, static_cast<std::size_t>(lc * kLightnessBins));
-                    ++p.lightness_hist[bin];
-                    p.sum_l += l;
-                    p.sum_chroma += C;
-
-                    const double s = context.signal[i];
-                    if (noise_available ? (s > 0.0 && s >= 3.0 * noise.sigma(s)) : s >= kNoSignalFloor) {
-                        ++p.signal;
-                    }
-
-                    const double bl = baseline != nullptr ? baseline->lightness[i] : l;
-                    const double ba = baseline != nullptr ? baseline->a[i] : A;
-                    const double bb = baseline != nullptr ? baseline->b[i] : B;
-                    const double bchroma = baseline != nullptr ? baseline->chroma[i] : linear_chroma;
-                    const std::uint8_t bflags = baseline != nullptr ? baseline->flags[i] : flags;
-                    if (baseline != nullptr) {
-                        p.new_hi += hi && (bflags & kFlagHighlightClipped) == 0 ? 1 : 0;
-                        p.new_lo +=
-                            (flags & kFlagShadowBlocked) != 0 && (bflags & kFlagShadowBlocked) == 0 ? 1 : 0;
-                        p.new_gamut +=
-                            (flags & kFlagOutOfGamut) != 0 && (bflags & kFlagOutOfGamut) == 0 ? 1 : 0;
-                    }
-                    const float coverage = context.saturation.empty() ? 0.0f : context.saturation[i];
-                    if (coverage >= kSaturatedCoverage) {
-                        ++p.saturated;
-                        p.sum_grey += std::max(0.0, bl - l);
-                    }
-                    const double bc = std::hypot(ba, bb);
-                    const bool base_hi = (bflags & kFlagHighlightClipped) != 0;
-                    if (bc >= kChromaticChroma && bl > kChromaticLightnessLow && bl < 0.95 && !base_hi &&
-                        !hi) {
-                        ++p.chromatic;
-                        p.sum_sat_c += linear_chroma;
-                        p.sum_sat_b += bchroma;
-                        const double dot = A * ba + B * bb;
-                        const double cross = ba * B - bb * A;
-                        p.sum_hue += bc * std::abs(std::atan2(cross, dot));
-                        p.sum_hue_weight += bc;
-                    }
-                    const bool neutral_surface = context.neutral_evidence.empty()
-                                                     ? bc < kNeutralChroma
-                                                     : context.neutral_evidence[i] != 0;
-                    if (neutral_surface && bl > 0.15 && bl < 0.9 && !base_hi) {
-                        ++p.neutral;
-                        p.sum_da += A - ba;
-                        p.sum_db += B - bb;
-                    }
-                    if (bl > kMidtoneLow && bl < kMidtoneHigh && !base_hi && !hi) {
-                        ++p.midtone;
-                        p.sum_mx += X;
-                        p.sum_my += Y;
-                        p.sum_mz += Z;
-                    }
-                    if (bl > kShadowMaskLow && bl < kShadowMaskHigh && coverage <= 0.0f && s > 0.0) {
-                        ++p.shadow;
-                        if (noise_available && Y > 0.0) {
-                            const double sigma_l = 100.0 * lightness_slope(Y) * (Y / s) * noise.sigma(s);
-                            const auto nb =
-                                std::min(kNoiseBins - 1,
-                                         static_cast<std::size_t>(std::max(0.0, sigma_l) / kNoiseBinWidth));
-                            ++p.noise_hist[nb];
-                        }
-                    }
-                    if (features != nullptr) {
-                        features->lightness[i] = static_cast<float>(l);
-                        features->a[i] = static_cast<float>(A);
-                        features->b[i] = static_cast<float>(B);
-                        features->chroma[i] = static_cast<float>(linear_chroma);
-                        features->flags[i] = flags;
-                    }
+                const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+                detail::ContextRow row_context;
+                row_context.signal = context.signal.data() + i;
+                row_context.saturation = context.saturation.empty() ? nullptr : context.saturation.data() + i;
+                row_context.neutral = context.neutral_evidence.empty() ? nullptr : context.neutral_evidence.data() + i;
+                detail::BaselineRow base;
+                if (baseline != nullptr) {
+                    base = detail::BaselineRow{baseline->lightness.data() + i, baseline->a.data() + i,
+                                               baseline->b.data() + i, baseline->chroma.data() + i,
+                                               baseline->flags.data() + i};
                 }
+                detail::FeatureRow out;
+                if (features != nullptr) {
+                    out = detail::FeatureRow{features->lightness.data() + i, features->a.data() + i,
+                                             features->b.data() + i, features->chroma.data() + i,
+                                             features->flags.data() + i};
+                }
+                kernel.measure_row(p, px.row(y), width, row_context, baseline != nullptr ? &base : nullptr,
+                                   features != nullptr ? &out : nullptr, log_y.data() + i);
             }
         },
         kMetricBandRows);
@@ -558,96 +716,7 @@ Expected<RenderStats> measure_render(const engine::ColorImage& display, const Im
         return Unexpected(std::move(status.error()));
     }
 
-    // Merge in band order.
-    std::vector<std::uint64_t> lightness_hist(kLightnessBins, 0);
-    std::vector<std::uint64_t> noise_hist(kNoiseBins, 0);
-    Partial t;
-    for (const Partial& p : partials) {
-        for (std::size_t k = 0; k < kLightnessBins; ++k) {
-            lightness_hist[k] += p.lightness_hist[k];
-        }
-        for (std::size_t k = 0; k < kNoiseBins; ++k) {
-            noise_hist[k] += p.noise_hist[k];
-        }
-        t.nonfinite_samples += p.nonfinite_samples;
-        t.pixels += p.pixels;
-        t.signal += p.signal;
-        t.near_white += p.near_white;
-        t.dark += p.dark;
-        t.hi += p.hi;
-        t.lo += p.lo;
-        t.gamut += p.gamut;
-        t.new_hi += p.new_hi;
-        t.new_lo += p.new_lo;
-        t.new_gamut += p.new_gamut;
-        t.saturated += p.saturated;
-        t.chromatic += p.chromatic;
-        t.neutral += p.neutral;
-        t.shadow += p.shadow;
-        t.sum_l += p.sum_l;
-        t.sum_grey += p.sum_grey;
-        t.sum_sat_c += p.sum_sat_c;
-        t.sum_sat_b += p.sum_sat_b;
-        t.sum_hue += p.sum_hue;
-        t.sum_hue_weight += p.sum_hue_weight;
-        t.sum_chroma += p.sum_chroma;
-        t.sum_da += p.sum_da;
-        t.sum_db += p.sum_db;
-        t.midtone += p.midtone;
-        t.sum_mx += p.sum_mx;
-        t.sum_my += p.sum_my;
-        t.sum_mz += p.sum_mz;
-    }
-
-    RenderStats s;
-    s.size = context.size;
-    s.pixels = t.pixels;
-    s.nonfinite_samples = t.nonfinite_samples;
-    const double bin_width = 1.0 / static_cast<double>(kLightnessBins);
-    s.quantiles.p01 = histogram_quantile(lightness_hist, t.pixels, 0.01, bin_width);
-    s.quantiles.p05 = histogram_quantile(lightness_hist, t.pixels, 0.05, bin_width);
-    s.quantiles.p10 = histogram_quantile(lightness_hist, t.pixels, 0.10, bin_width);
-    s.quantiles.p25 = histogram_quantile(lightness_hist, t.pixels, 0.25, bin_width);
-    s.quantiles.p50 = histogram_quantile(lightness_hist, t.pixels, 0.50, bin_width);
-    s.quantiles.p75 = histogram_quantile(lightness_hist, t.pixels, 0.75, bin_width);
-    s.quantiles.p90 = histogram_quantile(lightness_hist, t.pixels, 0.90, bin_width);
-    s.quantiles.p95 = histogram_quantile(lightness_hist, t.pixels, 0.95, bin_width);
-    s.quantiles.p99 = histogram_quantile(lightness_hist, t.pixels, 0.99, bin_width);
-    s.quantiles.p995 = histogram_quantile(lightness_hist, t.pixels, 0.995, bin_width);
-    const auto count = static_cast<double>(std::max<std::uint64_t>(1, t.pixels));
-    s.mean_lightness = t.sum_l / count;
-    s.signal_pixels = t.signal;
-    s.near_white = t.near_white;
-    s.dark = t.dark;
-    s.highlight_clipped = t.hi;
-    s.shadow_blocked = t.lo;
-    s.out_of_gamut = t.gamut;
-    s.new_highlight_clipped = t.new_hi;
-    s.new_shadow_blocked = t.new_lo;
-    s.new_out_of_gamut = t.new_gamut;
-    s.source_saturated = t.saturated;
-    s.saturated_greying = t.saturated == 0 ? 0.0 : t.sum_grey / static_cast<double>(t.saturated);
-    s.chromatic_pixels = t.chromatic;
-    s.saturation_log_ratio =
-        (t.sum_sat_c > 0.0 && t.sum_sat_b > 0.0) ? std::log(t.sum_sat_c / t.sum_sat_b) : 0.0;
-    s.hue_shift_degrees =
-        t.sum_hue_weight > 0.0 ? t.sum_hue / t.sum_hue_weight * 180.0 / std::numbers::pi : 0.0;
-    s.mean_chroma = t.sum_chroma / count;
-    s.neutral_pixels = t.neutral;
-    s.neutral_shift_de = t.neutral == 0 ? 0.0
-                                        : std::hypot(t.sum_da / static_cast<double>(t.neutral),
-                                                     t.sum_db / static_cast<double>(t.neutral));
-    s.noise_model_available = noise_available;
-    s.shadow_pixels = t.shadow;
-    std::uint64_t noise_count = 0;
-    for (const std::uint64_t h : noise_hist) {
-        noise_count += h;
-    }
-    s.shadow_noise_lstar = histogram_quantile(noise_hist, noise_count, 0.75, kNoiseBinWidth);
-    s.midtone_pixels = t.midtone;
-    s.midtone_x = t.sum_mx;
-    s.midtone_y = t.sum_my;
-    s.midtone_z = t.sum_mz;
+    RenderStats s = detail::finish_stats(partials, context.size, context.noise.available());
     s.local_contrast_radius = local_contrast_radius(context.size);
     auto contrast = local_contrast(log_y, width, height, s.local_contrast_radius, parallel, cancel);
     if (!contrast) {

@@ -221,6 +221,21 @@ inline constexpr double kNeutralEvidenceMinConfidence = 0.3;
     const engine::StageOneImage& image, const ImageContext& context, double clip_level, double cast_log_rg,
     double cast_log_bg, double radius = kNeutralEvidenceRadius);
 
+// The rule neutral_evidence_mask() applies to each pixel, for measurements that evaluate it pixel by
+// pixel instead of keeping a mask (frame_measurement.hpp).
+struct NeutralEvidenceRule {
+    double clip_level = 1.0;
+    double cast_log_rg = 0.0;
+    double cast_log_bg = 0.0;
+    double radius = kNeutralEvidenceRadius;
+
+    // True when the balanced camera pixel (r, g, b) is evidence: valid as for the estimators (finite,
+    // every channel at least 8 sigma of `noise` and 2^-11, at most 0.9 of the clip level, no
+    // saturated sensor site) and its camera log ratios within `radius` of the cast.
+    [[nodiscard]] bool neutral(double r, double g, double b, bool saturated_site,
+                               const SensorNoiseModel& noise) const noexcept;
+};
+
 // The Natural v1 correction of a cast (see the file comment): the red and blue gains for a cast of
 // (log_rg, log_bg) at `confidence`.
 struct WhiteBalanceCorrection {

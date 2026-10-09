@@ -13,7 +13,9 @@
 //      analysis image (long edge AutoOptions::analysis_long_edge, 1536) and the search proxy
 //      (proxy_long_edge, 512) with engine::make_proxy, and the deterministic native crops
 //      (native_crops.hpp) cut from the full-resolution image twice, with the local-tone halo and
-//      halo-free (NativeCrop::measured), which is then released. One decode.
+//      halo-free (NativeCrop::measured), which is then released (or, for a session opened with
+//      AutoOptions::keep_full_resolution, kept with the saturation classes of its upright grid for
+//      take_full_resolution(): the application's final check renders from it). One decode.
 //   3. The white-balance proposal on the proxy (proposals.hpp) and, with evidence of at least
 //      kNeutralEvidenceMinConfidence, the masks of the surfaces it treats as neutral (the
 //      white-balance hard check measures them in every render).
@@ -214,6 +216,23 @@ struct AutoOptions {
     bool native_crops = true;
     std::int32_t native_crop_size = kNativeCropSize;  // [32, 1024]
     engine::DevelopOptions develop;                   // limits, memory budget, parallelism
+    // AutoSession only: keep the full-resolution stage one (with its camera image area) and the
+    // saturation classes of its upright grid (SourceAnalysis::full_resolution) instead of releasing
+    // them once the native crops are cut, for AutoSession::take_full_resolution(): the application's
+    // full-resolution final check (auto_develop.hpp) uses them instead of decoding and rendering
+    // stage one again. The analysis is unchanged; it holds stage one's bytes (12 per pixel of colour
+    // data) and one byte per pixel more while it searches (estimate_auto_memory() counts them).
+    bool keep_full_resolution = false;
+};
+
+// What AutoSession::take_full_resolution() hands over.
+struct FullResolution {
+    // The analysis' stage one: Interactive, as shot, the whole upright image at full resolution,
+    // with its camera image area (the evaluation measured the whole frame; the area is restored).
+    engine::StageOneImage stage_one;
+    // The saturation classes of its upright grid; empty when the stage one is not the upright
+    // visible area (the saturation is then unknown, as in the analysis).
+    SaturationClasses saturation;
 };
 
 // ---- Candidates --------------------------------------------------------------------------------
@@ -366,11 +385,15 @@ struct AutoTiming {
 // Pixel memory (bytes) of the images the controller holds.
 struct AutoMemory {
     std::uint64_t stage_one_peak_estimate = 0;  // engine estimate for the full-resolution stage one
-    std::uint64_t full_resolution_bytes = 0;    // released after the crops are cut
+    // Released after the crops are cut, unless AutoOptions::keep_full_resolution keeps it.
+    std::uint64_t full_resolution_bytes = 0;
     std::uint64_t analysis_bytes = 0;
     std::uint64_t proxy_bytes = 0;
     std::uint64_t crop_bytes = 0;      // halo and halo-free crops
     std::uint64_t retained_bytes = 0;  // held during the search (analysis, proxy, crops, contexts)
+    // Kept for take_full_resolution() (AutoOptions::keep_full_resolution): the stage one and its
+    // saturation classes; 0 otherwise.
+    std::uint64_t kept_bytes = 0;
     std::uint64_t estimated_peak_bytes = 0;
 };
 
@@ -446,7 +469,9 @@ struct AutoResult {
                                                                          const engine::DevelopSettings& baseline);
 
 // Estimated peak pixel memory of auto_develop() for `metadata` (probe or decode metadata): the
-// full-resolution stage one's peak, or the full image with its proxies and crops if larger.
+// full-resolution stage one's peak, or the full image with its proxies and crops if larger; with
+// AutoOptions::keep_full_resolution, one byte per pixel more for the saturation classes kept beside
+// them (the stage one is then kept through the search, which the second term already counts).
 // Errors: those of engine::estimate_develop_memory().
 [[nodiscard]] Expected<std::uint64_t> estimate_auto_memory(const raw::RawMetadata& metadata,
                                                            const AutoOptions& options = {});
@@ -499,6 +524,11 @@ public:
 
     // Pixel and per-pixel memory the session holds.
     [[nodiscard]] std::uint64_t retained_bytes() const noexcept;
+
+    // Hands over the full-resolution stage one and its saturation classes that
+    // AutoOptions::keep_full_resolution kept (once: the session no longer holds them afterwards).
+    // InvalidArgument (analysis.auto) when the session did not keep them or they were taken.
+    [[nodiscard]] Expected<FullResolution> take_full_resolution();
 
     class Impl;
 
