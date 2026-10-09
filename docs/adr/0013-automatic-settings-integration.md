@@ -1,7 +1,8 @@
 # ADR 0013: Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches
 
 - **Status:** Accepted (amended 2026-10-04: "Amendment: W8 integration closure" below; amended
-  2026-10-05: "Amendment: geometry, masks and chroma denoising" below)
+  2026-10-05: "Amendment: geometry, masks and chroma denoising" below; amended 2026-10-09: "Amendment:
+  the final check by bands (W12)" below)
 - **Date:** 2026-10-04
 - **Workflow:** W8 application wiring (services and UI), after the W8 core (ADR 0011) and W7 (ADR 0012)
 
@@ -80,6 +81,9 @@ The blueprint fixes the behaviour:
    the export render clips before demosaicing, which differs within two pixels of saturated sites
    only (ADR 0010). A test hook (`AutoRunRequest::fail_final_checks`, the worker's
    `fail-final-check:<n>`) makes the first n rungs fail, so the ladder is tested on any photo.
+   (Corrected by the W12 amendment: the analysis' own stage one and the saturation classes of its
+   source pass are reused, so neither the decode nor the stage one is kept twice, and the renders
+   are measured band by band with the same statistics: items 21-23.)
 
 3. **Revisions.** One automatic revision (origin `Auto`, the canonical "lucent.develop" document) per
    attempt up to and including the effective one, each **derived from the revision the run started
@@ -183,7 +187,9 @@ The blueprint fixes the behaviour:
     check's (stage one with the full-size coverage map, then stage one kept, the image context at 9
     and the baseline features at 17 bytes per pixel, and one stage two). The batch scheduler
     estimates analyze attempts with `BatchMemoryOptions::default_auto_bytes_per_pixel` (72) until one
-    is measured, calibrated apart from export attempts.
+    is measured, calibrated apart from export attempts. (Superseded by the W12 amendment, item 24:
+    the check keeps the analysis' stage one, the classes and one render, about 37 bytes per pixel;
+    the scheduler's default is 40.)
 
 12. **Reports.** Every entry of an automatic batch carries an `AutomaticReport`: state, effective
     revision and its number, confidence, the effective attempt and how many revisions the job wrote,
@@ -391,6 +397,7 @@ whose outcome was already determined.
 - Remaining costs, deferred to W12: `measure_render()` (two calls, about 3.9 s of the R5's run), the
   check's stage one and upright source pass that the analysis already computed, and the check's
   26 bytes per pixel that refuse Auto above about 69 MP (GFX100-class files) on the 4 GiB budget.
+  (Resolved by the W12 amendment "the final check by bands" below.)
 
 ## Amendment: geometry, masks and chroma denoising (W9 part 2, 2026-10-05)
 
@@ -411,3 +418,100 @@ flip), masks and chroma denoising. Their interplay with the automatic settings (
   `GeometryMapping` (`analysis::map_image_context()`). Its memory estimate uses the current settings
   (`estimate_automatic_memory(metadata, current, options)`).
 - No new locks: Auto never changes the parts, so there is nothing to lock.
+
+## Amendment: the final check by bands (W12, 2026-10-09) - AUX-02 and AUX-03
+
+### Context
+
+The W8 closure deferred two costs of the full-resolution final check (item 2) to W12. AUX-03: the
+check rendered a second stage one, from a copy of the decoded samples kept through the analysis,
+although the analysis had rendered exactly that stage one, and ran a second source pass for the
+full grid's saturation coverage. AUX-02: the measurement contract of `measure_render()` kept
+per-pixel planes of the whole image, the context (9 bytes per pixel) and the baseline's features
+(17), plus its own temporaries (the log luminance and two box planes of local contrast, 12): the
+check peaked at about 61 bytes per pixel (2619 MiB for the 45 MP R5) and Auto was refused above
+about 69 MP on the 4 GiB interactive budget (GFX100-class files).
+
+### Decision
+
+21. **The analysis' stage one is the check's** (`analysis::AutoOptions::keep_full_resolution`,
+    `AutoSession::take_full_resolution()`; ADR 0011, amendment "Full-resolution measurements by
+    bands"). The check's stage one was always the analysis' request (Interactive, as shot, full
+    resolution): the settings' white balance and every other control are applied in stage two, so
+    the analysis' own stage one can be reused for every run that has a final check. The camera image
+    area the evaluation set aside is restored on it, and the saturation classes of its upright grid
+    (one byte per pixel; `analysis::SaturationClasses`) come from the analysis' source pass, as does
+    the noise model. No decoded copy is kept, no second source pass or stage one is made. Runs without
+    the check (the related-shot pre-pass, anchors) keep nothing.
+22. **The check measures by bands** (`analysis::FrameMeasurement`). Each rung is rendered whole
+    (the engine renders whole images) and measured against the baseline band by band: the context
+    of a band of output rows (signal from the stage one, saturation from the classes, the neutral
+    surfaces from the white-balance evidence's per-pixel rule, all through the rung's geometry) and
+    the baseline's features of that band exist only while the band is measured. When the baseline's
+    stage two is per pixel and its geometry only crops (no local tone, chroma denoising or masks;
+    no straightening, quarter turn or flip: the as-shot baseline of an unedited photo), the
+    baseline is re-rendered band by band from the stage one; otherwise its full render is kept
+    (12 bytes per pixel). The baseline's own statistics come from the same pass as the first rung's.
+    Every statistic is bit-identical to the whole-image measurement (proved by
+    `FrameMeasurement.BandsMeasureExactlyAsTheWholeImage` for identity, crop, camera-area, straighten,
+    quarter-turn, local-tone, denoised and context-free baselines, and on the fixtures below); local
+    contrast is not measured (neither `evaluate_candidate()`'s feasibility nor the recorded check
+    values used it). The ladder is unchanged: its rungs, order, reasons, failures and values; a
+    numerically invalid baseline still ends it as a failed check (its statistics are known before any
+    rung is judged; when the first rung cannot be rendered they are measured on their own).
+23. **The baseline rung of a choice that is the baseline consumes the stage one** (its render is the
+    stage one's last use: stage two then works in place).
+24. **Memory.** `estimate_automatic_memory()` is the larger of the analysis' estimate (keeping its
+    stage one and one byte per pixel of classes) and the check's: the stage one and the classes,
+    the baseline's full render when it is not streamed, and either one stage two of an attempt that
+    may add local tone (unless shadows and highlights are both locked) or a render with one
+    measurement band (`analysis::frame_measurement_band_bytes()`: about 50 bytes per pixel of one
+    band, 384 rows on this 12-thread machine and never more than 4 Mi pixels). For a colour photo that is about 37 bytes per pixel (it was
+    about 62, and the old formula underestimated the R5's measured peak). The batch scheduler's
+    estimate of analysis attempts before it measured one
+    (`BatchMemoryOptions::default_auto_bytes_per_pixel`) is 40 (was 72).
+25. **Progress** follows the new costs: the analysis is about a third of a 45 MP run with the
+    check; the first rung's band measurement reports per band.
+
+### Measurements
+
+Development machine (Ryzen 5 5500U, 11.9 GB, 12 threads, idle), 2026-10-09; "before" is a build of
+HEAD e51dd65 with the same measurement harness (`AutoMeasurement.DISABLED_OneFile`,
+`run_automatic` in process from as-shot settings, one process per run), alternated with "after",
+three rounds each.
+
+| Photo | Before | After |
+|---|---|---|
+| Canon EOS R5 (45 MP, +0.77 EV): total / check | 7.44-8.47 s (median 7.63) / 5.50-6.41 s | 5.53-5.82 s (median 5.61) / 3.52-3.73 s |
+| Canon EOS R5: peak commit / estimate | 2619 MiB / 2134 MiB | 1187-1188 MiB / 1579 MiB |
+| Sony A7R V (61 MP, kept as shot: render and validity scan): total / check | 3.04-3.07 s / 1.23-1.25 s | 2.71-2.76 s / 0.85-0.91 s |
+| Sony A7R V: peak commit / estimate | 2095-2098 MiB / 3597 MiB | 1395-1398 MiB / 2153 MiB |
+| Fujifilm X-T4 (26 MP, X-Trans): total / peak commit | 8.03-8.29 s / 1539-1542 MiB | 5.48-6.13 s / 948-956 MiB |
+| Synthetic 12000 x 8400 DNG (100.8 MP, +0.28 EV; `AutoLargePhoto.AHundredMegapixelPhotoRunsWithinTheBudget`) | refused (estimate above 4 GiB) | 10.8-11.4 s (analysis 2.5-2.7 s, check 8.3-8.7 s; 17.3-19.5 s in an earlier session of this machine); estimate 3557 MiB of 4096; peak commit 2550-2578 MiB |
+| Automatic batch of the 5 smoke fixtures, two workers: largest worker commit | 2619 MiB (W8, item 11's table) | 1187 MiB |
+
+Decisions are identical: the "lucent.auto-run" documents of all five smoke fixtures (R5, A7 IV,
+DJI FC4382, X-T4, Z 6) and the A7R V, before and after, are equal in everything but timings and
+the memory estimate (chosen settings, confidence and its breakdown, flags with reasons,
+diagnostics, attempts with their outcomes, failures and full-resolution check values); the R5 and
+X-T4 ran the full check (render and band measurement), the others the baseline's validity scan.
+
+### Review findings and their resolution
+
+| Finding | Resolution |
+|---|---|
+| AUX-02 Auto refused above about 69 MP | Fixed: items 21-24. The check holds no per-pixel plane but the stage one, the classes and one render (plus the baseline's render when it cannot be streamed); Auto now fits about 116 MP on the 4 GiB interactive budget (126 MP on this machine's 4.45 GiB worker budget) by the estimate, about 160 MP by the measured peaks |
+| AUX-03 the check re-renders a stage one the analysis had | Fixed: item 21 (also no second source pass, no decoded copy); with item 22 the R5's check is 35 % shorter |
+
+### Consequences (W12)
+
+- The check still runs two kernel passes over the image (the baseline's and the choice's) and the
+  baseline's band renders, so its time grows with the pixels (about 8.5 s of check for 100 MP).
+- A photo whose baseline cannot be streamed (the photographer locked local tone, denoised, masked,
+  straightened or turned it) keeps the baseline's render: 12 bytes per pixel more, which the
+  estimate counts.
+- The estimate stays conservative (it assumes the search may add local tone); the measured peaks
+  are about 26 bytes per pixel.
+- The closure's remaining costs (its Consequences: `measure_render()`, the check's stage one and
+  source pass, the 26 bytes per pixel) are resolved; local contrast at full resolution is no longer
+  computed, since nothing in the check used it.

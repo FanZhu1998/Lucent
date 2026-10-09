@@ -1,6 +1,6 @@
 # ADR 0005: RAW decoder boundary and decoded-RAW data contract
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09: "Amendment: Panasonic raw data (W12)" below)
 - **Date:** 2026-09-25 (revised the same day after the W1 review: contract 1.1)
 - **Workflow:** W1 (Foundation and RAW probe)
 
@@ -182,6 +182,7 @@ Facts verified for this decision (vcpkg LibRaw 0.22.2, headers and sources in th
       writer defect, not missing data. Tables that cannot be interpreted are skipped with a
       warning; overruns found elsewhere are always kept. A SubIFDs list longer than the IFD
       budget (64) is read only up to that budget, so a crafted count cannot allocate memory.
+      (RW2 / RWL: IFD 0's raw data is checked at RawDataOffset instead of its strips, decision 17.)
     - CR3: every top-level ISO base media box must end inside the file.
     - RAF: the JPEG, CFA-header and CFA ranges of the RAF header must lie inside the file.
     During unpacking, more than 16 reads that start at the end of the file are also `Corrupt`;
@@ -225,7 +226,8 @@ Facts verified for this decision (vcpkg LibRaw 0.22.2, headers and sources in th
   (top-level boxes) and RAF (header ranges). It does not cover data that none of these declare:
   a DNG whose last bytes are out-of-line values of IFD 0 (the Insta360 One X fixture cut by 2
   or 17 bytes), or an RW2 (whose raw data has no strip table) cut in its trailing bytes, still
-  decodes; in the measured cases the pixel data was complete. Files with other signatures rely
+  decodes; in the measured cases the pixel data was complete. (Since W12 an RW2's raw data is
+  checked against a minimum length at RawDataOffset: decision 17.) Files with other signatures rely
   on LibRaw's checks and the read-at-end threshold.
 - The compression and subimage rules read LibRaw maker-note fields and, for Fujifilm, Panasonic
   and CR3 track layout, LibRaw's unpacker state. That state is not a stable LibRaw API: the
@@ -271,3 +273,56 @@ Facts verified for this decision (vcpkg LibRaw 0.22.2, headers and sources in th
 - **Refusing files with unsupported mandatory opcodes at decode time.** Rejected: the raw data is
   valid and useful for diagnostics and future processing; the refusal belongs to whoever would
   publish a verified result, so the requirement is carried as data.
+
+## Amendment: Panasonic raw data (W12, 2026-10-09)
+
+### Context
+
+The search for rotated test files (ADR 0020) found older Panasonic RW2 and Leica RWL files that
+Lucent refused as truncated ("ifd0: strip data ends at byte 4294967295 ...", `raw.libraw.truncated`)
+although LibRaw decodes them: their IFD 0 declares StripOffsets as the placeholder 4294967295 with
+StripByteCounts 0, and the raw data sits at the Panasonic tag RawDataOffset (0x0118). LibRaw
+0.22.2's `parse_tiff_ifd()` (src/metadata/tiff.cpp) treats a LONG 0x0118 as the raw data offset of
+`panasonic_load_raw()`, replacing the strip offset (tags come in ascending order), and never reads
+the strips; the check of decision 14 compared a table LibRaw does not use.
+
+### Decision
+
+17. **RW2 / RWL raw data is checked where LibRaw reads it** (`tiff_extent.hpp`,
+    `RawDataRule::Panasonic`, used by `container_extent.hpp` for the RW2 container: "IIU\0", which
+    the Leica RWL shares). When IFD 0 carries RawDataOffset as a LONG, IFD 0's strip table is not
+    compared with the file; instead the raw data must start inside the file and hold
+    - StripByteCounts bytes when that is not 0 (LibRaw's data size), otherwise
+    - for the fixed-rate Panasonic encodings (RawFormat, tag 0x002D, absent or 1 to 7), at least
+      16 bytes per 14 pixels of SensorWidth (0x0002) x SensorHeight (0x0003): the classic encoding
+      packs exactly 14 pixels into 16 bytes, RawFormat 5 and 7 pack 9 or 10, RawFormat 6 11 or 14;
+    - for any other encoding (RawFormat 8, a variable-rate compression) nothing beyond its start.
+    Without a LONG RawDataOffset the strips are checked as before (what LibRaw then reads). Every
+    other container and IFD keeps decision 14's rule. The overrun names its basis ("raw data ends
+    at byte 19771392 (16 bytes per 14 pixels of the 4816x3472 sensor) but the file has ...").
+
+### Evidence
+
+Three CC0 samples of raw.pixls.us (not added to the fixture manifest):
+<https://raw.pixls.us/getfile.php/3755/nice/Panasonic%20-%20DMC-FZ70%20-%204%3A3.RW2>,
+<https://raw.pixls.us/getfile.php/4963/nice/Leica%20-%20C%20%28Typ%20112%29%20-%203%3A2.RWL> and
+<https://raw.pixls.us/getfile.php/5535/nice/Panasonic%20-%20DMC-TZ60%20-%203%3A2.RW2> (RawFormat 4).
+Their raw data runs from RawDataOffset to the end of the file in whole 16 KiB blocks (1167, 777 and
+1154 blocks: 10240, 0 and 14336 bytes more than 16 bytes per 14 pixels). With this amendment all
+three probe and decode (interpretation complete) and render (they are rotated, orientation 6 or 8)
+with the develop pipeline; a copy of the DMC-FZ70 file cut to 18,000,000 bytes is refused as
+truncated. The newer S5M2 fixture (RawFormat 8, no strip tags) now has its RawDataOffset checked
+(it had no check). Regression tests (`container_extent_test.cpp`):
+`OlderRw2PlaceholderStripsAreNotTheRawData` (the placeholder layout passes; read with the strip rule
+it is still an overrun), `Rw2RawDataMustFitTheFile` (cut inside the raw data or before it),
+`Rw2RawDataLengthFollowsStripByteCountsOrTheEncoding`.
+
+### Consequences
+
+- Older Panasonic and Leica files are no longer Unsupported for a structure Lucent misread; their
+  qualification is unchanged otherwise (the support table is regenerated from a clean build by the
+  orchestrator).
+- Residual (as for the RW2 bullet of the Consequences above): the bound is a minimum. A classic
+  encoding reads its last 16 KiB block in two parts (LibRaw's load_flags 0x2008), so a copy cut
+  inside the last block's unused tail still decodes, possibly with stale bytes in the last rows;
+  RawFormat 8 files cut after the start of their data rely on LibRaw's own checks.

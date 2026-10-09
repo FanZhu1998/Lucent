@@ -34,6 +34,7 @@ product authority. The current module structure is described in
 | [0018](0018-camera-support-data.md) | Camera support data: versioned asset manifests, the camera support database and the four support states (amends 0008, 0009, 0012, 0016) | Accepted (amended by the closing review: database schema 2, support rules 2) | 2026-10-08 | W10 |
 | [0019](0019-learned-appearance-research.md) | Learned appearance research: reproduce Image-Adaptive-3DLUT, keep its weights and data out of Lucent, and implement the method natively | Accepted | 2026-10-09 | W11 (phase 1: research) |
 | [0020](0020-camera-correctness-gate.md) | Camera correctness gate: an independent colour reference from colour charts, and rotated fixtures for every image-area source (amends 0016) | Accepted | 2026-10-09 | W12 |
+| [0021](0021-performance-baseline.md) | Performance baseline: a reproducible harness over the shipped programs, the first baseline, and regression budgets only where the variance allows | Accepted | 2026-10-09 | W12 |
 
 ## Conventions
 

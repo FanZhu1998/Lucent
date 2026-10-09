@@ -1,7 +1,8 @@
 # ADR 0011: Natural v1 automatic settings: metric contract, proposals, bounded search and confidence
 
 - **Status:** Accepted (amended 2026-10-04 for phase 2, and again for the W8 core closure: policy
-  "natural" version 2, see the last amendment)
+  "natural" version 2; amended 2026-10-09 for W12: "Amendment: full-resolution measurements by
+  bands", which changes no measured value)
 - **Date:** 2026-10-03
 - **Workflow:** W8 (Natural v1 optimiser), phase 1 of 3 (core) and phase 2 of 3 (related-shot
   consistency, recheck speed-ups, evaluation tooling: see "Amendment: phase 2" below), closed by
@@ -914,3 +915,58 @@ a first run can be made with the current tool:
   underexposed still need it; the flattening terms and the recheck pool bound it instead.
 - **Changing the grey-edge estimator now.** Without the checker-frame validation it would turn
   white-balance edits on across the cache on unproven evidence.
+
+## Amendment: full-resolution measurements by bands (W12, 2026-10-09)
+
+### Context
+
+The application's full-resolution final check (ADR 0013 item 2) used this library's whole-image
+measurement: `make_image_context()` and the full grid's coverage map (9 bytes per pixel), the
+baseline's `BaselineFeatures` (17) and `measure_render()`'s own planes (log luminance and two box
+planes of local contrast, 12), beside a second stage one the check rendered although the analysis
+had one. At full resolution that made the measurement contract cost memory in proportion to the
+photo (W8 closure findings AUX-02 and AUX-03, deferred to W12). The analysis and proxy images are
+bounded by `AutoOptions` whatever the photo, so the whole-image measurement stays right for them.
+
+### Decision
+
+30. **One per-pixel kernel** (`src/render_kernel.hpp`, private). `measure_render()`'s per-pixel
+    arithmetic and its partials of 32 rows, merged in band order, are a shared kernel; the
+    whole-image `measure_render()` is unchanged in its results (the analysis, the recheck and every
+    decision are bit for bit what they were).
+31. **`FrameMeasurement`** (`frame_measurement.hpp`) measures a full-resolution render against the
+    baseline band by band, with memory bounded by one band of rows
+    (`frame_measurement_band_bytes()`; by default one partial of 32 rows per hardware thread, at
+    most 12, and at most 4 Mi pixels, so a band holds about 200 MiB at most whatever the photo's
+    size; the band's size never changes a result): the context of each output pixel is derived
+    from its upright pixel through the render's geometry, exactly as `map_image_context()` picks
+    it (the signal from the stage one, the saturation from `SaturationClasses`, the neutral
+    surfaces from `NeutralEvidenceRule`, the per-pixel rule `neutral_evidence_mask()` now
+    applies), and the baseline's features are computed for each band from its band render
+    (re-rendered from the stage one when `streams_baseline()`: per-pixel operations and a geometry
+    that only crops, so a band of full upright rows renders exactly the whole render's pixels) or
+    from its kept full render. Every statistic is bit-identical to `measure_render()` with the
+    stored features; local contrast is not measured by bands (`local_contrast_ev` and its radius
+    are 0): it feeds only the objective's preference terms, which a full-resolution check does not
+    evaluate.
+32. **`SaturationClasses`** (`source_diagnostics.hpp`): `analyze_source(..., full_resolution_classes)`
+    returns the classes of the upright full-resolution grid (no saturated sample, fewer than half,
+    half or more; one byte per pixel), exactly the comparisons the measurements make on that grid's
+    `CoverageMap`.
+33. **`AutoOptions::keep_full_resolution`** keeps the session's full-resolution stage one (with its
+    camera image area restored) and those classes for `AutoSession::take_full_resolution()`, instead
+    of releasing them once the native crops are cut; `estimate_auto_memory()` counts the classes.
+    The analysis is otherwise unchanged.
+
+The metric contract (version 2), the policy (natural 2) and the search (2) are unchanged: no
+measurement changes value, so no version moves.
+
+### Consequences
+
+- The application's check holds the stage one, the classes and one render (ADR 0013, amendment
+  "the final check by bands"); `FrameMeasurement.BandsMeasureExactlyAsTheWholeImage` and
+  `ARotatedFileMeasuresAsTheWholeImage` prove the equality on identity, crop, camera-area,
+  straightened, turned, local-tone, denoised and context-free baselines, with band sizes that leave
+  a remainder; the fixtures' "lucent.auto-run" documents are identical before and after.
+- `measure_render()` still keeps whole-image planes, so it is meant for images whose size the
+  caller bounds; full-resolution renders go through `FrameMeasurement`.
