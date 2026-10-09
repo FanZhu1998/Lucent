@@ -270,7 +270,7 @@ bool CropTool::showing() const {
 GeometryMap CropTool::display_map(const EditGeometry& geometry) const {
     EditGeometry shown = geometry;
     shown.crop = EditCrop{};
-    return session_.service().map_geometry(shown, session_.frame_full_upright_size());
+    return session_.service().map_geometry(shown, session_.frame_full_upright_size(), session_.frame_full_frame());
 }
 
 QRectF CropTool::to_display(const GeometryMap& map, const EditCrop& crop) {
@@ -310,8 +310,9 @@ QString CropTool::size_text() const {
     if (!available()) {
         return {};
     }
-    const GeometryMap map =
-        session_.service().map_geometry(session_.settings().geometry, session_.frame_full_upright_size());
+    const GeometryMap map = session_.service().map_geometry(session_.settings().geometry,
+                                                            session_.frame_full_upright_size(),
+                                                            session_.frame_full_frame());
     if (!map.valid) {
         return {};
     }
@@ -368,15 +369,16 @@ QSizeF CropTool::min_size(const GeometryMap& map) const {
 }
 
 bool CropTool::inside(const EditGeometry& geometry) const {
-    return session_.service().crop_inside_image(geometry, session_.frame_full_upright_size());
+    // The crop is normalised in the geometry's frame F (the camera's area for geometry version 2).
+    return session_.service().crop_inside_image(geometry, session_.frame_full_frame_size());
 }
 
 double CropTool::straightened_aspect(const EditCrop& crop) const {
-    const QSize upright = session_.frame_full_upright_size();
-    if (upright.isEmpty() || !(crop.height() > 0.0)) {
+    const QSize frame = session_.frame_full_frame_size();
+    if (frame.isEmpty() || !(crop.height() > 0.0)) {
         return 0.0;
     }
-    return (crop.width() * upright.width()) / (crop.height() * upright.height());
+    return (crop.width() * frame.width()) / (crop.height() * frame.height());
 }
 
 EditGeometry CropTool::fit_inside(EditGeometry geometry) const {
@@ -400,7 +402,7 @@ EditGeometry CropTool::fit_inside(EditGeometry geometry) const {
     if (low < 0.01) {
         // The crop's centre is not on the image: the largest centred crop of the same shape.
         geometry.crop = session_.service().largest_inside_crop(geometry.straighten_degrees,
-                                                               session_.frame_full_upright_size(),
+                                                               session_.frame_full_frame_size(),
                                                                straightened_aspect(crop));
         const EditCrop c = geometry.crop;
         geometry.crop = tidy(c.left, c.top, c.right, c.bottom);
@@ -414,7 +416,7 @@ EditGeometry CropTool::straightened(const EditGeometry& geometry, double degrees
     EditGeometry next = geometry;
     const double angle = std::clamp(std::round(degrees * 100.0) / 100.0, -kMaxStraighten, kMaxStraighten);
     next.straighten_degrees = angle == 0.0 ? 0.0 : angle;
-    const QSize upright = session_.frame_full_upright_size();
+    const QSize upright = session_.frame_full_frame_size();  // F's size: the crop is normalised in F
     if (!constrain_ || upright.isEmpty() || next.straighten_degrees == geometry.straighten_degrees) {
         return next;
     }
@@ -584,8 +586,8 @@ bool CropTool::level(double u0, double v0, double u1, double v1) {
         return false;
     }
     // Through the geometry of the pixels on screen (the newest frame's), to the upright image.
-    const GeometryMap map =
-        session_.service().map_geometry(session_.frame_geometry(), session_.frame_full_upright_size());
+    const GeometryMap map = session_.service().map_geometry(
+        session_.frame_geometry(), session_.frame_full_upright_size(), session_.frame_full_frame());
     bool invertible = false;
     const QTransform to_normalized = map.normalized_to_output.inverted(&invertible);
     if (!map.valid || !invertible) {

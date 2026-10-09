@@ -11,8 +11,11 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QThread>
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include <gtest/gtest.h>
 
@@ -81,6 +84,10 @@ protected:
         spec.model = model;
         spec.width = width;
         spec.height = height;
+        return import_spec(name, spec);
+    }
+
+    ItemId import_spec(const std::wstring& name, const rts::SyntheticDngSpec& spec) {
         const std::filesystem::path path = write_dng(dir_, name, spec);
         const int before = imports_;
         library_->import_paths({QString::fromStdWString(path.wstring())}, false);
@@ -403,6 +410,67 @@ TEST_F(AppEditServiceTest, AnEditedPhotosThumbnailIsLucentsRenderOfItsRecipe) {
     EXPECT_GT(library_->item(id)->thumbnail_generation, edited.thumbnail_generation);
 }
 
+// QUA-05 (ADR 0017): a file that declares its image area renders as shot (geometry version 2) in that
+// area, and its frames carry the area as the geometry's frame, so the tools map through it: a mask's
+// outline sits where the engine's mapping with the frame puts it, offset by the area's origin.
+TEST_F(AppEditServiceTest, FramesOfAFileWithACameraAreaCarryThatFrameForTheTools) {
+    rts::SyntheticDngSpec spec = testing::dng_with_preview();
+    using Rational = std::pair<std::uint32_t, std::uint32_t>;
+    spec.default_crop_origin = std::array<Rational, 2>{Rational{8, 1}, Rational{4, 1}};
+    spec.default_crop_size = std::array<Rational, 2>{Rational{48, 1}, Rational{40, 1}};
+    const ItemId id = import_spec(L"area.dng", spec);
+    edits_->open(id);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(id).has_value() && !frames_.isEmpty(); }, kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+    EXPECT_EQ(frames_.back()->full_upright_size, QSize(64, 48));
+    EXPECT_EQ(frames_.back()->full_frame, QRect(8, 4, 48, 40));
+    EXPECT_EQ(frames_.back()->full_output_size, QSize(48, 40));
+
+    EditSettings settings = state_for(id)->settings;
+    EditMask radial;
+    radial.id = 1;
+    radial.kind = MaskKind::Radial;
+    radial.center = QPointF(0.5, 0.5);  // upright pixel (32, 24): output pixel (24, 20)
+    radial.radius_x = 0.1;
+    radial.radius_y = 0.1;
+    radial.controls.exposure_ev = 1.0;
+    settings.masks << radial;
+    const quint64 applied = edits_->apply(id, settings);
+    ASSERT_TRUE(wait_final_frame(id, applied)) << command_failures_.join('\n').toStdString();
+    ASSERT_TRUE(wait_idle());
+    EditFramePtr frame;
+    for (auto it = frames_.crbegin(); it != frames_.crend(); ++it) {
+        if ((*it)->token == applied && !(*it)->before && (*it)->phase == FramePhase::Final) {
+            frame = *it;
+            break;
+        }
+    }
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->full_frame, QRect(8, 4, 48, 40));
+    const GeometryMap map = edits_->map_geometry(frame->geometry, frame->full_upright_size, frame->full_frame);
+    ASSERT_TRUE(map.valid);
+    EXPECT_EQ(map.output_size, QSize(48, 40));
+    const QPointF centre = map.normalized_to_output.map(QPointF(0.5, 0.5));
+    EXPECT_NEAR(centre.x(), 24.0, 1e-9);
+    EXPECT_NEAR(centre.y(), 20.0, 1e-9);
+    ASSERT_EQ(frame->masks.size(), 1);
+    ASSERT_FALSE(frame->masks.front().polylines.isEmpty());
+    const QPolygonF& ellipse = frame->masks.front().polylines.front();
+    double mean_x = 0.0;
+    double mean_y = 0.0;
+    for (qsizetype i = 0; i + 1 < ellipse.size(); ++i) {
+        mean_x += ellipse[i].x();
+        mean_y += ellipse[i].y();
+    }
+    mean_x /= double(ellipse.size() - 1);
+    mean_y /= double(ellipse.size() - 1);
+    EXPECT_NEAR(mean_x, 24.0 / 48.0, 1e-3) << "the application's outline and the tools' mapping agree";
+    EXPECT_NEAR(mean_y, 20.0 / 40.0, 1e-3);
+    // Without the frame (the old mapping) the centre would be off by the area's origin.
+    const GeometryMap whole = edits_->map_geometry(frame->geometry, frame->full_upright_size, QRect());
+    EXPECT_NE(whole.normalized_to_output.map(QPointF(0.5, 0.5)), centre);
+}
+
 TEST_F(AppEditServiceTest, FramesCarryGeometryAndMasksAndTheCropToolSeesTheWholeImage) {
     const ItemId id = import_file(L"geometry.dng");
     edits_->open(id);
@@ -456,7 +524,8 @@ TEST_F(AppEditServiceTest, FramesCarryGeometryAndMasksAndTheCropToolSeesTheWhole
     EXPECT_EQ(cropped->masks.front().kind, MaskKind::Radial);
     ASSERT_FALSE(cropped->masks.front().polylines.isEmpty());
     // The ellipse's points, as fractions of the frame, agree with the engine's mapping.
-    const GeometryMap map = edits_->map_geometry(cropped->geometry, cropped->full_upright_size);
+    EXPECT_EQ(cropped->full_frame, QRect(0, 0, 64, 48)) << "no DefaultCrop: the frame is the whole image";
+    const GeometryMap map = edits_->map_geometry(cropped->geometry, cropped->full_upright_size, cropped->full_frame);
     ASSERT_TRUE(map.valid);
     const QPointF centre = map.normalized_to_output.map(QPointF(0.5, 0.5));
     double mean_x = 0.0;

@@ -169,21 +169,26 @@ QString support_short_label(SupportStatus status) {
 QString support_meaning(SupportStatus status) {
     switch (status) {
         case SupportStatus::Verified:
+            // QUA-03: colour is checked as agreement with the decoder's camera calibration.
             return tr_text(
                 "This exact camera model and capture mode passed Lucent's decoding, colour, geometry and "
-                "export tests. Automatic batches develop it like any other photo.");
+                "export tests (colour as agreement with the decoder's camera calibration, not yet against a "
+                "colour chart). Automatic batches develop it like any other photo.");
         case SupportStatus::CompatibleUnverified:
+            // QUA-10, AST-05: covers modes without a test photo and modes whose tests are incomplete.
             return tr_text(
-                "Lucent decodes this file and every step it requires is available, but Lucent has no test "
-                "photos for this camera mode yet. It is developed with the same care; check the results.");
+                "Lucent decodes this file and every step it requires is available, but Lucent lacks "
+                "representative quality evidence for this camera mode: it has no test photo of it, or its "
+                "tests could not be confirmed. It is developed with the same care; check the results.");
         case SupportStatus::Limited:
             return tr_text(
                 "An optional feature or profile is not available for this camera mode. Lucent develops the "
                 "photo without it, and exports carry a review note that names what is missing.");
         case SupportStatus::Unsupported:
             return tr_text(
-                "Lucent cannot decode this file or apply a step it requires, so it cannot develop it "
-                "faithfully. Automatic exports skip it and say why.");
+                "Lucent cannot develop this file faithfully: it cannot decode it, cannot apply a step it "
+                "requires, or its quality tests found that this camera mode does not develop correctly. "
+                "Automatic exports skip it and say why.");
         case SupportStatus::Unknown:
             break;
     }

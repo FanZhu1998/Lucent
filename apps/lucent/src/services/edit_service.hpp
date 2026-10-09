@@ -428,16 +428,19 @@ struct AutoSummary {
 
 // ---- Geometry and masks of frames -----------------------------------------------------------------
 
-// The point mapping of a geometry for an upright image of `upright_size` pixels (the engine's
-// GeometryMapping, develop_geometry.hpp). Every step is affine, so the transforms are exact.
+// The point mapping of a geometry for an upright image of `upright_size` pixels and its frame F
+// (the engine's GeometryMapping, develop_geometry.hpp; F is the camera's image area for geometry
+// version 2, the whole image otherwise). Every step is affine, so the transforms are exact.
 struct GeometryMap {
     bool valid = false;  // false: an empty size or an invalid geometry
     QSize upright_size;
+    QRect frame;        // F in the upright image (the whole image when the geometry has no other)
     QSize output_size;
     QRect crop_pixels;  // the crop in the straightened frame, whole pixels
     // Normalised upright (mask) coordinates -> continuous output pixel coordinates.
     QTransform normalized_to_output;
-    // Normalised straightened (crop) coordinates -> continuous output pixel coordinates.
+    // Normalised straightened (crop) coordinates, relative to the frame F -> continuous output pixel
+    // coordinates.
     QTransform straightened_to_output;
     // Output (and upright) pixels per normalised length: max(W, H).
     double pixels_per_unit_length = 0.0;
@@ -485,6 +488,11 @@ struct EditFrame {
     // the image's size at full resolution (after it); empty when unknown.
     QSize full_upright_size;
     QSize full_output_size;
+    // The frame F the geometry works in, in full-resolution upright pixels (ADR 0017): the camera's
+    // image area for a geometry-version-2 recipe of a file that declares one, the whole upright image
+    // otherwise (also when empty). Crops are normalised in it; masks stay normalised in the whole
+    // upright image (QUA-05: the tools map handles and pointer positions through it).
+    QRect full_frame;
     EditGeometry geometry;   // of the pixels (the crop is the whole image when `uncropped`)
     bool uncropped = false;  // rendered without the crop for the crop tool (set_crop_editing)
     QList<FrameMaskOutline> masks;  // every mask of the settings shown, in their order
@@ -574,12 +582,16 @@ public:
     [[nodiscard]] virtual QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const = 0;
 
     // The engine's geometry and mask helpers (develop_geometry.hpp, local_adjustments.hpp; pure).
-    [[nodiscard]] virtual GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size) const = 0;
-    // The straightened image covers the whole crop (no black canvas in the output).
-    [[nodiscard]] virtual bool crop_inside_image(const EditGeometry& geometry, QSize upright_size) const = 0;
-    // The largest crop centred on the image with `aspect` (width / height in pixels before the
-    // quarter turns; <= 0: the image's own) that the straightened image covers.
-    [[nodiscard]] virtual EditCrop largest_inside_crop(double straighten_degrees, QSize upright_size,
+    // `frame` is F in the upright image (EditFrame::full_frame at full resolution); an empty rectangle
+    // is the whole image.
+    [[nodiscard]] virtual GeometryMap map_geometry(const EditGeometry& geometry, QSize upright_size,
+                                                   QRect frame) const = 0;
+    // The straightened frame covers the whole crop (no black canvas in the output); `frame_size` is
+    // F's size (the whole upright image's for geometry version 1).
+    [[nodiscard]] virtual bool crop_inside_image(const EditGeometry& geometry, QSize frame_size) const = 0;
+    // The largest crop centred on the frame with `aspect` (width / height in pixels before the
+    // quarter turns; <= 0: the frame's own) that the straightened frame of `frame_size` covers.
+    [[nodiscard]] virtual EditCrop largest_inside_crop(double straighten_degrees, QSize frame_size,
                                                        double aspect) const = 0;
     [[nodiscard]] virtual EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const = 0;
     // engine::mask_outline() of `mask` in normalised upright coordinates (empty for an invalid mask).

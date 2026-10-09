@@ -317,6 +317,13 @@ public:
     // The newest frame (not the as-shot one): the photo's full-resolution upright size, the geometry
     // of its pixels and its mapping at full resolution (invalid without a frame), and its masks.
     [[nodiscard]] QSize frame_full_upright_size() const noexcept { return frame_full_upright_; }
+    // The geometry's frame F at full resolution (EditFrame::full_frame: the camera's image area for a
+    // geometry-version-2 recipe, ADR 0017; the whole upright image otherwise) and its size, which the
+    // crop is normalised in (QUA-05). Empty without a frame.
+    [[nodiscard]] QRect frame_full_frame() const noexcept {
+        return frame_full_frame_.isEmpty() ? QRect(QPoint(0, 0), frame_full_upright_) : frame_full_frame_;
+    }
+    [[nodiscard]] QSize frame_full_frame_size() const noexcept { return frame_full_frame().size(); }
     [[nodiscard]] const EditGeometry& frame_geometry() const noexcept { return frame_geometry_; }
     [[nodiscard]] const GeometryMap& frame_map() const noexcept { return frame_map_; }
     [[nodiscard]] const QList<FrameMaskOutline>& frame_masks() const noexcept { return frame_masks_; }
@@ -440,6 +447,7 @@ private:
     quint64 last_sequence_ = 0;
     // W9: the newest frame's geometry and masks, tools, the mask overlay and the brush.
     QSize frame_full_upright_;
+    QRect frame_full_frame_;  // EditFrame::full_frame (empty: the whole upright image)
     EditGeometry frame_geometry_;
     GeometryMap frame_map_;
     bool frame_uncropped_ = false;

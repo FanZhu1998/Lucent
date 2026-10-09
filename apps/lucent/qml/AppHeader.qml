@@ -154,6 +154,49 @@ Rectangle {
             ToolTip.delay: 300
         }
 
+        // W10 review (AST-04): no camera support database is active (missing, unreadable or
+        // refused), so no photo can be Verified this session. Clicking opens About, which says why.
+        Rectangle {
+            id: supportNotice
+
+            readonly property string problem: header.controller.cameraSupport.problem || ""
+
+            objectName: "cameraSupportNotice"
+            visible: supportNotice.problem.length > 0
+            implicitWidth: supportNoticeText.implicitWidth + 16
+            implicitHeight: 22
+            radius: 11
+            color: "transparent"
+            border.width: 1
+            border.color: Theme.attention
+            Layout.leftMargin: 10
+
+            // Keyboard users reach the same explanation through the About button beside it.
+            Accessible.role: Accessible.StaticText
+            Accessible.name: qsTr("No camera support database: %1").arg(supportNotice.problem)
+
+            Text {
+                id: supportNoticeText
+                anchors.centerIn: parent
+                text: qsTr("No camera support database")
+                color: Theme.attention
+                font.pixelSize: Theme.fontSmall
+            }
+
+            HoverHandler {
+                id: supportNoticeHover
+                cursorShape: Qt.PointingHandCursor
+            }
+
+            TapHandler {
+                onTapped: aboutDialog.open()
+            }
+
+            ToolTip.visible: supportNoticeHover.hovered
+            ToolTip.text: supportNotice.problem
+            ToolTip.delay: 300
+        }
+
         Rectangle {
             visible: header.controller.simulationNotice.length > 0
             implicitWidth: noticeText.implicitWidth + 16

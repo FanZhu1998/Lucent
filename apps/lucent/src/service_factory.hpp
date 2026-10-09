@@ -22,6 +22,10 @@ struct ServiceOptions {
     // Root of Lucent's per-user folders (data, cache; core::AppDirectories); empty:
     // %LOCALAPPDATA%\Lucent. Developer-only (--data-root).
     std::filesystem::path data_root;
+    // Attach the process's log file, <cache>\logs\lucent.log (core::FileSink, rotated at 8 MiB, 5
+    // files), before the services start (AST-04: their warnings, such as a refused camera support
+    // database, must reach a file). Lucent.exe sets it; tests leave it off.
+    bool log_to_file = false;
 };
 
 // Errors: those of adapters::create_application_services() (for example when the executor's

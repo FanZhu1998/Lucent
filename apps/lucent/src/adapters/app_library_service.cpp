@@ -28,13 +28,22 @@ QString tr_text(const char* text) {
 }
 
 // The shell's snapshot of `source`, with the paths of its content duplicates looked up in
-// `library` (any thread).
-LibraryItem convert(const app::SourceItem& source, const app::Library& library) {
+// `library` (any thread). Its support is what the session's camera support database gives
+// (app::current_support()): the stored assessment of a writable library, which refresh_support()
+// renewed at start-up, and an in-memory re-assessment for a read-only one, which cannot store it
+// (AST-06: never Verified against a database that is not the active one).
+LibraryItem convert(const app::SourceItem& source, const app::Library& library,
+                    const assets::CameraSupport* database) {
     QStringList duplicates;
     for (const app::ItemId id : source.content_duplicates) {
         if (std::optional<app::SourceItem> twin = library.find(id)) {
             duplicates << QDir::toNativeSeparators(to_qstring(twin->path));
         }
+    }
+    if (std::optional<app::SupportAssessment> current = app::refreshed_support(source, database)) {
+        app::SourceItem shown = source;
+        shown.support = std::move(*current);
+        return to_library_item(shown, duplicates);
     }
     return to_library_item(source, duplicates);
 }
@@ -94,10 +103,12 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
       backend_(std::move(backend)),
       dispatcher_(std::make_shared<UiDispatcher>(this)) {
     app::Library* library = &backend_->library();
+    // The session's camera support database (fixed for the session; kept alive by the backend).
+    const app::CameraSupportRef database = backend_->camera_support();
     // Runs on the thread that committed the change (an import, the maintenance service, a pick).
     // Snapshots are converted there; `this` is only used by the posted function, on the UI thread.
     subscription_ =
-        library->subscribe([this, dispatcher = dispatcher_, library](const app::LibraryChange& change) {
+        library->subscribe([this, dispatcher = dispatcher_, library, database](const app::LibraryChange& change) {
             if (change.kind == app::LibraryChangeKind::Removed) {
                 return;  // nothing removes items from the shell yet
             }
@@ -105,7 +116,7 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
             items.reserve(static_cast<qsizetype>(change.items.size()));
             for (const app::ItemId id : change.items) {
                 if (std::optional<app::SourceItem> source = library->find(id)) {
-                    items << convert(*source, *library);
+                    items << convert(*source, *library, database.get());
                 }
             }
             if (items.isEmpty()) {
@@ -126,7 +137,7 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
     // between the subscription and this snapshot are applied again when their posts arrive, which
     // is harmless (add_items treats known ids as updates).
     for (const app::SourceItem& source : library->items()) {
-        LibraryItem item = convert(source, *library);
+        LibraryItem item = convert(source, *library, database.get());
         initial_order_.push_back(item.id);
         items_.insert(item.id, std::move(item));
     }

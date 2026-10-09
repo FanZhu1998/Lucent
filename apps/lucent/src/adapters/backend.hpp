@@ -24,9 +24,11 @@
 // verifies the bundled asset (assets::load_camera_support: per-user data packs are refused, the
 // bundled folder next to Lucent.exe is checked against the manifest hash compiled into it) and
 // re-assesses the library's items whose stored assessment names another database
-// (app::refresh_support; a read-only catalog keeps the assessments it has). Imports, source
-// maintenance and folder batches assess new probes against it. When none can be activated the
-// session runs without one (no item is Verified) and camera_support_load() says why.
+// (app::refresh_support; a read-only catalog keeps the assessments it has, and the shell shows
+// app::refreshed_support() of each instead). Imports, source maintenance and folder batches assess
+// new probes against it. When none can be activated the session runs without one: no item is
+// Verified, stored Limited and Unsupported answers are kept (a missing database never improves a
+// state), camera_support_load() says why and the log file records it.
 //
 // W8: the AutoService (auto_service.hpp, ADR 0013) runs the editor's "Auto" in process on the
 // executor's Background lane, over the recipe service; it is created after the executor and

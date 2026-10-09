@@ -263,6 +263,7 @@ void EditSession::reset_frames() {
     clipping_source_.clear();
     mask_overlay_source_.clear();
     frame_full_upright_ = QSize();
+    frame_full_frame_ = QRect();
     frame_geometry_ = EditGeometry{};
     frame_map_ = GeometryMap{};
     frame_uncropped_ = false;
@@ -1327,11 +1328,13 @@ void EditSession::on_frame(const EditFramePtr& frame) {
     frame_source_ = FrameStore::url(FrameStore::Kind::Frame, item_, frame->sequence);
     // W9: the frame's geometry and masks for the tools, and the selected mask's weights.
     frame_full_upright_ = frame->full_upright_size;
+    frame_full_frame_ = frame->full_frame;
     frame_geometry_ = frame->geometry;
     frame_uncropped_ = frame->uncropped;
     frame_masks_ = frame->masks;
-    frame_map_ = frame_full_upright_.isEmpty() ? GeometryMap{}
-                                               : service_.map_geometry(frame_geometry_, frame_full_upright_);
+    frame_map_ = frame_full_upright_.isEmpty()
+                     ? GeometryMap{}
+                     : service_.map_geometry(frame_geometry_, frame_full_upright_, frame_full_frame());
     if (mask_overlay_ && !frame->mask_overlay.isNull() && frame->mask_overlay_id == selected_mask_) {
         store_->put(FrameStore::Kind::Mask, item_, frame->sequence, frame->mask_overlay);
         mask_overlay_source_ = FrameStore::url(FrameStore::Kind::Mask, item_, frame->sequence);

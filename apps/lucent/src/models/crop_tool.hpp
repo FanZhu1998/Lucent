@@ -9,8 +9,10 @@
 // shows the whole straightened image and the crop as an overlay. The overlay and the pointer work
 // in the displayed image's own coordinates: fractions (u, v) of its width and height. They are
 // mapped to S through EditService::map_geometry() (the engine's GeometryMapping) of the settings'
-// geometry without the crop at the photo's full-resolution upright size, so a handle drawn at (u,
-// v) is exactly where the engine puts that crop corner, whatever the quarter turns and mirror. The
+// geometry without the crop at the photo's full-resolution upright size and in the geometry's frame F
+// (EditSession::frame_full_frame(): the camera's image area for a geometry-version-2 recipe, ADR
+// 0017; QUA-05), so a handle drawn at (u, v) is exactly where the engine puts that crop corner,
+// whatever the quarter turns and mirror. Coverage and the largest inside crop use F's size. The
 // crop math itself (handles, aspect ratio, minimum size) runs in those displayed pixels
 // (crop_math below), where the aspect ratio is the one the photographer sees.
 //

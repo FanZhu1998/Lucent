@@ -100,22 +100,32 @@ namespace lucent::ui::adapters {
 
 // ---- Geometry and masks (the EditService helpers; engine/develop_geometry.hpp) ----------------------
 
-[[nodiscard]] GeometryMap geometry_map(const EditGeometry& geometry, QSize upright_size);
-[[nodiscard]] bool geometry_crop_inside(const EditGeometry& geometry, QSize upright_size);
-[[nodiscard]] EditCrop geometry_largest_inside_crop(double straighten_degrees, QSize upright_size, double aspect);
+// `frame`: the geometry's frame F in the upright image (empty: the whole image; ADR 0017). QUA-05:
+// crops are normalised in F, so a version-2 recipe of a file with a camera area maps through it.
+[[nodiscard]] GeometryMap geometry_map(const EditGeometry& geometry, QSize upright_size, QRect frame = {});
+[[nodiscard]] bool geometry_crop_inside(const EditGeometry& geometry, QSize frame_size);
+[[nodiscard]] EditCrop geometry_largest_inside_crop(double straighten_degrees, QSize frame_size, double aspect);
 [[nodiscard]] EditGeometry geometry_turned(const EditGeometry& geometry, GeometryTurn turn);
 [[nodiscard]] QList<QPolygonF> mask_outline_of(const EditMask& mask, QSize upright_size);
 
-// The weight overlay of `adjustment` (shown even when disabled) for a frame whose upright image is
-// `upright` pixels with `geometry`, tinted (premultiplied ARGB, alpha proportional to the weight):
-// laid over the frame's output (the frame's GeometryMapping) at most `max_long_edge` on its long
-// edge, each overlay pixel's centre mapped back to the upright image through that mapping and the
-// weight sampled there (bilinear) from engine::mask_weights() made at the overlay's density, at most
-// kMaxMaskOverlayPlaneEdge on its long edge. So the overlay sits exactly on the frame (the crop is
-// not rounded at the overlay's scale) and keeps its resolution for a small crop. 0 outside the
-// image (a straightened frame's corners). Null for an empty size, an invalid mask or geometry, or
+// The frame F of a develop report's settings in its full-resolution upright image (engine::
+// geometry_mapping() of report.settings at full size: the camera's area for geometry version 2 when
+// the stage one has one); an empty rectangle when it cannot be made.
+[[nodiscard]] QRect full_geometry_frame(const engine::DevelopReport& report);
+
+// The weight overlay of `adjustment` (shown even when disabled) for a frame rendered with
+// `mapping` (the frame's own GeometryMapping: its upright image, frame F and geometry), tinted
+// (premultiplied ARGB, alpha proportional to the weight): laid over the frame's output at most
+// `max_long_edge` on its long edge, each overlay pixel's centre mapped back to the upright image
+// through that mapping and the weight sampled there (bilinear) from engine::mask_weights() made at
+// the overlay's density, at most kMaxMaskOverlayPlaneEdge on its long edge. So the overlay sits
+// exactly on the frame (the crop is not rounded at the overlay's scale) and keeps its resolution for
+// a small crop. 0 outside the image (a straightened frame's corners). Null for an invalid mask, or
 // when memory runs out.
 inline constexpr int kMaxMaskOverlayPlaneEdge = 2048;
+[[nodiscard]] QImage mask_overlay_image(const engine::LocalAdjustment& adjustment,
+                                        const engine::GeometryMapping& mapping, int max_long_edge = 1024);
+// The same for `geometry` on an upright image of `upright` pixels whose frame is all of it.
 [[nodiscard]] QImage mask_overlay_image(const engine::LocalAdjustment& adjustment,
                                         const engine::GeometrySetting& geometry, image::Size upright,
                                         int max_long_edge = 1024);

@@ -25,7 +25,9 @@
 // attention, review and retry counts, left-out photos; a batch of one: its output or why there is
 // none) is read every `status_interval`, and once more when it finishes. No report is read for the
 // list. A status read that started before newer events were applied does not overwrite their state
-// or counts.
+// or counts. A status read can find a batch finished while its last attempt still returns and the
+// service writes its report: such a batch lists no running job, and its report path arrives with
+// the report's own event.
 //
 // The list: refresh() lists the newest `list_limit` batches and every batch with work left
 // whatever its age (a paused batch is never lost behind newer single exports); load_older() pages

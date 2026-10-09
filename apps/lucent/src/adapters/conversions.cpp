@@ -172,7 +172,9 @@ QString describe_issue(raw::InterpretationIssueKind kind) {
         case K::SubimageRoleUnknown:
             return tr_text("Lucent cannot tell what this image of a multi-image file is.");
         case K::MultiViewSource:
-            return tr_text("Unstitched multi-lens (360°) images are not supported.");
+            return tr_text(
+                "This is an unstitched multi-lens (360°) image. Stitch it into one panorama with the camera "
+                "maker's software first; Lucent does not stitch lens views.");
         case K::UnrepresentedBlackLevelCorrection:
             return tr_text("The file's black-level corrections cannot be applied exactly.");
     }
@@ -213,10 +215,11 @@ QString describe_reason(const app::SupportReason& reason) {
             return describe_error(error);
         }
         case app::SupportReasonKind::CameraLimitation:
+        case app::SupportReasonKind::EngineLimitation:
             return describe_limitation(QString::fromStdString(reason.limitation),
                                        QString::fromStdString(reason.message));
         case app::SupportReasonKind::CameraUnsupported:
-            return tr_text("Lucent's tests found that this camera mode does not develop correctly yet.");
+            return tr_text("Lucent's quality tests found that this camera mode cannot be developed faithfully.");
     }
     return {};
 }
@@ -239,6 +242,13 @@ QString verification_detail(const app::SupportAssessment& support) {
     }
     const app::CameraSupportEvaluation& camera = *support.camera;
     if (camera.database_id.empty()) {
+        if (camera.listed && *camera.listed == app::SupportStatus::Verified) {
+            // AST-01: kept from the last database while none is active.
+            return tr_text(
+                       "Lucent's camera support database is not available, so it cannot confirm that %1 is "
+                       "verified; the photo counts as compatible but unverified until the database is back.")
+                .arg(camera_mode(camera));
+        }
         return tr_text(
             "Lucent decodes this file, but its camera support database is not available, so no camera "
             "is verified.");
@@ -259,6 +269,13 @@ QString verification_detail(const app::SupportAssessment& support) {
         const QString text = tr_text(
             "Lucent verified %1 with another version of its decoder or processing; this version has not "
             "been tested with it yet.");
+        return text.arg(camera_mode(camera));
+    }
+    if (*camera.listed == app::SupportStatus::Verified && !camera.variant_matches) {
+        // QUA-08: the same mode, but another image area or other DNG corrections than the test photo.
+        const QString text = tr_text(
+            "Lucent verified %1 with test photos whose image area or built-in corrections differ from this "
+            "photo's (for example another in-camera aspect ratio), so this photo is not covered by that test.");
         return text.arg(camera_mode(camera));
     }
     const QString text = tr_text(
@@ -320,6 +337,21 @@ CameraSupportInfo to_camera_support_info(const app::CameraSupportRef& active,
                         "The installed camera support database needs a newer version of Lucent, "
                         "so it is not used; no camera counts as verified.");
                     break;
+                case ErrorCode::PermissionDenied:
+                case ErrorCode::IoError:
+                case ErrorCode::SourceChanged:
+                case ErrorCode::OutOfMemory:
+                case ErrorCode::LimitExceeded:
+                case ErrorCode::Timeout:
+                    // AST-04: unreadable is not tampered with (access denied, a sharing violation, an
+                    // I/O error).
+                    info.problem =
+                        tr_text(
+                            "The installed camera support database could not be read (%1), so it is not used; "
+                            "no camera counts as verified. Check that Lucent's installation folder is "
+                            "readable, or reinstall Lucent.")
+                            .arg(QString::fromStdString(std::string(to_string(load.problem->code))));
+                    break;
                 default:
                     info.problem = tr_text(
                         "The installed camera support database failed its integrity check and is "
@@ -327,6 +359,8 @@ CameraSupportInfo to_camera_support_info(const app::CameraSupportRef& active,
                         "verified.");
                     break;
             }
+            // AST-04: which step refused it (pin, hash, missing file, version), for support.
+            info.notes << tr_text("Technical detail: %1").arg(QString::fromStdString(load.problem->describe()));
         }
         return info;
     }

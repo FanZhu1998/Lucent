@@ -105,7 +105,21 @@ TEST(AdapterConversions, LimitationsAreNamedInTheirOwnWords) {
     app::SupportReason failed;
     failed.kind = app::SupportReasonKind::CameraUnsupported;
     unsupported.reasons = {failed};
-    EXPECT_TRUE(support_detail(unsupported).contains(QStringLiteral("does not develop correctly")));
+    EXPECT_TRUE(support_detail(unsupported).contains(QStringLiteral("cannot be developed faithfully")));
+    EXPECT_FALSE(support_detail(unsupported).contains(QStringLiteral("yet"))) << "AST-05: no promise of a fix";
+
+    // AST-03: an engine limitation reads like the database's limitation of the same code.
+    app::SupportAssessment engine_limited;
+    engine_limited.status = app::SupportStatus::Limited;
+    engine_limited.interpretation = raw::InterpretationStatus::Complete;
+    app::SupportReason engine;
+    engine.kind = app::SupportReasonKind::EngineLimitation;
+    engine.limitation = "xtrans_baseline_demosaic";
+    engine_limited.reasons = {engine};
+    EXPECT_EQ(support_detail(engine_limited), describe_limitation(QStringLiteral("xtrans_baseline_demosaic")));
+
+    // AST-05: a multi-view source says what to do first.
+    EXPECT_TRUE(describe_issue(raw::InterpretationIssueKind::MultiViewSource).contains(QStringLiteral("Stitch")));
 }
 
 TEST(AdapterConversions, AboutDescribesTheCameraSupportDatabase) {
@@ -141,8 +155,18 @@ TEST(AdapterConversions, AboutDescribesTheCameraSupportDatabase) {
     const CameraSupportInfo none = to_camera_support_info(nullptr, failed);
     EXPECT_FALSE(none.available);
     EXPECT_TRUE(none.problem.contains(QStringLiteral("integrity check")));
+    // AST-04: About names the step that refused it.
+    ASSERT_EQ(none.notes.size(), 1);
+    EXPECT_TRUE(none.notes.front().contains(QStringLiteral("assets.load.hash"))) << none.notes.front().toStdString();
     failed.problem = Error{ErrorCode::VersionMismatch, "newer", "assets.load.app_version", 0};
     EXPECT_TRUE(to_camera_support_info(nullptr, failed).problem.contains(QStringLiteral("newer version")));
+    // AST-04: a file Lucent may not read is not reported as tampered with.
+    for (const ErrorCode code : {ErrorCode::PermissionDenied, ErrorCode::IoError, ErrorCode::SourceChanged}) {
+        failed.problem = Error{code, "cannot read", "core.file", 5};
+        const CameraSupportInfo unreadable = to_camera_support_info(nullptr, failed);
+        EXPECT_TRUE(unreadable.problem.contains(QStringLiteral("could not be read"))) << to_string(code);
+        EXPECT_FALSE(unreadable.problem.contains(QStringLiteral("integrity"))) << to_string(code);
+    }
 }
 
 TEST(AdapterConversions, SupportDetailExplainsEveryDistinctReason) {

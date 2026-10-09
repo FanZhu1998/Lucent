@@ -97,6 +97,13 @@ TEST(Presentation, EverySupportStateSaysWhatItMeans) {
     }
     EXPECT_TRUE(support_meaning(SupportStatus::Limited).contains(QStringLiteral("review note")));
     EXPECT_TRUE(support_meaning(SupportStatus::Unsupported).contains(QStringLiteral("skip")));
+    // QUA-10, AST-05: the Compatible, unverified meaning also covers listed modes whose tests are not
+    // complete, and does not claim there is no test photo at all.
+    EXPECT_TRUE(support_meaning(SupportStatus::CompatibleUnverified)
+                    .contains(QStringLiteral("lacks representative quality evidence")));
+    EXPECT_FALSE(support_meaning(SupportStatus::CompatibleUnverified).contains(QStringLiteral("no test photos")));
+    // QUA-03: Verified says what its colour test compares with.
+    EXPECT_TRUE(support_meaning(SupportStatus::Verified).contains(QStringLiteral("camera calibration")));
 
     // Help > About lists the four states best first, each with its key, label and meaning.
     const QVariantList states = support_states();

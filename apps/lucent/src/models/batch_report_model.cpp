@@ -76,6 +76,10 @@ QVariant BatchReportModel::data(const QModelIndex& index, int role) const {
         return entry->attempts;
     case AccessibleLabelRole: {
         QStringList parts{entry->source_name, p::outcome_label(entry->outcome)};
+        // AST-10: the photo's support state, as library cards say it.
+        if (entry->support != SupportStatus::Unknown) {
+            parts << tr_text("camera support %1").arg(p::support_label(entry->support));
+        }
         if (!entry->output.isEmpty()) {
             parts << QFileInfo(entry->output).fileName();
         }

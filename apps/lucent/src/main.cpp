@@ -66,6 +66,7 @@ int main(int argc, char* argv[]) {
     }
 
     lucent::ui::ServiceOptions service_options;
+    service_options.log_to_file = true;  // <cache>\logs\lucent.log
     // Per-user settings (QSettings); with --data-root they live in that folder too, so a developer
     // session never changes the user's own settings.
     std::unique_ptr<QSettings> settings = std::make_unique<QSettings>();

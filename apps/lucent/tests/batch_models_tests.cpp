@@ -622,6 +622,10 @@ TEST(BatchReportModelTest, ShowsTheSelectedBatchsReportWithFilters) {
     EXPECT_FALSE(role(model, 0, BatchReportModel::SupportMeaningRole).toString().isEmpty());
     EXPECT_EQ(role(model, 1, BatchReportModel::SupportKeyRole).toString(), QStringLiteral("unsupported"));
     EXPECT_TRUE(role(model, 2, BatchReportModel::SupportLabelRole).toString().isEmpty());  // not recorded
+    // AST-10: a screen reader hears the state in the row's name.
+    EXPECT_TRUE(role(model, 0, BatchReportModel::AccessibleLabelRole).toString().contains(QStringLiteral("Limited")));
+    EXPECT_TRUE(
+        role(model, 1, BatchReportModel::AccessibleLabelRole).toString().contains(QStringLiteral("Unsupported")));
 
     model.setFilter(QStringLiteral("failed"));
     ASSERT_EQ(model.count(), 1);
