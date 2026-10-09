@@ -317,9 +317,10 @@ engine limitations depended on whether the exact mode was qualified. Changes:
    readers (AST-10).
 5. **Provenance.** The build's commit carries "-dirty" when tracked files differ at configure time
    (`cmake/LucentVersion.cmake`), and `--export-support` refuses a report of such a build unless
-   `--allow-dirty-build` (QUA-06). The bundled database 2.0.0 was exported from a run of a build of
-   the review fixes on top of 72cb6d1 and records that commit with its "-dirty" marker; it must be
-   regenerated from a clean build before a release (W12).
+   `--allow-dirty-build` (QUA-06). The database 2.0.0 exported during the review recorded the
+   uncommitted build "72cb6d170d50-dirty"; it was superseded by database 2.0.1, exported without
+   `--allow-dirty-build` from a fresh build of commit 0161428 (all 34 fixtures matched their
+   expectations, same states). Only the provenance changed, hence the patch version.
 
 Consequences: the run of the review fixes over all 34 fixtures gave the same outcomes as before
 (Verified 14, Compatible, unverified 11, Limited 6, Unsupported 3; no fixture's state changed); the

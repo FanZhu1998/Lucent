@@ -281,8 +281,9 @@ cached fixture of any tier, in `lucent_qualification_fixture_tests`).
 - **Provenance (QUA-06).** The report and the database name the build's commit; it now carries
   "-dirty" when the tree had uncommitted changes at configure time, and the export refuses such a
   report unless `--allow-dirty-build` (ADR 0018 amendment). The report of 2026-10-08 that was
-  committed with commit 3a836ac's name came from an uncommitted tree; the regenerated report names
-  its build honestly.
+  committed with commit 3a836ac's name came from an uncommitted tree; the committed report is now
+  the run of a fresh build of commit 0161428 (no "-dirty" marker), from which database 2.0.1 was
+  exported.
 - **Probe facts (QUA-08).** Each fixture result records `lookup_variant` (the probe's image area and
   DNG opcodes) and each support-table row `lookup_variants`; the database's Verified entries hold
   only for files with those facts (ADR 0018 amendment).
