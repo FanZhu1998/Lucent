@@ -9,6 +9,7 @@
 #include <sstream>
 #include <utility>
 
+#include <lucent/assets/camera_support.hpp>
 #include <lucent/core/hash.hpp>
 #include <lucent/core/version.hpp>
 #include <lucent/engine/develop.hpp>
@@ -312,6 +313,9 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
         }
     }
     report["decoder"] = decoder;
+    // Everything a Verified state certifies (QUA-02): the running build's basis (assets::
+    // running_basis(), which the application compares with the database's).
+    const assets::QualificationBasis basis = assets::running_basis();
     report["versions"] = {{"mode_key", kModeKeyVersion},
                           {"check_suite", kCheckSuiteVersion},
                           {"state_rules", kStateRulesVersion},
@@ -320,7 +324,11 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
                           {"develop_pipeline", engine::kDevelopPipelineVersion},
                           {"dng_opcode_processing", engine::kDngOpcodeProcessingVersion},
                           {"geometry_operation", engine::kGeometryOperationVersion},
-                          {"image_area_placement", engine::kImageAreaPlacementVersion}};
+                          {"image_area_placement", engine::kImageAreaPlacementVersion},
+                          {"decoder_capabilities", basis.decoder_capabilities},
+                          {"develop_engine", basis.develop_engine},
+                          {"neutral_look", basis.neutral_look},
+                          {"export", basis.export_version}};
     const auto input = [](const std::filesystem::path& path, const std::filesystem::path& root) {
         std::error_code ec;
         const std::filesystem::path relative = std::filesystem::relative(path, root, ec);
@@ -370,11 +378,17 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
         const OrderedJson* worst = group.front();
         std::set<std::string> limitations;
         std::set<std::string> lookup_keys;
+        OrderedJson lookup_variants = OrderedJson::array();
         std::vector<std::string> ids;
         std::vector<std::string> gaps;
         for (const OrderedJson* f : group) {
             if (f->contains("lookup_key") && f->at("lookup_key").is_string()) {
                 lookup_keys.insert(f->at("lookup_key").get<std::string>());
+            }
+            if (f->contains("lookup_variant") && f->at("lookup_variant").is_object() &&
+                std::find(lookup_variants.begin(), lookup_variants.end(), f->at("lookup_variant")) ==
+                    lookup_variants.end()) {
+                lookup_variants.push_back(f->at("lookup_variant"));
             }
             if (state_severity(f->value("proposed_state", std::string())) <
                 state_severity(worst->value("proposed_state", std::string()))) {
@@ -391,6 +405,7 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
         table.push_back(
             {{"mode_key", key},
              {"lookup_keys", std::vector<std::string>(lookup_keys.begin(), lookup_keys.end())},
+             {"lookup_variants", std::move(lookup_variants)},
              {"model_key",
               worst->at("mode_key").is_object() ? worst->at("mode_key").at("model_key") : OrderedJson("")},
              {"family", worst->value("family", std::string())},
@@ -459,7 +474,10 @@ std::string support_table_markdown(const OrderedJson& report) {
        << report.at("versions").at("develop_pipeline") << ", DNG opcode processing "
        << report.at("versions").at("dng_opcode_processing") << ", geometry operation "
        << report.at("versions").value("geometry_operation", 1) << ", image area placement "
-       << report.at("versions").value("image_area_placement", 0) << " (ADR 0016, ADR 0017).\n\n";
+       << report.at("versions").value("image_area_placement", 0) << "; develop engine "
+       << report.at("versions").value("develop_engine", OrderedJson::array()).dump() << ", neutral look "
+       << report.at("versions").value("neutral_look", 0) << ", export "
+       << report.at("versions").value("export", 0) << " (ADR 0016, ADR 0017, ADR 0018).\n\n";
     md << "These states are **proposals from Lucent's qualification harness** for the exact camera model and "
           "capture "
           "mode of each corpus fixture. They are not a claim about other modes of the same camera, other "
@@ -468,16 +486,27 @@ std::string support_table_markdown(const OrderedJson& report) {
           "single "
           "daylight test file from raw.pixls.us; scene diversity (blueprint section 10) is not yet covered. "
           "Lens-profile corrections (Lensfun) are not available for any camera yet; they are optional by the "
-          "blueprint and are not listed per mode. A Verified state holds for the decoder, contract and "
-          "pipeline "
-          "versions above. Lucent shows these states to the photographer through the camera support database "
+          "blueprint and are not listed per mode. A Verified state holds for the decoder (and its codecs), "
+          "contract, pipeline, engine, look and export versions above, and only for files whose camera image "
+          "area and DNG opcodes are those of the qualified file. Lucent shows these states to the photographer "
+          "through the camera support database "
           "exported from this report (`assets/camera-support`, ADR 0018), combined with each file's own "
           "interpretation: a photo of a mode not listed here is Compatible, unverified at best.\n\n";
+    md << "What the checks compare with: the camera's identity, compression, image area, orientation and "
+          "representation are facts from independent sources (manufacturer specifications, the file's own "
+          "tags read without LibRaw, another decoder's camera database). Decoding and colour are compared "
+          "with a reference built on the same decoder (rawpy, LibRaw): they show that Lucent reads the data "
+          "and reproduces LibRaw's camera calibration faithfully, not that the calibration itself matches "
+          "an independent colour measurement (no colour chart or DNG SDK reference yet; ADR 0016). The raw-"
+          "buffer hash is compared for single-channel (mosaic and monochrome) data; full-colour data is "
+          "compared through the colour check.\n\n";
 
     md << "| State | Meaning (blueprint section 3) |\n|---|---|\n";
     md << "| Verified | Exact model and capture mode passed Lucent's decoding, colour, geometry and export "
           "checks with "
-          "strong evidence, against independently verified expectations |\n";
+          "strong evidence, and its identity, compression, image area, orientation and representation are "
+          "independently verified facts (colour is verified as agreement with LibRaw's calibration, see "
+          "above) |\n";
     md << "| Compatible, unverified | Decoder and required interpretation steps succeed, but the evidence or "
           "the "
           "expectations are insufficient |\n";

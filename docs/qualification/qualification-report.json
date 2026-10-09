@@ -1,11 +1,11 @@
 {
  "schema": "lucent.qualification-report",
  "schema_version": 1,
- "generated": "2026-10-08T21:47:26Z",
+ "generated": "2026-10-09T01:43:35Z",
  "tool": {
   "name": "lucent-qualify",
   "lucent_version": "0.1.0",
-  "git_commit": "3a836ac453c2",
+  "git_commit": "72cb6d170d50-dirty",
   "build_type": "RelWithDebInfo",
   "compiler": "MSVC 19.44.35229.0"
  },
@@ -19,7 +19,27 @@
   "develop_pipeline": 3,
   "dng_opcode_processing": 1,
   "geometry_operation": 2,
-  "image_area_placement": 1
+  "image_area_placement": 1,
+  "decoder_capabilities": [
+   "jpeg",
+   "zlib"
+  ],
+  "develop_engine": [
+   3,
+   2,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "neutral_look": 1,
+  "export": 1
  },
  "inputs": {
   "manifest": {
@@ -28,7 +48,7 @@
   },
   "expectations": {
    "path": "fixtures/qualification/expectations.json",
-   "sha256": "78e66377847223536914496cf742f4a499514544c573df3c7e3f7028b0100414"
+   "sha256": "7b1356bc24f2d134e901f58104d96c1edc611dc114d55bc9c9dcb0fcf48c4869"
   },
   "families": {
    "path": "fixtures/qualification/families.json",
@@ -129,6 +149,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 8192x5464",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -142,7 +166,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0419769,
+     "seconds": 0.0428741,
      "details": {
       "size_bytes": 40632406,
       "sha256": "21430c36387efe65bd09ac0fcd724bfd959d93dd391ec811a1b741c8663becb5"
@@ -153,7 +177,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.0845722,
+     "seconds": 2.0042087,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -177,7 +201,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5.6e-06,
+     "seconds": 7.1e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -241,7 +265,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0104 (limit 0.033), max 0.0618 (limit 0.127), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.2274796,
+     "seconds": 4.0053204,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -261,7 +285,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "8191x5463 contains the camera's image area 8192x5464; edge bands are image data",
-     "seconds": 0.0036826,
+     "seconds": 0.0059098,
      "details": {
       "rendered": [
        8191,
@@ -352,7 +376,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 7.209463,
+     "seconds": 17.0860619,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -366,7 +390,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 4.0564845
+       "seconds": 7.3476319
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -379,7 +403,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 3.1334011
+       "seconds": 9.7138035
       }
      }
     },
@@ -388,7 +412,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 5.5363705,
+     "seconds": 6.4472405,
      "details": {
       "display_sha256": "eb8776948110110db3c0716a4d50294784301a9c1c1dcae22dce8fc4125d42b5",
       "second_display_sha256": "eb8776948110110db3c0716a4d50294784301a9c1c1dcae22dce8fc4125d42b5",
@@ -423,17 +447,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 18.1599277,
+    "total_seconds": 32.3987217,
     "phase_seconds": {
-     "decode": 0.5576217,
-     "develop_1": 1.1148432,
-     "develop_2": 5.5363707,
-     "export": 7.2094631,
-     "probe": 0.0047339,
-     "w2_render": 1.0930013
+     "decode": 0.8996995,
+     "develop_1": 1.6339845,
+     "develop_2": 6.4472407,
+     "export": 17.0860621,
+     "probe": 0.0030728,
+     "w2_render": 2.297961
     },
-    "peak_working_set_bytes": 1087385600,
-    "peak_commit_bytes": 1081356288,
+    "peak_working_set_bytes": 1087324160,
+    "peak_commit_bytes": 1081204736,
     "w2_render_estimate_bytes": 1074069504,
     "develop_export_estimate_bytes": 760793769
    },
@@ -477,6 +501,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 7008x4672",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -490,7 +518,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.037203,
+     "seconds": 0.0369154,
      "details": {
       "size_bytes": 40665088,
       "sha256": "73c79fd9fbd73dff89548b611aaedc3c5a7e3412ec190c23881ea8434ff2214c"
@@ -501,7 +529,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.5550174,
+     "seconds": 0.6311069,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -591,7 +619,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0567 (limit 0.0909), max 0.203 (limit 0.303), luminance ratio 0.999; like for like with the reference (same calibration)",
-     "seconds": 1.2595261,
+     "seconds": 1.3775158,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -611,7 +639,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "7008x4672 contains the camera's image area 7008x4672; edge bands are image data",
-     "seconds": 0.0024989,
+     "seconds": 0.0034553,
      "details": {
       "rendered": [
        7008,
@@ -702,7 +730,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 5.5282536,
+     "seconds": 7.5727589,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -716,7 +744,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 3.1855737
+       "seconds": 3.4145564
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -729,7 +757,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 2.3300084
+       "seconds": 4.1466456
       }
      }
     },
@@ -738,7 +766,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.9882115,
+     "seconds": 3.9774014,
      "details": {
       "display_sha256": "ecfef04959e800fc7f4c139e200572a16c2efb3651a1ba8eee310c182d2dbee0",
       "second_display_sha256": "ecfef04959e800fc7f4c139e200572a16c2efb3651a1ba8eee310c182d2dbee0",
@@ -778,17 +806,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 12.5250327,
+    "total_seconds": 14.8518581,
     "phase_seconds": {
-     "decode": 0.1700504,
-     "develop_1": 0.5587613,
-     "develop_2": 3.9882117,
-     "export": 5.5282536,
-     "probe": 0.0028902,
-     "w2_render": 0.5205395
+     "decode": 0.1890967,
+     "develop_1": 0.622342,
+     "develop_2": 3.9774015,
+     "export": 7.572759,
+     "probe": 0.0041035,
+     "w2_render": 0.5442949
     },
-    "peak_working_set_bytes": 803110912,
-    "peak_commit_bytes": 797261824,
+    "peak_working_set_bytes": 803319808,
+    "peak_commit_bytes": 797310976,
     "w2_render_estimate_bytes": 790884352,
     "develop_export_estimate_bytes": 788338688
    },
@@ -832,6 +860,12 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 4024x3016",
+    "dng_opcodes": [
+     "list3:WarpRectilinear"
+    ]
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -845,7 +879,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0163049,
+     "seconds": 0.015501,
      "details": {
       "size_bytes": 14884352,
       "sha256": "f33ddaf2a7fa70b395abced251faccea11100d2ab7e54ae0a6adbff043d72027"
@@ -856,7 +890,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.6394541,
+     "seconds": 0.6533909,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -880,7 +914,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5e-06,
+     "seconds": 4.2e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -945,7 +979,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 0.548 (limit 0.705), max 1.26 (limit 1.63), luminance ratio 1; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 0.7141546,
+     "seconds": 0.7569582,
      "details": {
       "calibration_path": "dng_color_matrix",
       "like_for_like": false,
@@ -965,7 +999,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "4024x3016 contains the camera's image area 4024x3016; edge bands are image data",
-     "seconds": 0.0013673,
+     "seconds": 0.0014373,
      "details": {
       "rendered": [
        4024,
@@ -1066,7 +1100,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 2.113903,
+     "seconds": 2.7955857,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -1080,7 +1114,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "DJI",
        "camera_model": "FC4382",
-       "seconds": 1.1680648
+       "seconds": 1.1631841
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -1093,7 +1127,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "DJI",
        "camera_model": "FC4382",
-       "seconds": 0.9408461
+       "seconds": 1.6276976
       }
      }
     },
@@ -1102,7 +1136,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 1.9761454,
+     "seconds": 1.8218849,
      "details": {
       "display_sha256": "47824885820ede4e6dd2517067fab37b2e2a5248f0f07dee63c7f5b4b2402228",
       "second_display_sha256": "47824885820ede4e6dd2517067fab37b2e2a5248f0f07dee63c7f5b4b2402228",
@@ -1144,17 +1178,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 6.3192897,
+    "total_seconds": 6.9330934,
     "phase_seconds": {
-     "decode": 0.3144946,
-     "develop_1": 0.6277777,
-     "develop_2": 1.9761456,
-     "export": 2.1139031,
-     "probe": 0.0014937,
-     "w2_render": 0.4468533
+     "decode": 0.3165001,
+     "develop_1": 0.6678817,
+     "develop_2": 1.8218851,
+     "export": 2.7955857,
+     "probe": 0.0034649,
+     "w2_render": 0.4832215
     },
-    "peak_working_set_bytes": 306073600,
-    "peak_commit_bytes": 298934272,
+    "peak_working_set_bytes": 306028544,
+    "peak_commit_bytes": 298139648,
     "w2_render_estimate_bytes": 292626432,
     "develop_export_estimate_bytes": 292626432
    },
@@ -1198,6 +1232,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 6240x4160",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -1211,7 +1249,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0262717,
+     "seconds": 0.0269736,
      "details": {
       "size_bytes": 27949104,
       "sha256": "07ea642656074834ffe5c661870a612ffa2e80fc1218a05166ee966bbe5f6fae"
@@ -1222,7 +1260,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 2.0447152,
+     "seconds": 2.0877612,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -1302,7 +1340,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0515 (limit 0.0844), max 0.124 (limit 0.205), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.4590149,
+     "seconds": 2.3099138,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -1322,7 +1360,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6240x4160 contains the camera's image area 6240x4160; edge bands are image data",
-     "seconds": 0.0036861,
+     "seconds": 0.0022554,
      "details": {
       "rendered": [
        6240,
@@ -1413,7 +1451,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.2031235,
+     "seconds": 6.1687041,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -1427,7 +1465,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "FUJIFILM",
        "camera_model": "X-T4",
-       "seconds": 2.3356218
+       "seconds": 2.3049064
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -1440,7 +1478,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "FUJIFILM",
        "camera_model": "X-T4",
-       "seconds": 1.8577704
+       "seconds": 3.8535281
       }
      }
     },
@@ -1449,7 +1487,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 4.5209608,
+     "seconds": 4.2516074,
      "details": {
       "display_sha256": "67c4c300f543936934fed8d507da54c8a1384348ce90a857d0a2941bb0079a3f",
       "second_display_sha256": "67c4c300f543936934fed8d507da54c8a1384348ce90a857d0a2941bb0079a3f",
@@ -1497,17 +1535,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 15.7880434,
+    "total_seconds": 17.0577276,
     "phase_seconds": {
-     "decode": 1.3541136,
-     "develop_1": 1.9532151,
-     "develop_2": 4.520961,
-     "export": 4.2031236,
-     "probe": 0.0017345,
-     "w2_render": 1.7401547
+     "decode": 1.3842325,
+     "develop_1": 1.7539519,
+     "develop_2": 4.2516077,
+     "export": 6.1687043,
+     "probe": 0.002404,
+     "w2_render": 1.750064
     },
-    "peak_working_set_bytes": 637706240,
-    "peak_commit_bytes": 631705600,
+    "peak_working_set_bytes": 637755392,
+    "peak_commit_bytes": 631762944,
     "w2_render_estimate_bytes": 625566720,
     "develop_export_estimate_bytes": 624284160
    },
@@ -1551,6 +1589,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|nikon|z-6|tiff|nikon-nef-lossless|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 6048x4024",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -1564,7 +1606,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0280147,
+     "seconds": 0.0298512,
      "details": {
       "size_bytes": 30164134,
       "sha256": "c079345fc93f53a4f0d322f8ddaae505f920c36015f25b58befccaa61db1af31"
@@ -1575,7 +1617,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.8128157,
+     "seconds": 0.8240135,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -1599,7 +1641,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.4e-06,
+     "seconds": 3.6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -1663,7 +1705,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0055 (limit 0.0269), max 0.0241 (limit 0.0801), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.3290037,
+     "seconds": 1.2971635,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -1683,7 +1725,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6048x4024 contains the camera's image area 6048x4024; edge bands are image data",
-     "seconds": 0.0027892,
+     "seconds": 0.0018909,
      "details": {
       "rendered": [
        6048,
@@ -1774,7 +1816,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 3.8488282,
+     "seconds": 4.8482535,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -1788,7 +1830,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "NIKON CORPORATION",
        "camera_model": "NIKON Z 6",
-       "seconds": 2.1181214
+       "seconds": 1.9906704
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -1801,7 +1843,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "NIKON CORPORATION",
        "camera_model": "NIKON Z 6",
-       "seconds": 1.7220804
+       "seconds": 2.8481181
       }
      }
     },
@@ -1810,7 +1852,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.1071355,
+     "seconds": 2.9625456,
      "details": {
       "display_sha256": "90acc4ad1134414bf1880ec6f0ba08cab446f3bb047316b1aa323917be54c468",
       "second_display_sha256": "90acc4ad1134414bf1880ec6f0ba08cab446f3bb047316b1aa323917be54c468",
@@ -1853,17 +1895,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 10.450437,
+    "total_seconds": 11.2437741,
     "phase_seconds": {
-     "decode": 0.526176,
-     "develop_1": 0.817326,
-     "develop_2": 3.1071357,
-     "export": 3.8488284,
-     "probe": 0.001564,
-     "w2_render": 0.7623199
+     "decode": 0.5249001,
+     "develop_1": 0.812779,
+     "develop_2": 2.9625462,
+     "export": 4.8482537,
+     "probe": 0.0016553,
+     "w2_render": 0.775124
     },
-    "peak_working_set_bytes": 600084480,
-    "peak_commit_bytes": 593891328,
+    "peak_working_set_bytes": 600252416,
+    "peak_commit_bytes": 593948672,
     "w2_render_estimate_bytes": 587965440,
     "develop_export_estimate_bytes": 586028544
    },
@@ -1907,6 +1949,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 8192x5464",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -1920,7 +1966,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0190339,
+     "seconds": 0.0207459,
      "details": {
       "size_bytes": 16815190,
       "sha256": "2deae46b816e56ba91ae7a3892ca121290e12d5b22afb11f5b05a3d8f09f759f"
@@ -1931,7 +1977,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.1442225,
+     "seconds": 1.1137788,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -1955,7 +2001,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5.2e-06,
+     "seconds": 5e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -2021,7 +2067,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0113 (limit 0.0341), max 0.0571 (limit 0.121), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.2979353,
+     "seconds": 2.1192707,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -2041,7 +2087,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "8191x5463 contains the camera's image area 8192x5464; edge bands are image data",
-     "seconds": 0.0036053,
+     "seconds": 0.0033594,
      "details": {
       "rendered": [
        8191,
@@ -2132,7 +2178,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 7.1226518,
+     "seconds": 9.4949204,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -2146,7 +2192,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 3.9690577
+       "seconds": 3.7755848
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -2159,7 +2205,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 3.1334334
+       "seconds": 5.7036044
       }
      }
     },
@@ -2168,7 +2214,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 5.7118875,
+     "seconds": 5.2278307,
      "details": {
       "display_sha256": "19bf2b7c09153dfbc9644b9c88faabc51d794d66f0d5f15eb59afabeff112cdf",
       "second_display_sha256": "19bf2b7c09153dfbc9644b9c88faabc51d794d66f0d5f15eb59afabeff112cdf",
@@ -2203,17 +2249,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 18.3907482,
+    "total_seconds": 19.8967697,
     "phase_seconds": {
-     "decode": 0.6114866,
-     "develop_1": 1.1543763,
-     "develop_2": 5.7118876,
-     "export": 7.122652,
-     "probe": 0.0014865,
-     "w2_render": 1.1015671
+     "decode": 0.60466,
+     "develop_1": 1.0831177,
+     "develop_2": 5.2278311,
+     "export": 9.4949208,
+     "probe": 0.0013055,
+     "w2_render": 1.1235667
     },
-    "peak_working_set_bytes": 1087299584,
-    "peak_commit_bytes": 1080803328,
+    "peak_working_set_bytes": 1087410176,
+    "peak_commit_bytes": 1081012224,
     "w2_render_estimate_bytes": 1074069504,
     "develop_export_estimate_bytes": 760793769
    },
@@ -2257,6 +2303,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 5088x3392",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -2270,7 +2320,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0186734,
+     "seconds": 0.0172735,
      "details": {
       "size_bytes": 17391702,
       "sha256": "dc3ef975ef029fe527ba6cafa0f899720cfdcbcfb4f590edcff81f26d499c2f0"
@@ -2281,7 +2331,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.4270675,
+     "seconds": 0.4191501,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -2305,7 +2355,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.9e-06,
+     "seconds": 4.6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -2369,7 +2419,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00766 (limit 0.0296), max 0.0329 (limit 0.0911), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 0.784181,
+     "seconds": 0.8359887,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -2389,7 +2439,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5087x3391 contains the camera's image area 5088x3392; edge bands are image data",
-     "seconds": 0.0019642,
+     "seconds": 0.002204,
      "details": {
       "rendered": [
        5087,
@@ -2480,7 +2530,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 2.9083708,
+     "seconds": 3.5616313,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -2494,7 +2544,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 1.6076894
+       "seconds": 1.4363805
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -2507,7 +2557,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 1.2942314
+       "seconds": 2.1193106
       }
      }
     },
@@ -2516,7 +2566,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 2.1406611,
+     "seconds": 2.1215029,
      "details": {
       "display_sha256": "174757c13c2b61771ec81c05062fd50c56702e4a5ea84fc3c2d62cbe0047744b",
       "second_display_sha256": "174757c13c2b61771ec81c05062fd50c56702e4a5ea84fc3c2d62cbe0047744b",
@@ -2551,17 +2601,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 7.0290213,
+    "total_seconds": 7.7349946,
     "phase_seconds": {
-     "decode": 0.2232177,
-     "develop_1": 0.4127202,
-     "develop_2": 2.1406613,
-     "export": 2.9083712,
-     "probe": 0.0015838,
-     "w2_render": 0.3979191
+     "decode": 0.2199755,
+     "develop_1": 0.4363542,
+     "develop_2": 2.1215031,
+     "export": 3.5616314,
+     "probe": 0.0014563,
+     "w2_render": 0.4151462
     },
-    "peak_working_set_bytes": 427323392,
-    "peak_commit_bytes": 419983360,
+    "peak_working_set_bytes": 427413504,
+    "peak_commit_bytes": 420028416,
     "w2_render_estimate_bytes": 414081792,
     "develop_export_estimate_bytes": 293304545
    },
@@ -2605,6 +2655,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/2",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 5088x3392",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -2618,7 +2672,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0325611,
+     "seconds": 0.0129944,
      "details": {
       "size_bytes": 11416376,
       "sha256": "88497fe7f71018ce35810e6b033fb696c7792b57e8c73e842d8326095287526a"
@@ -2629,7 +2683,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.4426547,
+     "seconds": 0.4712926,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -2653,7 +2707,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "2 images listed with roles; an implicit decode is refused (no silent first image)",
-     "seconds": 0.0009933,
+     "seconds": 0.0010322,
      "details": {
       "count": 2,
       "subimages": [
@@ -2725,7 +2779,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0082 (limit 0.0302), max 0.0182 (limit 0.0728), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 0.8131741,
+     "seconds": 0.8206362,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -2745,7 +2799,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5087x3391 contains the camera's image area 5088x3392; edge bands are image data",
-     "seconds": 0.0015854,
+     "seconds": 0.0024237,
      "details": {
       "rendered": [
        5087,
@@ -2836,7 +2890,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 2.7731467,
+     "seconds": 3.8740351,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -2850,7 +2904,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 1.4982117
+       "seconds": 1.5189856
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -2863,7 +2917,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS R5",
-       "seconds": 1.2678458
+       "seconds": 2.3485679
       }
      }
     },
@@ -2872,7 +2926,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 2.1865246,
+     "seconds": 2.1689179,
      "details": {
       "display_sha256": "82220168456425d342c4e6436b22672babf323021110eb0c7c003cdd06f9b944",
       "second_display_sha256": "82220168456425d342c4e6436b22672babf323021110eb0c7c003cdd06f9b944",
@@ -2912,17 +2966,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 7.0074863,
+    "total_seconds": 8.1030187,
     "phase_seconds": {
-     "decode": 0.240922,
-     "develop_1": 0.4224462,
-     "develop_2": 2.1865248,
-     "export": 2.7731468,
-     "probe": 0.0020499,
-     "w2_render": 0.4260307
+     "decode": 0.2654224,
+     "develop_1": 0.4365929,
+     "develop_2": 2.1689181,
+     "export": 3.8740353,
+     "probe": 0.0023382,
+     "w2_render": 0.4487244
     },
-    "peak_working_set_bytes": 427319296,
-    "peak_commit_bytes": 419430400,
+    "peak_working_set_bytes": 427397120,
+    "peak_commit_bytes": 419459072,
     "w2_render_estimate_bytes": 414081792,
     "develop_export_estimate_bytes": 293304545
    },
@@ -2966,6 +3020,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg|6744x4502|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 6720x4480",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -2979,7 +3037,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0353868,
+     "seconds": 0.0311885,
      "details": {
       "size_bytes": 33900585,
       "sha256": "02b23f9cc6dc4c99fb39aa4d1f65ac227804d06461ac1bd0f842aa2f3beb8fe4"
@@ -2990,7 +3048,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.5814451,
+     "seconds": 1.4911119,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -3014,7 +3072,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4e-06,
+     "seconds": 5.1e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -3078,7 +3136,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00952 (limit 0.0319), max 0.0343 (limit 0.0929), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.33124,
+     "seconds": 2.1072308,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -3098,7 +3156,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6720x4480 contains the camera's image area 6720x4480; edge bands are image data",
-     "seconds": 0.003362,
+     "seconds": 0.003813,
      "details": {
       "rendered": [
        6720,
@@ -3189,7 +3247,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.8788298,
+     "seconds": 6.9884312,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -3203,7 +3261,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 5D Mark IV",
-       "seconds": 2.674232
+       "seconds": 2.7580321
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -3216,7 +3274,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 5D Mark IV",
-       "seconds": 2.1918272
+       "seconds": 4.2195009
       }
      }
     },
@@ -3225,7 +3283,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 4.529757,
+     "seconds": 4.8694578,
      "details": {
       "display_sha256": "f9ac6f9839c304d6de4e19f823422aed02a18fce36ea9bd9173596d7e14a65fd",
       "second_display_sha256": "f9ac6f9839c304d6de4e19f823422aed02a18fce36ea9bd9173596d7e14a65fd",
@@ -3265,16 +3323,16 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 15.6919468,
+    "total_seconds": 17.548646,
     "phase_seconds": {
-     "decode": 1.2052258,
-     "develop_1": 1.7089589,
-     "develop_2": 4.5297572,
-     "export": 4.8788298,
-     "probe": 0.002027,
-     "w2_render": 1.4795501
+     "decode": 1.0748977,
+     "develop_1": 1.4973604,
+     "develop_2": 4.8694579,
+     "export": 6.9884314,
+     "probe": 0.0020263,
+     "w2_render": 1.425689
     },
-    "peak_working_set_bytes": 741183488,
+    "peak_working_set_bytes": 741130240,
     "peak_commit_bytes": 735383552,
     "w2_render_estimate_bytes": 728963840,
     "develop_export_estimate_bytes": 725749120
@@ -3319,6 +3377,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg-canon-sraw-mraw-subsampled-ycbcr|3360x2240|15bit|linear-rgb|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 3360x2240",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -3332,7 +3394,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0157982,
+     "seconds": 0.0139409,
      "details": {
       "size_bytes": 15217883,
       "sha256": "25d928f9e9a65525ac796bdff13e93b7b36b627568d7a17338e12dc44424078a"
@@ -3343,7 +3405,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields match the rawpy reference (full-colour data: pixels are compared through the colour check)",
-     "seconds": 0.5439797,
+     "seconds": 0.5999362,
      "details": {
       "fields_compared": 20,
       "raw_data_sha256_compared": false,
@@ -3368,7 +3430,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.1e-06,
+     "seconds": 4.6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -3427,7 +3489,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00655 (limit 0.0283), max 0.0305 (limit 0.088), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 0.6716508,
+     "seconds": 0.7625528,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -3447,7 +3509,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "3360x2240 contains the camera's image area 3360x2240; edge bands are image data",
-     "seconds": 0.0010593,
+     "seconds": 0.0009504,
      "details": {
       "rendered": [
        3360,
@@ -3538,7 +3600,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 1.1459339,
+     "seconds": 1.8769999,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -3552,7 +3614,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 5D Mark IV",
-       "seconds": 0.6085663
+       "seconds": 0.6907549
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -3565,7 +3627,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 5D Mark IV",
-       "seconds": 0.5347898
+       "seconds": 1.1833211
       }
      }
     },
@@ -3574,7 +3636,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 1.2782495,
+     "seconds": 1.315228,
      "details": {
       "display_sha256": "618da485e632e24726922bc987252cf195ca5bd2e7356bb3abe20db96c289240",
       "second_display_sha256": "618da485e632e24726922bc987252cf195ca5bd2e7356bb3abe20db96c289240",
@@ -3609,17 +3671,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 4.2998695,
+    "total_seconds": 5.3079808,
     "phase_seconds": {
-     "decode": 0.4287683,
-     "develop_1": 0.4962135,
-     "develop_2": 1.2782497,
-     "export": 1.145934,
-     "probe": 0.0013058,
-     "w2_render": 0.50472
+     "decode": 0.4694855,
+     "develop_1": 0.5829036,
+     "develop_2": 1.3152282,
+     "export": 1.8770002,
+     "probe": 0.0016731,
+     "w2_render": 0.5552994
     },
-    "peak_working_set_bytes": 193900544,
-    "peak_commit_bytes": 185999360,
+    "peak_working_set_bytes": 193994752,
+    "peak_commit_bytes": 185884672,
     "w2_render_estimate_bytes": 180633600,
     "develop_export_estimate_bytes": 143001600
    },
@@ -3663,6 +3725,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 7008x4672",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -3676,7 +3742,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0732585,
+     "seconds": 0.0674484,
      "details": {
       "size_bytes": 73457664,
       "sha256": "626e1f3235e28f2c642814e0aefad404ea767c06943934db87d2b0072ba8e8b9"
@@ -3687,7 +3753,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.4657189,
+     "seconds": 0.5246248,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -3711,7 +3777,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5e-06,
+     "seconds": 6.4e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -3775,7 +3841,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0505 (limit 0.0831), max 0.21 (limit 0.312), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.1472887,
+     "seconds": 1.2658006,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -3795,7 +3861,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "7008x4672 contains the camera's image area 7008x4672; edge bands are image data",
-     "seconds": 0.0025528,
+     "seconds": 0.0034336,
      "details": {
       "rendered": [
        7008,
@@ -3886,7 +3952,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 5.4857795,
+     "seconds": 8.2943891,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -3900,7 +3966,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 3.1628382
+       "seconds": 4.0182836
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -3913,7 +3979,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 2.3106485
+       "seconds": 4.2627817
       }
      }
     },
@@ -3922,7 +3988,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.877224,
+     "seconds": 4.0029824,
      "details": {
       "display_sha256": "4ce8394d9e2f10c28990a418d78ba04fc5137779f42808435b122203ad40f5ed",
       "second_display_sha256": "4ce8394d9e2f10c28990a418d78ba04fc5137779f42808435b122203ad40f5ed",
@@ -3962,17 +4028,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 12.1173864,
+    "total_seconds": 15.2865833,
     "phase_seconds": {
-     "decode": 0.0814514,
-     "develop_1": 0.4690511,
-     "develop_2": 3.8772242,
-     "export": 5.4857797,
-     "probe": 0.0013621,
-     "w2_render": 0.4168058
+     "decode": 0.0878568,
+     "develop_1": 0.5197767,
+     "develop_2": 4.0029827,
+     "export": 8.2943893,
+     "probe": 0.001529,
+     "w2_render": 0.4991008
     },
-    "peak_working_set_bytes": 803139584,
-    "peak_commit_bytes": 797302784,
+    "peak_working_set_bytes": 803291136,
+    "peak_commit_bytes": 797380608,
     "w2_render_estimate_bytes": 790884352,
     "develop_export_estimate_bytes": 788338688
    },
@@ -4016,6 +4082,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 7008x4672",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -4029,7 +4099,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0452992,
+     "seconds": 0.0547972,
      "details": {
       "size_bytes": 49184768,
       "sha256": "851b43c2116c4139104a5036f83ac3b6a148789b2142214dd7192c13972b25b6"
@@ -4040,7 +4110,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.3817745,
+     "seconds": 1.9293479,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -4064,7 +4134,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.3e-06,
+     "seconds": 4.6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -4128,7 +4198,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0273 (limit 0.0541), max 0.188 (limit 0.285), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.2294462,
+     "seconds": 2.3489955,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -4148,7 +4218,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "7008x4672 contains the camera's image area 7008x4672; edge bands are image data",
-     "seconds": 0.002794,
+     "seconds": 0.0036013,
      "details": {
       "rendered": [
        7008,
@@ -4239,7 +4309,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 5.6358947,
+     "seconds": 5.922504,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -4253,7 +4323,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 3.2105612
+       "seconds": 3.3834171
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -4266,7 +4336,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 2.4120476
+       "seconds": 2.5269402
       }
      }
     },
@@ -4275,7 +4345,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 4.9616948,
+     "seconds": 4.7815613,
      "details": {
       "display_sha256": "4b59280b87b91dd58c7b427a395512bcde120909ffda8fc5356ab6dc228dc644",
       "second_display_sha256": "4b59280b87b91dd58c7b427a395512bcde120909ffda8fc5356ab6dc228dc644",
@@ -4315,17 +4385,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 16.5526213,
+    "total_seconds": 17.1428343,
     "phase_seconds": {
-     "decode": 0.9927922,
-     "develop_1": 1.6095715,
-     "develop_2": 4.9616951,
-     "export": 5.6358948,
-     "probe": 0.001763,
-     "w2_render": 1.3505264
+     "decode": 1.377006,
+     "develop_1": 1.5032675,
+     "develop_2": 4.7815615,
+     "export": 5.9225041,
+     "probe": 0.0026506,
+     "w2_render": 1.5381093
     },
-    "peak_working_set_bytes": 803127296,
-    "peak_commit_bytes": 797274112,
+    "peak_working_set_bytes": 803225600,
+    "peak_commit_bytes": 797319168,
     "w2_render_estimate_bytes": 790884352,
     "develop_export_estimate_bytes": 788338688
    },
@@ -4369,6 +4439,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|4624x3080|15bit|linear-rgb|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 4608x3072",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -4382,7 +4456,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0326055,
+     "seconds": 0.0301714,
      "details": {
       "size_bytes": 32804864,
       "sha256": "d453005714327addd75bcb99c1c6223173dc92f2a59542d82e6761ef0e0e7571"
@@ -4393,7 +4467,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields match the rawpy reference (full-colour data: pixels are compared through the colour check)",
-     "seconds": 0.6502568,
+     "seconds": 0.6782659,
      "details": {
       "fields_compared": 20,
       "raw_data_sha256_compared": false,
@@ -4417,7 +4491,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.2e-06,
+     "seconds": 6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -4477,7 +4551,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00303 (limit 0.0238), max 0.00588 (limit 0.0574), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 0.8716106,
+     "seconds": 0.867976,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -4497,7 +4571,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "4608x3072 contains the camera's image area 4608x3072; edge bands are image data",
-     "seconds": 0.0017297,
+     "seconds": 0.0017338,
      "details": {
       "rendered": [
        4608,
@@ -4588,7 +4662,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 2.4014201,
+     "seconds": 3.5230082,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -4602,7 +4676,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 1.3759146
+       "seconds": 1.343451
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -4615,7 +4689,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 1.0202662
+       "seconds": 2.174638
       }
      }
     },
@@ -4624,7 +4698,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 2.1741175,
+     "seconds": 2.2280335,
      "details": {
       "display_sha256": "b450280df72846d0552c6020da862c8fdd713edceb125a620681bfcee9149174",
       "second_display_sha256": "b450280df72846d0552c6020da862c8fdd713edceb125a620681bfcee9149174",
@@ -4664,17 +4738,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 6.9693488,
+    "total_seconds": 8.1611518,
     "phase_seconds": {
-     "decode": 0.4320391,
-     "develop_1": 0.5661925,
-     "develop_2": 2.1741177,
-     "export": 2.4014203,
-     "probe": 0.0014986,
-     "w2_render": 0.5564687
+     "decode": 0.4369998,
+     "develop_1": 0.5754612,
+     "develop_2": 2.2280337,
+     "export": 3.5230083,
+     "probe": 0.0014115,
+     "w2_render": 0.5712562
     },
-    "peak_working_set_bytes": 354160640,
-    "peak_commit_bytes": 347394048,
+    "peak_working_set_bytes": 354361344,
+    "peak_commit_bytes": 347004928,
     "w2_render_estimate_bytes": 341806080,
     "develop_export_estimate_bytes": 340772352
    },
@@ -4718,6 +4792,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|3516x2344|15bit|linear-rgb|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 3504x2336",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -4731,7 +4809,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0283595,
+     "seconds": 0.0219993,
      "details": {
       "size_bytes": 22933504,
       "sha256": "cbbd0930c7d8706dff84c68a2004454266e6fd0d8354f5f76a106b5d776e0223"
@@ -4742,7 +4820,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields match the rawpy reference (full-colour data: pixels are compared through the colour check)",
-     "seconds": 0.3865655,
+     "seconds": 0.3996232,
      "details": {
       "fields_compared": 20,
       "raw_data_sha256_compared": false,
@@ -4766,7 +4844,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4e-06,
+     "seconds": 3.9e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -4826,7 +4904,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00311 (limit 0.0239), max 0.00587 (limit 0.0573), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 0.5254394,
+     "seconds": 0.5239408,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -4846,7 +4924,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "3504x2336 contains the camera's image area 3504x2336; edge bands are image data",
-     "seconds": 0.0010332,
+     "seconds": 0.0009719,
      "details": {
       "rendered": [
        3504,
@@ -4937,7 +5015,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 1.3805234,
+     "seconds": 2.1720755,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -4951,7 +5029,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 0.7876868
+       "seconds": 0.9234042
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -4964,7 +5042,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 0.5900058
+       "seconds": 1.2457385
       }
      }
     },
@@ -4973,7 +5051,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 1.2615005,
+     "seconds": 1.3252761,
      "details": {
       "display_sha256": "28c063a2d2fb5cd32fe9f07d3354e142f34c6f58f696b3478aac8c0cc1394333",
       "second_display_sha256": "28c063a2d2fb5cd32fe9f07d3354e142f34c6f58f696b3478aac8c0cc1394333",
@@ -5013,17 +5091,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 4.1081435,
+    "total_seconds": 4.9722386,
     "phase_seconds": {
-     "decode": 0.25874779999999997,
-     "develop_1": 0.3587011,
-     "develop_2": 1.2615009,
-     "export": 1.3805234,
-     "probe": 0.0014109,
-     "w2_render": 0.3373657
+     "decode": 0.2621809,
+     "develop_1": 0.3720168,
+     "develop_2": 1.3252764,
+     "export": 2.1720755,
+     "probe": 0.0014733,
+     "w2_render": 0.3555256
     },
-    "peak_working_set_bytes": 210636800,
-    "peak_commit_bytes": 204120064,
+    "peak_working_set_bytes": 210690048,
+    "peak_commit_bytes": 203427840,
     "w2_render_estimate_bytes": 198021120,
     "develop_export_estimate_bytes": 197234688
    },
@@ -5067,6 +5145,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|4692x3132|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 4608x3072",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -5080,7 +5162,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.017698,
+     "seconds": 0.021363,
      "details": {
       "size_bytes": 19636224,
       "sha256": "639a6d4db881f1359e3ea7e1137b314e59417d24e6d4d862b7202111a2c823b2"
@@ -5091,7 +5173,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.2539734,
+     "seconds": 0.3076137,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -5115,7 +5197,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5.2e-06,
+     "seconds": 4.9e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -5181,7 +5263,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0404 (limit 0.0705), max 0.143 (limit 0.229), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 0.5858265,
+     "seconds": 0.5519943,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -5201,7 +5283,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "4608x3072 contains the camera's image area 4608x3072; edge bands are image data",
-     "seconds": 0.0017368,
+     "seconds": 0.0015708,
      "details": {
       "rendered": [
        4608,
@@ -5292,7 +5374,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 2.4189872,
+     "seconds": 3.439164,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -5306,7 +5388,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 1.3928963
+       "seconds": 1.3910229
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -5319,7 +5401,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7M4",
-       "seconds": 1.0205901
+       "seconds": 2.0431899
       }
      }
     },
@@ -5328,7 +5410,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 1.7773162,
+     "seconds": 1.7852648,
      "details": {
       "display_sha256": "a30e6dd71db2837f8d2332075258904e907ef7cc2dcfd3b7f70fce61a0129f0a",
       "second_display_sha256": "a30e6dd71db2837f8d2332075258904e907ef7cc2dcfd3b7f70fce61a0129f0a",
@@ -5368,17 +5450,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 5.6028358,
+    "total_seconds": 6.6285747,
     "phase_seconds": {
-     "decode": 0.0793834,
-     "develop_1": 0.2680854,
-     "develop_2": 1.7773164,
-     "export": 2.4189872,
-     "probe": 0.0014186,
-     "w2_render": 0.2497281
+     "decode": 0.1069368,
+     "develop_1": 0.260386,
+     "develop_2": 1.785265,
+     "export": 3.4391641,
+     "probe": 0.0025896,
+     "w2_render": 0.2431033
     },
-    "peak_working_set_bytes": 364998656,
-    "peak_commit_bytes": 358309888,
+    "peak_working_set_bytes": 365006848,
+    "peak_commit_bytes": 358359040,
     "w2_render_estimate_bytes": 352788480,
     "develop_export_estimate_bytes": 346263552
    },
@@ -5422,6 +5504,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|sony|ilce-7rm5|tiff|sony-arw-compressed-lossy|9564x6376|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 9504x6336",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -5435,7 +5521,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0678726,
+     "seconds": 0.0654489,
      "details": {
       "size_bytes": 72286208,
       "sha256": "92d962578abe59f686ae57016e87d5f81e03f17404bd1959aa9628bd5a52ca91"
@@ -5446,7 +5532,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.0508949,
+     "seconds": 1.0354376,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -5470,7 +5556,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 6.1e-06,
+     "seconds": 5.8e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -5536,7 +5622,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0224 (limit 0.048), max 0.111 (limit 0.188), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.7267217,
+     "seconds": 2.4612885,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -5556,7 +5642,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "9504x6336 contains the camera's image area 9504x6336; edge bands are image data",
-     "seconds": 0.0043808,
+     "seconds": 0.0045357,
      "details": {
       "rendered": [
        9504,
@@ -5647,7 +5733,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 9.8961092,
+     "seconds": 11.0831075,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -5661,7 +5747,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7RM5",
-       "seconds": 5.6966272
+       "seconds": 5.6524505
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -5674,7 +5760,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "SONY",
        "camera_model": "ILCE-7RM5",
-       "seconds": 4.1765963
+       "seconds": 5.4066226
       }
      }
     },
@@ -5683,7 +5769,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 7.4347083,
+     "seconds": 7.1582217,
      "details": {
       "display_sha256": "dfcfbab125c8ef2f1927f84d600bb5b40191b2cd8ab8b0d959bcf5dadfd4070e",
       "second_display_sha256": "dfcfbab125c8ef2f1927f84d600bb5b40191b2cd8ab8b0d959bcf5dadfd4070e",
@@ -5723,17 +5809,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 23.5044857,
+    "total_seconds": 23.9978759,
     "phase_seconds": {
-     "decode": 0.3129589,
-     "develop_1": 1.0515659,
-     "develop_2": 7.4347085,
-     "export": 9.8961094,
-     "probe": 0.0014154,
-     "w2_render": 1.1153773
+     "decode": 0.3108064,
+     "develop_1": 1.0309718,
+     "develop_2": 7.158222,
+     "export": 11.0831077,
+     "probe": 0.0015165,
+     "w2_render": 1.0727877
     },
-    "peak_working_set_bytes": 1476485120,
-    "peak_commit_bytes": 1471803392,
+    "peak_working_set_bytes": 1476608000,
+    "peak_commit_bytes": 1471930368,
     "w2_render_estimate_bytes": 1464133632,
     "develop_export_estimate_bytes": 1454674944
    },
@@ -5777,6 +5863,13 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|dji|fc220|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 3992x2992",
+    "dng_opcodes": [
+     "list1:FixBadPixelsList",
+     "list3:FixVignetteRadial"
+    ]
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -5790,7 +5883,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0227646,
+     "seconds": 0.0254269,
      "details": {
       "size_bytes": 24331468,
       "sha256": "85a4fc27cca3c1358abd22898d6426dc3448060ca5143e7bd255cb5fff64392d"
@@ -5801,7 +5894,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.3888292,
+     "seconds": 0.3650525,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -5825,7 +5918,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5.8e-06,
+     "seconds": 4.3e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -5890,7 +5983,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 0.127 (limit 0.179), max 0.303 (limit 0.428), luminance ratio 0.998; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 0.4575868,
+     "seconds": 0.4344412,
      "details": {
       "calibration_path": "dng_color_matrix",
       "like_for_like": false,
@@ -5910,7 +6003,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "3992x2992 contains the camera's image area 3992x2992; edge bands are image data",
-     "seconds": 0.0013824,
+     "seconds": 0.0013729,
      "details": {
       "rendered": [
        3992,
@@ -6016,7 +6109,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 1.8805846,
+     "seconds": 2.1194569,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -6030,7 +6123,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "DJI",
        "camera_model": "FC220",
-       "seconds": 1.0585472
+       "seconds": 1.0647269
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -6043,7 +6136,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "DJI",
        "camera_model": "FC220",
-       "seconds": 0.8179566
+       "seconds": 1.0506567
       }
      }
     },
@@ -6052,7 +6145,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 1.4527056,
+     "seconds": 1.4538025,
      "details": {
       "display_sha256": "125604dca1a04436d0582f84255826932659c19a545f91814d75e2774a605bed",
       "second_display_sha256": "125604dca1a04436d0582f84255826932659c19a545f91814d75e2774a605bed",
@@ -6094,17 +6187,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 4.6671582,
+    "total_seconds": 4.8463311,
     "phase_seconds": {
-     "decode": 0.0499368,
-     "develop_1": 0.2203196,
-     "develop_2": 1.4527059,
-     "export": 1.8805847,
-     "probe": 0.0037734,
-     "w2_render": 0.1765618
+     "decode": 0.0458663,
+     "develop_1": 0.2277344,
+     "develop_2": 1.4538028,
+     "export": 2.119457,
+     "probe": 0.0041421,
+     "w2_render": 0.1753828
     },
-    "peak_working_set_bytes": 300896256,
-    "peak_commit_bytes": 293371904,
+    "peak_working_set_bytes": 300957696,
+    "peak_commit_bytes": 293404672,
     "w2_render_estimate_bytes": 288000000,
     "develop_export_estimate_bytes": 287424512
    },
@@ -6148,6 +6241,13 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|hasselblad|l2d-20c|dng|uncompressed|5280x3956|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 5272x3948",
+    "dng_opcodes": [
+     "list3:GainMap",
+     "list3:WarpRectilinear"
+    ]
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -6161,7 +6261,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0394609,
+     "seconds": 0.0418904,
      "details": {
       "size_bytes": 43571200,
       "sha256": "dbe98cb202f884ff11e0144899613b26d33cf9cddd9f1a62226f4352397f18e4"
@@ -6172,7 +6272,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.6424894,
+     "seconds": 0.6412202,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -6196,7 +6296,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.4e-06,
+     "seconds": 4.1e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -6261,7 +6361,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 0.522 (limit 0.673), max 1.61 (limit 2.06), luminance ratio 1; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 0.7573022,
+     "seconds": 0.7743502,
      "details": {
       "calibration_path": "dng_color_matrix",
       "like_for_like": false,
@@ -6281,7 +6381,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5272x3948 contains the camera's image area 5272x3948; edge bands are image data",
-     "seconds": 0.0018042,
+     "seconds": 0.0019353,
      "details": {
       "rendered": [
        5272,
@@ -6387,7 +6487,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 3.7407117,
+     "seconds": 4.1970505,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -6401,7 +6501,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Hasselblad",
        "camera_model": "L2D-20c",
-       "seconds": 2.19259
+       "seconds": 2.0452699
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -6414,7 +6514,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Hasselblad",
        "camera_model": "L2D-20c",
-       "seconds": 1.5397818
+       "seconds": 2.143635
       }
      }
     },
@@ -6423,7 +6523,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.3318015,
+     "seconds": 3.1465516,
      "details": {
       "display_sha256": "131e031e24326e266098f430f4af2280f3c0da2a22a8dc2ba06a9f996dc1ee3d",
       "second_display_sha256": "131e031e24326e266098f430f4af2280f3c0da2a22a8dc2ba06a9f996dc1ee3d",
@@ -6465,17 +6565,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 9.7956764,
+    "total_seconds": 10.0858606,
     "phase_seconds": {
-     "decode": 0.0785995,
-     "develop_1": 0.8909998,
-     "develop_2": 3.3318017,
-     "export": 3.7407118,
-     "probe": 0.002284,
-     "w2_render": 0.2878592
+     "decode": 0.0782653,
+     "develop_1": 0.9112803,
+     "develop_2": 3.1465518,
+     "export": 4.1970507,
+     "probe": 0.0027081,
+     "w2_render": 0.3275964
     },
-    "peak_working_set_bytes": 514764800,
-    "peak_commit_bytes": 507088896,
+    "peak_working_set_bytes": 514994176,
+    "peak_commit_bytes": 507228160,
     "w2_render_estimate_bytes": 501304320,
     "develop_export_estimate_bytes": 501304320
    },
@@ -6519,6 +6619,14 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|dji|fc7303|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 4000x3000",
+    "dng_opcodes": [
+     "list3:FixVignetteRadial",
+     "list3:WarpRectilinear",
+     "list3:GainMap"
+    ]
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -6532,7 +6640,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.024649,
+     "seconds": 0.0240505,
      "details": {
       "size_bytes": 24524288,
       "sha256": "21a49e63966f82391ca1188c7559c3acc01a35a89a70194fda4bf44cbd64a851"
@@ -6543,7 +6651,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.4284951,
+     "seconds": 0.3668011,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -6567,7 +6675,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.9e-06,
+     "seconds": 4.5e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -6632,7 +6740,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 0.369 (limit 0.482), max 0.738 (limit 0.972), luminance ratio 1; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 0.4494353,
+     "seconds": 0.4186428,
      "details": {
       "calibration_path": "dng_color_matrix",
       "like_for_like": false,
@@ -6652,7 +6760,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "4000x3000 contains the camera's image area 4000x3000; edge bands are image data",
-     "seconds": 0.0016642,
+     "seconds": 0.001431,
      "details": {
       "rendered": [
        4000,
@@ -6763,7 +6871,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 1.9408072,
+     "seconds": 2.0324718,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -6777,7 +6885,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "DJI",
        "camera_model": "FC7303",
-       "seconds": 1.0541997
+       "seconds": 1.1270825
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -6790,7 +6898,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "DJI",
        "camera_model": "FC7303",
-       "seconds": 0.8815974
+       "seconds": 0.901202
       }
      }
     },
@@ -6799,7 +6907,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 1.6197459,
+     "seconds": 1.5822951,
      "details": {
       "display_sha256": "bba80cb74490a9197058d7e8aa5e30423eb199576557f1a43b168d14bc9fb5ef",
       "second_display_sha256": "bba80cb74490a9197058d7e8aa5e30423eb199576557f1a43b168d14bc9fb5ef",
@@ -6836,17 +6944,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 5.0653503,
+    "total_seconds": 5.0027868,
     "phase_seconds": {
-     "decode": 0.0732433,
-     "develop_1": 0.3689514,
-     "develop_2": 1.6197462,
-     "export": 1.9408072,
-     "probe": 0.0021799,
-     "w2_render": 0.1707171
+     "decode": 0.0447632,
+     "develop_1": 0.3645484,
+     "develop_2": 1.5822953,
+     "export": 2.032472,
+     "probe": 0.0014887,
+     "w2_render": 0.1717605
     },
-    "peak_working_set_bytes": 301555712,
-    "peak_commit_bytes": 293625856,
+    "peak_working_set_bytes": 301654016,
+    "peak_commit_bytes": 293707776,
     "w2_render_estimate_bytes": 288000000,
     "develop_export_estimate_bytes": 288000000
    },
@@ -6890,6 +6998,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|insta360|one2|dng|uncompressed|3040x6080|16bit|mosaic:GRBG|uint16|dual-fisheye-360|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_whole_image 3040x6080",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -6905,7 +7017,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0344869,
+     "seconds": 0.0349514,
      "details": {
       "size_bytes": 36967459,
       "sha256": "54919f75c1981e23c83731da54a381ca0c7b4ef4b1e14d124a81289959fa8108"
@@ -6916,7 +7028,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.283896,
+     "seconds": 0.2868068,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -6940,7 +7052,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.6e-06,
+     "seconds": 4.2e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -7007,7 +7119,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 0.483 (limit 0.623), max 1.13 (limit 1.46), luminance ratio 0.999; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 0.6773586,
+     "seconds": 0.6412063,
      "details": {
       "calibration_path": "dng_color_matrix",
       "like_for_like": false,
@@ -7027,7 +7139,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "3040x6080 (camera image area unknown); multi-view frame, edge bands not evaluated",
-     "seconds": 1.57e-05,
+     "seconds": 1.97e-05,
      "details": {
       "rendered": [
        3040,
@@ -7089,7 +7201,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 2.9865098,
+     "seconds": 4.6543215,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -7103,7 +7215,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Arashi Vision",
        "camera_model": "Insta360 One2",
-       "seconds": 1.6604377
+       "seconds": 1.7036343
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -7116,7 +7228,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Arashi Vision",
        "camera_model": "Insta360 One2",
-       "seconds": 1.3197176
+       "seconds": 2.9437535
       }
      }
     },
@@ -7125,7 +7237,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 2.1076702,
+     "seconds": 2.154704,
      "details": {
       "display_sha256": "6a2a924aa46b697e51b27a22115edd0cba2acfb79f7743b138280adf0b7b8150",
       "second_display_sha256": "6a2a924aa46b697e51b27a22115edd0cba2acfb79f7743b138280adf0b7b8150",
@@ -7164,17 +7276,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 6.6510752,
+    "total_seconds": 8.3226435,
     "phase_seconds": {
-     "decode": 0.0678077,
-     "develop_1": 0.2233134,
-     "develop_2": 2.1076705,
-     "export": 2.9865098,
-     "probe": 0.0011051,
-     "w2_render": 0.2625692
+     "decode": 0.0678263,
+     "develop_1": 0.228093,
+     "develop_2": 2.1547043,
+     "export": 4.6543216,
+     "probe": 0.0011405,
+     "w2_render": 0.2562436
     },
-    "peak_working_set_bytes": 456896512,
-    "peak_commit_bytes": 449273856,
+    "peak_working_set_bytes": 456876032,
+    "peak_commit_bytes": 449220608,
     "w2_render_estimate_bytes": 443596800,
     "develop_export_estimate_bytes": 314214400
    },
@@ -7218,6 +7330,10 @@
     "stage": "after_open"
    },
    "lookup_key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 8256x5504",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": false,
    "decode_error": "unsupported at raw.libraw.interpret: LibRaw 0.22.2-Release recognises the file but cannot decode its data (nikon_he_load_raw())",
@@ -7233,7 +7349,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.026273,
+     "seconds": 0.0250467,
      "details": {
       "size_bytes": 24384512,
       "sha256": "82df041542b8d328738443bb5ff3373b396e406ecc8cbe7dc3b35252790c53e7"
@@ -7244,7 +7360,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "refused as Unsupported, as the reference decoder refuses it (Unsupported file format or not RAW file)",
-     "seconds": 0.0012495,
+     "seconds": 0.0013443,
      "details": {
       "lucent_error": "unsupported at raw.libraw.interpret: LibRaw 0.22.2-Release recognises the file but cannot decode its data (nikon_he_load_raw())"
      }
@@ -7266,7 +7382,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 1.04e-05,
+     "seconds": 4.6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -7395,13 +7511,13 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 0.0389256,
+    "total_seconds": 0.029424,
     "phase_seconds": {
-     "decode": 0.0012275,
-     "probe": 0.0017101
+     "decode": 0.0013283,
+     "probe": 0.0021552
     },
-    "peak_working_set_bytes": 12308480,
-    "peak_commit_bytes": 5144576,
+    "peak_working_set_bytes": 12423168,
+    "peak_commit_bytes": 5246976,
     "w2_render_estimate_bytes": 0,
     "develop_export_estimate_bytes": 0
    },
@@ -7445,6 +7561,10 @@
     "stage": "after_open"
    },
    "lookup_key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he-star|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 8256x5504",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": false,
    "decode_error": "unsupported at raw.libraw.interpret: LibRaw 0.22.2-Release recognises the file but cannot decode its data (nikon_he_load_raw())",
@@ -7460,7 +7580,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0367119,
+     "seconds": 0.0334756,
      "details": {
       "size_bytes": 35744768,
       "sha256": "ea8b093cd11c946c5eeb501b775859e8e617ce1d79577abc41b233c339e4004c"
@@ -7471,7 +7591,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "refused as Unsupported, as the reference decoder refuses it (Unsupported file format or not RAW file)",
-     "seconds": 0.0009728,
+     "seconds": 0.0006686,
      "details": {
       "lucent_error": "unsupported at raw.libraw.interpret: LibRaw 0.22.2-Release recognises the file but cannot decode its data (nikon_he_load_raw())"
      }
@@ -7493,7 +7613,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.5e-06,
+     "seconds": 4.6e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -7622,13 +7742,13 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 0.0466493,
+    "total_seconds": 0.0362939,
     "phase_seconds": {
-     "decode": 0.0009578,
-     "probe": 0.0015628
+     "decode": 0.000653,
+     "probe": 0.0015507
     },
-    "peak_working_set_bytes": 12345344,
-    "peak_commit_bytes": 5173248,
+    "peak_working_set_bytes": 12439552,
+    "peak_commit_bytes": 5267456,
     "w2_render_estimate_bytes": 0,
     "develop_export_estimate_bytes": 0
    },
@@ -7672,6 +7792,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|nikon|z-6|tiff|nikon-nef-lossy-type-2|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 6048x4024",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -7685,7 +7809,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0291237,
+     "seconds": 0.0271797,
      "details": {
       "size_bytes": 25994889,
       "sha256": "8ca94584578b35a422744c1a610174ce37df0691588edfdecaec3111b3fbbb02"
@@ -7696,7 +7820,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.8002383,
+     "seconds": 0.86016,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -7720,7 +7844,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.8e-06,
+     "seconds": 4e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -7786,7 +7910,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00609 (limit 0.0276), max 0.0282 (limit 0.0852), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.297723,
+     "seconds": 1.303269,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -7806,7 +7930,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6048x4024 contains the camera's image area 6048x4024; edge bands are image data",
-     "seconds": 0.0022685,
+     "seconds": 0.0040376,
      "details": {
       "rendered": [
        6048,
@@ -7897,7 +8021,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 3.8229909,
+     "seconds": 5.2525497,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -7911,7 +8035,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "NIKON CORPORATION",
        "camera_model": "NIKON Z 6",
-       "seconds": 2.0780493
+       "seconds": 2.0967145
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -7924,7 +8048,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "NIKON CORPORATION",
        "camera_model": "NIKON Z 6",
-       "seconds": 1.7360065
+       "seconds": 3.1472233
       }
      }
     },
@@ -7933,7 +8057,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.2009499,
+     "seconds": 3.0776973,
      "details": {
       "display_sha256": "1ea931e42318c16e6ae33de162892be2beff3607ef6c33a2b10f6d5c1ede4855",
       "second_display_sha256": "1ea931e42318c16e6ae33de162892be2beff3607ef6c33a2b10f6d5c1ede4855",
@@ -7976,17 +8100,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 10.4144597,
+    "total_seconds": 11.7290055,
     "phase_seconds": {
-     "decode": 0.510363,
-     "develop_1": 0.7712441,
-     "develop_2": 3.2009504,
-     "export": 3.8229911,
-     "probe": 0.0016672,
-     "w2_render": 0.7547257
+     "decode": 0.5665777,
+     "develop_1": 0.775477,
+     "develop_2": 3.0776977,
+     "export": 5.2525501,
+     "probe": 0.0020482,
+     "w2_render": 0.753634
     },
-    "peak_working_set_bytes": 600055808,
-    "peak_commit_bytes": 593965056,
+    "peak_working_set_bytes": 600133632,
+    "peak_commit_bytes": 593977344,
     "w2_render_estimate_bytes": 587965440,
     "develop_export_estimate_bytes": 586028544
    },
@@ -8030,6 +8154,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-compressed-lossy|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 6240x4160",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -8043,7 +8171,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0303767,
+     "seconds": 0.0252033,
      "details": {
       "size_bytes": 26971008,
       "sha256": "871836938ffa695f4c41765ddb107c2703ce755f7f3ced7e10f9e04746f1734e"
@@ -8054,7 +8182,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 2.1145791,
+     "seconds": 2.1794598,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -8078,7 +8206,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.6e-06,
+     "seconds": 4.2e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -8136,7 +8264,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0525 (limit 0.0856), max 0.122 (limit 0.202), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 2.5294305,
+     "seconds": 2.362365,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -8156,7 +8284,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6240x4160 contains the camera's image area 6240x4160; edge bands are image data",
-     "seconds": 0.0027951,
+     "seconds": 0.003038,
      "details": {
       "rendered": [
        6240,
@@ -8247,7 +8375,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.3638027,
+     "seconds": 5.5676594,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -8261,7 +8389,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "FUJIFILM",
        "camera_model": "X-T4",
-       "seconds": 2.380846
+       "seconds": 2.4043892
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -8274,7 +8402,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "FUJIFILM",
        "camera_model": "X-T4",
-       "seconds": 1.973953
+       "seconds": 3.1511209
       }
      }
     },
@@ -8283,7 +8411,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 4.6409727,
+     "seconds": 4.5395117,
      "details": {
       "display_sha256": "3fc08547dcb6c78ce6b10e9196f4c6a44febc9d5d8ef29c549b935991290560d",
       "second_display_sha256": "3fc08547dcb6c78ce6b10e9196f4c6a44febc9d5d8ef29c549b935991290560d",
@@ -8331,17 +8459,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 16.2795874,
+    "total_seconds": 17.11589,
     "phase_seconds": {
-     "decode": 1.4169871,
-     "develop_1": 2.049413,
-     "develop_2": 4.640973,
-     "export": 4.3638028,
-     "probe": 0.001619,
-     "w2_render": 1.8370492
+     "decode": 1.4660149,
+     "develop_1": 1.9209541,
+     "develop_2": 4.539512,
+     "export": 5.5676596,
+     "probe": 0.0014242,
+     "w2_render": 1.7958847
     },
-    "peak_working_set_bytes": 637751296,
-    "peak_commit_bytes": 631762944,
+    "peak_working_set_bytes": 637763584,
+    "peak_commit_bytes": 631816192,
     "w2_render_estimate_bytes": 625566720,
     "develop_export_estimate_bytes": 624284160
    },
@@ -8385,6 +8513,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|fujifilm|gfx50s-ii|raf|fujifilm-raf-compressed-lossy|8280x6208|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 8256x6192",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -8398,7 +8530,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0400381,
+     "seconds": 0.033043,
      "details": {
       "size_bytes": 34522544,
       "sha256": "59699d3063a9900eb5f226da664473c6081ed2cfe4d4529b7cd45afa2f1cac62"
@@ -8409,7 +8541,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 4.0882879,
+     "seconds": 4.0309918,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -8433,7 +8565,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.7e-06,
+     "seconds": 5.1e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -8499,7 +8631,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0354 (limit 0.0643), max 0.342 (limit 0.478), luminance ratio 0.999; like for like with the reference (same calibration)",
-     "seconds": 5.1676782,
+     "seconds": 4.6462742,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -8519,7 +8651,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "8256x6192 contains the camera's image area 8256x6192; edge bands are image data",
-     "seconds": 0.0042927,
+     "seconds": 0.0032712,
      "details": {
       "rendered": [
        8256,
@@ -8610,7 +8742,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 8.734488,
+     "seconds": 8.4003509,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -8624,7 +8756,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "FUJIFILM",
        "camera_model": "GFX50S II",
-       "seconds": 4.9681525
+       "seconds": 4.6322127
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -8637,7 +8769,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "FUJIFILM",
        "camera_model": "GFX50S II",
-       "seconds": 3.7440168
+       "seconds": 3.7501416
       }
      }
     },
@@ -8646,7 +8778,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 8.9144954,
+     "seconds": 8.5312304,
      "details": {
       "display_sha256": "9f726fd028a988574cfbaff65b2da8bce7f5fc4b71a542c5b3bebc40e84511f3",
       "second_display_sha256": "9f726fd028a988574cfbaff65b2da8bce7f5fc4b71a542c5b3bebc40e84511f3",
@@ -8689,17 +8821,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 31.6469052,
+    "total_seconds": 30.0138843,
     "phase_seconds": {
-     "decode": 2.6049525,
-     "develop_1": 3.6347145,
-     "develop_2": 8.9144957,
-     "export": 8.7344883,
-     "probe": 0.0013003,
-     "w2_render": 3.7065441
+     "decode": 2.6116245,
+     "develop_1": 3.4358453,
+     "develop_2": 8.5312305,
+     "export": 8.400351,
+     "probe": 0.001459,
+     "w2_render": 3.4047971
     },
-    "peak_working_set_bytes": 1246306304,
-    "peak_commit_bytes": 1241391104,
+    "peak_working_set_bytes": 1246318592,
+    "peak_commit_bytes": 1241452544,
     "w2_render_estimate_bytes": 1234051072,
     "develop_export_estimate_bytes": 1230479360
    },
@@ -8743,6 +8875,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|panasonic|dc-s5m2|rw2|panasonicc8-load-raw-lossiness-not-established|6008x4008|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 6000x4000",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -8756,7 +8892,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0417539,
+     "seconds": 0.0385487,
      "details": {
       "size_bytes": 37309952,
       "sha256": "53a171521a7f9af6910b4ab61c5a4a42de0cceb24166e15b07eee1e00675028f"
@@ -8767,7 +8903,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.6210872,
+     "seconds": 0.6257871,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -8791,7 +8927,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.6e-06,
+     "seconds": 4.1e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -8855,7 +8991,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0459 (limit 0.0774), max 0.258 (limit 0.372), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.1144734,
+     "seconds": 1.0998369,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -8875,7 +9011,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6000x4000 contains the camera's image area 6000x4000; edge bands are image data",
-     "seconds": 0.0019115,
+     "seconds": 0.0020011,
      "details": {
       "rendered": [
        6000,
@@ -8966,7 +9102,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.0457619,
+     "seconds": 4.2833914,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -8980,7 +9116,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Panasonic",
        "camera_model": "DC-S5M2",
-       "seconds": 2.338279
+       "seconds": 2.3534572
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -8993,7 +9129,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Panasonic",
        "camera_model": "DC-S5M2",
-       "seconds": 1.6982062
+       "seconds": 1.9208517
       }
      }
     },
@@ -9002,7 +9138,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.5041845,
+     "seconds": 3.2879394,
      "details": {
       "display_sha256": "12cb7c32d71046b8cbf03c841d8146d11b0c4d9eb827c5da584d4c3b018e921a",
       "second_display_sha256": "12cb7c32d71046b8cbf03c841d8146d11b0c4d9eb827c5da584d4c3b018e921a",
@@ -9045,17 +9181,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 10.4039061,
+    "total_seconds": 10.4046052,
     "phase_seconds": {
-     "decode": 0.3413632,
-     "develop_1": 0.6228666,
-     "develop_2": 3.5041847,
-     "export": 4.0457622,
-     "probe": 0.0012275,
-     "w2_render": 0.5831068
+     "decode": 0.3484447,
+     "develop_1": 0.6303618,
+     "develop_2": 3.2879397,
+     "export": 4.2833917,
+     "probe": 0.0017914,
+     "w2_render": 0.592995
     },
-    "peak_working_set_bytes": 590372864,
-    "peak_commit_bytes": 584249344,
+    "peak_working_set_bytes": 590323712,
+    "peak_commit_bytes": 584216576,
     "w2_render_estimate_bytes": 578178048,
     "develop_export_estimate_bytes": 577089024
    },
@@ -9099,6 +9235,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "decoder_inset_crop 5184x3888",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -9112,7 +9252,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0268152,
+     "seconds": 0.0216177,
      "details": {
       "size_bytes": 21820729,
       "sha256": "bf2eef6becc0851e48231617c3e2eac27a2cdb44c75b93035c561d837952c18b"
@@ -9123,7 +9263,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.9418526,
+     "seconds": 0.9302443,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -9147,7 +9287,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.8e-06,
+     "seconds": 4e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -9211,7 +9351,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0562 (limit 0.0903), max 0.202 (limit 0.303), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.3813597,
+     "seconds": 1.3502236,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -9231,7 +9371,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5184x3888 contains the camera's image area 5184x3888; edge bands are image data",
-     "seconds": 0.0024618,
+     "seconds": 0.002242,
      "details": {
       "rendered": [
        5184,
@@ -9322,7 +9462,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 3.667124,
+     "seconds": 3.473309,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -9336,7 +9476,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "OM Digital Solutions",
        "camera_model": "OM-1",
-       "seconds": 2.1195127
+       "seconds": 1.9064531
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -9349,7 +9489,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "OM Digital Solutions",
        "camera_model": "OM-1",
-       "seconds": 1.5382013
+       "seconds": 1.5598412
       }
      }
     },
@@ -9358,7 +9498,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.3497017,
+     "seconds": 3.0437341,
      "details": {
       "display_sha256": "d2ad50c3a1ab73e2649be31f219fd0223ff63141e8292c314049660e94b3a339",
       "second_display_sha256": "d2ad50c3a1ab73e2649be31f219fd0223ff63141e8292c314049660e94b3a339",
@@ -9401,17 +9541,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 10.8968704,
+    "total_seconds": 10.1693973,
     "phase_seconds": {
-     "decode": 0.6987402,
-     "develop_1": 1.0929596,
-     "develop_2": 3.349702,
-     "export": 3.6671241,
-     "probe": 0.0016265,
-     "w2_render": 0.930986
+     "decode": 0.6960101,
+     "develop_1": 0.9588816,
+     "develop_2": 3.0437343,
+     "export": 3.4733091,
+     "probe": 0.0016014,
+     "w2_render": 0.9264993
     },
-    "peak_working_set_bytes": 502353920,
-    "peak_commit_bytes": 496025600,
+    "peak_working_set_bytes": 502358016,
+    "peak_commit_bytes": 496218112,
     "w2_render_estimate_bytes": 490220544,
     "develop_export_estimate_bytes": 486974976
    },
@@ -9455,6 +9595,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|pentax|k-3-mark-iii|tiff|pentax-pef-lossless-compressed|6224x4160|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "unknown",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -9468,7 +9612,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0389259,
+     "seconds": 0.0342835,
      "details": {
       "size_bytes": 32300671,
       "sha256": "351be88038b2dd28af39e11dbece6de74efd71119a9ef667d35cdf02dcff919f"
@@ -9479,7 +9623,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.8295715,
+     "seconds": 0.8442885,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -9503,7 +9647,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 5.7e-06,
+     "seconds": 4.9e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -9567,7 +9711,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00246 (limit 0.0231), max 0.00678 (limit 0.0585), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.3771724,
+     "seconds": 1.3355048,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -9587,7 +9731,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6224x4160 contains the camera's image area 6192x4128; edge bands are image data",
-     "seconds": 0.0026342,
+     "seconds": 0.0021532,
      "details": {
       "rendered": [
        6224,
@@ -9678,7 +9822,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.1734636,
+     "seconds": 4.2884064,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -9692,7 +9836,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "RICOH IMAGING COMPANY, LTD.",
        "camera_model": "PENTAX K-3 Mark III",
-       "seconds": 2.3021481
+       "seconds": 2.1860111
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -9705,7 +9849,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "RICOH IMAGING COMPANY, LTD.",
        "camera_model": "PENTAX K-3 Mark III",
-       "seconds": 1.8594314
+       "seconds": 2.0921745
       }
      }
     },
@@ -9714,7 +9858,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.3053995,
+     "seconds": 3.1191224,
      "details": {
       "display_sha256": "4715650d3a0d4dd1f4284b75ca7b980dc74bdce6dc293365d3e6cf92c24af22d",
       "second_display_sha256": "4715650d3a0d4dd1f4284b75ca7b980dc74bdce6dc293365d3e6cf92c24af22d",
@@ -9752,17 +9896,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 10.9839905,
+    "total_seconds": 10.810431,
     "phase_seconds": {
-     "decode": 0.5232131,
-     "develop_1": 0.73326,
-     "develop_2": 3.3053997,
-     "export": 4.1734637,
-     "probe": 0.0012165,
-     "w2_render": 0.7797423
+     "decode": 0.5307128,
+     "develop_1": 0.7400101,
+     "develop_2": 3.1191227,
+     "export": 4.2884066,
+     "probe": 0.0012469,
+     "w2_render": 0.7976655
     },
-    "peak_working_set_bytes": 634605568,
-    "peak_commit_bytes": 627470336,
+    "peak_working_set_bytes": 634667008,
+    "peak_commit_bytes": 627408896,
     "w2_render_estimate_bytes": 621404160,
     "develop_export_estimate_bytes": 440161280
    },
@@ -9806,6 +9950,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|pentax|k-3-mark-iii-monochrome|dng|lossless-jpeg|6224x4160|14bit|monochrome|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 6192x4128",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -9819,7 +9967,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0408452,
+     "seconds": 0.0337489,
      "details": {
       "size_bytes": 37669430,
       "sha256": "1afc1071451a3a3737c29ae319e1411551b6893d0e6a34db29903318266b0066"
@@ -9830,7 +9978,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.1249527,
+     "seconds": 0.9601457,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -9854,7 +10002,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.5e-06,
+     "seconds": 6.9e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -9911,7 +10059,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00098 (limit 0.0213), max 0.00259 (limit 0.0533), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.7716612,
+     "seconds": 1.6128707,
      "details": {
       "calibration_path": "monochrome_neutral",
       "like_for_like": true,
@@ -9931,7 +10079,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "6192x4128 contains the camera's image area 6192x4128; edge bands are image data",
-     "seconds": 0.0019192,
+     "seconds": 0.0021679,
      "details": {
       "rendered": [
        6192,
@@ -10026,7 +10174,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 3.9513086,
+     "seconds": 4.041702,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -10040,7 +10188,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "RICOH IMAGING COMPANY, LTD.",
        "camera_model": "PENTAX K-3 Mark III Monochrome",
-       "seconds": 2.1181103
+       "seconds": 2.0724073
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -10053,7 +10201,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "RICOH IMAGING COMPANY, LTD.",
        "camera_model": "PENTAX K-3 Mark III Monochrome",
-       "seconds": 1.8223282
+       "seconds": 1.9601901
       }
      }
     },
@@ -10062,7 +10210,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.6492462,
+     "seconds": 3.3816292,
      "details": {
       "display_sha256": "b5e4048eb356fc05cc27c4e297164e9aa1927ba98b7603c8b25711b93747006d",
       "second_display_sha256": "b5e4048eb356fc05cc27c4e297164e9aa1927ba98b7603c8b25711b93747006d",
@@ -10102,17 +10250,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 12.438066,
+    "total_seconds": 11.5799804,
     "phase_seconds": {
-     "decode": 0.9589035,
-     "develop_1": 1.3775882,
-     "develop_2": 3.6492464,
-     "export": 3.9513088,
-     "probe": 0.001321,
-     "w2_render": 1.1730984
+     "decode": 0.7837375,
+     "develop_1": 1.0963809,
+     "develop_2": 3.3816295,
+     "export": 4.0417021,
+     "probe": 0.0018917,
+     "w2_render": 1.0759972
     },
-    "peak_working_set_bytes": 734298112,
-    "peak_commit_bytes": 727556096,
+    "peak_working_set_bytes": 734314496,
+    "peak_commit_bytes": 726900736,
     "w2_render_estimate_bytes": 621404160,
     "develop_export_estimate_bytes": 720996352
    },
@@ -10156,6 +10304,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|leica|m10|dng|lossless-jpeg|5984x3992|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 5976x3984",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -10169,7 +10321,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.036604,
+     "seconds": 0.0300048,
      "details": {
       "size_bytes": 34209792,
       "sha256": "26be5e06dfb53a2938dab3ca8f06024533a9c0dd0c652938f39eb48bc325f95e"
@@ -10180,7 +10332,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.4368754,
+     "seconds": 1.3542282,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -10204,7 +10356,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.7e-06,
+     "seconds": 4e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -10269,7 +10421,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 0.624 (limit 0.8), max 0.945 (limit 1.23), luminance ratio 0.998; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 1.6222482,
+     "seconds": 1.4896946,
      "details": {
       "calibration_path": "dng_color_matrix",
       "like_for_like": false,
@@ -10289,7 +10441,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5976x3984 contains the camera's image area 5976x3984; edge bands are image data",
-     "seconds": 0.0030621,
+     "seconds": 0.0027333,
      "details": {
       "rendered": [
        5976,
@@ -10384,7 +10536,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.1550554,
+     "seconds": 3.9997473,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -10398,7 +10550,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Leica Camera AG",
        "camera_model": "LEICA M10",
-       "seconds": 2.4200529
+       "seconds": 2.2031333
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -10411,7 +10563,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Leica Camera AG",
        "camera_model": "LEICA M10",
-       "seconds": 1.725348
+       "seconds": 1.7875242
       }
      }
     },
@@ -10420,7 +10572,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.6982884,
+     "seconds": 3.4852376,
      "details": {
       "display_sha256": "fa20c798917324ded689cb10980972b02b60fe347d18ac95333154a874cbfa92",
       "second_display_sha256": "fa20c798917324ded689cb10980972b02b60fe347d18ac95333154a874cbfa92",
@@ -10462,17 +10614,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 12.7081928,
+    "total_seconds": 11.8156172,
     "phase_seconds": {
-     "decode": 0.7835165,
-     "develop_1": 1.2490568,
-     "develop_2": 3.6982885,
-     "export": 4.1550556,
-     "probe": 0.0014086,
-     "w2_render": 1.0463667
+     "decode": 0.6999247,
+     "develop_1": 1.0328174,
+     "develop_2": 3.485238,
+     "export": 3.9997475,
+     "probe": 0.0013132,
+     "w2_render": 1.0022176
     },
-    "peak_working_set_bytes": 585801728,
-    "peak_commit_bytes": 579334144,
+    "peak_working_set_bytes": 585863168,
+    "peak_commit_bytes": 579330048,
     "w2_render_estimate_bytes": 573315072,
     "develop_export_estimate_bytes": 572485632
    },
@@ -10516,6 +10668,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|leica|m-monochrom-typ-246|dng|lossless-jpeg|5984x4000|12bit|monochrome|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 5976x3992",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -10529,7 +10685,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0275596,
+     "seconds": 0.0252197,
      "details": {
       "size_bytes": 21700096,
       "sha256": "3fb74d1fc402daaa48a9c3f1d6279d7e85fb58dfdaf816f036927d49ab228977"
@@ -10540,7 +10696,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.221515,
+     "seconds": 1.1000697,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -10564,7 +10720,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.8e-06,
+     "seconds": 4.2e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -10621,7 +10777,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.00155 (limit 0.022), max 0.00281 (limit 0.0535), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.5391069,
+     "seconds": 1.3724303,
      "details": {
       "calibration_path": "monochrome_neutral",
       "like_for_like": true,
@@ -10641,7 +10797,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5976x3992 contains the camera's image area 5976x3992; edge bands are image data",
-     "seconds": 0.0021341,
+     "seconds": 0.0019818,
      "details": {
       "rendered": [
        5976,
@@ -10736,7 +10892,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 4.1246331,
+     "seconds": 3.9380186,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -10750,7 +10906,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Leica Camera AG",
        "camera_model": "LEICA M MONOCHROM (Typ 246)",
-       "seconds": 2.2865447
+       "seconds": 2.0417464
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -10763,7 +10919,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Leica Camera AG",
        "camera_model": "LEICA M MONOCHROM (Typ 246)",
-       "seconds": 1.8284052
+       "seconds": 1.887336
       }
      }
     },
@@ -10772,7 +10928,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.4458597,
+     "seconds": 3.241584,
      "details": {
       "display_sha256": "18c8b57e191c00178f5cdad4d375aec89cb3a01cbe3fde634e1749faf0c06466",
       "second_display_sha256": "18c8b57e191c00178f5cdad4d375aec89cb3a01cbe3fde634e1749faf0c06466",
@@ -10812,17 +10968,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 12.0230941,
+    "total_seconds": 11.1388662,
     "phase_seconds": {
-     "decode": 0.7913368,
-     "develop_1": 1.1568464,
-     "develop_2": 3.4458598,
-     "export": 4.1246332,
-     "probe": 0.0013923,
-     "w2_render": 1.0077138
+     "decode": 0.6702834,
+     "develop_1": 1.0141148,
+     "develop_2": 3.2415842,
+     "export": 3.9380188,
+     "probe": 0.0013681,
+     "w2_render": 0.8823568
     },
-    "peak_working_set_bytes": 682823680,
-    "peak_commit_bytes": 675303424,
+    "peak_working_set_bytes": 682729472,
+    "peak_commit_bytes": 675270656,
     "w2_render_estimate_bytes": 574464000,
     "develop_export_estimate_bytes": 669378048
    },
@@ -10866,6 +11022,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|hasselblad|x1d-ii-50c|tiff|uncompressed|8278x6208|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "unknown",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -10879,7 +11039,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.1210657,
+     "seconds": 0.0969076,
      "details": {
       "size_bytes": 108399104,
       "sha256": "809d498263d6f07cbaa4b9a5be97933057b4ab21e7243bb7afbe3862f3b48b47"
@@ -10890,7 +11050,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 0.6671628,
+     "seconds": 0.6966797,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -10914,7 +11074,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 4.6e-06,
+     "seconds": 4.9e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -10978,7 +11138,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "region CIEDE2000 mean 0.0106 (limit 0.0333), max 0.0615 (limit 0.127), luminance ratio 1; like for like with the reference (same calibration)",
-     "seconds": 1.7632123,
+     "seconds": 1.7101049,
      "details": {
       "calibration_path": "decoder_matrix",
       "like_for_like": true,
@@ -10998,7 +11158,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "8278x6208 contains the camera's image area 8272x6200; edge bands are image data",
-     "seconds": 0.0066765,
+     "seconds": 0.0033949,
      "details": {
       "rendered": [
        8278,
@@ -11089,7 +11249,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 8.2045227,
+     "seconds": 8.8963968,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -11103,7 +11263,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Hasselblad",
        "camera_model": "X1D II 50C",
-       "seconds": 4.5574457
+       "seconds": 4.373827
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -11116,7 +11276,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Hasselblad",
        "camera_model": "X1D II 50C",
-       "seconds": 3.6266172
+       "seconds": 4.5006029
       }
      }
     },
@@ -11125,7 +11285,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 5.680405,
+     "seconds": 5.4316931,
      "details": {
       "display_sha256": "9712c8623e25f31bbf684282cc9404239393799c245b3520d6516c177241e029",
       "second_display_sha256": "9712c8623e25f31bbf684282cc9404239393799c245b3520d6516c177241e029",
@@ -11160,17 +11320,17 @@
    "evidence_gaps": [],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 18.0607899,
+    "total_seconds": 18.2796522,
     "phase_seconds": {
-     "decode": 0.0588462,
-     "develop_1": 0.5258014,
-     "develop_2": 5.6804053,
-     "export": 8.2045229,
-     "probe": 0.0013078,
-     "w2_render": 0.6083179
+     "decode": 0.0579863,
+     "develop_1": 0.4897247,
+     "develop_2": 5.4316935,
+     "export": 8.8963971,
+     "probe": 0.0011114,
+     "w2_render": 0.6108025
     },
-    "peak_working_set_bytes": 1246916608,
-    "peak_commit_bytes": 1241255936,
+    "peak_working_set_bytes": 1246965760,
+    "peak_commit_bytes": 1241251840,
     "w2_render_estimate_bytes": 1234051072,
     "develop_export_estimate_bytes": 874222976
    },
@@ -11214,6 +11374,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 3960x2640",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -11227,7 +11391,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0289519,
+     "seconds": 0.0244473,
      "details": {
       "size_bytes": 24103910,
       "sha256": "0608c9f277307b745530e61b589c465540611df22f9a1fe2d01237c5b2b4c13b"
@@ -11238,7 +11402,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields match the rawpy reference (full-colour data: pixels are compared through the colour check)",
-     "seconds": 1.043579,
+     "seconds": 1.0529644,
      "details": {
       "fields_compared": 20,
       "raw_data_sha256_compared": false,
@@ -11262,7 +11426,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.8e-06,
+     "seconds": 4.3e-06,
      "details": {
       "count": 1,
       "subimages": [
@@ -11321,7 +11485,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 1.33 (limit 1.68), max 1.73 (limit 2.22), luminance ratio 0.98; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 1.2286358,
+     "seconds": 1.1379462,
      "details": {
       "calibration_path": "dng_forward_matrix",
       "like_for_like": false,
@@ -11341,7 +11505,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "3960x2640 contains the camera's image area 3960x2640; edge bands are image data",
-     "seconds": 0.0016621,
+     "seconds": 0.0015116,
      "details": {
       "rendered": [
        3960,
@@ -11436,7 +11600,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 1.6434569,
+     "seconds": 2.2434914,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -11450,7 +11614,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 5D Mark III",
-       "seconds": 0.8920129
+       "seconds": 0.9779089
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -11463,7 +11627,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 5D Mark III",
-       "seconds": 0.7470306
+       "seconds": 1.2607777
       }
      }
     },
@@ -11472,7 +11636,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 2.1519222,
+     "seconds": 1.890637,
      "details": {
       "display_sha256": "4c8c09cfe964b901aac5ce1ea6213c5e201a8ba5d416398f06daaf55b3b7f988",
       "second_display_sha256": "4c8c09cfe964b901aac5ce1ea6213c5e201a8ba5d416398f06daaf55b3b7f988",
@@ -11509,17 +11673,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 7.3447214,
+    "total_seconds": 7.4302191,
     "phase_seconds": {
-     "decode": 0.8814329,
-     "develop_1": 1.0200427,
-     "develop_2": 2.1519225,
-     "export": 1.6434569,
-     "probe": 0.0013945,
-     "w2_render": 0.9946129
+     "decode": 0.8812723,
+     "develop_1": 0.8833483,
+     "develop_2": 1.8906373,
+     "export": 2.2434915,
+     "probe": 0.0026116,
+     "w2_render": 0.9150425
     },
-    "peak_working_set_bytes": 264294400,
-    "peak_commit_bytes": 256458752,
+    "peak_working_set_bytes": 264368128,
+    "peak_commit_bytes": 256434176,
     "w2_render_estimate_bytes": 251074560,
     "develop_export_estimate_bytes": 198844800
    },
@@ -11563,6 +11727,10 @@
     "stage": "after_unpack"
    },
    "lookup_key": "mk1|canon|eos-7d-mark-ii|dng|lossless-jpeg|5496x3670|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "lookup_variant": {
+    "image_area": "dng_default_crop 5472x3648",
+    "dng_opcodes": []
+   },
    "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
    "decoded": true,
    "decode_error": null,
@@ -11576,7 +11744,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "size and SHA-256 match the manifest",
-     "seconds": 0.0486283,
+     "seconds": 0.0354274,
      "details": {
       "size_bytes": 38265824,
       "sha256": "090e01f9a7a860b2f2f0ead770b8a9ba3b17ea98dc1997835c6bda2fc0a2ae54"
@@ -11587,7 +11755,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "all parity fields and the raw-buffer SHA-256 match the rawpy reference",
-     "seconds": 1.2826448,
+     "seconds": 1.1862987,
      "details": {
       "fields_compared": 21,
       "raw_data_sha256_compared": true,
@@ -11611,7 +11779,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "single primary image",
-     "seconds": 3.9e-06,
+     "seconds": 1.25e-05,
      "details": {
       "count": 1,
       "subimages": [
@@ -11676,7 +11844,7 @@
      "status": "pass",
      "evidence": "weak",
      "summary": "region CIEDE2000 mean 1.07 (limit 1.36), max 3.15 (limit 3.99), luminance ratio 1; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only",
-     "seconds": 1.4053771,
+     "seconds": 1.295144,
      "details": {
       "calibration_path": "dng_forward_matrix",
       "like_for_like": false,
@@ -11696,7 +11864,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "5472x3648 contains the camera's image area 5472x3648; edge bands are image data",
-     "seconds": 0.0016334,
+     "seconds": 0.001684,
      "details": {
       "rendered": [
        5472,
@@ -11791,7 +11959,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "JPEG (sRGB) and 16-bit TIFF (Display P3) decode independently to the quantised image with exact ICC profiles and the written metadata",
-     "seconds": 3.7657142,
+     "seconds": 4.6222852,
      "details": {
       "jpeg_srgb_q95": {
        "file": "render.jpg",
@@ -11805,7 +11973,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 7D Mark II",
-       "seconds": 2.229841
+       "seconds": 2.0985461
       },
       "tiff16_display_p3": {
        "file": "render.tif",
@@ -11818,7 +11986,7 @@
        "metadata_matches_receipt": true,
        "camera_make": "Canon",
        "camera_model": "Canon EOS 7D Mark II",
-       "seconds": 1.5282912
+       "seconds": 2.5155558
       }
      }
     },
@@ -11827,7 +11995,7 @@
      "status": "pass",
      "evidence": "strong",
      "summary": "two develop renders are bit-identical and their JPEGs byte-identical",
-     "seconds": 3.3366979,
+     "seconds": 3.3489042,
      "details": {
       "display_sha256": "8bbde0a5e5d127d2dcb7baa5c293ee0438ad16c608b59c41d2f9fb9d4084119c",
       "second_display_sha256": "8bbde0a5e5d127d2dcb7baa5c293ee0438ad16c608b59c41d2f9fb9d4084119c",
@@ -11874,17 +12042,17 @@
    ],
    "expectation_mismatches": [],
    "measurements": {
-    "total_seconds": 11.3445353,
+    "total_seconds": 11.8035085,
     "phase_seconds": {
-     "decode": 0.7373677,
-     "develop_1": 1.0858429,
-     "develop_2": 3.3366983,
-     "export": 3.7657143,
-     "probe": 0.0014661,
-     "w2_render": 0.9558931
+     "decode": 0.6409747,
+     "develop_1": 0.9421598,
+     "develop_2": 3.3489043,
+     "export": 4.6222856,
+     "probe": 0.0014089,
+     "w2_render": 0.8773731
     },
-    "peak_working_set_bytes": 496619520,
-    "peak_commit_bytes": 490188800,
+    "peak_working_set_bytes": 496840704,
+    "peak_commit_bytes": 490377216,
     "w2_render_estimate_bytes": 484322560,
     "develop_export_estimate_bytes": 481703552
    },
@@ -11896,6 +12064,12 @@
    "mode_key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 8192x5464",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "canon|eos-r5",
    "family": "canon",
@@ -11915,6 +12089,12 @@
    "lookup_keys": [
     "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 7008x4672",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "sony|ilce-7m4",
    "family": "sony",
    "camera": "Sony ILCE-7M4",
@@ -11932,6 +12112,14 @@
    "mode_key": "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 4024x3016",
+     "dng_opcodes": [
+      "list3:WarpRectilinear"
+     ]
+    }
    ],
    "model_key": "dji|fc4382",
    "family": "dji",
@@ -11952,6 +12140,12 @@
    "mode_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 6240x4160",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "fujifilm|x-t4",
    "family": "fujifilm",
@@ -11976,6 +12170,12 @@
    "lookup_keys": [
     "mk1|nikon|z-6|tiff|nikon-nef-lossless|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 6048x4024",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "nikon|z-6",
    "family": "nikon",
    "camera": "Nikon Z 6",
@@ -11997,6 +12197,12 @@
    "lookup_keys": [
     "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 8192x5464",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "canon|eos-r5",
    "family": "canon",
    "camera": "Canon EOS R5",
@@ -12015,6 +12221,12 @@
    "lookup_keys": [
     "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 5088x3392",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "canon|eos-r5",
    "family": "canon",
    "camera": "Canon EOS R5",
@@ -12032,6 +12244,12 @@
    "mode_key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/2",
    "lookup_keys": [
     "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/2"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 5088x3392",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "canon|eos-r5",
    "family": "canon",
@@ -12053,6 +12271,12 @@
    "lookup_keys": [
     "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg|6744x4502|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 6720x4480",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "canon|eos-5d-mark-iv",
    "family": "canon",
    "camera": "Canon EOS 5D Mark IV",
@@ -12070,6 +12294,12 @@
    "mode_key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg-canon-sraw-mraw-subsampled-ycbcr|3360x2240|14bit|linear-rgb|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg-canon-sraw-mraw-subsampled-ycbcr|3360x2240|15bit|linear-rgb|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 3360x2240",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "canon|eos-5d-mark-iv",
    "family": "canon",
@@ -12089,6 +12319,12 @@
    "lookup_keys": [
     "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 7008x4672",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "sony|ilce-7m4",
    "family": "sony",
    "camera": "Sony ILCE-7M4",
@@ -12106,6 +12342,12 @@
    "mode_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 7008x4672",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "sony|ilce-7m4",
    "family": "sony",
@@ -12125,6 +12367,12 @@
    "lookup_keys": [
     "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|4624x3080|15bit|linear-rgb|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 4608x3072",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "sony|ilce-7m4",
    "family": "sony",
    "camera": "Sony ILCE-7M4",
@@ -12142,6 +12390,12 @@
    "mode_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|3516x2344|15bit|linear-rgb|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|3516x2344|15bit|linear-rgb|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 3504x2336",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "sony|ilce-7m4",
    "family": "sony",
@@ -12161,6 +12415,12 @@
    "lookup_keys": [
     "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|4692x3132|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 4608x3072",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "sony|ilce-7m4",
    "family": "sony",
    "camera": "Sony ILCE-7M4",
@@ -12179,6 +12439,12 @@
    "lookup_keys": [
     "mk1|sony|ilce-7rm5|tiff|sony-arw-compressed-lossy|9564x6376|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 9504x6336",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "sony|ilce-7rm5",
    "family": "sony",
    "camera": "Sony ILCE-7RM5",
@@ -12196,6 +12462,15 @@
    "mode_key": "mk1|dji|fc220|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|dji|fc220|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 3992x2992",
+     "dng_opcodes": [
+      "list1:FixBadPixelsList",
+      "list3:FixVignetteRadial"
+     ]
+    }
    ],
    "model_key": "dji|fc220",
    "family": "dji",
@@ -12217,6 +12492,15 @@
    "lookup_keys": [
     "mk1|hasselblad|l2d-20c|dng|uncompressed|5280x3956|16bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 5272x3948",
+     "dng_opcodes": [
+      "list3:GainMap",
+      "list3:WarpRectilinear"
+     ]
+    }
+   ],
    "model_key": "hasselblad|l2d-20c",
    "family": "dji",
    "camera": "Hasselblad L2D-20c",
@@ -12237,6 +12521,16 @@
    "lookup_keys": [
     "mk1|dji|fc7303|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 4000x3000",
+     "dng_opcodes": [
+      "list3:FixVignetteRadial",
+      "list3:WarpRectilinear",
+      "list3:GainMap"
+     ]
+    }
+   ],
    "model_key": "dji|fc7303",
    "family": "dji",
    "camera": "DJI FC7303",
@@ -12256,6 +12550,12 @@
    "mode_key": "mk1|insta360|one2|dng|uncompressed|3040x6080|16bit|mosaic:GRBG|uint16|dual-fisheye-360|primary:0/1",
    "lookup_keys": [
     "mk1|insta360|one2|dng|uncompressed|3040x6080|16bit|mosaic:GRBG|uint16|dual-fisheye-360|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_whole_image 3040x6080",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "insta360|one2",
    "family": "insta360",
@@ -12279,6 +12579,12 @@
    "lookup_keys": [
     "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 8256x5504",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "nikon|z-8",
    "family": "nikon",
    "camera": "Nikon Z 8",
@@ -12299,6 +12605,12 @@
    "mode_key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he-star|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he-star|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 8256x5504",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "nikon|z-8",
    "family": "nikon",
@@ -12321,6 +12633,12 @@
    "lookup_keys": [
     "mk1|nikon|z-6|tiff|nikon-nef-lossy-type-2|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 6048x4024",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "nikon|z-6",
    "family": "nikon",
    "camera": "Nikon Z 6",
@@ -12341,6 +12659,12 @@
    "mode_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-compressed-lossy|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|fujifilm|x-t4|raf|fujifilm-raf-compressed-lossy|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 6240x4160",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "fujifilm|x-t4",
    "family": "fujifilm",
@@ -12365,6 +12689,12 @@
    "lookup_keys": [
     "mk1|fujifilm|gfx50s-ii|raf|fujifilm-raf-compressed-lossy|8280x6208|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 8256x6192",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "fujifilm|gfx50s-ii",
    "family": "fujifilm",
    "camera": "Fujifilm GFX50S II",
@@ -12385,6 +12715,12 @@
    "mode_key": "mk1|panasonic|dc-s5m2|rw2|panasonicc8-load-raw-lossiness-not-established|6008x4008|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|panasonic|dc-s5m2|rw2|panasonicc8-load-raw-lossiness-not-established|6008x4008|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 6000x4000",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "panasonic|dc-s5m2",
    "family": "other",
@@ -12407,6 +12743,12 @@
    "lookup_keys": [
     "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "decoder_inset_crop 5184x3888",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "om-system|om-1",
    "family": "other",
    "camera": "OM Digital OM-1",
@@ -12427,6 +12769,12 @@
    "mode_key": "mk1|pentax|k-3-mark-iii|tiff|pentax-pef-lossless-compressed|6224x4160|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|pentax|k-3-mark-iii|tiff|pentax-pef-lossless-compressed|6224x4160|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "unknown",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "pentax|k-3-mark-iii",
    "family": "other",
@@ -12451,6 +12799,12 @@
    "lookup_keys": [
     "mk1|pentax|k-3-mark-iii-monochrome|dng|lossless-jpeg|6224x4160|14bit|monochrome|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 6192x4128",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "pentax|k-3-mark-iii-monochrome",
    "family": "other",
    "camera": "Pentax K-3 Mark III Monochrome",
@@ -12468,6 +12822,12 @@
    "mode_key": "mk1|leica|m10|dng|lossless-jpeg|5984x3992|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|leica|m10|dng|lossless-jpeg|5984x3992|16bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 5976x3984",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "leica|m10",
    "family": "other",
@@ -12489,6 +12849,12 @@
    "lookup_keys": [
     "mk1|leica|m-monochrom-typ-246|dng|lossless-jpeg|5984x4000|12bit|monochrome|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 5976x3992",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "leica|m-monochrom-typ-246",
    "family": "other",
    "camera": "Leica M MONOCHROM (Typ 246)",
@@ -12506,6 +12872,12 @@
    "mode_key": "mk1|hasselblad|x1d-ii-50c|tiff|uncompressed|8278x6208|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|hasselblad|x1d-ii-50c|tiff|uncompressed|8278x6208|16bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "unknown",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "hasselblad|x1d-ii-50c",
    "family": "other",
@@ -12527,6 +12899,12 @@
    "lookup_keys": [
     "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1"
    ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 3960x2640",
+     "dng_opcodes": []
+    }
+   ],
    "model_key": "canon|eos-5d-mark-iii",
    "family": "canon",
    "camera": "Canon EOS 5D Mark III",
@@ -12546,6 +12924,12 @@
    "mode_key": "mk1|canon|eos-7d-mark-ii|dng|lossless-jpeg|5496x3670|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "lookup_keys": [
     "mk1|canon|eos-7d-mark-ii|dng|lossless-jpeg|5496x3670|16bit|mosaic:RGGB|uint16|single-view|primary:0/1"
+   ],
+   "lookup_variants": [
+    {
+     "image_area": "dng_default_crop 5472x3648",
+     "dng_opcodes": []
+    }
    ],
    "model_key": "canon|eos-7d-mark-ii",
    "family": "canon",

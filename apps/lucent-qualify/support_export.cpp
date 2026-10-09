@@ -1,5 +1,6 @@
 #include "support_export.hpp"
 
+#include <algorithm>
 #include <format>
 #include <map>
 #include <set>
@@ -66,42 +67,8 @@ std::vector<std::string> strings(const OrderedJson& object, std::string_view key
 }  // namespace
 
 std::optional<assets::LimitationText> limitation_text(std::string_view code) {
-    struct Words {
-        std::string_view code;
-        std::string_view summary;
-        std::string_view meaning;
-    };
-    static constexpr Words kWords[] = {
-        {kLimitDefaultCrop, "The camera's image area is not applied",
-         "Lucent cannot find where this camera's intended image area lies in the file, so the photo "
-         "keeps the narrow border of extra pixels the sensor records around it. Crop the edges if they "
-         "look different."},
-        {kLimitXTransBaseline, "X-Trans demosaicing is baseline quality",
-         "Fujifilm X-Trans files are developed with Lucent's baseline demosaicing: fine detail can look "
-         "softer, and fine patterns can show colour artefacts."},
-        {kLimitDualPixel, "Dual Pixel data is not processed",
-         "Lucent develops the photograph; the camera's second Dual Pixel image stays in the file unused, "
-         "so Dual Pixel adjustments are not available."},
-        {kLimitEnhancedImage, "The DNG's enhanced image is not used",
-         "This DNG also holds an enhanced, already processed version of the photo. Lucent develops the "
-         "original raw image instead."},
-        {kLimitOptionalOperations, "Optional processing is skipped",
-         "The file asks for an optional processing step that Lucent does not have yet; the photo is "
-         "developed without it."},
-        {kLimitNonSquarePixels, "Non-square pixels are not corrected",
-         "This camera records pixels that are not square. Lucent does not resample them, so the photo's "
-         "proportions can look slightly stretched."},
-        {kLimitPixelShift, "Pixel-shift frames are not combined",
-         "Each frame of a pixel-shift capture is developed on its own; Lucent does not merge them into one "
-         "higher-resolution image."},
-    };
-    for (const Words& words : kWords) {
-        if (words.code == code) {
-            return assets::LimitationText{std::string(words.code), std::string(words.summary),
-                                          std::string(words.meaning)};
-        }
-    }
-    return std::nullopt;
+    // One wording for the database and the application's own limitations (AST-03).
+    return assets::standard_limitation_text(code);
 }
 
 Expected<assets::CameraSupportDatabase> camera_support_from_report(const OrderedJson& report,
@@ -154,6 +121,20 @@ Expected<assets::CameraSupportDatabase> camera_support_from_report(const Ordered
         basis.dng_opcode_processing = number(versions, "dng_opcode_processing", "versions");
         basis.geometry_operation = number(versions, "geometry_operation", "versions");
         basis.image_area_placement = number(versions, "image_area_placement", "versions");
+        // QUA-02: what else a Verified state certifies.
+        basis.decoder_capabilities = strings(versions, "decoder_capabilities", "versions");
+        const OrderedJson& engine_versions = at(versions, "develop_engine", "versions");
+        if (!engine_versions.is_array() || engine_versions.empty()) {
+            refuse("the report's versions.develop_engine is not a non-empty array");
+        }
+        for (const OrderedJson& v : engine_versions) {
+            if (!v.is_number_unsigned()) {
+                refuse("the report's versions.develop_engine holds a value that is not a version");
+            }
+            basis.develop_engine.push_back(v.get<std::uint32_t>());
+        }
+        basis.neutral_look = number(versions, "neutral_look", "versions");
+        basis.export_version = number(versions, "export", "versions");
 
         // The qualification's detail of each limitation, per fixture.
         std::map<std::string, std::map<std::string, std::string>> details;  // fixture -> code -> detail
@@ -191,6 +172,16 @@ Expected<assets::CameraSupportDatabase> camera_support_from_report(const Ordered
                                 "them apart",
                                 entry.match));
             }
+            // QUA-08: the probe facts beside the key; a Verified entry holds only for files that share
+            // them, so they must be one set per mode.
+            const OrderedJson& variants = at(row, "lookup_variants", "support_table row");
+            if (!variants.is_array() || variants.size() != 1) {
+                refuse(std::format("the mode {} has {} probe variants (image area and DNG opcodes); the database "
+                                   "needs exactly one",
+                                   entry.qualified_key, variants.is_array() ? variants.size() : 0));
+            }
+            entry.image_area = text(variants.at(0), "image_area", "lookup variant");
+            entry.dng_opcodes = strings(variants.at(0), "dng_opcodes", "lookup variant");
             const std::string state = text(row, "proposed_state", "support_table row");
             const std::optional<assets::SupportState> parsed = assets::parse_support_state(state);
             if (!parsed) {
@@ -275,7 +266,51 @@ Expected<SupportExport> export_camera_support(const OrderedJson& report,
     out.database = std::move(*reread);
     out.database_text = std::move(*database_text);
     out.manifest_text = std::move(*manifest_text);
+    out.version = manifest.version;
     return out;
+}
+
+Status check_report_provenance(const OrderedJson& report, bool allow_dirty) {
+    std::string commit;
+    if (report.is_object() && report.contains("tool") && report.at("tool").is_object()) {
+        commit = report.at("tool").value("git_commit", std::string());
+    }
+    // A clean build records the bare abbreviated commit (cmake/LucentVersion.cmake); anything else
+    // ("unknown", "<commit>-dirty", "<commit>-unknown-state") does not name what produced the evidence.
+    const bool clean = !commit.empty() && std::all_of(commit.begin(), commit.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+    if (allow_dirty || clean) {
+        return ok();
+    }
+    return fail(ErrorCode::InvalidArgument,
+                std::format("the report was made by a build of {}: a published database must name the commit "
+                            "that produced its evidence. Commit the changes, configure and build again, qualify "
+                            "again and export, or pass --allow-dirty-build to export it as it is",
+                            commit.empty() || commit == "unknown"
+                                ? std::string("an unknown commit")
+                                : "uncommitted changes or an unknown state (" + commit + ")"),
+                "qualify.export.provenance");
+}
+
+Status check_version_change(std::string_view existing_manifest, std::string_view existing_database,
+                            const SupportExport& exported) {
+    if (existing_manifest.empty()) {
+        return ok();
+    }
+    auto manifest = assets::parse_asset_manifest(existing_manifest);
+    if (!manifest || manifest->version != exported.version) {
+        return ok();  // another version (or not a manifest): replacing it is a version change
+    }
+    if (existing_manifest == exported.manifest_text && existing_database == exported.database_text) {
+        return ok();
+    }
+    return fail(ErrorCode::InvalidArgument,
+                std::format("the folder already holds camera-support {} with other content; every change of "
+                            "the content needs a new --asset-version (ADR 0018), or Lucent would keep stored "
+                            "assessments of the old content",
+                            exported.version.to_string()),
+                "qualify.export.version");
 }
 
 }  // namespace lucent::qualify

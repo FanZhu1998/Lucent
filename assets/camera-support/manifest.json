@@ -2,17 +2,17 @@
  "schema": "lucent.asset-manifest",
  "schema_version": 1,
  "id": "camera-support",
- "version": "1.0.0",
+ "version": "2.0.0",
  "minimum_app_version": "0.1.0",
  "content": {
   "schema": "lucent.camera-support",
-  "schema_version": 1
+  "schema_version": 2
  },
  "files": [
   {
    "path": "camera-support.json",
-   "size": 27102,
-   "sha256": "1fa91ceed9e52f13879c5696905744289b0fc60bcf8f01c9115779bf5547a886"
+   "size": 29908,
+   "sha256": "ca392bcfafc2dd58f4174baa866634f6ab8967683f99e5f4b2a6b7b2528cb973"
   }
  ]
 }

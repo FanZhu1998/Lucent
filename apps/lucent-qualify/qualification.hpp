@@ -142,6 +142,10 @@ struct FixtureResult {
     // of `mode_key` unless the probe sees a provisional value (the Canon S-RAW white level before
     // unpacking); std::nullopt when the file could not be probed.
     std::optional<std::string> lookup_key;
+    // The probe's facts beside the key (assets::derive_mode_variant(): the image area's source and
+    // size, the DNG opcodes), which a Verified database entry also requires of a file (QUA-08):
+    // {"image_area": "...", "dng_opcodes": [...]}; null when the file could not be probed.
+    OrderedJson lookup_variant = nullptr;
     // From the expectation (empty without one): product name, qualification family, mode label.
     std::string product;
     std::string family;

@@ -222,6 +222,27 @@ TEST(Expectations, TheImageAreaSourceIsOptionalAndChecked) {
     EXPECT_NE(bad.error().message.find("image_area_source"), std::string::npos) << bad.error().message;
 }
 
+// QUA-07: where the area is placed is an asserted outcome too.
+TEST(Expectations, TheAppliedImageAreaIsOptionalAndChecked) {
+    Json doc = minimal_expectations();
+    auto plain = parse_expectations(doc);
+    ASSERT_TRUE(plain) << plain.error().describe();
+    EXPECT_FALSE(plain->fixtures.front().image_area_applied_asserted);
+    doc["fixtures"][0]["dimensions"]["image_area_applied"] = nullptr;
+    auto whole = parse_expectations(doc);
+    ASSERT_TRUE(whole) << whole.error().describe();
+    EXPECT_TRUE(whole->fixtures.front().image_area_applied_asserted);
+    EXPECT_FALSE(whole->fixtures.front().image_area_applied.has_value()) << "null: the whole image is the frame";
+    doc["fixtures"][0]["dimensions"]["image_area_applied"] = {12, 8, 76, 64};
+    auto placed = parse_expectations(doc);
+    ASSERT_TRUE(placed) << placed.error().describe();
+    EXPECT_EQ(placed->fixtures.front().image_area_applied, (std::array<std::int32_t, 4>{12, 8, 76, 64}));
+    doc["fixtures"][0]["dimensions"]["image_area_applied"] = {12, 8, 76};
+    EXPECT_FALSE(parse_expectations(doc));
+    doc["fixtures"][0]["dimensions"]["image_area_applied"] = "12,8";
+    EXPECT_FALSE(parse_expectations(doc));
+}
+
 TEST(Expectations, AVerifiedFactNeedsAnIndependentSource) {
     Json doc = minimal_expectations();
     doc["fixtures"][0]["orientation"]["sources"] = {"rawpy"};  // the reference decoder alone
@@ -553,6 +574,14 @@ TEST(CommittedData, ExpectationsAreValidAndCoverTheManifestExactly) {
             EXPECT_FALSE(e.expected_limitations.empty()) << e.id;
         }
         EXPECT_EQ(e.mode_key.rfind("mk1|", 0), 0u) << e.id;
+        // QUA-07: every rendered fixture pins where its camera area is placed.
+        if (e.rendered) {
+            EXPECT_TRUE(e.image_area_applied_asserted) << e.id << " does not pin dimensions.image_area_applied";
+            if (e.image_area_applied) {
+                EXPECT_EQ((*e.image_area_applied)[2], e.rendered->width) << e.id;
+                EXPECT_EQ((*e.image_area_applied)[3], e.rendered->height) << e.id;
+            }
+        }
     }
 }
 
@@ -623,7 +652,9 @@ OrderedJson export_report() {
      "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
      "versions": {"mode_key": 1, "check_suite": 2, "state_rules": 1, "decoded_raw_contract": "1.4",
                   "render_pipeline": 3, "develop_pipeline": 3, "dng_opcode_processing": 1,
-                  "geometry_operation": 2, "image_area_placement": 1},
+                  "geometry_operation": 2, "image_area_placement": 1,
+                  "decoder_capabilities": ["jpeg", "zlib"], "develop_engine": [3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                  "neutral_look": 1, "export": 1},
      "selection": {"tier": "all", "ids": ["a", "b"], "isolated_processes": true},
      "summary": {"fixtures": 2, "by_state": {}, "expectation_mismatches": 0, "harness_errors": 0},
      "fixtures": [
@@ -632,11 +663,13 @@ OrderedJson export_report() {
      "support_table": [
       {"mode_key": "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
        "lookup_keys": ["mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1"],
+       "lookup_variants": [{"image_area": "decoder_inset_crop 7008x4672", "dng_opcodes": []}],
        "model_key": "sony|ilce-7m4", "family": "sony", "camera": "Sony ILCE-7M4", "product": "Sony A7 IV",
        "mode_label": "ARW uncompressed", "fixtures": ["a"], "proposed_state": "verified",
        "evidence": "13 of 13 checks strong", "limitations": [], "evidence_gaps": []},
       {"mode_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
        "lookup_keys": ["mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|15bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1"],
+       "lookup_variants": [{"image_area": "decoder_inset_crop 6240x4160", "dng_opcodes": []}],
        "model_key": "fujifilm|x-t4", "family": "fujifilm", "camera": "Fujifilm X-T4", "product": "",
        "mode_label": "RAF lossless", "fixtures": ["b"], "proposed_state": "limited",
        "evidence": "13 of 13 checks strong", "limitations": ["xtrans_baseline_demosaic"], "evidence_gaps": []}]
@@ -675,6 +708,13 @@ TEST(SupportExport, MapsTheSupportTableToTheDatabase) {
     EXPECT_EQ(fuji->entry->limitations[0].detail, "baseline route");
     ASSERT_NE(db.limitation("xtrans_baseline_demosaic"), nullptr);
     EXPECT_EQ(db.entries[1].camera, "Sony A7 IV");
+    // QUA-08: the probe facts; QUA-02: the whole basis.
+    EXPECT_EQ(fuji->entry->image_area, "decoder_inset_crop 6240x4160");
+    EXPECT_TRUE(fuji->entry->dng_opcodes.empty());
+    EXPECT_EQ(db.basis.decoder_capabilities, (std::vector<std::string>{"jpeg", "zlib"}));
+    EXPECT_EQ(db.basis.develop_engine.size(), 12u);
+    EXPECT_EQ(db.basis.neutral_look, 1u);
+    EXPECT_EQ(db.basis.export_version, 1u);
     // The manifest lists the database with its hash.
     auto manifest = assets::parse_asset_manifest(exported->manifest_text);
     ASSERT_TRUE(manifest) << manifest.error().describe();
@@ -718,7 +758,48 @@ TEST(SupportExport, RefusesReportsThatCannotBeTheShippedDatabase) {
     OrderedJson shared = export_report();
     shared["support_table"][1]["lookup_keys"] = shared["support_table"][0]["lookup_keys"];
     refused(shared, "two modes under one probe key");
+    OrderedJson two_variants = export_report();
+    two_variants["support_table"][0]["lookup_variants"].push_back(
+        OrderedJson{{"image_area", "unknown"}, {"dng_opcodes", OrderedJson::array()}});
+    refused(two_variants, "a mode whose files differ in their image area");
+    OrderedJson no_engine = export_report();
+    no_engine["versions"].erase("develop_engine");
+    refused(no_engine, "a report without the develop-engine versions");
     refused(OrderedJson::parse(R"({"schema": "something-else"})"), "another document");
+}
+
+// QUA-06: a published database names the commit that produced its evidence.
+TEST(SupportExport, RefusesReportsOfUncommittedBuildsUnlessAllowed) {
+    OrderedJson report = export_report();
+    EXPECT_TRUE(check_report_provenance(report, false)) << "abc123 is a clean commit";
+    for (const char* commit : {"abc123-dirty", "unknown", "abc123-unknown-state", ""}) {
+        report["tool"]["git_commit"] = commit;
+        const Status checked = check_report_provenance(report, false);
+        ASSERT_FALSE(checked) << commit;
+        EXPECT_EQ(checked.error().where, "qualify.export.provenance");
+        EXPECT_TRUE(check_report_provenance(report, true)) << commit;
+    }
+}
+
+// AST-02: an asset version names exactly one content.
+TEST(SupportExport, RefusesNewContentUnderAnExistingVersion) {
+    auto exported = export_camera_support(export_report(), export_options());
+    ASSERT_TRUE(exported) << exported.error().describe();
+    EXPECT_TRUE(check_version_change("", "", *exported)) << "a new folder";
+    EXPECT_TRUE(check_version_change(exported->manifest_text, exported->database_text, *exported))
+        << "the same content again";
+    OrderedJson changed_report = export_report();
+    changed_report["generated"] = "2026-11-02T10:00:00Z";
+    auto changed = export_camera_support(changed_report, export_options());
+    ASSERT_TRUE(changed);
+    const Status same_version = check_version_change(exported->manifest_text, exported->database_text, *changed);
+    ASSERT_FALSE(same_version);
+    EXPECT_EQ(same_version.error().where, "qualify.export.version");
+    SupportExportOptions next = export_options();
+    next.asset_version = semver("1.1.0");
+    auto bumped = export_camera_support(changed_report, next);
+    ASSERT_TRUE(bumped);
+    EXPECT_TRUE(check_version_change(exported->manifest_text, exported->database_text, *bumped));
 }
 
 TEST(SupportExport, EveryLimitationCodeHasWording) {

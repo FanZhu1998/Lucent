@@ -123,6 +123,18 @@ FixtureExpectation fixture_of(const Json& f, const std::map<std::string, Source>
                     "' is not an image area source");
         }
     }
+    if (dims.contains("image_area_applied")) {
+        const Json& applied = dims.at("image_area_applied");
+        e.image_area_applied_asserted = true;
+        if (!applied.is_null()) {
+            if (!applied.is_array() || applied.size() != 4 ||
+                std::any_of(applied.begin(), applied.end(), [](const Json& v) { return !v.is_number_integer(); })) {
+                invalid(at + ": dimensions.image_area_applied must be null or [x, y, width, height]");
+            }
+            e.image_area_applied = std::array<std::int32_t, 4>{applied[0].get<std::int32_t>(), applied[1].get<std::int32_t>(),
+                                                               applied[2].get<std::int32_t>(), applied[3].get<std::int32_t>()};
+        }
+    }
 
     const Json& orientation = f.at("orientation");
     e.orientation_exif = orientation.at("exif").get<int>();

@@ -11,7 +11,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <format>
 #include <limits>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <system_error>
@@ -822,6 +824,8 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         subimages = selection->probe.subimages;
         // The application's view of the mode: its import probes, it does not decode (ADR 0018).
         result.lookup_key = derive_mode_key(selection->probe.metadata).to_string();
+        const assets::ModeVariant variant = assets::derive_mode_variant(selection->probe.metadata);
+        result.lookup_variant = {{"image_area", variant.image_area}, {"dng_opcodes", variant.dng_opcodes}};
     }
 
     const Json reference_report = [&]() -> Json {
@@ -1661,6 +1665,24 @@ void compare_with_expectation(FixtureResult& result, const FixtureExpectation* e
                                                 result.camera_area.value("source", std::string()) +
                                                 ", expected " + *expectation->image_area_source);
     }
+    // QUA-07: where the area was placed, not only its size (a rendered fixture only).
+    if (expectation->image_area_applied_asserted && result.camera_area.is_object() &&
+        result.camera_area.contains("output") && result.camera_area.at("output").is_array()) {
+        const OrderedJson& applied = result.camera_area.contains("applied") ? result.camera_area.at("applied")
+                                                                          : OrderedJson(nullptr);
+        std::optional<std::array<std::int32_t, 4>> actual;
+        if (applied.is_object()) {
+            actual = std::array<std::int32_t, 4>{applied.value("x", 0), applied.value("y", 0),
+                                                 applied.value("width", 0), applied.value("height", 0)};
+        }
+        if (actual != expectation->image_area_applied) {
+            const auto text = [](const std::optional<std::array<std::int32_t, 4>>& r) {
+                return r ? std::format("{}x{}+{}+{}", (*r)[2], (*r)[3], (*r)[0], (*r)[1]) : std::string("the whole image");
+            };
+            result.expectation_mismatches.push_back("camera area applied at " + text(actual) + ", expected " +
+                                                    text(expectation->image_area_applied));
+        }
+    }
 }
 
 }  // namespace
@@ -1785,6 +1807,7 @@ OrderedJson FixtureResult::to_json() const {
         j["mode_key"] = nullptr;
     }
     j["lookup_key"] = lookup_key ? OrderedJson(*lookup_key) : OrderedJson(nullptr);
+    j["lookup_variant"] = lookup_variant;
     j["decoder"] = decoder;
     j["decoded"] = decoded;
     j["decode_error"] = decode_error.empty() ? OrderedJson(nullptr) : OrderedJson(decode_error);

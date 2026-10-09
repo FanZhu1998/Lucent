@@ -9,8 +9,12 @@
 // here and has to be reviewed: either the change is wrong, or the expectation is updated together
 // with the support table (docs/qualification/README.md).
 //
-// Qualification-tier fixtures run only with LUCENT_TEST_FIXTURE_TIER=all (about 20 s each); smoke
-// fixtures always run when cached. Fixtures that are not downloaded skip with a message.
+// Smoke fixtures and every fixture whose expected state is Verified always run when cached (QUA-07:
+// a regression in a mode Lucent shows as Verified must fail the default test run); the other
+// qualification-tier fixtures run with LUCENT_TEST_FIXTURE_TIER=all (about 20 s each). Fixtures
+// that are not downloaded skip with a message. Besides the outcome, the camera area's placement
+// (where the develop render put it, not only its size) must equal the expectation's
+// "image_area_applied".
 //
 // W10 phase 3 (ADR 0018): the application assesses a library item by the mode key of the probe it
 // makes at import, not of a decode. ProbeKeyFindsTheQualifiedState probes every cached fixture as
@@ -21,6 +25,7 @@
 // the probe's key (support_export.hpp).
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -89,17 +94,18 @@ class QualificationFixture : public ::testing::TestWithParam<ManifestFixture> {}
 
 TEST_P(QualificationFixture, OutcomeMatchesItsExpectation) {
     const ManifestFixture& fixture = GetParam();
-    if (fixture.tier != "smoke" && !qualification_tier_enabled()) {
-        GTEST_SKIP() << "qualification-tier fixture; set LUCENT_TEST_FIXTURE_TIER=all to qualify it";
-    }
     const QualifyCorpus& c = corpus();
+    ASSERT_TRUE(c.expectations.has_value());
+    const FixtureExpectation* expectation = c.expectations->find(fixture.id);
+    ASSERT_NE(expectation, nullptr) << "no expectation for " << fixture.id;
+    if (fixture.tier != "smoke" && expectation->expected_state != "verified" && !qualification_tier_enabled()) {
+        GTEST_SKIP() << "qualification-tier fixture that is not Verified; set LUCENT_TEST_FIXTURE_TIER=all to "
+                        "qualify it";
+    }
     if (!std::filesystem::exists(c.paths.cached_file(fixture))) {
         GTEST_SKIP() << "fixture '" << fixture.id
                      << "' is not downloaded; run tools\\fetch-fixtures.ps1 -Tier " << fixture.tier;
     }
-    ASSERT_TRUE(c.expectations.has_value());
-    const FixtureExpectation* expectation = c.expectations->find(fixture.id);
-    ASSERT_NE(expectation, nullptr) << "no expectation for " << fixture.id;
 
     QualifyOptions options;
     options.work_dir = std::filesystem::temp_directory_path() /
@@ -141,6 +147,18 @@ TEST_P(QualificationFixture, OutcomeMatchesItsExpectation) {
         result.camera_area.at("output").is_array()) {
         EXPECT_EQ(result.camera_area.at("output").at(0).get<std::int32_t>(), expectation->rendered->width);
         EXPECT_EQ(result.camera_area.at("output").at(1).get<std::int32_t>(), expectation->rendered->height);
+        // QUA-07: and where it was placed.
+        if (expectation->image_area_applied_asserted) {
+            const OrderedJson& applied = result.camera_area.at("applied");
+            ASSERT_EQ(applied.is_object(), expectation->image_area_applied.has_value()) << applied.dump();
+            if (expectation->image_area_applied) {
+                const std::array<std::int32_t, 4>& e = *expectation->image_area_applied;
+                EXPECT_EQ(applied.value("x", -1), e[0]);
+                EXPECT_EQ(applied.value("y", -1), e[1]);
+                EXPECT_EQ(applied.value("width", -1), e[2]);
+                EXPECT_EQ(applied.value("height", -1), e[3]);
+            }
+        }
     }
     EXPECT_TRUE(result.expectation_mismatches.empty());
     for (const std::string& m : result.expectation_mismatches) {
@@ -189,6 +207,11 @@ TEST_P(QualificationFixture, ProbeKeyFindsTheQualifiedState) {
     ASSERT_NE(match->entry, nullptr);
     EXPECT_EQ(match->entry->qualified_key, expectation->mode_key);
     EXPECT_EQ(std::string(assets::to_string(match->state)), expectation->expected_state);
+    // QUA-08: the probe's facts beside the key are those the entry was qualified with, so the
+    // application keeps a Verified state for exactly this kind of file.
+    const assets::ModeVariant variant = assets::derive_mode_variant(selection->probe.metadata);
+    EXPECT_EQ(variant.image_area, match->entry->image_area);
+    EXPECT_EQ(variant.dng_opcodes, match->entry->dng_opcodes);
     if (key.to_string() != expectation->mode_key) {
         std::cout << "[ probe    ] " << fixture.id << ": probe key " << key.to_string()
                   << " differs from the "

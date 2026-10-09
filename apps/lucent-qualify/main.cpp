@@ -22,10 +22,15 @@
 //   --from-report F  do not qualify anything: read the report F and write --out-md from it, or
 //                    export the camera support database asset from it (ADR 0018):
 //   --export-support DIR   write DIR/camera-support.json and DIR/manifest.json (support_export.hpp)
-//   --asset-version V      the asset's version (SemVer; required with --export-support)
+//   --asset-version V      the asset's version (SemVer; required with --export-support). Refused when
+//                          DIR already holds this version with other content (AST-02): any change of
+//                          the content is a new version
 //   --min-app-version V    the oldest Lucent that may use it (default: this build's version)
 //   --check                compare with the files in DIR instead of writing them (exit 3 when they
 //                          differ)
+//   --allow-dirty-build    export a report whose build was made from uncommitted changes (its commit
+//                          ends in "-dirty") or from an unknown commit; refused otherwise (QUA-06), so
+//                          that a published database names the commit that produced its evidence
 //
 // Fixtures run one after another (each needs about 1 to 1.5 GB at its peak).
 //
@@ -76,6 +81,7 @@ struct Arguments {
     std::string asset_version;
     std::string min_app_version;
     bool check = false;
+    bool allow_dirty_build = false;
     // Internal: run one fixture and write its result.
     bool child = false;
     std::optional<std::filesystem::path> result_file;
@@ -95,7 +101,7 @@ void usage() {
         "[--in-process]\n"
         "       lucent-qualify --from-report FILE --out-md FILE\n"
         "       lucent-qualify --from-report FILE --export-support DIR --asset-version X.Y.Z\n"
-        "                      [--min-app-version X.Y.Z] [--check]\n",
+        "                      [--min-app-version X.Y.Z] [--check] [--allow-dirty-build]\n",
         stderr);
 }
 
@@ -123,6 +129,8 @@ std::optional<Arguments> parse(int argc, wchar_t** argv) {
             args.in_process = true;
         } else if (arg == L"--check") {
             args.check = true;
+        } else if (arg == L"--allow-dirty-build") {
+            args.allow_dirty_build = true;
         } else if (arg == L"--export-support" && (v = value())) {
             args.export_support = std::filesystem::path(*v);
         } else if (arg == L"--asset-version" && (v = value())) {
@@ -292,6 +300,15 @@ std::string report_name(const Arguments& args) {
     return utf8(args.from_report->filename());
 }
 
+// The file's bytes; empty when it cannot be read.
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 bool same_text(const std::filesystem::path& path, const std::string& text) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -336,6 +353,17 @@ int export_support(const Arguments& args, const OrderedJson& report) {
         std::fprintf(stderr, "lucent-qualify: %s %s the export of %s\n", utf8(*args.export_support).c_str(),
                      same ? "equals" : "DIFFERS FROM", utf8(*args.from_report).c_str());
         return same ? kExitOk : kExitMismatch;
+    }
+    if (lucent::Status provenance = lucent::qualify::check_report_provenance(report, args.allow_dirty_build);
+        !provenance) {
+        std::fprintf(stderr, "lucent-qualify: %s\n", provenance.error().describe().c_str());
+        return kExitUsage;
+    }
+    if (lucent::Status version = lucent::qualify::check_version_change(read_text(manifest_path),
+                                                                        read_text(database_path), *exported);
+        !version) {
+        std::fprintf(stderr, "lucent-qualify: %s\n", version.error().describe().c_str());
+        return kExitUsage;
     }
     if (!write_text(database_path, exported->database_text) ||
         !write_text(manifest_path, exported->manifest_text)) {

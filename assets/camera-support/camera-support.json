@@ -1,13 +1,17 @@
 {
  "schema": "lucent.camera-support",
- "schema_version": 1,
+ "schema_version": 2,
  "qualification": {
-  "generated": "2026-10-08T21:47:26Z",
-  "date": "2026-10-08",
-  "tool": "lucent-qualify 0.1.0 (3a836ac453c2)",
+  "generated": "2026-10-09T01:43:35Z",
+  "date": "2026-10-09",
+  "tool": "lucent-qualify 0.1.0 (72cb6d170d50-dirty)",
   "report": "docs/qualification/qualification-report.json",
   "basis": {
    "decoder": "LibRaw 0.22.2-Release",
+   "decoder_capabilities": [
+    "jpeg",
+    "zlib"
+   ],
    "decoded_raw_contract": "1.4",
    "mode_key": 1,
    "check_suite": 2,
@@ -16,7 +20,23 @@
    "develop_pipeline": 3,
    "dng_opcode_processing": 1,
    "geometry_operation": 2,
-   "image_area_placement": 1
+   "image_area_placement": 1,
+   "develop_engine": [
+    3,
+    2,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "neutral_look": 1,
+   "export": 1
   },
   "summary": {
    "modes": 34,
@@ -52,6 +72,8 @@
   {
    "match": "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 3960x2640",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "Canon EOS 5D Mark III M-RAW via Adobe DNG Converter 9.8",
    "mode": "LinearRaw DNG (3 samples per pixel, lossless JPEG)",
@@ -68,6 +90,8 @@
   {
    "match": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg-canon-sraw-mraw-subsampled-ycbcr|3360x2240|15bit|linear-rgb|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg-canon-sraw-mraw-subsampled-ycbcr|3360x2240|14bit|linear-rgb|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 3360x2240",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Canon EOS 5D Mark IV",
    "mode": "CR2 S-RAW (YCbCr, lossless JPEG), 3360x2240",
@@ -82,6 +106,8 @@
   {
    "match": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg|6744x4502|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-5d-mark-iv|tiff|lossless-jpeg|6744x4502|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 6720x4480",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Canon EOS 5D Mark IV",
    "mode": "CR2 RAW (lossless JPEG), 14-bit",
@@ -96,6 +122,8 @@
   {
    "match": "mk1|canon|eos-7d-mark-ii|dng|lossless-jpeg|5496x3670|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-7d-mark-ii|dng|lossless-jpeg|5496x3670|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 5472x3648",
+   "dng_opcodes": [],
    "state": "limited",
    "camera": "Canon EOS 7D Mark II (Lightroom Classic 13 Denoise DNG)",
    "mode": "DNG 1.7 CFA original (lossless JPEG) beside a JPEG XL Enhanced image",
@@ -117,6 +145,8 @@
   {
    "match": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 5088x3392",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Canon EOS R5",
    "mode": "CR3 RAW (lossless CRX), 1.6x crop, 14-bit",
@@ -131,6 +161,8 @@
   {
    "match": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-r5|cr3|canon-crx-lossless-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 8192x5464",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Canon EOS R5",
    "mode": "CR3 RAW (lossless CRX), full frame, 14-bit",
@@ -145,6 +177,8 @@
   {
    "match": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/2",
    "qualified_key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|5087x3391|14bit|mosaic:RGGB|uint16|single-view|primary:0/2",
+   "image_area": "decoder_inset_crop 5088x3392",
+   "dng_opcodes": [],
    "state": "limited",
    "camera": "Canon EOS R5",
    "mode": "CR3 C-RAW (lossy CRX), 1.6x crop, Dual Pixel RAW: image 0 of 2",
@@ -164,6 +198,8 @@
   {
    "match": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-r5|cr3|canon-crx-lossy-c-raw|8191x5463|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 8192x5464",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Canon EOS R5",
    "mode": "CR3 C-RAW (lossy CRX), full frame, 14-bit",
@@ -178,6 +214,11 @@
   {
    "match": "mk1|dji|fc220|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|dji|fc220|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 3992x2992",
+   "dng_opcodes": [
+    "list1:FixBadPixelsList",
+    "list3:FixVignetteRadial"
+   ],
    "state": "compatible_unverified",
    "camera": "DJI Mavic Pro",
    "mode": "DNG, uncompressed, 16-bit, OpcodeList1 FixBadPixelsList, OpcodeList3 FixVignetteRadial",
@@ -194,6 +235,10 @@
   {
    "match": "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|dji|fc4382|dng|lossless-jpeg|4032x3024|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 4024x3016",
+   "dng_opcodes": [
+    "list3:WarpRectilinear"
+   ],
    "state": "compatible_unverified",
    "camera": "DJI Mavic 3 Pro medium tele camera (70 mm), 12 MP mode",
    "mode": "DNG, tiled lossless JPEG, 16-bit, OpcodeList3 WarpRectilinear",
@@ -210,6 +255,12 @@
   {
    "match": "mk1|dji|fc7303|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|dji|fc7303|dng|uncompressed|4000x3000|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 4000x3000",
+   "dng_opcodes": [
+    "list3:FixVignetteRadial",
+    "list3:WarpRectilinear",
+    "list3:GainMap"
+   ],
    "state": "compatible_unverified",
    "camera": "DJI Mini 2",
    "mode": "DNG, uncompressed, 16-bit, 4:3, OpcodeList3 FixVignetteRadial, WarpRectilinear, GainMap",
@@ -226,6 +277,8 @@
   {
    "match": "mk1|fujifilm|gfx50s-ii|raf|fujifilm-raf-compressed-lossy|8280x6208|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|fujifilm|gfx50s-ii|raf|fujifilm-raf-compressed-lossy|8280x6208|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 8256x6192",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "Fujifilm GFX 50S II",
    "mode": "RAF 14-bit compressed (lossy), Bayer, 4:3",
@@ -243,6 +296,8 @@
   {
    "match": "mk1|fujifilm|x-t4|raf|fujifilm-raf-compressed-lossy|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-compressed-lossy|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 6240x4160",
+   "dng_opcodes": [],
    "state": "limited",
    "camera": "Fujifilm X-T4",
    "mode": "RAF 14-bit compressed (lossy), X-Trans",
@@ -265,6 +320,8 @@
   {
    "match": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|fujifilm|x-t4|raf|fujifilm-raf-lossless-compressed|6246x4170|14bit|mosaic:GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 6240x4160",
+   "dng_opcodes": [],
    "state": "limited",
    "camera": "Fujifilm X-T4",
    "mode": "RAF 14-bit lossless compressed, X-Trans",
@@ -287,6 +344,11 @@
   {
    "match": "mk1|hasselblad|l2d-20c|dng|uncompressed|5280x3956|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|hasselblad|l2d-20c|dng|uncompressed|5280x3956|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 5272x3948",
+   "dng_opcodes": [
+    "list3:GainMap",
+    "list3:WarpRectilinear"
+   ],
    "state": "compatible_unverified",
    "camera": "DJI Mavic 3 series Hasselblad camera (L2D-20c)",
    "mode": "DNG, uncompressed, 16-bit, OpcodeList3 GainMap, WarpRectilinear",
@@ -303,6 +365,8 @@
   {
    "match": "mk1|hasselblad|x1d-ii-50c|tiff|uncompressed|8278x6208|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|hasselblad|x1d-ii-50c|tiff|uncompressed|8278x6208|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "unknown",
+   "dng_opcodes": [],
    "state": "limited",
    "camera": "Hasselblad X1D II 50C",
    "mode": "3FR 16-bit, uncompressed",
@@ -322,6 +386,8 @@
   {
    "match": "mk1|insta360|one2|dng|uncompressed|3040x6080|16bit|mosaic:GRBG|uint16|dual-fisheye-360|primary:0/1",
    "qualified_key": "mk1|insta360|one2|dng|uncompressed|3040x6080|16bit|mosaic:GRBG|uint16|dual-fisheye-360|primary:0/1",
+   "image_area": "dng_default_whole_image 3040x6080",
+   "dng_opcodes": [],
    "state": "unsupported",
    "camera": "Insta360 'One2' (the archive labels it One X; the file says Insta360 One2, probably the ONE X2)",
    "mode": "DNG, unstitched dual-fisheye 360 source, 3040x6080",
@@ -340,6 +406,8 @@
   {
    "match": "mk1|leica|m-monochrom-typ-246|dng|lossless-jpeg|5984x4000|12bit|monochrome|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|leica|m-monochrom-typ-246|dng|lossless-jpeg|5984x4000|12bit|monochrome|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 5976x3992",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Leica M Monochrom (Typ 246)",
    "mode": "DNG 12-bit LinearRaw (big-endian), monochrome sensor",
@@ -354,6 +422,8 @@
   {
    "match": "mk1|leica|m10|dng|lossless-jpeg|5984x3992|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|leica|m10|dng|lossless-jpeg|5984x3992|16bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 5976x3984",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "Leica M10",
    "mode": "DNG 14-bit CFA, lossless JPEG",
@@ -370,6 +440,8 @@
   {
    "match": "mk1|nikon|z-6|tiff|nikon-nef-lossless|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|nikon|z-6|tiff|nikon-nef-lossless|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 6048x4024",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "Nikon Z 6",
    "mode": "NEF 14-bit lossless compressed",
@@ -387,6 +459,8 @@
   {
    "match": "mk1|nikon|z-6|tiff|nikon-nef-lossy-type-2|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|nikon|z-6|tiff|nikon-nef-lossy-type-2|6064x4040|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 6048x4024",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "Nikon Z 6",
    "mode": "NEF 14-bit compressed (lossy)",
@@ -404,6 +478,8 @@
   {
    "match": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he-star|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he-star|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 8256x5504",
+   "dng_opcodes": [],
    "state": "unsupported",
    "camera": "Nikon Z 8",
    "mode": "NEF High Efficiency* (HE*)",
@@ -421,6 +497,8 @@
   {
    "match": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|nikon|z-8|tiff|nikon-nef-high-efficiency-he|8280x5520|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 8256x5504",
+   "dng_opcodes": [],
    "state": "unsupported",
    "camera": "Nikon Z 8",
    "mode": "NEF High Efficiency (HE)",
@@ -438,6 +516,8 @@
   {
    "match": "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 5184x3888",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "OM System OM-1",
    "mode": "ORF 12-bit, standard 20 MP",
@@ -455,6 +535,8 @@
   {
    "match": "mk1|panasonic|dc-s5m2|rw2|panasonicc8-load-raw-lossiness-not-established|6008x4008|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|panasonic|dc-s5m2|rw2|panasonicc8-load-raw-lossiness-not-established|6008x4008|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 6000x4000",
+   "dng_opcodes": [],
    "state": "compatible_unverified",
    "camera": "Panasonic LUMIX S5 II (DC-S5M2)",
    "mode": "RW2 14-bit, mechanical shutter",
@@ -472,6 +554,8 @@
   {
    "match": "mk1|pentax|k-3-mark-iii-monochrome|dng|lossless-jpeg|6224x4160|14bit|monochrome|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|pentax|k-3-mark-iii-monochrome|dng|lossless-jpeg|6224x4160|14bit|monochrome|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 6192x4128",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Pentax K-3 Mark III Monochrome",
    "mode": "DNG 14-bit LinearRaw, monochrome sensor",
@@ -486,6 +570,8 @@
   {
    "match": "mk1|pentax|k-3-mark-iii|tiff|pentax-pef-lossless-compressed|6224x4160|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|pentax|k-3-mark-iii|tiff|pentax-pef-lossless-compressed|6224x4160|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "unknown",
+   "dng_opcodes": [],
    "state": "limited",
    "camera": "Pentax K-3 Mark III",
    "mode": "PEF 14-bit",
@@ -508,6 +594,8 @@
   {
    "match": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|4692x3132|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|4692x3132|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 4608x3072",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7 IV (ILCE-7M4)",
    "mode": "ARW compressed (lossy), APS-C crop, 14-bit",
@@ -522,6 +610,8 @@
   {
    "match": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7m4|tiff|sony-arw-compressed-lossy|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 7008x4672",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7 IV (ILCE-7M4)",
    "mode": "ARW compressed (lossy), full frame, 14-bit",
@@ -536,6 +626,8 @@
   {
    "match": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|3516x2344|15bit|linear-rgb|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|3516x2344|15bit|linear-rgb|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 3504x2336",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7 IV (ILCE-7M4)",
    "mode": "ARW lossless compressed, size S (YCbCr, white balance applied in camera)",
@@ -550,6 +642,8 @@
   {
    "match": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|4624x3080|15bit|linear-rgb|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed-ycbcr-m-s-sizes|4624x3080|15bit|linear-rgb|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 4608x3072",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7 IV (ILCE-7M4)",
    "mode": "ARW lossless compressed, size M (YCbCr, white balance applied in camera)",
@@ -564,6 +658,8 @@
   {
    "match": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7m4|tiff|sony-arw-lossless-compressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 7008x4672",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7 IV (ILCE-7M4)",
    "mode": "ARW lossless compressed, size L, full frame, 14-bit",
@@ -578,6 +674,8 @@
   {
    "match": "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7m4|tiff|uncompressed|7028x4688|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 7008x4672",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7 IV (ILCE-7M4)",
    "mode": "ARW uncompressed, full frame, 14-bit",
@@ -592,6 +690,8 @@
   {
    "match": "mk1|sony|ilce-7rm5|tiff|sony-arw-compressed-lossy|9564x6376|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|sony|ilce-7rm5|tiff|sony-arw-compressed-lossy|9564x6376|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 9504x6336",
+   "dng_opcodes": [],
    "state": "verified",
    "camera": "Sony A7R V (ILCE-7RM5)",
    "mode": "ARW compressed (lossy), full frame, 14-bit",

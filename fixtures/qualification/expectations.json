@@ -448,6 +448,7 @@
    "dimensions": {
     "rendered": [8191, 5463],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [8192, 5464],
      "status": "verified",
@@ -513,6 +514,7 @@
    "dimensions": {
     "rendered": [7008, 4672],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 7008, 4672],
     "camera_image_area": {
      "size": [7008, 4672],
      "status": "verified",
@@ -579,6 +581,7 @@
    "dimensions": {
     "rendered": [4024, 3016],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 4024, 3016],
     "camera_image_area": {
      "size": [4024, 3016],
      "status": "verified",
@@ -652,6 +655,7 @@
    "dimensions": {
     "rendered": [6240, 4160],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 7, 6240, 4160],
     "camera_image_area": {
      "size": [6240, 4160],
      "status": "verified",
@@ -718,6 +722,7 @@
    "dimensions": {
     "rendered": [6048, 4024],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [8, 8, 6048, 4024],
     "camera_image_area": {
      "size": [6048, 4024],
      "status": "verified",
@@ -783,6 +788,7 @@
    "dimensions": {
     "rendered": [8191, 5463],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [8192, 5464],
      "status": "verified",
@@ -848,6 +854,7 @@
    "dimensions": {
     "rendered": [5087, 3391],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [5088, 3392],
      "status": "verified",
@@ -913,6 +920,7 @@
    "dimensions": {
     "rendered": [5087, 3391],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [5088, 3392],
      "status": "verified",
@@ -985,6 +993,7 @@
    "dimensions": {
     "rendered": [6720, 4480],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 12, 6720, 4480],
     "camera_image_area": {
      "size": [6720, 4480],
      "status": "verified",
@@ -1051,6 +1060,7 @@
    "dimensions": {
     "rendered": [3360, 2240],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [3360, 2240],
      "status": "verified",
@@ -1122,6 +1132,7 @@
    "dimensions": {
     "rendered": [7008, 4672],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 7008, 4672],
     "camera_image_area": {
      "size": [7008, 4672],
      "status": "verified",
@@ -1187,6 +1198,7 @@
    "dimensions": {
     "rendered": [7008, 4672],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 7008, 4672],
     "camera_image_area": {
      "size": [7008, 4672],
      "status": "verified",
@@ -1252,6 +1264,7 @@
    "dimensions": {
     "rendered": [4608, 3072],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [8, 4, 4608, 3072],
     "camera_image_area": {
      "size": [4608, 3072],
      "status": "verified",
@@ -1323,6 +1336,7 @@
    "dimensions": {
     "rendered": [3504, 2336],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 4, 3504, 2336],
     "camera_image_area": {
      "size": [3504, 2336],
      "status": "verified",
@@ -1394,6 +1408,7 @@
    "dimensions": {
     "rendered": [4608, 3072],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [44, 30, 4608, 3072],
     "camera_image_area": {
      "size": [4608, 3072],
      "status": "verified",
@@ -1459,6 +1474,7 @@
    "dimensions": {
     "rendered": [9504, 6336],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [32, 20, 9504, 6336],
     "camera_image_area": {
      "size": [9504, 6336],
      "status": "verified",
@@ -1525,6 +1541,7 @@
    "dimensions": {
     "rendered": [3992, 2992],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 3992, 2992],
     "camera_image_area": {
      "size": [3992, 2992],
      "status": "verified",
@@ -1603,6 +1620,7 @@
    "dimensions": {
     "rendered": [5272, 3948],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 5272, 3948],
     "camera_image_area": {
      "size": [5272, 3948],
      "status": "verified",
@@ -1681,6 +1699,7 @@
    "dimensions": {
     "rendered": [4000, 3000],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [4000, 3000],
      "status": "verified",
@@ -1765,6 +1784,7 @@
    "dimensions": {
     "rendered": [3040, 6080],
     "image_area_source": "dng_default_whole_image",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": null,
      "status": "unverified",
@@ -1980,6 +2000,7 @@
    "dimensions": {
     "rendered": [6048, 4024],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [8, 8, 6048, 4024],
     "camera_image_area": {
      "size": [6048, 4024],
      "status": "verified",
@@ -2045,6 +2066,7 @@
    "dimensions": {
     "rendered": [6240, 4160],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 7, 6240, 4160],
     "camera_image_area": {
      "size": [6240, 4160],
      "status": "verified",
@@ -2111,6 +2133,7 @@
    "dimensions": {
     "rendered": [8256, 6192],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 8, 8256, 6192],
     "camera_image_area": {
      "size": [8256, 6192],
      "status": "verified",
@@ -2177,6 +2200,7 @@
    "dimensions": {
     "rendered": [6000, 4000],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [4, 4, 6000, 4000],
     "camera_image_area": {
      "size": [6000, 4000],
      "status": "verified",
@@ -2244,6 +2268,7 @@
    "dimensions": {
     "rendered": [5184, 3888],
     "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [12, 12, 5184, 3888],
     "camera_image_area": {
      "size": [5184, 3888],
      "status": "verified",
@@ -2310,6 +2335,7 @@
    "dimensions": {
     "rendered": [6224, 4160],
     "image_area_source": "unknown",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [6192, 4128],
      "status": "verified",
@@ -2377,6 +2403,7 @@
    "dimensions": {
     "rendered": [6192, 4128],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [28, 24, 6192, 4128],
     "camera_image_area": {
      "size": [6192, 4128],
      "status": "verified",
@@ -2444,6 +2471,7 @@
    "dimensions": {
     "rendered": [5976, 3984],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 5976, 3984],
     "camera_image_area": {
      "size": [5976, 3984],
      "status": "verified",
@@ -2512,6 +2540,7 @@
    "dimensions": {
     "rendered": [5976, 3992],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [4, 4, 5976, 3992],
     "camera_image_area": {
      "size": [5976, 3992],
      "status": "verified",
@@ -2578,6 +2607,7 @@
    "dimensions": {
     "rendered": [8278, 6208],
     "image_area_source": "unknown",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [8272, 6200],
      "status": "verified",
@@ -2645,6 +2675,7 @@
    "dimensions": {
     "rendered": [3960, 2640],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": null,
     "camera_image_area": {
      "size": [3960, 2640],
      "status": "verified",
@@ -2713,6 +2744,7 @@
    "dimensions": {
     "rendered": [5472, 3648],
     "image_area_source": "dng_default_crop",
+    "image_area_applied": [12, 12, 5472, 3648],
     "camera_image_area": {
      "size": [5472, 3648],
      "status": "verified",

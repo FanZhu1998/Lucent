@@ -9,9 +9,10 @@
 # cached fixture it runs lucent::qualify::qualify_fixture() (decode, rawpy parity, W2 render
 # against the committed rawpy statistics, two develop renders, JPEG/TIFF export and read-back) and
 # asserts the outcome recorded in fixtures/qualification/expectations.json: the proposed state,
-# every check's status, the limitations and the mode key. A regression in camera handling
-# therefore fails CI. Fixtures that are not downloaded skip; qualification-tier fixtures run only
-# with LUCENT_TEST_FIXTURE_TIER=all (about 20 s each), smoke fixtures always run when cached. The
+# every check's status, the limitations, the mode key and where the camera's area is placed. A
+# regression in camera handling therefore fails CI. Fixtures that are not downloaded skip; smoke
+# fixtures and every fixture expected to be Verified always run when cached (QUA-07), the other
+# qualification-tier fixtures only with LUCENT_TEST_FIXTURE_TIER=all (about 20 s each). The
 # tests hold the full-resolution render lock (tests/CMakeLists.txt) so that at most one
 # full-resolution render of the fixture suites runs at a time.
 #

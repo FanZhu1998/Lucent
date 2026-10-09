@@ -29,6 +29,7 @@
 // recorded but never suffice on their own. Anything that could not be checked stays
 // "unverified".
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -39,6 +40,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <lucent/assets/camera_support.hpp>
 #include <lucent/core/error.hpp>
 
 namespace lucent::qualify {
@@ -64,14 +66,15 @@ inline constexpr std::string_view kCheckExportRoundTrip = "export_round_trip";
 inline constexpr std::string_view kCheckDeterminism = "determinism";
 [[nodiscard]] const std::vector<std::string_view>& check_ids();
 
-//   Limitations (known optional capabilities that are missing).
-inline constexpr std::string_view kLimitDefaultCrop = "default_crop_not_applied";
-inline constexpr std::string_view kLimitXTransBaseline = "xtrans_baseline_demosaic";
-inline constexpr std::string_view kLimitDualPixel = "dual_pixel_not_processed";
-inline constexpr std::string_view kLimitEnhancedImage = "dng_enhanced_image_not_offered";
-inline constexpr std::string_view kLimitOptionalOperations = "optional_operations_skipped";
-inline constexpr std::string_view kLimitNonSquarePixels = "non_square_pixels";
-inline constexpr std::string_view kLimitPixelShift = "pixel_shift_not_combined";
+//   Limitations (known optional capabilities that are missing): the codes the camera support
+//   database and the application share (lucent/assets/camera_support.hpp).
+inline constexpr std::string_view kLimitDefaultCrop = assets::kLimitationDefaultCrop;
+inline constexpr std::string_view kLimitXTransBaseline = assets::kLimitationXTransBaseline;
+inline constexpr std::string_view kLimitDualPixel = assets::kLimitationDualPixel;
+inline constexpr std::string_view kLimitEnhancedImage = assets::kLimitationEnhancedImage;
+inline constexpr std::string_view kLimitOptionalOperations = assets::kLimitationOptionalOperations;
+inline constexpr std::string_view kLimitNonSquarePixels = assets::kLimitationNonSquarePixels;
+inline constexpr std::string_view kLimitPixelShift = assets::kLimitationPixelShift;
 [[nodiscard]] const std::vector<std::string_view>& limitation_ids();
 
 //   States and check statuses as written in JSON.
@@ -135,6 +138,13 @@ struct FixtureExpectation {
     // raw::to_string(ImageAreaSource) the decoder reports ("dng_default_crop", "decoder_inset_crop",
     // "dng_default_whole_image", "unknown"); absent: not asserted.
     std::optional<std::string> image_area_source;
+    // QUA-07: where the develop render placed the camera's area in its upright image
+    // ("image_area_applied": [x, y, width, height], or null when the frame is the whole image). An
+    // outcome recorded from a reviewed run, like "rendered" (its origin is the declared crop origin
+    // the file's tags give, cross-checked in the note); a placement that moves while the size stays
+    // fails. Not asserted when absent (image_area_applied_asserted false).
+    bool image_area_applied_asserted = false;
+    std::optional<std::array<std::int32_t, 4>> image_area_applied;
     // Orientation.
     int orientation_exif = 1;
     Fact orientation;
