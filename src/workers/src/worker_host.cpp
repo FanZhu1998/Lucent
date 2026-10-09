@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <windows.h>
+#include <psapi.h>
 
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
@@ -77,6 +78,18 @@ struct Worker {
 
     // Driving thread only.
     bool memory_limit_hit = false;
+    bool grouped = false;  // a member of the host's WorkerGroup
+
+    // The process's commit now (PrivateUsage); 0 when it cannot be read.
+    [[nodiscard]] std::uint64_t commit() const noexcept {
+        PROCESS_MEMORY_COUNTERS_EX counters{};
+        counters.cb = sizeof(counters);
+        if (!::GetProcessMemoryInfo(process.get(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                                    sizeof(counters))) {
+            return 0;
+        }
+        return counters.PrivateUsage;
+    }
 
     [[nodiscard]] bool exited() const noexcept {
         return ::WaitForSingleObject(process.get(), 0) == WAIT_OBJECT_0;
@@ -326,14 +339,22 @@ Expected<std::unique_ptr<Worker>> spawn(const WorkerHostOptions& options, const 
     }
     UniqueHandle process(created.hProcess);
     UniqueHandle thread(created.hThread);
+    // The group's Job Object first, then the worker's own, which therefore nests inside it.
+    const bool grouped = options.group && options.group->join(process.get(), created.dwProcessId);
+    const auto abandon = [&] {
+        ::TerminateProcess(process.get(), kTerminatedExitCode);
+        if (grouped) {
+            options.group->leave(created.dwProcessId);
+        }
+    };
     if (job && !::AssignProcessToJobObject(job.get(), process.get())) {
         auto failure = win32_failure("cannot assign the worker to its Job Object");
-        ::TerminateProcess(process.get(), kTerminatedExitCode);
+        abandon();
         return failure;
     }
     if (::ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
         auto failure = win32_failure("cannot resume the worker");
-        ::TerminateProcess(process.get(), kTerminatedExitCode);
+        abandon();
         return failure;
     }
     // The worker holds its own copies of its ends now; closing ours lets each side see the other
@@ -348,6 +369,7 @@ Expected<std::unique_ptr<Worker>> spawn(const WorkerHostOptions& options, const 
         worker->job = std::move(job);
         worker->port = std::move(port);
         worker->pid = created.dwProcessId;
+        worker->grouped = grouped;
         worker->channel = std::make_unique<MessageChannel>(response_read.get(), request_write.get(),
                                                            Direction::WorkerToHost);
         (void)response_read.release();
@@ -356,8 +378,14 @@ Expected<std::unique_ptr<Worker>> spawn(const WorkerHostOptions& options, const 
         worker->reader = std::thread([raw] { raw->read_loop(); });
         return worker;
     } catch (const std::bad_alloc&) {
+        if (grouped) {
+            options.group->leave(created.dwProcessId);
+        }
         return fail(ErrorCode::OutOfMemory, "cannot start the worker", std::string(kWhereStart));
     } catch (const std::system_error& e) {
+        if (grouped) {
+            options.group->leave(created.dwProcessId);
+        }
         return fail(ErrorCode::Internal, std::format("cannot start the reader thread: {}", e.what()),
                     std::string(kWhereStart));
     }
@@ -415,6 +443,8 @@ std::string_view to_string(WorkerFault fault) noexcept {
             return "memory_limit";
         case WorkerFault::ProtocolViolation:
             return "protocol_violation";
+        case WorkerFault::GroupMemoryLimit:
+            return "group_memory_limit";
     }
     return "unknown";
 }
@@ -429,6 +459,8 @@ struct WorkerHost::State {
     void set_stopped() {
         std::lock_guard lock(info_mutex);
         info.running = false;
+        info.grouped = false;
+        info.idle_commit_bytes = 0;
     }
 
     // Ends the current worker (if any) and forgets it.
@@ -436,6 +468,9 @@ struct WorkerHost::State {
         if (worker) {
             const std::uint64_t peak = worker->peak_commit();
             worker->stop();
+            if (worker->grouped && options.group) {
+                options.group->leave(worker->pid);
+            }
             {
                 std::lock_guard lock(info_mutex);
                 info.peak_commit_bytes = std::max(info.peak_commit_bytes, peak);
@@ -443,6 +478,56 @@ struct WorkerHost::State {
             worker.reset();
         }
         set_stopped();
+    }
+
+    // The group's aggregate limit stopped the current worker during the job that started with
+    // `start` (see the file comment): the group's notification naming the worker or, with
+    // `failed_for_memory` (the job ended with an OutOfMemory, or the worker ended), the group's peak
+    // commit rising to within 5 % of the limit during the job. `shared`: another worker of the group
+    // was alive at some time during the job. Consumes the notification: call once per job.
+    struct GroupHit {
+        bool shared = false;
+    };
+    [[nodiscard]] std::optional<GroupHit> group_limit(const std::optional<WorkerGroup::Snapshot>& start,
+                                                      bool failed_for_memory) {
+        if (!start || !options.group || !worker || !worker->grouped) {
+            return std::nullopt;
+        }
+        const bool notified = options.group->take_limit_hit(worker->pid);
+        const WorkerGroup::Snapshot end = options.group->snapshot(worker->pid);
+        const std::uint64_t limit = options.group->memory_limit_bytes();
+        const bool near_limit = end.peak_commit > start->peak_commit && end.peak_commit >= limit - limit / 20;
+        if (!notified && !(failed_for_memory && near_limit)) {
+            return std::nullopt;
+        }
+        GroupHit hit;
+        hit.shared = start->other_members > 0 || end.other_members > 0 || end.joined > start->joined;
+        return hit;
+    }
+
+    [[nodiscard]] JobFailure group_failure(const GroupHit& hit, const std::string& what) const {
+        JobFailure failure;
+        const std::uint64_t limit_mib = options.group->memory_limit_bytes() >> 20;
+        if (hit.shared) {
+            // Which worker an aggregate limit stops is whichever allocates at it: alone, this job
+            // may well fit.
+            failure.error = Error{ErrorCode::OutOfMemory,
+                                  std::format("the workers together reached their aggregate memory limit of {} MiB "
+                                              "while another worker held memory: {}",
+                                              limit_mib, what),
+                                  "workers.worker.group_memory_limit", 0};
+            failure.failure_class = FailureClass::Transient;
+            failure.fault = WorkerFault::GroupMemoryLimit;
+        } else {
+            failure.error = Error{ErrorCode::LimitExceeded,
+                                  std::format("the worker alone exceeded the workers' aggregate memory limit of {} "
+                                              "MiB: {}",
+                                              limit_mib, what),
+                                  "workers.worker.memory_limit", 0};
+            failure.failure_class = FailureClass::Deterministic;
+            failure.fault = WorkerFault::MemoryLimit;
+        }
+        return failure;
     }
 
     Status validate_options(TestHooks& hooks) const {
@@ -553,19 +638,24 @@ struct WorkerHost::State {
             info = WorkerInfo{.starts = info.starts + 1, .jobs = info.jobs};
             info.creation_flags = flags;
             info.pid = worker->pid;
+            info.grouped = worker->grouped;
         }
         if (auto shaken = handshake(*worker); !shaken) {
             discard_worker();
             return shaken;
         }
+        const std::uint64_t idle = worker->commit();
         std::lock_guard lock(info_mutex);
         info.running = true;
         info.last_start_seconds = seconds_since(started_at);
+        info.idle_commit_bytes = idle;
         return ok();
     }
 
-    // Classifies the end of a worker that went away during a job.
-    JobFailure lost(std::string_view job_id, std::optional<Error> protocol_error) {
+    // Classifies the end of a worker that went away during a job (`group`: the group-limit evidence,
+    // asked for once the process ended).
+    JobFailure lost(std::string_view job_id, std::optional<Error> protocol_error,
+                    const std::function<std::optional<GroupHit>()>& group) {
         JobFailure failure;
         if (protocol_error) {
             failure.error = std::move(*protocol_error);
@@ -582,6 +672,12 @@ struct WorkerHost::State {
             failure.failure_class = FailureClass::Deterministic;
             failure.fault = WorkerFault::MemoryLimit;
             return failure;
+        }
+        if (const std::optional<GroupHit> hit = group()) {
+            JobFailure grouped = group_failure(
+                *hit, std::format("the worker ended ({}) running job '{}'", exit_text(failure.exit_code), job_id));
+            grouped.exit_code = failure.exit_code;
+            return grouped;
         }
         if (failure.exit_code == static_cast<std::uint32_t>(WorkerExitCode::ProtocolViolation)) {
             failure.error = Error{ErrorCode::Corrupt,
@@ -687,6 +783,23 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
     }
     w.poll_port();
     w.memory_limit_hit = false;
+    // The group as the job starts (its company and peak commit); a notification left from before
+    // belongs to no job of this worker.
+    std::optional<WorkerGroup::Snapshot> group_start;
+    if (options.group && w.grouped) {
+        (void)options.group->take_limit_hit(w.pid);
+        group_start = options.group->snapshot(w.pid);
+    }
+    // The group-limit evidence, evaluated once (it consumes the group's notification).
+    std::optional<GroupHit> group_hit;
+    bool group_checked = false;
+    const auto check_group = [&](bool failed_for_memory) {
+        if (!group_checked) {
+            group_checked = true;
+            group_hit = group_limit(group_start, failed_for_memory);
+        }
+        return group_hit;
+    };
     {
         std::lock_guard lock(info_mutex);
         ++info.jobs;
@@ -827,7 +940,7 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
         if (protocol_error) {
             w.terminate();
         }
-        outcome.failure = lost(request.job_id, std::move(protocol_error));
+        outcome.failure = lost(request.job_id, std::move(protocol_error), [&] { return check_group(true); });
     }
     w.poll_port();
     {
@@ -841,14 +954,22 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
         info.peak_commit_bytes = std::max(info.peak_commit_bytes, outcome.metrics.peak_commit_bytes);
     }
 
-    // A worker that reported OutOfMemory at its limit is recycled like one that ended at it.
+    // A worker that reported OutOfMemory at its limit is recycled like one that ended at it; at its
+    // group's limit, classified by its company.
     if (outcome.failure && outcome.failure->fault == WorkerFault::None &&
-        outcome.failure->error.code == ErrorCode::OutOfMemory && memory_limit_reached()) {
-        outcome.failure->error = memory_limit_error(outcome.failure->error.describe());
-        outcome.failure->failure_class = FailureClass::Deterministic;
-        outcome.failure->fault = WorkerFault::MemoryLimit;
+        outcome.failure->error.code == ErrorCode::OutOfMemory) {
+        if (memory_limit_reached()) {
+            outcome.failure->error = memory_limit_error(outcome.failure->error.describe());
+            outcome.failure->failure_class = FailureClass::Deterministic;
+            outcome.failure->fault = WorkerFault::MemoryLimit;
+        } else if (const std::optional<GroupHit> hit = check_group(true)) {
+            outcome.failure = group_failure(*hit, outcome.failure->error.describe());
+        }
     }
-    const bool recycle = memory_limit_reached() || (outcome.failure && outcome.failure->fault != WorkerFault::None);
+    // A group-limit notification about a job that ended otherwise still recycles the worker.
+    (void)check_group(false);
+    const bool recycle = memory_limit_reached() || group_hit.has_value() ||
+                         (outcome.failure && outcome.failure->fault != WorkerFault::None);
     if (recycle) {
         if (outcome.failure && !outcome.failure->exit_code && worker->exited()) {
             outcome.failure->exit_code = worker->exit_code();
@@ -864,6 +985,12 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
                 }
             }
         }
+    } else if (worker && worker->alive()) {
+        // What the worker keeps while idle counts against its group's limit (the scheduler's
+        // admission looks at it).
+        const std::uint64_t idle = worker->commit();
+        std::lock_guard lock(info_mutex);
+        info.idle_commit_bytes = idle;
     }
     return finish(outcome);
 }

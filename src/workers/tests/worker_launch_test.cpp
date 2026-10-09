@@ -34,8 +34,8 @@ TEST(WorkerLaunch, ArgumentsRoundTrip) {
     launch.request_handle = 0x1A4;
     launch.response_handle = 0x1B8;
     launch.parent_handle = 0x2C0;
-    for (const char* spec : {"hang-job", "freeze", "crash-job", "allocate:1048576", "render-delay:250",
-                             "fake-commit:deadbee", "protocol:2-3", "fail-final-check:2"}) {
+    for (const char* spec : {"hang-job", "freeze", "crash-job", "allocate:1048576", "hold-allocation:1500",
+                             "render-delay:250", "fake-commit:deadbee", "protocol:2-3", "fail-final-check:2"}) {
         ASSERT_TRUE(apply_test_hook(spec, launch.hooks)) << spec;
     }
     auto arguments = worker_arguments(launch);
@@ -48,6 +48,7 @@ TEST(WorkerLaunch, ArgumentsRoundTrip) {
     EXPECT_EQ(parsed->hooks.specs(), launch.hooks.specs());
     EXPECT_TRUE(parsed->hooks.hang_job && parsed->hooks.freeze && parsed->hooks.crash_job);
     EXPECT_EQ(parsed->hooks.allocate_bytes, 1048576u);
+    EXPECT_EQ(parsed->hooks.hold_allocation_ms, 1500u);
     EXPECT_EQ(parsed->hooks.render_delay_ms, 250u);
     EXPECT_EQ(parsed->hooks.fake_commit, "deadbee");
     EXPECT_EQ(parsed->hooks.protocol_range, std::pair(2u, 3u));
@@ -99,7 +100,8 @@ TEST(WorkerLaunch, TestHookSpecsAreValidated) {
                              "allocate:1099511627777", "render-delay:0", "render-delay:600001", "fake-commit:",
                              "fake-commit:a b", "fake-commit:\"x\"", "protocol:0-1", "protocol:2-1", "protocol:1",
                              "protocol:1-", "freeze:yes", "fail-final-check:0", "fail-final-check:17",
-                             "fail-final-check"}) {
+                             "fail-final-check", "hold-allocation", "hold-allocation:0",
+                             "hold-allocation:600001"}) {
         TestHooks hooks;
         auto applied = apply_test_hook(spec, hooks);
         EXPECT_FALSE(applied) << spec;

@@ -65,8 +65,8 @@ bool parse_handle(std::wstring_view text, std::uintptr_t& value) {
 }  // namespace
 
 bool TestHooks::any() const noexcept {
-    return hang_job || freeze || crash_job || allocate_bytes != 0 || render_delay_ms != 0 || fake_commit.has_value() ||
-           protocol_range.has_value() || fail_final_checks != 0;
+    return hang_job || freeze || crash_job || allocate_bytes != 0 || hold_allocation_ms != 0 || render_delay_ms != 0 ||
+           fake_commit.has_value() || protocol_range.has_value() || fail_final_checks != 0;
 }
 
 std::vector<std::string> TestHooks::specs() const {
@@ -82,6 +82,9 @@ std::vector<std::string> TestHooks::specs() const {
     }
     if (allocate_bytes != 0) {
         out.push_back(std::format("allocate:{}", allocate_bytes));
+    }
+    if (hold_allocation_ms != 0) {
+        out.push_back(std::format("hold-allocation:{}", hold_allocation_ms));
     }
     if (render_delay_ms != 0) {
         out.push_back(std::format("render-delay:{}", render_delay_ms));
@@ -115,6 +118,12 @@ Status apply_test_hook(std::string_view spec, TestHooks& hooks) {
             return Unexpected(invalid_hook(spec));
         }
         hooks.allocate_bytes = bytes;
+    } else if (name == "hold-allocation" && has_value) {
+        std::uint32_t ms = 0;
+        if (!parse_number(value, ms) || ms == 0 || ms > kMaxDelayMs) {
+            return Unexpected(invalid_hook(spec));
+        }
+        hooks.hold_allocation_ms = ms;
     } else if (name == "render-delay" && has_value) {
         std::uint32_t ms = 0;
         if (!parse_number(value, ms) || ms == 0 || ms > kMaxDelayMs) {

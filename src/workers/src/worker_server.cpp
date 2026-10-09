@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <format>
@@ -135,6 +136,15 @@ Expected<Answer> run_one(const std::variant<JobRequest, AnalysisRequest>& job, J
             auto block = std::make_unique_for_overwrite<std::byte[]>(bytes);
             for (std::size_t offset = 0; offset < bytes; offset += 4096) {
                 block[offset] = std::byte{1};  // commit and touch every page
+            }
+            // hold-allocation: keep it a while (cancellable), so other workers allocate meanwhile.
+            const auto until =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(hooks.hold_allocation_ms);
+            while (std::chrono::steady_clock::now() < until && !context.cancel().is_cancelled()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (Status c = context.cancel().check("workers.server"); !c) {
+                return Unexpected(std::move(c.error()));
             }
         }
         if (const auto* request = std::get_if<JobRequest>(&job)) {
