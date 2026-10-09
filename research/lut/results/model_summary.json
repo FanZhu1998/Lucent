@@ -1,0 +1,436 @@
+{
+  "schema": "lucent.lut-research.model-summary",
+  "schema_version": 1,
+  "run_date": "2026-10-09",
+  "upstream": {
+    "repository": "https://github.com/HuiZeng/Image-Adaptive-3DLUT",
+    "commit": "b491f6df64a588864739a157db271e5c848e1805",
+    "commit_date": "2022-11-26T12:22:59+08:00",
+    "clean": true
+  },
+  "environment": {
+    "python": "3.12.10",
+    "python_build": "MSC v.1943 64 bit (AMD64)",
+    "os": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "AMD64 Family 23 Model 104 Stepping 1, AuthenticAMD",
+    "logical_cpus": 12,
+    "torch": "2.14.1+cpu",
+    "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+    "torch_cuda_available": false,
+    "torch_cpu_capability": "AVX2",
+    "torch_num_threads": 6,
+    "torch_mkldnn": true,
+    "torchvision": "0.29.1+cpu",
+    "numpy": "2.5.3",
+    "pillow": "12.3.0",
+    "libjpeg_turbo": "3.1.4.1"
+  },
+  "classifier": {
+    "class": "models_x.Classifier (identical to models.Classifier)",
+    "input": "1 x 3 x H x W float32 RGB in [0, 1] (to_tensor of an 8-bit sRGB image); any H, W",
+    "internal_resize": "bilinear to 256 x 256, align_corners=False, no antialiasing; aspect ratio not preserved",
+    "output": "3 unconstrained real weights (no softmax, not normalised); demo weights a1629 = [1.908, -0.346, -0.928]",
+    "layers": [
+      {
+        "index": 0,
+        "layer": "Upsample(size=(256, 256), mode=bilinear, align_corners=None -> False)",
+        "input": [
+          1,
+          3,
+          1080,
+          1620
+        ],
+        "output": [
+          1,
+          3,
+          256,
+          256
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 1376256
+      },
+      {
+        "index": 1,
+        "layer": "Conv2d(3, 16, 3x3, stride 2, pad 1)",
+        "input": [
+          1,
+          3,
+          256,
+          256
+        ],
+        "output": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "params": 448,
+        "macs": 7077888,
+        "other_flops_approx": 262144
+      },
+      {
+        "index": 2,
+        "layer": "LeakyReLU(0.2)",
+        "input": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "output": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 262144
+      },
+      {
+        "index": 3,
+        "layer": "InstanceNorm2d(16, affine=True, eps=1e-05, track_running_stats=False)",
+        "input": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "output": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "params": 32,
+        "macs": 0,
+        "other_flops_approx": 2097152
+      },
+      {
+        "index": 4,
+        "layer": "Conv2d(16, 32, 3x3, stride 2, pad 1)",
+        "input": [
+          1,
+          16,
+          128,
+          128
+        ],
+        "output": [
+          1,
+          32,
+          64,
+          64
+        ],
+        "params": 4640,
+        "macs": 18874368,
+        "other_flops_approx": 131072
+      },
+      {
+        "index": 5,
+        "layer": "LeakyReLU(0.2)",
+        "input": [
+          1,
+          32,
+          64,
+          64
+        ],
+        "output": [
+          1,
+          32,
+          64,
+          64
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 131072
+      },
+      {
+        "index": 6,
+        "layer": "InstanceNorm2d(32, affine=True, eps=1e-05, track_running_stats=False)",
+        "input": [
+          1,
+          32,
+          64,
+          64
+        ],
+        "output": [
+          1,
+          32,
+          64,
+          64
+        ],
+        "params": 64,
+        "macs": 0,
+        "other_flops_approx": 1048576
+      },
+      {
+        "index": 7,
+        "layer": "Conv2d(32, 64, 3x3, stride 2, pad 1)",
+        "input": [
+          1,
+          32,
+          64,
+          64
+        ],
+        "output": [
+          1,
+          64,
+          32,
+          32
+        ],
+        "params": 18496,
+        "macs": 18874368,
+        "other_flops_approx": 65536
+      },
+      {
+        "index": 8,
+        "layer": "LeakyReLU(0.2)",
+        "input": [
+          1,
+          64,
+          32,
+          32
+        ],
+        "output": [
+          1,
+          64,
+          32,
+          32
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 65536
+      },
+      {
+        "index": 9,
+        "layer": "InstanceNorm2d(64, affine=True, eps=1e-05, track_running_stats=False)",
+        "input": [
+          1,
+          64,
+          32,
+          32
+        ],
+        "output": [
+          1,
+          64,
+          32,
+          32
+        ],
+        "params": 128,
+        "macs": 0,
+        "other_flops_approx": 524288
+      },
+      {
+        "index": 10,
+        "layer": "Conv2d(64, 128, 3x3, stride 2, pad 1)",
+        "input": [
+          1,
+          64,
+          32,
+          32
+        ],
+        "output": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "params": 73856,
+        "macs": 18874368,
+        "other_flops_approx": 32768
+      },
+      {
+        "index": 11,
+        "layer": "LeakyReLU(0.2)",
+        "input": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "output": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 32768
+      },
+      {
+        "index": 12,
+        "layer": "InstanceNorm2d(128, affine=True, eps=1e-05, track_running_stats=False)",
+        "input": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "output": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "params": 256,
+        "macs": 0,
+        "other_flops_approx": 262144
+      },
+      {
+        "index": 13,
+        "layer": "Conv2d(128, 128, 3x3, stride 2, pad 1)",
+        "input": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "output": [
+          1,
+          128,
+          8,
+          8
+        ],
+        "params": 147584,
+        "macs": 9437184,
+        "other_flops_approx": 8192
+      },
+      {
+        "index": 14,
+        "layer": "LeakyReLU(0.2)",
+        "input": [
+          1,
+          128,
+          8,
+          8
+        ],
+        "output": [
+          1,
+          128,
+          8,
+          8
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 8192
+      },
+      {
+        "index": 15,
+        "layer": "Dropout(0.5) (identity in eval)",
+        "input": [
+          1,
+          128,
+          8,
+          8
+        ],
+        "output": [
+          1,
+          128,
+          8,
+          8
+        ],
+        "params": 0,
+        "macs": 0,
+        "other_flops_approx": 0
+      },
+      {
+        "index": 16,
+        "layer": "Conv2d(128, 3, 8x8, stride 1, pad 0)",
+        "input": [
+          1,
+          128,
+          8,
+          8
+        ],
+        "output": [
+          1,
+          3,
+          1,
+          1
+        ],
+        "params": 24579,
+        "macs": 24576,
+        "other_flops_approx": 3
+      }
+    ],
+    "params": 270083,
+    "params_without_instance_norm_affine": 269603,
+    "paper_statement": "'The whole CNN model contains only 269K parameters when N=3' (arXiv 2009.14468); 269,603 without the 480 InstanceNorm scale/shift parameters, 270,083 with them",
+    "conv_macs": 73162752,
+    "conv_flops": 146325504,
+    "torch_flop_counter_total": 146325504,
+    "torch_flop_counter_matches_conv_flops": true,
+    "other_flops_approx": 6307843,
+    "total_flops_approx": 152633347
+  },
+  "lut_basis": {
+    "count": 3,
+    "size": 33,
+    "layout": "float32 [c][b][g][r] (r fastest): output channel c, then blue, green, red input index",
+    "params": 323433,
+    "float32_bytes": 1293732,
+    "fusion": "LUT = w0*LUT0 + w1*LUT1 + w2*LUT2 (3 x 107,811 multiply-adds per image)",
+    "basis_ranges": [
+      [
+        -0.23276376724243164,
+        0.8277654051780701
+      ],
+      [
+        -0.146810382604599,
+        0.2164078801870346
+      ],
+      [
+        -0.2760557532310486,
+        0.24418005347251892
+      ]
+    ]
+  },
+  "total_params": 593516,
+  "total_float32_bytes": 2374064,
+  "trilinear_application": {
+    "per_pixel_operations_reference_arithmetic": {
+      "divisions": 6,
+      "floors": 3,
+      "fmods": 3,
+      "subtractions_1_minus_d": 3,
+      "weight_multiplies": 16,
+      "lut_multiplies": 24,
+      "lut_additions": 21,
+      "lut_loads": 24
+    },
+    "per_pixel_flops_excluding_loads": 76,
+    "lut_working_set_bytes": 431244,
+    "note": "per-pixel and independent; cost scales with output pixels, the classifier's does not"
+  },
+  "timings": {
+    "note": "median wall-clock seconds on the research laptop; indicative only",
+    "classifier_torch_1_threads_on_1620x1080": 0.0163,
+    "classifier_torch_1_threads_on_256x256": 0.006,
+    "classifier_torch_6_threads_on_1620x1080": 0.0038,
+    "classifier_torch_6_threads_on_256x256": 0.0038,
+    "classifier_numpy_float64_unoptimised": 0.072,
+    "lut_fusion_torch": 8e-05,
+    "lut_apply_extension_single_thread_1620x1080": 0.0852,
+    "lut_apply_extension_megapixels_per_second": 20.5,
+    "lut_apply_extension_projected_45mp_single_thread_seconds": 2.19,
+    "lut_apply_pure_torch_1620x1080": 0.2508
+  },
+  "manifest_fields_draft": {
+    "note": "Blueprint section 5 model-manifest fields as they apply to the upstream sRGB model. Research record only: not a Lucent asset manifest (ADR 0018) and the weights are not redistributable.",
+    "input_domain": "display-referred sRGB (IEC 61966-2-1 encoding), RGB channel order, planar NCHW, float32 [0, 1] from 8-bit code values / 255; rendered images only, never camera RGB",
+    "output_domain": "display-referred sRGB-encoded RGB, float32, not clamped (about 2-3 % of the demo samples fall below 0; the demo clamps when quantising to 8 bits)",
+    "training_domain": "MIT-Adobe FiveK, expert C targets, 4,500 training pairs, short side resized to 480 px, Lightroom-rendered sRGB JPEG inputs; augmentation: random crop 60-100 % per side, horizontal flip, brightness and saturation x[0.8, 1.2]",
+    "resize_crop": "whole image to the classifier (no crop); internal bilinear 256 x 256 without antialiasing, so the weights depend on the resolution of the image supplied",
+    "numerical_range": "LUT input domain [0, 1.0000008] for binsize 1.000001/32; outside it the upstream code reads out of bounds, so inputs must be clamped to [0, 1]",
+    "preprocessing": "PIL decode, no ICC conversion or EXIF orientation, to_tensor (uint8 / 255 in float32)",
+    "weights_sha256": {
+      "LUTs.pth": "c1bb2bc4b7239c1a7e96159f5923123ba796b1fceb0b8c3132b423ea825b821a",
+      "classifier.pth": "bae9865395625ecae58cfe86147e521093bb1e29e7b2544e02adb238b8035021"
+    },
+    "runtime_opset_provider": "not exported (Appendix D2 step 6 is a later phase)",
+    "allowed_placements": "explicit sRGB appearance route only (blueprint section 5)"
+  }
+}
