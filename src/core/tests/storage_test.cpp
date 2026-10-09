@@ -323,6 +323,27 @@ TEST(StorageFiles, AtomicWriteBeyondMaxPath) {
     EXPECT_EQ(read_text(target), "long");
 }
 
+// CreateDirectoryW stops at MAX_PATH - 12 (248) characters, below MAX_PATH: every directory length
+// around both limits must work, whatever the length of the temporary folder's name.
+TEST(StorageFiles, CreatesDirectoriesAtEveryLengthAroundTheWin32Limits) {
+    TempDir dir;
+    const std::size_t parent = dir.path().native().size() + 1;  // with the separator
+    constexpr std::size_t kFirst = MAX_PATH - 14;
+    constexpr std::size_t kLast = MAX_PATH + 2;
+    ASSERT_LT(parent, kFirst);
+    for (std::size_t length = kFirst; length <= kLast; ++length) {
+        const std::filesystem::path target = dir / std::wstring(length - parent, L'x');
+        ASSERT_EQ(target.native().size(), length);
+        auto status = create_directory_tree(target);
+        ASSERT_TRUE(status) << length << " characters: " << status.error().describe();
+        EXPECT_TRUE(std::filesystem::is_directory(std::filesystem::path(test_support::verbatim(target))))
+            << length << " characters";
+        const auto file = target / L"settings.json";
+        ASSERT_TRUE(write_file_atomic(file, bytes_of("{}"))) << length << " characters";
+        EXPECT_EQ(read_text(file), "{}") << length << " characters";
+    }
+}
+
 // ---- temporary names --------------------------------------------------------------------------
 
 TEST(StorageFiles, TemporaryFileNames) {

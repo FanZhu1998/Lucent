@@ -17,8 +17,9 @@
 // when another program holds the file with a share mode that excludes readers.
 //
 // Paths: all functions take std::filesystem::path and call the wide-character Win32 APIs.
-// Absolute paths longer than MAX_PATH are passed to Win32 in "\\?\" form automatically, so
-// deep folder structures work without the process-wide long-path opt-in. Symbolic links and
+// Absolute paths of 248 characters or more (CreateDirectoryW's limit, below MAX_PATH) are
+// passed to Win32 in "\\?\" form automatically, so deep folder structures work without the
+// process-wide long-path opt-in. Symbolic links and
 // junctions are followed. Empty paths and paths containing NUL characters are rejected with
 // InvalidArgument.
 
