@@ -63,6 +63,13 @@
 
 namespace lucent::exporter {
 
+// Version of the export path's semantics: the quantisation and output conversion (encode.hpp), the
+// embedded ICC profiles (output_profile.hpp), the JPEG and TIFF writers' settings and the metadata
+// written (metadata.hpp). Bump when the same rendered image and settings would be written with other
+// samples, profile bytes or tags. It is part of the camera support database's qualification basis
+// (ADR 0018): a Verified mode was checked through this export path.
+inline constexpr std::uint32_t kExportVersion = 1;
+
 // File format. Persisted (receipts, export presets); append only.
 enum class ExportFormat : std::uint8_t {
     Jpeg = 1,  // baseline JPEG/JFIF, 8-bit YCbCr, libjpeg-turbo
