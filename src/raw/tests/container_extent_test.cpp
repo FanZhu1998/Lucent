@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -195,6 +196,124 @@ TEST(ContainerExtent, OrfAndRw2AreReadAsTiffStructure) {
     auto result = check(mm, ContainerFormat::Orf);
     ASSERT_TRUE(result) << result.error().describe();
     EXPECT_EQ(result->overruns.size(), 1u);
+}
+
+// An older Panasonic RW2 / Leica RWL in the layout of raw.pixls.us samples 3755 (DMC-FZ70), 4963
+// (Leica C (Typ 112)) and 5535 (DMC-TZ60): IFD 0 holds PanasonicRawVersion, the sensor size,
+// RawFormat 4, StripOffsets with the placeholder 4294967295 and StripByteCounts 0, and RawDataOffset
+// (0x0118) pointing at the raw data, the last bytes of the file (16 bytes per 14 pixels, rounded up
+// to whole 16 KiB blocks as the cameras write it).
+struct OlderRw2 {
+    std::vector<std::byte> bytes;
+    std::uint64_t data_offset = 0;
+    std::uint64_t data_needed = 0;  // ceil(width x height / 14) x 16
+};
+
+OlderRw2 older_rw2(std::uint32_t width, std::uint32_t height, std::optional<std::uint64_t> raw_format = 4,
+                   std::uint64_t strip_byte_counts = 0, bool with_raw_offset = true) {
+    constexpr std::uint16_t kRawData = 65000;  // private tag holding the raw data bytes
+    const std::uint64_t needed = (std::uint64_t{width} * height + 13) / 14 * 16;
+    const std::uint64_t stored = (needed + 16383) / 16384 * 16384;
+    ts::Ifd ifd;
+    ifd.entries = {
+        ts::undefined_entry(0x0001, {std::byte{'0'}, std::byte{'2'}, std::byte{'3'}, std::byte{'0'}}),
+        ts::short_entry(0x0002, {width}),
+        ts::short_entry(0x0003, {height}),
+        ts::short_entry(0x0004, {8}),
+        ts::short_entry(0x0005, {8}),
+        ts::short_entry(0x0006, {height - 8}),
+        ts::short_entry(0x0007, {width - 8}),
+        ts::long_entry(tiff_tag::kStripOffsets, {0xFFFFFFFFu}),
+        ts::short_entry(tiff_tag::kRowsPerStrip, {height}),
+        ts::long_entry(tiff_tag::kStripByteCounts, {strip_byte_counts}),
+        ts::undefined_entry(kRawData, ts::filler(static_cast<std::size_t>(stored))),
+    };
+    if (raw_format) {
+        ifd.entries.push_back(ts::short_entry(0x002D, {*raw_format}));
+    }
+    if (with_raw_offset) {
+        ifd.entries.push_back(ts::long_entry(0x0118, {0}));  // patched below
+    }
+    ts::Document doc;
+    doc.chain = {ifd};
+    ts::Built built = ts::build(doc);
+    OlderRw2 out;
+    out.data_offset = built.value("ifd0", kRawData);
+    out.data_needed = needed;
+    if (with_raw_offset) {
+        built.put(built.value("ifd0", 0x0118), out.data_offset, 4);
+    }
+    out.bytes = std::move(built.bytes);
+    std::memcpy(out.bytes.data(), "IIU\0", 4);
+    EXPECT_EQ(out.data_offset + stored, out.bytes.size()) << "the raw data must be the file's last bytes";
+    return out;
+}
+
+TEST(ContainerExtent, OlderRw2PlaceholderStripsAreNotTheRawData) {
+    // The regression (W12 phase 1, ADR 0020): these files were refused as truncated ("ifd0: strip
+    // data ends at byte 4294967295") although LibRaw decodes them from RawDataOffset.
+    const OlderRw2 file = older_rw2(4816, 3472);  // the DMC-FZ70's sensor
+    auto rw2 = check(file.bytes, ContainerFormat::Rw2);
+    ASSERT_TRUE(rw2) << rw2.error().describe();
+    EXPECT_TRUE(rw2->overruns.empty()) << rw2->overruns.front().detail;
+    EXPECT_TRUE(rw2->warnings.empty());
+    // Read with the strip rule (as a TIFF) the placeholder still is an overrun: the rule is the
+    // container's, not a relaxation of the strip check.
+    MemorySource source(file.bytes);
+    auto as_tiff = find_image_data_overruns(source, {}, TiffSignatures::WithVendorRaw);
+    ASSERT_TRUE(as_tiff) << as_tiff.error().describe();
+    ASSERT_EQ(as_tiff->overruns.size(), 1u);
+    EXPECT_EQ(as_tiff->overruns[0].declared_end, 0xFFFFFFFFu);
+}
+
+TEST(ContainerExtent, Rw2RawDataMustFitTheFile) {
+    const OlderRw2 file = older_rw2(4144, 2688);  // the Leica C (Typ 112): exactly 777 blocks
+    ASSERT_EQ(file.data_offset + file.data_needed, file.bytes.size());
+    // A copy that lost its last bytes is truncated inside the raw data.
+    for (const std::size_t cut : {std::size_t{1}, std::size_t{100000}}) {
+        SCOPED_TRACE(cut);
+        std::vector<std::byte> truncated(file.bytes.begin(), file.bytes.end() - static_cast<std::ptrdiff_t>(cut));
+        auto result = check(truncated, ContainerFormat::Rw2);
+        ASSERT_TRUE(result) << result.error().describe();
+        ASSERT_EQ(result->overruns.size(), 1u);
+        EXPECT_EQ(result->overruns[0].ifd_path, "ifd0");
+        EXPECT_EQ(result->overruns[0].declared_end, file.data_offset + file.data_needed);
+        EXPECT_NE(result->overruns[0].detail.find("16 bytes per 14 pixels"), std::string::npos)
+            << result->overruns[0].detail;
+    }
+    // Cut before the raw data starts.
+    std::vector<std::byte> head(file.bytes.begin(), file.bytes.begin() + static_cast<std::ptrdiff_t>(file.data_offset));
+    auto result = check(head, ContainerFormat::Rw2);
+    ASSERT_TRUE(result) << result.error().describe();
+    ASSERT_EQ(result->overruns.size(), 1u);
+    EXPECT_NE(result->overruns[0].detail.find("starts at byte"), std::string::npos) << result->overruns[0].detail;
+}
+
+TEST(ContainerExtent, Rw2RawDataLengthFollowsStripByteCountsOrTheEncoding) {
+    // A declared StripByteCounts is the raw data's length (LibRaw's data size).
+    OlderRw2 declared = older_rw2(64, 32, 4, 100000);
+    auto result = check(declared.bytes, ContainerFormat::Rw2);
+    ASSERT_TRUE(result) << result.error().describe();
+    ASSERT_EQ(result->overruns.size(), 1u);
+    EXPECT_EQ(result->overruns[0].declared_end, declared.data_offset + 100000);
+    // RawFormat 8 (a variable-rate compression) declares no length: only the start is checked.
+    OlderRw2 compressed = older_rw2(4816, 3472, 8);
+    compressed.bytes.resize(static_cast<std::size_t>(compressed.data_offset + 1));
+    result = check(compressed.bytes, ContainerFormat::Rw2);
+    ASSERT_TRUE(result) << result.error().describe();
+    EXPECT_TRUE(result->overruns.empty());
+    // Without RawFormat (the oldest models) the fixed-rate minimum applies.
+    OlderRw2 oldest = older_rw2(4816, 3472, std::nullopt);
+    oldest.bytes.resize(oldest.bytes.size() - 20000);
+    result = check(oldest.bytes, ContainerFormat::Rw2);
+    ASSERT_TRUE(result) << result.error().describe();
+    EXPECT_EQ(result->overruns.size(), 1u);
+    // Without RawDataOffset LibRaw reads the strips, and so does the check.
+    const OlderRw2 strips = older_rw2(64, 32, 4, 0, false);
+    result = check(strips.bytes, ContainerFormat::Rw2);
+    ASSERT_TRUE(result) << result.error().describe();
+    ASSERT_EQ(result->overruns.size(), 1u);
+    EXPECT_EQ(result->overruns[0].declared_end, 0xFFFFFFFFu);
 }
 
 TEST(ContainerExtent, ContainersWithoutACheckAreUnsupported) {

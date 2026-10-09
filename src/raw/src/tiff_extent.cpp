@@ -6,6 +6,7 @@
 #include <format>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 #include <string>
@@ -20,6 +21,17 @@ namespace {
 
 constexpr std::uint16_t kTileOffsets = 324;
 constexpr std::uint16_t kTileByteCounts = 325;
+// Panasonic RW2 / Leica RWL tags of IFD 0 (ExifTool's PanasonicRaw table, LibRaw's parse_tiff_ifd()).
+constexpr std::uint16_t kPanasonicSensorWidth = 0x0002;
+constexpr std::uint16_t kPanasonicSensorHeight = 0x0003;
+constexpr std::uint16_t kPanasonicRawFormat = 0x002D;
+constexpr std::uint16_t kPanasonicRawDataOffset = 0x0118;
+constexpr std::uint16_t kTiffTypeLong = 4;
+// The fixed-rate Panasonic encodings (RawFormat absent, or 1 to 7) store at most 14 pixels in 16
+// bytes (the classic encoding exactly; 5: 9 or 10, 6: 11 or 14, 7: 9 or 10 pixels per 16 bytes).
+constexpr std::uint64_t kPanasonicPixelsPerBlock = 14;
+constexpr std::uint64_t kPanasonicBlockBytes = 16;
+constexpr std::uint64_t kPanasonicLastFixedRateFormat = 7;
 
 struct PendingIfd {
     std::uint64_t offset = 0;
@@ -104,8 +116,8 @@ Expected<BrokenIfd> classify_broken_ifd(RandomAccessSource& source, const TiffRe
 
 class ExtentScan {
 public:
-    ExtentScan(RandomAccessSource& source, TiffReader& reader, const TiffInspectLimits& limits)
-        : source_(source), reader_(reader), limits_(limits) {}
+    ExtentScan(RandomAccessSource& source, TiffReader& reader, const TiffInspectLimits& limits, RawDataRule rule)
+        : source_(source), reader_(reader), limits_(limits), rule_(rule) {}
 
     Expected<ImageDataExtent> run();
 
@@ -115,6 +127,11 @@ private:
     // Checks one strip or tile table pair of an IFD.
     Status check_data(const PendingIfd& current, const TiffEntry& offsets, const TiffEntry& counts,
                       const char* what);
+    // Checks the Panasonic raw data of IFD 0 at RawDataOffset (RawDataRule::Panasonic).
+    Status check_panasonic_data(const PendingIfd& current, const TiffIfd& ifd, const TiffEntry& raw_offset,
+                                const TiffEntry* strip_counts);
+    // The first value of an integer entry; std::nullopt when absent or unreadable.
+    std::optional<std::uint64_t> first_value(const TiffEntry* entry, const std::string& path);
     // Records a structural problem of part of the file as "not verified" and lets the scan go on;
     // passes read failures through.
     Status skip(const std::string& what, Error error);
@@ -122,9 +139,87 @@ private:
     RandomAccessSource& source_;
     TiffReader& reader_;
     const TiffInspectLimits& limits_;
+    RawDataRule rule_;
     ImageDataExtent extent_;
     std::vector<PendingIfd> pending_;
 };
+
+std::optional<std::uint64_t> ExtentScan::first_value(const TiffEntry* entry, const std::string& path) {
+    if (entry == nullptr || entry->status != EntryStatus::Ok) {
+        return std::nullopt;
+    }
+    auto values = integers(reader_, *entry, limits_, path, 1);
+    if (!values || values->empty()) {
+        return std::nullopt;
+    }
+    return values->front();
+}
+
+Status ExtentScan::check_panasonic_data(const PendingIfd& current, const TiffIfd& ifd, const TiffEntry& raw_offset,
+                                        const TiffEntry* strip_counts) {
+    const std::string what = std::format("{} raw data (RawDataOffset)", current.path);
+    if (raw_offset.status == EntryStatus::OutOfBounds) {
+        extent_.overruns.push_back({current.path, raw_offset.value_offset + raw_offset.byte_count,
+                                    "the raw data offset lies beyond the end of the file"});
+        return ok();
+    }
+    if (raw_offset.status != EntryStatus::Ok) {
+        return skip(what, reader_.entry_error(raw_offset, current.path));
+    }
+    auto start = integers(reader_, raw_offset, limits_, current.path, 1);
+    if (!start) {
+        return skip(what, std::move(start.error()));
+    }
+    if (start->empty()) {
+        return ok();  // no offset declared: nothing to compare
+    }
+    const std::uint64_t offset = start->front();
+    const auto find = [&ifd](std::uint16_t tag) -> const TiffEntry* {
+        for (const TiffEntry& entry : ifd.entries) {
+            if (entry.tag == tag) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    };
+    // The length: StripByteCounts when declared (LibRaw's data size), otherwise the least a
+    // fixed-rate encoding needs for the sensor area.
+    std::uint64_t length = 0;
+    std::string basis;
+    if (const auto declared = first_value(strip_counts, current.path); declared && *declared != 0) {
+        length = *declared;
+        basis = "StripByteCounts";
+    } else {
+        const auto format = first_value(find(kPanasonicRawFormat), current.path);
+        const auto width = first_value(find(kPanasonicSensorWidth), current.path);
+        const auto height = first_value(find(kPanasonicSensorHeight), current.path);
+        const bool fixed_rate = !format || (*format >= 1 && *format <= kPanasonicLastFixedRateFormat);
+        if (fixed_rate && width && height && *width > 0 && *height > 0 && *width <= 0xFFFF && *height <= 0xFFFF) {
+            length = (*width * *height + kPanasonicPixelsPerBlock - 1) / kPanasonicPixelsPerBlock *
+                     kPanasonicBlockBytes;
+            basis = std::format("16 bytes per 14 pixels of the {}x{} sensor", *width, *height);
+        }
+    }
+    const std::uint64_t size = reader_.source_size();
+    if (offset >= size) {
+        const std::uint64_t end = offset > std::numeric_limits<std::uint64_t>::max() - std::max<std::uint64_t>(length, 1)
+                                      ? std::numeric_limits<std::uint64_t>::max()
+                                      : offset + std::max<std::uint64_t>(length, 1);
+        extent_.overruns.push_back(
+            {current.path, end,
+             std::format("the raw data starts at byte {} but the file has {} bytes", offset, size)});
+        return ok();
+    }
+    if (length > size - offset) {
+        const std::uint64_t end = length > std::numeric_limits<std::uint64_t>::max() - offset
+                                      ? std::numeric_limits<std::uint64_t>::max()
+                                      : offset + length;
+        extent_.overruns.push_back(
+            {current.path, end,
+             std::format("raw data ends at byte {} ({}) but the file has {} bytes", end, basis, size)});
+    }
+    return ok();
+}
 
 Status ExtentScan::skip(const std::string& what, Error error) {
     if (!is_structural(error.code)) {
@@ -197,8 +292,12 @@ Expected<ImageDataExtent> ExtentScan::run() {
 Status ExtentScan::scan_ifd(const PendingIfd& current, const TiffIfd& ifd) {
     const TiffEntry* offsets[2] = {nullptr, nullptr};  // strips, tiles
     const TiffEntry* counts[2] = {nullptr, nullptr};
+    const TiffEntry* panasonic_raw_offset = nullptr;
     for (const TiffEntry& entry : ifd.entries) {
         switch (entry.tag) {
+            case kPanasonicRawDataOffset:
+                panasonic_raw_offset = &entry;
+                break;
             case tiff_tag::kStripOffsets:
                 offsets[0] = &entry;
                 break;
@@ -254,8 +353,17 @@ Status ExtentScan::scan_ifd(const PendingIfd& current, const TiffIfd& ifd) {
                 break;
         }
     }
+    // RW2 / RWL: the raw data LibRaw reads is at RawDataOffset; IFD 0's strips are not it.
+    bool check_strips = true;
+    if (rule_ == RawDataRule::Panasonic && current.depth == 0 && current.path == "ifd0" &&
+        panasonic_raw_offset != nullptr && panasonic_raw_offset->type == kTiffTypeLong) {
+        if (auto checked = check_panasonic_data(current, ifd, *panasonic_raw_offset, counts[0]); !checked) {
+            return checked;
+        }
+        check_strips = false;
+    }
     for (int kind = 0; kind < 2; ++kind) {
-        if (offsets[kind] == nullptr || counts[kind] == nullptr) {
+        if (offsets[kind] == nullptr || counts[kind] == nullptr || (kind == 0 && !check_strips)) {
             continue;
         }
         if (auto checked = check_data(current, *offsets[kind], *counts[kind], kind == 0 ? "strip" : "tile");
@@ -312,12 +420,13 @@ Status ExtentScan::check_data(const PendingIfd& current, const TiffEntry& offset
 }  // namespace
 
 Expected<ImageDataExtent> find_image_data_overruns(RandomAccessSource& source,
-                                                   const TiffInspectLimits& limits, TiffSignatures accepted) {
+                                                   const TiffInspectLimits& limits, TiffSignatures accepted,
+                                                   RawDataRule rule) {
     auto opened = TiffReader::open(source, accepted);
     if (!opened) {
         return Unexpected(std::move(opened.error()));
     }
-    ExtentScan scan(source, *opened, limits);
+    ExtentScan scan(source, *opened, limits, rule);
     return scan.run();
 }
 
