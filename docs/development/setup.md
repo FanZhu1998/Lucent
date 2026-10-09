@@ -274,9 +274,11 @@ only: the installer deploys Qt with windeployqt (W5) and never ships it.
 .\build\dev\bin\Lucent.exe D:\Photos\IMG_0001.CR3 D:\Card   # positional paths are added, like drag and drop
 ```
 
-`Lucent.exe` is a WIN32 program without a console. Its own progress lines (`lucent: ...`) reach a
-terminal only when stderr is redirected. Set `QT_FORCE_STDERR_LOGGING=1` to get Qt's and QML's
-warnings there as well:
+`Lucent.exe` is a WIN32 program without a console. The application services' log (for example why
+the camera support database was refused) goes to `<cache>\logs\lucent.log`
+(`%LOCALAPPDATA%\Lucent\cache\logs`, or the `--data-root` folder's `cache\logs`; rotated at 8 MiB,
+five files). Its own progress lines (`lucent: ...`) reach a terminal only when stderr is redirected.
+Set `QT_FORCE_STDERR_LOGGING=1` to get Qt's and QML's warnings there as well:
 
 ```powershell
 $env:QT_FORCE_STDERR_LOGGING = '1'

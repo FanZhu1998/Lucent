@@ -1,6 +1,8 @@
 # ADR 0017: The camera's image area: decoded-RAW contract 1.4, geometry version 2 and the W2 camera_area stage
 
-- **Status:** Accepted
+- **Status:** Accepted (amended on 2026-10-08 by the closing review of W10: Canon aspect-ratio
+  settings, lone DNG crop tags, the editor's frame and batches frozen before the update; see
+  "Amendment: closing review" below)
 - **Date:** 2026-10-07
 - **Workflow:** W10 (Multi-brand qualification), phase 2: the camera's image area
 - **Amends:** ADR 0005 decision 2 (contract 1.4), ADR 0006 sections 1, 5 and 6 (a camera_area
@@ -257,3 +259,42 @@ sources and the corpus re-checked 2026-10-07):
   restored from the file, and only when LibRaw's value is exactly its adjusted form.
 - **Treat a missing area as unsupported.** A border is image data (ADR 0016's edge-band check);
   rendering it is the conservative path of a Limited mode, not a failure.
+
+## Amendment: closing review (2026-10-08)
+
+Contract 1.4 and geometry version 2 were not released yet, so these corrections keep their version
+numbers (no corpus fixture's area changes; the qualification gave the same 34 outcomes).
+
+1. **Canon aspect-ratio settings (QUA-01).** LibRaw 0.22.2 stores Canon's AspectInfo rectangle
+   (maker note 0x009a, src/metadata/canon.cpp) in `raw_inset_crops[0]`, offset by the SensorInfo
+   origin (src/utils/open.cpp), and leaves `[1]` empty because its ratio matches `raw_aspect`. For
+   a 1:1, 4:3, 16:9 or 4:5 setting decision 1 therefore took the aspect crop as the camera's area,
+   although the camera records the whole 3:2 image ("RAW images are generated at 3:2, with
+   information added about the specified aspect ratio", Canon EOS R5 manual) and the visible area,
+   which LibRaw takes from SensorInfo, is unchanged. Now, for a non-DNG Canon file whose AspectInfo
+   names another ratio than 3:2 (or an unknown one) and whose SensorInfo DefaultCropAbsolute lies
+   inside the raw frame, the area is the SensorInfo area and the AspectInfo rectangle is the user
+   crop (`detail::canon_aspect_crops()`, `InsetCrops.ACanonAspectRatioSettingIsTheUserCropOfTheWholeSensorArea`).
+   3:2 files (every corpus Canon file) are unchanged. The application's support rules additionally
+   hold a Verified entry only for a file with the qualified file's area (ADR 0018 amendment).
+   Olympus (0x1112/0x1113), Pentax (0x0080) and Fujifilm record the aspect setting apart from the crop
+   declaration, and LibRaw derives `[1]` from it; Nikon's image-area setting (0x001b) and CropArea
+   (0x0045, `[0]`) could not be checked without a corpus file of a non-default setting, so for Nikon,
+   as for any vendor, a file whose area differs from the qualified file's is at most Compatible,
+   unverified (the support rules' image-area check).
+2. **A lone DNG crop tag (QUA-09).** Each tag now takes the specification's default for the other
+   (DefaultCropOrigin (0, 0), DefaultCropSize ImageWidth x ImageLength), noted in `basis`, instead
+   of making the area Unknown; an overrunning rectangle is moved inside and cut by the placement
+   (decision 2). A raw IFD of another size than the decoded frame stays Unknown.
+3. **The editor's frame (QUA-05; the follow-up in Consequences).** Frames carry the geometry's frame
+   at full resolution (`EditFrame::full_frame`, from `engine::geometry_mapping()` of the frame's
+   report), and the Qt adapter's `map_geometry()` takes it: the crop tool's handles, the straightened
+   crop's coverage and largest inside crop (F's size), levelling, new masks, brush strokes, handle
+   drags and the weight overlay (the frame's own mapping) work in the camera's area for a version-2
+   recipe (`CropMaskModelsTest.TheToolsWorkInTheCameraAreaOfTheFrame`,
+   `AppEditServiceTest.FramesOfAFileWithACameraAreaCarryThatFrameForTheTools`).
+4. **Batches frozen before the update (QUA-04).** A job without a revision freezes the SHA-256 of
+   the as-shot settings, which decision 3 moved from 3104dbcc... (geometry version 1) to 879de8b7....
+   A job frozen by an earlier build no longer fails with VersionMismatch: `frozen_document()` also
+   tries the as-shot settings of every older geometry version this build renders and renders the one
+   whose identity the job froze (`BatchServiceTest.AsShotJobsFrozenWithAnEarlierGeometryVersionStillRun`).

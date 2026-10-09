@@ -1,6 +1,7 @@
 # ADR 0018: Camera support data: versioned asset manifests, the camera support database and the four support states
 
-- **Status:** Accepted
+- **Status:** Accepted (amended on 2026-10-08 by the closing review of W10: database schema 2 and
+  support rules 2, see "Amendment: closing review" below)
 - **Date:** 2026-10-08
 - **Workflow:** W10 (Multi-brand qualification), phase 3: support data
 - **Amends:** ADR 0016 (decision 1: the mode key moves to `lucent_assets`; decision 6: the report
@@ -255,3 +256,73 @@ Facts that shaped the decisions (2026-10-08):
   interpretation must still win (a file of a Verified model whose DNG asks for an unsupported
   mandatory opcode is Unsupported), and unknown cameras must be assessed at all. Rejected: the
   database answers for modes, the rules combine it with the probe.
+
+## Amendment: closing review (2026-10-08)
+
+The closing review of W10 (findings QUA-01 to QUA-10, AST-01 to AST-10) found that a Verified state
+could outlive what it certified, that a missing database could improve a photo's state, and that
+engine limitations depended on whether the exact mode was qualified. Changes:
+
+1. **Database schema 2** (`kCameraSupportSchemaVersion` 2; version 1, never released, is refused
+   with VersionMismatch). The qualification basis also records the decoder's capabilities (its
+   codecs), every `engine::kDevelopEngineVersions` entry (`develop_engine`: sensor normalisation,
+   white balance, the demosaic routes, camera colour, working space, guided filter, proxy
+   downscale, besides the stage graph, DNG opcodes and image-area placement), the neutral look
+   (`neutral_look`) and the export path (`export`, the new `exporter::kExportVersion`):
+   `basis_differences()` compares them all, so changing any of them makes every Verified entry
+   Compatible, unverified until the qualification runs again (QUA-02;
+   `CameraSupport.TheBasisCoversEveryEngineDecoderAndExportVersion`). Each entry records the probe
+   facts of its qualified file (`assets::derive_mode_variant()`: `image_area`, the image area's
+   source and size, and `dng_opcodes`), which the report records per fixture (`lookup_variant`) and
+   per row (`lookup_variants`, exactly one for an export) (QUA-08). The bundled database is 2.0.0.
+2. **Support rules 2** (`kSupportRulesVersion` 2; records of rules 1 are probed again).
+   - A Verified entry holds only for a file whose probe facts equal the entry's
+     (`CameraSupportEvaluation::variant_matches`): a Canon aspect-ratio setting, a file without its
+     crop tags or a DNG with opcode lists the qualified file did not have is Compatible, unverified
+     ("verified with test photos whose image area or built-in corrections differ") (QUA-08).
+   - Engine limitations come from the probe, with or without a database (AST-03): X-Trans mosaic data
+     ("xtrans_baseline_demosaic") and a file with a Dual Pixel component image
+     ("dual_pixel_not_processed", from the importer's subimage list, `SupportFileFacts`) are at least
+     Limited, as a new `EngineLimitation` reason (catalog element "engine_limitation") worded by
+     the database or by `assets::standard_limitation_text()` (the exporter's words, moved from
+     lucent-qualify); a database limitation of the same code is not repeated. Batch review notes name
+     both kinds.
+   - A database that is missing or refused never improves a state (AST-01): re-assessing against no
+     database keeps the last database's answer (`listed`, its CameraLimitation and CameraUnsupported
+     reasons) and turns only Verified into Compatible, unverified; when a database is active again
+     the items follow it.
+   - The record stores the database manifest's SHA-256 (`database.sha256`), and `assessed_with()`
+     compares it: other content under the same version is re-assessed (AST-02). The exporter refuses
+     to write other content under the version the asset folder holds.
+   - `probe_outdated()` is also true for a probe of another LibRaw version and for a record whose
+     mode key is not of this build's mode-key version; `refresh_support()` leaves such items to
+     source maintenance instead of re-assessing their stale keys, and only caps a stored Verified to
+     Compatible, unverified until they are probed again (AST-08). `refreshed_support()` and
+     `current_support()` give the state with the active database without storing it; the shell
+     shows it for every library item, so a read-only catalog never shows a Verified state the
+     active database does not confirm (AST-06).
+3. **Batches.** A job whose photo is Unsupported when its attempt starts (a database update or a
+   re-probe after the batch was created; resume and retry included) ends Skipped with its reasons,
+   as at creation (AST-07).
+4. **Activation and the shell.** `bundled_asset_request()` refuses an id the build has no pin for
+   (`assets.load.unpinned`), so an asset is never trusted on its own hashes (AST-09). Lucent.exe
+   writes its log to `<cache>\logs\lucent.log` (`core::FileSink`, bounded rotation), so the reason a
+   database was refused is recorded (AST-04); About shows the refusing step ("Technical detail:
+   assets.load.hash: ..."), a database that cannot be read (access denied, I/O errors) is no longer
+   reported as failing its integrity check, and the header shows "No camera support database"
+   whenever none is active. The meanings shown for the states were corrected: Compatible,
+   unverified "lacks representative quality evidence" (it has no test photo, or its tests could not
+   be confirmed; QUA-10, AST-05), Unsupported covers modes the tests found not to develop
+   correctly, a 360 source says to stitch it first, and batch report rows name the state for screen
+   readers (AST-10).
+5. **Provenance.** The build's commit carries "-dirty" when tracked files differ at configure time
+   (`cmake/LucentVersion.cmake`), and `--export-support` refuses a report of such a build unless
+   `--allow-dirty-build` (QUA-06). The bundled database 2.0.0 was exported from a run of a build of
+   the review fixes on top of 72cb6d1 and records that commit with its "-dirty" marker; it must be
+   regenerated from a clean build before a release (W12).
+
+Consequences: the run of the review fixes over all 34 fixtures gave the same outcomes as before
+(Verified 14, Compatible, unverified 11, Limited 6, Unsupported 3; no fixture's state changed); the
+bundled database is 2.0.0. An independent colour reference (QUA-03) is not part of the basis: the
+colour check still compares with LibRaw's calibration, which the support table, the README and the
+Verified meaning now say (ADR 0016 amendment).

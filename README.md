@@ -2,11 +2,11 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its eighth development
-> increment (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches)
-> and the ninth except lens corrections (W9: DNG opcode lists, then crop and straighten, masks and
-> colour noise reduction, the latter pending commit and merge; lens corrections wait for a decision
-> on their third-party dependency): a Qt Quick
+> **Status: pre-alpha, under active development.** Lucent has completed its tenth development
+> increment (W10, multi-brand camera qualification and the four support states, pending commit and
+> merge), the ninth except lens corrections (W9: DNG opcode lists, crop and straighten, masks and
+> colour noise reduction; lens corrections wait for a decision on their third-party dependency) and
+> the eighth (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches): a Qt Quick
 > `Lucent.exe` that adds RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
 > removable-media badges and relinking, and browses them with labelled camera previews and support
@@ -27,10 +27,15 @@ Offline, camera-independent RAW photo development for Windows.
 > settings and keeps the photographer's crop, masks and noise reduction); related shots can be
 > kept consistent, and uncertain results are marked for review. Natural v1 is deliberately
 > conservative and **not yet calibrated** against photographers' preferences. DNG opcode lists are
-> applied at the stages the specification defines. It runs from a source build or from an unsigned
-> per-user installer built from source (see [Installing](#installing)). No camera model is verified
-> as supported. The next section describes the product Lucent is being built to become, from its
-> blueprint, not what it can do today.
+> applied at the stages the specification defines, and each camera's own image area is rendered by
+> default. Every photo shows a camera support state from Lucent's qualification of 34 camera modes
+> ([support table](docs/qualification/support-table.md)): 14 modes are Verified (exact model and
+> capture mode; colour verified as agreement with the decoder's camera calibration, from one
+> daylight test file per mode), 11 Compatible, unverified, 6 Limited and 3 Unsupported; any other
+> camera that decodes cleanly is Compatible, unverified. It runs from a source build or from an
+> unsigned per-user installer built from source (see [Installing](#installing)). The next section
+> describes the product Lucent is being built to become, from its blueprint, not what it can do
+> today.
 
 ## What Lucent is meant to be
 
@@ -77,7 +82,7 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W7 | Durable batch export: `lucent-worker.exe` and its versioned pipe protocol, memory-budgeted scheduling, catalog job journal (schema v3 and v4) with leases, a publication journal and receipts, verified no-clobber publication, restart recovery, pause / cancel / resume and destination attentions, EXIF capture metadata with an explicit GPS policy, completion reports, the Export batch dialog and the Exports view (ADR 0012) | Done, pending commit and merge |
 | W8 | Natural v1 automatic settings (`lucent_analysis`: metric contract, proposals, bounded deterministic search with rechecks, confidence and review flags, related-shot consistency; ADR 0011) and their integration: the editor's Auto with a full-resolution final check and conservative fallbacks, automatic revisions with analysis records (catalog schema v5), automatic batches (Auto, Analyse only, related shots kept consistent) analysed in the worker (protocol v2), the Automatic settings panel and Review badges (ADR 0013) | Done; the blind preference test and the calibration of Natural v1 are pending |
 | W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks, guided chroma denoise, recipes version 2 (ADR 0015); lens corrections | Done except lens corrections (pending a decision on the Lensfun dependency); masks, geometry and denoise pending commit and merge |
-| W10 | Multi-brand qualification: the `lucent-qualify` harness, cited expectations and the support table (ADR 0016); the camera's image area (ADR 0017); the camera support database, a versioned and verified data asset generated from the qualification, and the blueprint's four support states in the library, the editor, batch exports and reports, with Help > About (`lucent_assets`, ADR 0018) | Done (phases 1 to 3), pending review, commit and merge |
+| W10 | Multi-brand qualification: the `lucent-qualify` harness, cited expectations and the support table (ADR 0016); the camera's image area (ADR 0017); the camera support database, a versioned and verified data asset generated from the qualification, and the blueprint's four support states in the library, the editor, batch exports and reports, with Help > About (`lucent_assets`, ADR 0018) | Done (phases 1 to 3 and the closing review), pending commit and merge; an independent colour reference, a rotated test file per image-area source and regenerating the qualification report and database from a clean committed build are deferred to W12 |
 | W11–W12 | Learned appearance, release hardening | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
@@ -90,8 +95,10 @@ read-only. W9 writes edits as "lucent.develop" version 2 recipes (crop, masks, n
 which earlier builds show read-only; version-1 edits open and are upgraded. Photos are rendered with their recipe and the base look "neutral" v1.
 W10 shows each photo's camera support state (Verified, Compatible, unverified, Limited,
 Unsupported) from the camera support database installed with Lucent (`assets\camera-support`,
-verified against its manifest and the hash built into `Lucent.exe`; Help > About shows its version);
-an earlier build opening the same library shows Verified photos as Compatible, unverified.
+verified against its manifest and the hash built into `Lucent.exe`; Help > About shows its version,
+and the header says when no database is in use); an earlier build opening the same library shows
+Verified photos as Compatible, unverified. `Lucent.exe` writes its log to
+`%LOCALAPPDATA%\Lucent\cache\logs\lucent.log`.
 The developer command-line tools `lucent-probe`, `lucent-render`, `lucent-auto` and
 `lucent-qualify` remain; they are not installed.
 

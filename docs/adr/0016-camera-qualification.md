@@ -1,8 +1,9 @@
 # ADR 0016: Camera qualification: mode keys, evidence rules, proposed states and the support table
 
 - **Status:** Accepted (phase 1 of W10: the harness, the expectations and the table; amended by
-  ADR 0017 for the camera's image area (check suite 2) and on 2026-10-08 by ADR 0018 for the
-  camera support database: see "Amendment: support data (ADR 0018)" below)
+  ADR 0017 for the camera's image area (check suite 2), on 2026-10-08 by ADR 0018 for the
+  camera support database: see "Amendment: support data (ADR 0018)" below, and by the closing
+  review of W10: see "Amendment: closing review")
 - **Date:** 2026-10-05
 - **Workflow:** W10 (Multi-brand qualification), phase 1 of 3
 
@@ -253,3 +254,37 @@ Phase 3 of W10 turns the report into the camera support database the application
 New tests: `SupportExport.*` and `CommittedData.TheCameraSupportAssetIsTheExportOfTheReport`
 (`lucent_qualification_tests`), and `QualificationFixture.ProbeKeyFindsTheQualifiedState` (every
 cached fixture of any tier, in `lucent_qualification_fixture_tests`).
+
+## Amendment: closing review (2026-10-08)
+
+- **What colour and decode evidence is (QUA-03).** Decision 3 grades decode parity and like-for-like
+  colour Strong, although their reference is built on the same decoder (rawpy, LibRaw 0.22.1): they
+  show that Lucent reads the data and reproduces LibRaw's camera calibration, not that the
+  calibration matches an independent measurement, as the Consequences already said. The evidence
+  rule of decision 2 (for facts) is unchanged and the state rules are not weakened: Verified still
+  needs every expected fact from an independent source. What changed is what the product claims:
+  the support table, `docs/qualification/README.md` and the Verified meaning in the shell now say
+  that colour is verified as agreement with the decoder's calibration, and the README no longer
+  says that decode parity always includes the raw-buffer hash (full-colour data has none; its
+  pixels are compared through the colour check). An independent colour reference (chart patches of
+  a corpus file that shows a colour checker, such as the 5D Mark IV RAW's SpyderCHECKR, against the
+  chart's published values, or a DNG SDK rendering) is deferred to the release gates (W12).
+- **Regression net (QUA-07).** The GTest wrapper qualifies every cached fixture whose expected state
+  is Verified by default, not only the smoke tier, and asserts where the camera's area was placed:
+  `expectations.json` records `dimensions.image_area_applied` ([x, y, width, height] in the upright
+  image, or null for the whole image) for every rendered fixture, an outcome recorded from the
+  reviewed run whose origins equal the crop origins the files' tags declare (each fixture's note);
+  the harness reports a different placement as an expectation mismatch. A rotated corpus file
+  (orientation 6 or 8) per image-area source is still missing: every corpus file has orientation 1,
+  and rotated placement is covered by the engine's synthetic tests only (deferred with the corpus
+  expansion, W12).
+- **Provenance (QUA-06).** The report and the database name the build's commit; it now carries
+  "-dirty" when the tree had uncommitted changes at configure time, and the export refuses such a
+  report unless `--allow-dirty-build` (ADR 0018 amendment). The report of 2026-10-08 that was
+  committed with commit 3a836ac's name came from an uncommitted tree; the regenerated report names
+  its build honestly.
+- **Probe facts (QUA-08).** Each fixture result records `lookup_variant` (the probe's image area and
+  DNG opcodes) and each support-table row `lookup_variants`; the database's Verified entries hold
+  only for files with those facts (ADR 0018 amendment).
+- Run of the review fixes over all 34 fixtures: every outcome equal to its expectation, the same
+  states as before (Verified 14, Compatible, unverified 11, Limited 6, Unsupported 3).

@@ -29,9 +29,9 @@ product authority. The current module structure is described in
 | [0013](0013-automatic-settings-integration.md) | Automatic settings in the application: where Auto runs, the full-resolution final check, revisions and records, and automatic batches | Accepted (amended for the W8 integration closure and for geometry and masks, W9 part 2) | 2026-10-04 | W8 application wiring |
 | [0014](0014-dng-opcode-processing.md) | DNG opcode processing at the stages the specification defines (amends 0005 decision 8, 0006 sections 1 and 5) | Accepted | 2026-10-04 | W9 |
 | [0015](0015-geometry-masks-and-chroma-denoise.md) | Geometry, masks and guided chroma denoising: DevelopSettings v2, coordinate frames, operation order and preview tolerances (amends 0010) | Accepted (amended for phase 2: recipes, paste, editor services, Auto; and for geometry version 2, see 0017) | 2026-10-05 | W9 part 2 |
-| [0016](0016-camera-qualification.md) | Camera qualification: mode keys, evidence rules, proposed states and the support table | Accepted (phase 1: harness, expectations, table; amended for the camera support database, see 0018) | 2026-10-05 | W10 |
-| [0017](0017-camera-image-area.md) | The camera's image area: decoded-RAW contract 1.4, geometry version 2 and the W2 camera_area stage (amends 0005, 0006, 0014, 0015, 0016) | Accepted | 2026-10-07 | W10 |
-| [0018](0018-camera-support-data.md) | Camera support data: versioned asset manifests, the camera support database and the four support states (amends 0008, 0009, 0012, 0016) | Accepted | 2026-10-08 | W10 |
+| [0016](0016-camera-qualification.md) | Camera qualification: mode keys, evidence rules, proposed states and the support table | Accepted (phase 1: harness, expectations, table; amended for the camera support database, see 0018, and by the closing review: colour evidence, regression net, provenance) | 2026-10-05 | W10 |
+| [0017](0017-camera-image-area.md) | The camera's image area: decoded-RAW contract 1.4, geometry version 2 and the W2 camera_area stage (amends 0005, 0006, 0014, 0015, 0016) | Accepted (amended by the closing review: Canon aspect-ratio settings, lone DNG crop tags, the editor's frame, batches frozen before the update) | 2026-10-07 | W10 |
+| [0018](0018-camera-support-data.md) | Camera support data: versioned asset manifests, the camera support database and the four support states (amends 0008, 0009, 0012, 0016) | Accepted (amended by the closing review: database schema 2, support rules 2) | 2026-10-08 | W10 |
 
 ## Conventions
 
