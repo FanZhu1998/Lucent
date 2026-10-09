@@ -1,6 +1,6 @@
 # ADR 0019: Learned appearance research: reproduce Image-Adaptive-3DLUT, keep its weights and data out of Lucent, and implement the method natively
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-09): native C++ inference instead of ONNX Runtime, and the rights position. Product integration is deferred until a model with clear redistribution rights exists; the deterministic Natural v1 optimiser remains the production baseline.
 - **Date:** 2026-10-09
 - **Workflow:** W11 (Learned appearance research), phase 1: reproduction, rights and the native plan
   (blueprint Appendix D2 steps 1-5; steps 6 and 7 are later phases)
