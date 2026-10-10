@@ -10,6 +10,7 @@ nothing here turns them into claims the data does not support.
 | Baseline | Build | Machine | Notes |
 |---|---|---|---|
 | [2026-10-09](baseline-2026-10-09.md) | release preset, branch `feat/w12-hardening` (W12 part 1 working tree on e51dd65) | Ryzen 5 5500U, 11.9 GB, Windows 11 | the first baseline and the 1,000-file resilience gate (passed); the machine was a loaded development laptop (see the baseline) |
+| [2026-10-10](baseline-2026-10-10.md) | release preset, branch `feat/w13-lensfun` (the W13 closure working tree on d728f5f) | the same, idle | the lens corrections of exactly matched photos (W13, ADR 0023): `budgets.json` is derived from this baseline (ADR 0021, closure amendment of W13) |
 
 ## The harness
 
@@ -76,12 +77,14 @@ Lucent.exe's measurement hooks (`--measure` lines, `--cancel-batch-after`, `--pa
 
 ## Regression budgets
 
-`budgets.json` holds 79 measurements of the 2026-10-09 baseline. 68 are budgets: a time may not
+`budgets.json` holds 79 measurements of the 2026-10-10 baseline (before: of the 2026-10-09 baseline,
+whose four budgets the lens corrections exceed; ADR 0021, closure amendment of W13). 68 are budgets: a time may not
 exceed max(1.25 x median, 1.10 x the largest value), a memory peak 1.10 x the largest value, a rate
 may not fall below min(0.80 x median, 0.90 x the smallest value). Only measurements with at least
 three values and a small variation (CV at most 10 %, memory 5 %) are budgets; the other 11 are
-tracked with their reason (ADR 0021, decision 5). They hold for the reference machine only, and the
-2026-10-09 baseline was measured on a loaded machine: measure an exceeded budget again with the
-machine idle before treating it as a regression, and replace the budgets from a quieter baseline
-when one exists. A budget whose measurement is missing or not trustworthy fails too (ADR 0021,
+tracked with their reason (ADR 0021, decision 5). They hold for the reference machine only: measure
+an exceeded budget again with the machine idle before treating it as a regression (the 2026-10-10
+baseline measured its preview scenario again for that reason), and keep the antivirus's scan of
+freshly copied files in mind: the cold starts make such copies just before the thumbnails and
+preview scenarios. A budget whose measurement is missing or not trustworthy fails too (ADR 0021,
 decision 8): a new run is judged only on what it measured.
