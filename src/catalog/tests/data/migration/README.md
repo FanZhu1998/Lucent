@@ -34,11 +34,20 @@ built as `lucent_catalog_fixture_generator`):
    is vacuumed into one rollback-journal file and checked (`integrity_check`, `foreign_key_check`).
 
 `tests/catalog_fixtures/check_historical_ddl.py` then verifies against git history that each
-migration's DDL (`kSchemaV1` ... `kSchemaV5` in `src/catalog/src/schema.cpp`) is unchanged since the
-commit that introduced it (b2951f7, 0491d19, 6711a6a, 93f72ca, 7df00b8) and that applying them to an
-empty database (with Python's own SQLite) gives exactly each fixture's schema objects. Result on
-2026-10-09: all five unchanged, all five schemas identical. Regenerating with the same build
-reproduces all five files byte for byte (the automatic run's measured durations are fixed).
+migration is unchanged since the commit that introduced it (b2951f7, 0491d19, 6711a6a, 93f72ca,
+7df00b8): its DDL (`kSchemaV1` ... `kSchemaV5` in `src/catalog/src/schema.cpp`), its row of
+`kBuiltinMigrations` (version and `min_reader_version`, which the migration stamps into
+`catalog_meta`) and its apply function; and that applying the DDL to an empty database (with
+Python's own SQLite) gives exactly each fixture's schema objects. Result on 2026-10-09: all five
+unchanged, all five schemas identical. Regenerating with the same build reproduces all five files
+byte for byte (the automatic run's measured durations are fixed).
+
+One edit of a released migration is known and listed in the script (`KNOWN_EDITS`; W12 review
+SEC-08): 5548046 raised v2's `min_reader_version` from 1 to 2 two days after 0491d19 introduced v2,
+before any release. W6 development builds in between wrote v2 catalogs whose `catalog_meta` says
+`min_reader_version` 1; `v2.catalog` has 2, as every build since. Such a catalog reads exactly like
+the fixture once migrated (v3's migration stamps 2), so no separate fixture represents it; no build
+that could misread it (a schema-v1 build opening it for writing) was ever released.
 
 ```powershell
 build\w12-upd\bin\lucent_catalog_fixture_generator.exe src\catalog\tests\data\migration
