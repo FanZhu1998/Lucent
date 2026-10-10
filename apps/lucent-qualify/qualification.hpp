@@ -67,6 +67,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -75,6 +76,7 @@
 #include <nlohmann/json.hpp>
 
 #include <lucent/core/error.hpp>
+#include <lucent/engine/lens_correction.hpp>
 
 #include "charts.hpp"
 #include "expectations.hpp"
@@ -182,6 +184,11 @@ struct FixtureResult {
     // in raw-frame pixels, or null), "user_crop", "basis", "applied" (the develop render's geometry
     // frame in its upright image, or null when the whole image is the frame), "output" ([w, h])}.
     OrderedJson camera_area = nullptr;
+    // What the develop render did for the lens (ADR 0023): {"database" (null without one), "match"
+    // ("exact", "fuzzy", "none"), "profile" (null: none), "corrections": {"distortion",
+    // "lateral_chromatic_aberration", "vignetting": the outcome, e.g. "applied", "no_profile"}};
+    // null when the develop render failed.
+    OrderedJson lens_correction = nullptr;
     // Filled by propose_state().
     SupportState state = SupportState::NotQualified;
     std::vector<std::string> state_reasons;
@@ -237,6 +244,11 @@ struct QualifyOptions {
     // Exports are written below this directory (created; a fixture subdirectory is removed
     // afterwards unless keep_exports).
     std::filesystem::path work_dir;
+    // The lens database the develop renders correct lenses with, as Lucent's exports do (W13
+    // closure, ADR 0023): lucent-qualify loads the bundled asset (and refuses to run without it), so
+    // a Verified state covers the export Lucent makes by default, lens corrections included; the
+    // report's basis names it (assets::lens_database_basis()). Null: no lens is corrected (tests).
+    std::shared_ptr<const engine::LensDatabase> lens_database;
     bool keep_exports = false;
     // When set, a reduced sRGB JPEG of the develop render (long edge preview_long_edge) is
     // written to <previews_dir>/<id>.jpg for the reviewer's visual check.

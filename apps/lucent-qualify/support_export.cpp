@@ -135,6 +135,15 @@ Expected<assets::CameraSupportDatabase> camera_support_from_report(const Ordered
         }
         basis.neutral_look = number(versions, "neutral_look", "versions");
         basis.export_version = number(versions, "export", "versions");
+        // W13 (ADR 0023): the lens database the develop renders corrected lenses with. A report made
+        // before lens corrections records none: it is exported as before (schema 2, no lens database),
+        // and its Verified states never hold for a build that corrects lenses (basis_differences()).
+        if (versions.contains("lens_database")) {
+            basis.lens_database = text(versions, "lens_database", "versions");
+            if (basis.lens_database.empty()) {
+                refuse("the report's versions.lens_database is empty");
+            }
+        }
 
         // The qualification's detail of each limitation, per fixture.
         std::map<std::string, std::map<std::string, std::string>> details;  // fixture -> code -> detail
@@ -252,7 +261,7 @@ Expected<SupportExport> export_camera_support(const OrderedJson& report,
     manifest.id = std::string(assets::kCameraSupportAssetId);
     manifest.version = options.asset_version;
     manifest.minimum_app_version = options.minimum_app_version;
-    manifest.content = {std::string(assets::kCameraSupportSchema), assets::kCameraSupportSchemaVersion};
+    manifest.content = {std::string(assets::kCameraSupportSchema), assets::camera_support_schema_version(*database)};
     auto file = assets::describe_asset_file(std::string(assets::kCameraSupportFileName), *database_text);
     if (!file) {
         return Unexpected(std::move(file.error()));

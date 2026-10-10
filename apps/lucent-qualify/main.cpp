@@ -43,6 +43,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -50,6 +51,8 @@
 
 #include <windows.h>
 
+#include <lucent/assets/asset_store.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/version.hpp>
 
@@ -380,12 +383,29 @@ int export_support(const Arguments& args, const OrderedJson& report) {
     return kExitOk;
 }
 
-lucent::qualify::QualifyOptions options_of(const Arguments& args) {
+lucent::qualify::QualifyOptions options_of(const Arguments& args,
+                                           std::shared_ptr<const lucent::engine::LensDatabase> lens_database) {
     lucent::qualify::QualifyOptions options;
     options.work_dir = args.work_dir;
     options.keep_exports = args.keep_exports;
     options.previews_dir = args.previews;
+    options.lens_database = std::move(lens_database);
     return options;
+}
+
+// The bundled lens database next to this executable, verified against the build's pin (ADR 0023):
+// the develop renders correct lenses as Lucent's exports do, and the report's basis names this
+// database, so a qualification without it would certify renders Lucent does not make.
+std::shared_ptr<const lucent::engine::LensDatabase> load_lens_database_or_report() {
+    lucent::assets::LensDatabaseLookup lens =
+        lucent::assets::load_lens_database(lucent::assets::default_asset_locations(nullptr));
+    if (!lens.database) {
+        std::fprintf(stderr,
+                     "lucent-qualify: the bundled lens database cannot be loaded (%s); the qualification renders "
+                     "lenses as Lucent's exports do and needs it\n",
+                     lens.problem ? lens.problem->describe().c_str() : "unknown reason");
+    }
+    return lens.database;
 }
 
 }  // namespace
@@ -425,6 +445,10 @@ int wmain(int argc, wchar_t** argv) {
     }
     std::error_code ec;
     std::filesystem::create_directories(args.work_dir, ec);
+    const std::shared_ptr<const lucent::engine::LensDatabase> lens_database = load_lens_database_or_report();
+    if (!lens_database) {
+        return kExitUsage;
+    }
 
     if (args.child) {
         const lucent::qualify::ManifestFixture* fixture = corpus->find(args.ids.front());
@@ -433,7 +457,7 @@ int wmain(int argc, wchar_t** argv) {
             return kExitUsage;
         }
         const lucent::qualify::FixtureResult result =
-            lucent::qualify::qualify_fixture(*corpus, *fixture, options_of(args));
+            lucent::qualify::qualify_fixture(*corpus, *fixture, options_of(args, lens_database));
         return write_text(*args.result_file, result.to_json().dump(1)) ? kExitOk : kExitUsage;
     }
 
@@ -477,7 +501,7 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "[%zu/%zu] %s ...\n", index, selected.size(), fixture->id.c_str());
         OrderedJson result;
         if (args.in_process) {
-            result = lucent::qualify::qualify_fixture(*corpus, *fixture, options_of(args)).to_json();
+            result = lucent::qualify::qualify_fixture(*corpus, *fixture, options_of(args, lens_database)).to_json();
         } else {
             ChildOutcome child = run_child(args, fixture->id);
             result = child.ok ? std::move(child.result) : failed_result(*fixture, child.error);

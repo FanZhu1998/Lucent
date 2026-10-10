@@ -45,6 +45,7 @@
 #include <vector>
 
 #include <lucent/core/error.hpp>
+#include <lucent/engine/develop.hpp>
 #include <lucent/image/color_math.hpp>
 #include <lucent/image/geometry.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -88,9 +89,15 @@ struct ChartMeasurement {
 // engine's stages; InvalidArgument ("qualify.colour_reference") when the develop render's frame
 // differs from the chart definition's frame (size and origin: the boxes would not locate the
 // patches) or the image is not 3-channel colour.
+// `develop` gives the lens database the develop render corrects lenses with (ADR 0023): the chart's
+// samples are camera values of stage one (before the lens correction), where the boxes locate the
+// patches, and the colour the check verifies, operation 1's transform, is the same with and without
+// a correction (a lens correction moves and scales samples, a channel-independent gain for
+// vignetting; it changes no colour transform).
 [[nodiscard]] Expected<ChartMeasurement> measure_chart(const raw::DecoderRegistry& registry,
                                                        const std::filesystem::path& file,
-                                                       const ChartFixture& chart);
+                                                       const ChartFixture& chart,
+                                                       const engine::DevelopOptions& develop = {});
 
 struct ChartPatchResult {
     std::string patch;
