@@ -5,12 +5,15 @@
   without a change, Lucent's model matches Lensfun 0.3.4's `lfModifier` to 1e-4 pixel, and the
   corpus matched exactly as section 11 predicted. One deviation (the memory estimate, decision 5),
   the measured limits of the database's lateral-CA calibrations and the follow-ups the application
-  owes are recorded under "Verification" and "Consequences". A release package is blocked until the
-  GLib and GNU libintl ports stop compiling build-machine folders into their DLLs ("Verification",
-  the package).
+  owes are recorded under "Verification" and "Consequences". Amended 2026-10-10 by the closing review
+  of W13 ("Amendment: W13 closure" below: crop modes the camera records, vignetting without a focus
+  distance, primes and teleconverters, one lock for Lensfun, missing dependencies reported and
+  recorded, the corrected proxy kept between frames, qualification with lens corrections); its
+  overlays of the GLib and GNU libintl ports keep build-machine folders out of their DLLs, so the
+  release package is no longer blocked.
 - **Date:** 2026-10-10
 - **Workflow:** W13 (Lensfun lens corrections), engine phase; verified and accepted in the
-  build-and-test phase
+  build-and-test phase; closed by the W13 closing review ("Amendment: W13 closure")
 - **Amends:** ADR 0010 and ADR 0015 (DevelopSettings version 3: the `lens_correction` member and
   operation; stage two gains a first operation; pipeline version 4), ADR 0014 decision 8 (the
   "future Lensfun stage" now exists), ADR 0015 decision 2 (masks stay in the uncorrected frame U;
@@ -78,7 +81,8 @@ Facts verified for this decision (2026-10-10):
 - **The decoded metadata** (contract 1.4) carries the camera make and model as LibRaw reports them
   and normalised, the lens make and model (`LensMake`, else LibRaw's maker-note lens name), the
   lens's focal range and maximum apertures, the focal length, the f-number and the 35 mm equivalent
-  focal length. It carries no lens identifier number and no focus distance.
+  focal length. It carries no lens identifier number and no focus distance. (Contract 1.5, from the
+  W13 closure, adds the sensor crop the camera records: "Amendment: W13 closure".)
 - **What the files already correct.** `carried_lens_corrections()` (ADR 0014 decision 8) reports
   distortion for an applied WarpRectilinear, lateral CA when its coefficient sets differ per plane,
   vignetting for FixVignetteRadial or a List 2/3 GainMap over the whole image. Non-DNG raw data is
@@ -93,7 +97,8 @@ an imported target found with `find_path`/`find_library`: the port installs no C
 translation unit, `lens_correction.cpp`, includes `<lensfun/lensfun.h>`, and no Lensfun type appears
 in any Lucent header (`lens_correction.hpp` wraps everything: `LensDatabase` is a pimpl). The
 library ships unmodified as `lensfun.dll` with the GLib DLLs it imports (ADR 0003: replaceable LGPL
-DLLs). Every Lensfun call that searches or reads the database runs under one mutex per database.
+DLLs). Every Lensfun call runs under one process-wide lock (since the W13 closure; before, one mutex
+per database guarded searches and reads only: "Amendment: W13 closure").
 Lucent runs in the C locale, so Lensfun's temporary `LC_NUMERIC` switches change nothing observable.
 
 ### 2. The lens database is a verified, versioned asset
@@ -137,7 +142,8 @@ From the metadata (`lens_query()`):
   file names no other lens maker, and the file's 35 mm equivalent focal length agrees with the
   camera's crop factor within 6 % (otherwise the image is a crop mode of the sensor, and a profile for
   the whole sensor would correct it wrongly; a file without a 35 mm equivalent focal length is taken to
-  cover the whole sensor, and the reasons say so). *Fuzzy* when Lensfun returns candidates (strict, or loose
+  cover the whole sensor, and the reasons say so; since the W13 closure a sensor crop the camera
+  records, contract 1.5, is a crop mode too). *Fuzzy* when Lensfun returns candidates (strict, or loose
   when strict returns none) but the rule does not single one out. *None* when the database has no
   candidate or the file names no lens. Every result lists its reasons and at most five candidates with
   Lensfun's scores. Several calibrations of the exact lens for different sensors: the one with the
@@ -165,16 +171,20 @@ Per correction, in order of precedence:
 5. **NotApplicable**: lateral CA on monochrome data, or a stage-one image that is a part of the frame
    (an analysis crop: the model is centred on the whole frame);
 6. **NoCalibration**: the profile has no calibration of that kind, or none that covers the
-   photograph: the focal length within the calibrated focal lengths (1 %; any focal length for a
-   prime), for vignetting also the f-number within the calibrated apertures (2 %) and a known
+   photograph: the focal length within the calibrated focal lengths (1 %; for a prime, within 5 % of
+   its calibrated focal length, any focal length when the file records none: W13 closure), for
+   vignetting also the f-number within the calibrated apertures (2 %) and a known
    f-number; a profile calibrated on a smaller sensor than the image's; a model Lucent does not
    implement; a distortion model that folds back within the image or a vignetting model that is not
    positive and bounded (gain at most 64) over it;
-7. **Applied**, with the calibration Lensfun interpolates for the focal length (vignetting: for the
-   f-number and 1000 m, Lensfun's "infinity" entries, since the focus distance is unknown).
+7. **Applied**, with the calibration Lensfun interpolates for the focal length (a prime's: its
+   calibrated one) and, for vignetting, the f-number and a focus distance: unknown, so 1000 m,
+   Lensfun's "infinity" entries, for a profile calibrated at one distance, and for one calibrated at
+   several the calibrated distance that corrects the image's corners least (W13 closure).
 
 The image's crop factor is the database camera's; for a named profile in a crop mode, the file's 35
-mm equivalent focal length gives it (recorded with its basis).
+mm equivalent focal length gives it, else (a sensor crop the camera records, W13 closure) the
+camera's times the crop's factor, else it is unknown (recorded with its basis).
 
 ### 5. The model and its application (operation version 1)
 
@@ -341,7 +351,8 @@ CC-BY-SA-3.0, its licence file, credit line and comment.
 - Updated for the new first operation: `develop_test.cpp`, `develop_v2_test.cpp` (13 operations,
   indices shifted), `develop_settings_test.cpp` (version 3, upgrades to lens-correction version 0)
   and `tests/integration/render_tool_tests.cpp` (lucent-render's report lists `lens_correction`
-  first, not applied: the tool passes no database).
+  first; written when the tool passed no database, and since the application phase the tool loads
+  the bundled database, ADR 0010's W13 amendment, decision 10).
 
 ### 11. The corpus
 
@@ -522,9 +533,11 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
   an interrupted rebuild was completed): 2238 tests, 2172 passed, the same nine failed, 57 skipped
   (the qualification-tier fixtures), no compiler warning. With `LUCENT_TEST_FIXTURE_TIER=all` the
   124 render, qualification and colour-reference fixture tests (`RenderFixture`,
-  `QualificationFixture`, `ColourReferenceFixture`; the 57 among them) all pass: no program or
-  service passes a lens database yet, so the version-3 as-shot renders of all 40 fixtures still
-  meet their gates and qualification expectations unchanged.
+  `QualificationFixture`, `ColourReferenceFixture`; the 57 among them) all pass: in this phase no
+  program or service passed a lens database yet, so the version-3 as-shot renders of all 40 fixtures
+  still met their gates and qualification expectations unchanged (the application phase then made
+  Lucent.exe, lucent-worker and lucent-render load it, and the closure lucent-qualify: "Amendment:
+  W13 closure").
 - **The package** (`tools\package.ps1 -BuildDir build\w13-rel -StageOnly`, the release preset): the
   layout carries `lensfun.dll`, `glib-2.0-0.dll`, `intl-8.dll`, `iconv-2.dll` and `pcre2-8.dll` (no
   `ffi-8.dll`, `charset-1.dll` or other GLib library: nothing imports them) and both assets; the audit
@@ -554,7 +567,9 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
   the compiler, so the neutral value must survive that). Lucent never uses these strings at run time
   (GLib binds its translation domain under its own DLL's folder and uses only the last two components
   of its string). Until then no release package can be made; the scan must not get an exception for
-  them (ADR 0009, decision 12).
+  them (ADR 0009, decision 12). The W13 closure made those overlays, with gnulib's costly relocation
+  turned off rather than a build without `--enable-relocatable`, and the scan passes ("Amendment: W13
+  closure").
 
 ## Consequences
 
@@ -562,10 +577,12 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
   support database's basis no longer equals this build's: every Verified mode is reported as
   Compatible, unverified until the qualification is run again with lens corrections and the database
   re-exported (ADR 0018; `BundledCameraSupport.HoldsForThisBuildsDecoderAndPipelines` fails until
-  then, by design). The qualification's renders use the as-shot defaults, which now correct exactly
-  matched lenses once a lens database is passed.
-- **The application** (recipes, editor, Auto, thumbnails, `lucent-render`) is not changed by this
-  phase and must follow (requests recorded with the phase's report): the recipe document gains
+  then, by design). The qualification's renders use the as-shot defaults with the bundled lens
+  database since the W13 closure (ADR 0016's closure amendment), so they correct exactly matched
+  lenses as exports do, and the report and the database name it in their basis.
+- **The application** (recipes, editor, Auto, thumbnails, `lucent-render`) was not changed by the
+  engine phase; the application phase followed (ADR 0010's W13 amendment, ADR 0007 decision 16) and
+  did what this item asked: the recipe document gains
   `lens_correction` and the `lens_correction` operation (version 3; version 2 read and upgraded with
   operation version 0); `kRecipeSchemaVersion` follows the engine to 3 already, so until then a
   version-2 document re-written by the application loses nothing it had but writes `"version": 3`
@@ -574,8 +591,8 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
   mappings with `geometry_mapping(report)`, and offer the toggles and the profile choice; Auto should
   decide whether its analysis measures with the correction (its native crops are parts of the frame,
   which stage two does not correct).
-- **The application's tests** fail until it follows (measured in this phase's `dev-core` and `dev`
-  runs): the recipe tests `RecipeDocument.DefaultSettingsHaveAFixedCanonicalTextAndIdentity`,
+- **The application's tests** failed until it followed (measured in the engine phase's `dev-core` and
+  `dev` runs; all pass since the application phase): the recipe tests `RecipeDocument.DefaultSettingsHaveAFixedCanonicalTextAndIdentity`,
   `AcceptsAnyJsonNumberSpellingAndOrder`, `Version1DocumentsAreUpgradedOnRead` and
   `NewerVersionsAreVersionMismatchNeverNoOps`, `RecipeServiceTest.Version1SettingsAreKeptAsTheirConversion`
   and `CatalogRecipeTest.AVersion1RevisionIsReadAsItsUpgrade` pin documents, identities and upgrades of
@@ -601,12 +618,13 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
   above).
 - **Cost.** A resampling correction is the first pass's main cost: about 26 ns per pixel on six
   cores, so +1.1 to +1.6 s for a 45 to 61 MP export and +60 to +70 ms for a 2048-pixel proxy's stage
-  two (20 to 31 ms without; "Verification"). Interactive edits of a corrected file therefore run at
-  about 10 to 12 instead of 32 to 50 stage-two frames per second on the reference machine. The obvious
-  optimisations keep the model and its tests: evaluate the distortion once per pixel instead of once
-  per channel (lateral CA is applied on its result), compute the source positions on a coarse grid
-  and interpolate them (the map is smooth), and keep the planes' taps in float; measure them against
-  this phase's numbers before the application turns corrections on for previews.
+  two (20 to 31 ms without; "Verification"). Interactive edits no longer pay it per frame: since the
+  W13 closure an edit session corrects its proxy once per stage-one image and plan and every frame
+  reads the kept image ("Amendment: W13 closure"). Full-resolution renders (the 100 % view, exports)
+  still resample the whole image; the distortion is now evaluated once per pixel instead of once per
+  channel, and the other optimisations that keep the model and its tests (source positions on a
+  coarse grid, interpolated, since the map is smooth; the planes' taps in float) wait for a profile
+  of the full-resolution path (ADR 0021's closure amendment records its cost).
 - The Nikon Z 8 High Efficiency NEFs are exact matches that this build cannot decode (LibRaw 0.22.2);
   they are corrected once a decoder reads them, with no change here.
 - Crop modes are detected only through the 35 mm equivalent focal length. Files that do not record
@@ -615,17 +633,17 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
   matched lens would be corrected as if it were the whole sensor (the corpus's R5 crop files are
   not affected: their lens is a fuzzy match). Revisit when the decoded-RAW contract carries the
   sensor crop (Canon's crop information) or the full sensor size.
-- Until the application serialises `lens_correction`, a version-2 recipe that the application
-  re-writes (as version 3, without the member) reads back with lens-correction operation version 1
-  (the struct's default): the same identity then renders with automatic corrections once a database
-  is passed. The application must write and read the member and the operation with version 3 before
-  it passes a database (requested with this phase's report).
+- Between the engine and the application phases, a version-2 recipe that the application re-wrote
+  (as version 3, without the member) would have read back with lens-correction operation version 1.
+  The application phase writes and reads the member and the operation with version 3 before it
+  passes a database (ADR 0010's W13 amendment), so no build ever did both.
 - The database is as trustworthy as the executable (the pin); updating it is a new asset version
   (`tests/tools/lens_database_asset.py`), reviewed like any data change. Signed data packs remain
   future work (ADR 0018).
-- Revisit when Lensfun 0.4 (data format 2, new models such as `acm`) is packaged, when the
-  decoded-RAW contract carries a lens identifier or a focus distance, when the application exposes the
-  profile choice, or when the qualification measures lens corrections.
+- Revisit when Lensfun 0.4 (data format 2, new models such as `acm`) is packaged, or when the
+  decoded-RAW contract carries a lens identifier or a focus distance (the application exposes the
+  profile choice since the application phase, and the qualification renders with lens corrections
+  since the closure: "Amendment: W13 closure").
 
 ## Alternatives considered
 
@@ -652,3 +670,221 @@ preset in `build\w13-eng`, the `dev` preset in `build\w13-dev`, the release pack
 - **Bundling the database inside the executable or Lensfun's own search path.** The asset path verifies
   the data against the build's pin and keeps its licence apart; Lensfun's default search would read
   unverified files from the user's profile.
+
+## Amendment: W13 closure (2026-10-10)
+
+The closing review of W13 (an engine lens and an application lens) checked the engine's model against
+Lensfun on every lens of the bundled database (66,768 plans: positions within 1.1e-3 pixel, gains
+within 2.2e-6 relative, the scale equal to `GetAutoScale` or raised by at most 1.08 %), the recipes,
+the identities, the upgrade path, the worker and the panel, and found the defects below (LNS-1 to
+LNS-5, APL-01 to APL-12). Every one is resolved or deliberately deferred here; the measurements are
+in "Closure verification".
+
+### Planning (match version 1, as closed)
+
+These rules changed before any release, so they remain match version 1 (`kLensProfileMatchVersion`):
+decisions 3 and 4 as amended here.
+
+- **A crop mode the camera records is never corrected as the whole sensor (LNS-1).** Canon's CR2 and
+  CR3 files record no 35 mm equivalent focal length, so decision 3's test could not see an EOS R5 in
+  its 1.6x crop mode: with an exactly matched full-frame lens it would have been corrected with the
+  whole sensor's normalisation (measured on the corpus's crop file with the RF 24-105 profile:
+  corners over-brightened about 3.3x, +1.7 EV, distortion off by about 17.5 pixels). The decoded-RAW
+  contract 1.5 adds `RawMetadata::sensor_crop` (`raw::SensorCrop`: the crop factor relative to the
+  whole sensor, its provenance and basis): the LibRaw adapter reads Canon's AspectInfo maker note
+  (tag 0x009a) itself, through LibRaw's maker-note callback while LibRaw parses the maker notes
+  (LibRaw 0.22 folds the crop codes into "3:2"), and a non-DNG Canon file whose AspectRatio is 12
+  ("3:2 (APS-H crop)") or 13 ("3:2 (APS-C crop)") and whose visible area is the AspectInfo rectangle
+  (the camera recorded the crop, not a whole-sensor image with the crop attached) has a sensor crop
+  with Canon's factor, 1.3 or 1.6 (the corpus's R5 crop files: AspectInfo [13, 5088, 3392, 0, 0],
+  visible area 5087 x 3391; its full-frame files [0, 8192, 5464, 0, 0]). Matching (`LensQuery::
+  sensor_crop`): a recorded sensor crop makes the match Fuzzy with the reason, like a disagreeing 35 mm
+  equivalent; a named profile is planned for the cropped sensor (the file's 35 mm equivalent when it
+  records one, else the database camera's crop factor times the sensor crop's; a crop of unknown size
+  is NoProfile). A file that records neither is still taken to cover the whole sensor, and the
+  reasons say so; the corpus's only other crop-mode file, the ILCE-7M4's APS-C file, records its 35 mm
+  equivalent (75 mm for 50 mm) and was already Fuzzy. Contract 1.5 does not make a library's stored
+  probes outdated (`app::kOldestCurrentProbeContract` stays 1.4, `probe_outdated()`): the sensor crop
+  changes no mode key, requirement or support state, and lens planning reads it from the decode, so
+  no library is probed again for it.
+- **Vignetting with an unknown focus distance corrects least (LNS-2).** Decision 4 interpolated every
+  vignetting calibration for 1000 m. In the bundled database 689 lenses are calibrated at several
+  distances, and for 74 the corner gain at the nearest one differs from the 1000 m gain by more than
+  25 % (a Laowa 60mm macro: 2.52 at 0.19 m, 7.15 at 1000 m): a close-up was over-brightened by up to
+  about 2.8x. Now, while the contract carries no focus distance: a profile calibrated at one distance
+  is interpolated for 1000 m as before (Lensfun's choice without a distance); one calibrated at
+  several is interpolated at each calibrated distance (Lensfun's own interpolation over focal length,
+  f-number and distance; a distance without a calibration close enough is left out), and the
+  calibrated distance whose gain at the image's corners is the smallest is used: the farthest unless
+  a nearer one is more than 1 % smaller (`kLensVignettingDistanceTolerance`). The corners are then
+  never brightened more than the lens darkens them at any calibrated distance: an unknown distance
+  can leave them under-corrected (at most by the ratio of the extreme gains), never over-corrected.
+  Withholding the correction, the review's first suggestion, was rejected: it leaves every photo with
+  the whole vignetting, which is worse at every distance than the least correction. The decision's
+  detail names the distance used, the calibrated distances and the largest gain it avoided.
+- **A prime is corrected only at its own focal length (LNS-4).** "Any focal length for a prime" let a
+  file that names the bare lens but records a teleconverter's focal length (420 mm for a 300 mm with
+  a 1.4x) take the bare lens's distortion, lateral CA and autoscale; the database calibrates
+  converter combinations as lenses of their own. A prime's calibrations now cover a recorded focal
+  length within 5 % of its calibrated one (`kLensPrimeFocalTolerance`; converters are 1.4x or more),
+  and are interpolated for that calibrated focal length (Lensfun weighs vignetting by a prime's focal
+  difference in millimetres, so a file recording 51.6 mm for a 50 mm prime found no vignetting
+  calibration before); outside it, NoCalibration says "a teleconverter?". A file that records no
+  focal length still uses the prime's own.
+- **One lock for all of Lensfun (LNS-5).** Lensfun 0.3.4 keeps process-wide mutable state no instance
+  owns: `lfLens` counts the users of its lazily compiled lens-name regular expressions in a plain
+  integer and frees them at zero (lens.cpp), and every load, search (a temporary `lfLens`) and
+  destruction of a database touches it. Every Lensfun call of `lens_correction.cpp`, `load()` and
+  `~LensDatabase()` included, now runs under one process-wide recursive mutex (recursive: a database
+  whose load fails is destroyed under it), so several databases may exist in a process
+  (`LensDatabaseThreads.SeveralDatabasesWorkConcurrently`: four threads loading, searching, planning
+  and destroying databases).
+- **A missing dependency is reported, not silent (LNS-3, APL-04).** `LensCorrectionPlan::
+  missing_dependency` says why settings that ask for a correction (operation version 1, enabled, not
+  carried by the file) cannot be planned for want of a dependency: no lens database, or a named
+  profile the database does not hold. A profile miss of the automatic match is not one (the
+  blueprint allows it), nor is an automatic setting for a file that carries corrections of its own
+  (no database profile would be applied to it). The worker reports it (protocol version 3, ADR
+  0012's closure amendment), the export gets a review note and `lucent.log` a warning, and the Lens
+  corrections panel says that the chosen profile is not in this database.
+
+### Records and identities (LNS-3)
+
+Blueprint section 8 asks a recipe to record its "camera/lens calibration" and resource hashes. The
+lens database is data that changes pixels, so it is recorded where pixels are named:
+- every revision's `engine_version` (catalog, free text) is "<Lucent version>; lens database
+  <asset id> <version> (manifest <first 16 hex digits>)" (`RecipeServiceOptions::engine_version`,
+  set by the Backend from the database its session loaded): the database each revision was made
+  with stays readable with the revision;
+- every batch's `renderer_version`, part of every job's identity, ends with the lens database the
+  session renders with (ADR 0012's closure amendment): an output made with another database is never
+  taken for this one's;
+- every receipt and report entry names the database the worker rendered with and what it corrected;
+- rendered thumbnails were already keyed by it (decision 8).
+
+A replay compares nothing yet: a revision made with database 1.0.0 renders with whatever database the
+build bundles. Lucent ships exactly one database per build (per-user data packs are refused until
+signed packs exist, ADR 0018), so the database changes only with an application update, as the
+engine's own versions do (`kDevelopEngineVersions`), and blueprint section 8 accepts that a new
+version does not reproduce every historical pixel if it says so. **Deferred** to the introduction of
+signed lens-database packs (ADR 0018's future work): comparing a revision's recorded database with
+the active one, and an explicit stale-recipe state or a reviewed migration when they differ.
+
+### Stage two keeps the corrected proxy (APL-03)
+
+The correction depends only on stage one's pixels and the plan, never on a slider, yet stage two
+resampled it on every frame: about 70 to 80 ms of a Z 6 frame. `StageTwoCache` gains a second entry,
+the lens-corrected image (`StageTwoCache::LensEntry`: stage one's camera samples after the correction,
+before the white-balance correction, the clip and colour; key: the stage-one image's id and
+`LensCorrectionPlan::revision()`). A non-consuming render with a cache corrects the whole image once
+into that entry and reads its rows in the fused first pass; every later render of the same stage-one
+image and plan reads them (`LensCorrectionRecord::reused`, the operation's parameter `reused`). The
+rows are the floats the per-row sampler writes, so a reused render is bit-identical to an uncached
+one (`LensStageTwo.TheLensCorrectedImageIsKeptAndReused`); preview and export parity is unchanged.
+`max_bytes` now bounds both entries together, and the denoised image is kept only beside the
+lens-corrected one, which serves every render; the edit session's capacity rises from 64 to 96 MiB
+(both images of a 2048-pixel proxy, 32 to 48 MiB each by aspect ratio) and is claimed for settings
+that ask for a lens correction when the renderer has a database (`uses_stage_two_cache()`).
+Full-resolution renders (the 100 % view, exports) keep the per-row path: keeping a corrected
+full-resolution image would double the session's largest retained buffer. The sampler also evaluates
+the distortion once per pixel for the three channels (`LensGeometryMap::normalized_sources()`, the
+same arithmetic as `normalized_source()` per channel, asserted bit for bit).
+
+### Builder paths and the recipes of the shipped ports (APL-05)
+
+The two DLLs that blocked the release package are fixed in their ports, not excepted (ADR 0009's
+closure amendment): an overlay of `glib` compiles only the part of `GLIB_LOCALE_DIR` that GLib uses
+on Windows ("/share/locale", which `glib/ggettext.c` appends to its own DLL's folder), and the
+`gettext-libintl` overlay gives libintl's default catalog folder a name no file can have and turns
+gnulib's costly relocation off (Lucent binds no text domain; GLib binds its own; relocation serves
+only `locale.alias` files, and `LOCALE_ALIAS_PATH` is empty). Both patches mark the files they change
+with the date. The overlay recipes ship in `licenses\<port>\recipe\`, and the LGPL notice and the
+SBOM point at that copy instead of a commit that was never published.
+
+### Qualification (APL-01)
+
+`lucent-qualify` renders with the bundled lens database and refuses to run without it; the report
+and the camera support database (schema 3) name it in their basis, and the support table lists each
+fixture's lens outcome (ADR 0016's and ADR 0018's closure amendments).
+
+### Performance budgets (APL-02)
+
+See ADR 0021's closure amendment: the interactive figures return to their budgets with the kept
+proxy; the full-resolution correction's own cost (the 100 % view, exports, a worker's peak) is
+recorded with a new baseline.
+
+### The application (APL-06 to APL-12)
+
+- **Esc in the profile choice (APL-07)** closes the choice from any of its controls (the window's Esc,
+  which leaves the Edit view, is off while it is open), and the choice opens with the search focused.
+- **Profile rows and keyboard (APL-08)**: a row's detail starts with the calibration's crop factor
+  (always, "crop factor 1" included), then the focal range, the calibrations and the mounts, so
+  same-named calibrations for different sensors are told apart before the line is elided; the whole
+  detail and the row's state ("In use", "Fits this camera's mount" or "For another mount") are the
+  row's tooltip and accessible description; a correction's engine detail is part of its switch's
+  accessible description, and its tooltip shows on keyboard focus.
+- **Pasting from an older recipe (APL-12)**: lens corrections copied from settings of operation
+  version 0 are not pasted (the paste report says the copied photo has none), instead of switching
+  the target's corrections off (ADR 0010's closure amendment).
+- **Auto (APL-10)**: ADR 0013's closure amendment records the deviation from blueprint section 6
+  step 7 and adds a review note for automatic exports whose vignetting correction leaves clipped
+  highlights.
+- **Batches frozen before W13 (APL-09)**: the batch test now freezes jobs with the identities W6 to
+  W12 really wrote (`kVersion2AsShotRecipes`, `kVersion1AsShotRecipe`) and checks their converted
+  receipts, and the dead geometry loop that could only match identities no build froze is removed.
+- **Documents (APL-11)**: this ADR's passages written before the application phase, ADR 0007
+  decision 16 and the licence policy's comment now describe the delivered state.
+- **Start-up (APL-06)**: **deferred** to the W12 licence and release phase's performance pass.
+  Verifying and parsing the database on the UI thread costs about 140 ms of every start, within the
+  start-up budgets (window and first frame); moving it off that thread needs the renderer, the batch
+  service and the recipe service to take the database (and its identity) asynchronously.
+
+### Closure verification (2026-10-10)
+
+On the reference laptop (Ryzen 5 5500U, MSVC 14.44, `/W4 /WX`):
+
+- **Tests.** `tools\build.ps1 -Preset dev -Fresh -BuildDir build\w13-final -Test -Jobs 6`: 2,288
+  tests, 2,224 passed, 57 fixture tests skipped by their tier, 6 disabled, 1 failed:
+  `BundledCameraSupport.HoldsForThisBuildsDecoderAndPipelines`, by design until the committed
+  qualification report and camera support database are regenerated with this build (their basis
+  differs in the decoded-RAW contract, the develop pipeline and engine versions and the lens
+  database). `dev-core` (`build\w13-rev-eng`): 2,011 tests, 1,947 passed, 57 skipped, 6 disabled,
+  the same 1 failed. With `LUCENT_TEST_FIXTURE_TIER=all` (the release tree) the 252 fixture tests
+  pass, the 80 qualification fixture tests, the 40 render fixtures and the lens fixtures among them;
+  one timing assertion (`DevelopFixtures.MasksDenoiseAndGeometryOnTheR5`, a median under 1 s)
+  failed once under the six-way parallel load and passes alone (median 142 ms).
+- **Ports.** The changed overlays rebuilt gettext-libintl (14 min), gettext's tools (60 min;
+  `tools\Watch-Conftest.ps1` stopped no probe), GLib (1.9 min) and Lensfun (10 s). `glib-2.0-0.dll`
+  now holds "/share/locale" and no folder of the machine, `intl-8.dll` "<no default message catalog
+  folder>" and none; their exports are unchanged (1,921 and 37 names, `dumpbin /exports` of the
+  DLLs before and after).
+- **The package.** `tools\package.ps1 -BuildDir build\w13-rel -StageOnly` passes every step: the
+  audit (21 ports; `camera-support 2.1.0` and `lens-database 1.0.0` verified against their pins),
+  the smoke run, the licence bundle with `licenses\glib\recipe\` and `licenses\gettext-libintl\recipe\`
+  (named by `LGPL-NOTICE.txt` and by the SBOM, now 107 packages, 545 files, 708 relationships) and
+  the builder-path scan: 0 hits in 392 files.
+- **The corpus** (`LUCENT_TEST_FIXTURE_TIER=all`). `LensFixtures.TheCorpusMatchesAsDocumented`:
+  every fixture's match kind and corrections as in section 11. `LibRawFixtures.SensorCropsOfTheCorpus`:
+  the two R5 crop-mode files record Canon's 1.6 crop (AspectInfo 13), the R5's full-frame files, the
+  5D Mark IV, the ILCE-7M4's APS-C file and the Z 6 none. The R5 crop file rendered by `lucent-render`
+  with the RF 24-105mm F4L IS USM profile named is planned for crop factor 1.6 ("the database camera
+  'Canon Canon EOS R5' (1) times the sensor crop the file records (1.6: Canon AspectInfo ...)"), and
+  its automatic match is Fuzzy with the sensor crop among the reasons. The vignetting distances the
+  exact matches use (`lucent-render` reports): the GF110mmF2 R LM WR on the GFX 50S II at f/2 is
+  corrected for 0.9 m (corner gain 2.06; 2.98 for 1000 m), the EF 70-200mm f/2.8L IS II USM at 70 mm
+  f/2.8 for 1000 m (2.3; up to 2.64 for 1.1 m), the NIKKOR Z 24-70mm f/4 S for 1000 m (its 10 m and
+  1000 m calibrations agree, 1.69); the other exact matches' profiles (FE 50mm f/2.5 G, FE 50mm
+  f/1.2 GM, XF16-55mmF2.8 R LM WR, Summicron-M 1:2/35 Asph.) hold no vignetting calibration. The
+  qualification of all 40 fixtures with the bundled database
+  (`QualificationFixture.OutcomeMatchesItsExpectation`, in process): every outcome equals its
+  expectation, and every develop render records the database it planned with.
+- **Interactive latency.** ADR 0007 decision 16: on the Z 6 NEF with all three corrections applied,
+  the exposure drag's slider-to-frame median falls from 139 to 74 ms (72 ms without the database),
+  the shadows drag's from 161 to 98 ms (98 ms), and a drag shows 18 instead of 9 quick frames.
+- **Performance budgets** (ADR 0021's closure amendment). A full run of `tools\bench` on the
+  closure's release build: the drags are within the first baseline's budgets again; four budgets
+  fail for the full-resolution correction's own cost (the 100 % views of the Z 6 and the ILCE-7M4,
+  the workers together of two JPEG batches), recorded with the new baseline of 2026-10-10 from which
+  `budgets.json` is now derived. A 100 % view of the Z 6 takes 1.49 s instead of 1.66 s before the
+  closure (the distortion evaluated once per pixel) and 1.01 s without the database (six runs of
+  each, alternating).

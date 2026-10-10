@@ -2,7 +2,8 @@
 
 - **Status:** Accepted (amended 2026-10-05 for DevelopSettings v2: "Amendment: DevelopSettings v2" below, ADR 0015;
   amended 2026-10-10 for DevelopSettings v3 and lens corrections: "Amendment: DevelopSettings v3 and lens
-  corrections" below, ADR 0023)
+  corrections" below, ADR 0023; amended 2026-10-10 by the closing review of W13: "Amendment: W13 closure"
+  below)
 - **Date:** 2026-10-03
 - **Workflow:** W6 (Recipes and editor), phase 2 of 4
 
@@ -411,3 +412,35 @@ model, DevelopSettings v3); this amendment records the application's.
   comparisons with decoders that correct nothing); a database that cannot be activated is a warning,
   not a failure. Performance figures of `tools\bench` exports now include the corrections of exactly
   matched fixtures (ADR 0021's budgets were measured without them).
+
+## Amendment: W13 closure (2026-10-10)
+
+The closing review of W13 found three gaps on the application's side of lens corrections; ADR 0023's
+closure amendment records the engine's.
+
+- **Decision 5 (copy and paste), APL-12.** Settings of lens-correction operation version 0 (a recipe
+  made before W13, read as its version-3 conversion) hold no lens corrections. Pasting their category
+  `lens_corrections` switched the target's corrections off and gave it operation version 0, as if it
+  had been edited before Lucent had lens corrections. The category is now skipped for every target
+  when the copied settings have operation version 0 (`PasteSkip` with the part `lens_correction` and
+  the reason "the lens corrections are not pasted: the copied photo was edited before Lucent had lens
+  corrections, so it has none to paste"); the target keeps its own
+  (`RecipeServiceTest.LensCorrectionsOfARecipeMadeBeforeThemAreNotPasted`).
+- **Decision 4 (revisions): the lens database is recorded, LNS-3.** The lens database changes pixels,
+  so every revision's `engine_version` (the catalog's free text, `RecipeServiceOptions::
+  engine_version`) is "<Lucent version>; lens database <asset id> <version> (manifest <first 16 hex
+  digits of its SHA-256>)", or "...; lens database none", from the database the Backend's session
+  loaded: the database a revision was made with stays readable with it. Nothing compares it yet: a
+  revision renders with the database the build bundles (one per build; ADR 0023's closure amendment
+  defers the comparison to signed lens-database packs).
+- **A missing dependency is not silent, APL-04.** A recipe that names a profile the database does
+  not hold, or asks for corrections where no database is loaded, renders without them: the panel
+  says so ("The profile chosen for this photo is not in this lens database, so nothing is
+  applied."), and a batch export gets a review note and a warning in `lucent.log` (ADR 0012's
+  closure amendment).
+- **Decisions 6 and 7 (renders): the edit session keeps the corrected proxy, APL-03.** The
+  correction depends on no slider, so each edit session's stage-two cache keeps its proxy's
+  lens-corrected image beside the denoised one (ADR 0023's closure amendment) and every frame reads
+  it while the lens settings stay; the session's stage-two capacity rises from 64 to 96 MiB
+  (`kDefaultSessionStageTwoCacheBytes`), claimed for settings that ask for a lens correction when
+  the renderer has a database. Measured with the Z 6 NEF in ADR 0007 decision 16 ("Responsiveness").
