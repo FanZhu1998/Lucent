@@ -36,6 +36,18 @@ vcpkg_extract_source_archive(SOURCE_PATH
     PATCHES
         uwp.patch
         0003-Fix-win-unicode-paths.patch
+        # Lucent overlay: keep the build machine's folders out of intl-8.dll (tools\package.ps1's
+        # builder-path scan, ADR 0009 decision 12). Upstream compiles three: LOCALEDIR (the default
+        # catalog folder of text domains nobody bound, dcigettext.c) and, through gnulib's "costly"
+        # relocation support for shared libraries, INSTALLPREFIX and INSTALLDIR (relocatable.c).
+        # The patch gives the default folder a name no Windows file can have, and turns the costly
+        # relocation off. Neither changes what Lucent does: Lucent binds no text domain; GLib binds
+        # its own below its DLL and reads the default domain's header only to decide whether to
+        # translate, which it does for the default domain "messages" whatever that lookup returns
+        # (glib/ggettext.c, _g_dgettext_should_translate); relocate() is called only for the
+        # locale.alias files of LOCALE_ALIAS_PATH, which is empty in this build (localealias.c).
+        # The exported functions are unchanged. See docs/adr/0023 (W13 closure).
+        lucent-no-builder-paths.patch
 )
 
 if(VCPKG_HOST_IS_WINDOWS)

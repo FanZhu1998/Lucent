@@ -1,0 +1,24 @@
+diff --git a/meson.build b/meson.build
+index c8f6673..e90a0c3 100644
+--- a/meson.build
++++ b/meson.build
+@@ -2364,7 +2364,18 @@ glib_conf.set('HAVE_BIND_TEXTDOMAIN_CODESET', have_bind_textdomain_codeset)
+ glib_conf.set('HAVE_DCGETTEXT', 1)
+ glib_conf.set('HAVE_GETTEXT', 1)
+ 
+-glib_conf.set_quoted('GLIB_LOCALE_DIR', glib_localedir)
++if host_system == 'windows'
++  # Changed by the Lucent project, 2026-10-10: on Windows, glib/ggettext.c
++  # (_glib_get_locale_dir) uses only the part of GLIB_LOCALE_DIR from its second-to-last '/'
++  # on ("/share/locale"), below the folder of the installed DLL. Compile only that part, so
++  # that the DLL does not carry the build machine's install prefix.
++  glib_localedir_parts = glib_localedir.split('/')
++  glib_conf.set_quoted('GLIB_LOCALE_DIR', '/' + '/'.join([
++    glib_localedir_parts[glib_localedir_parts.length() - 2],
++    glib_localedir_parts[glib_localedir_parts.length() - 1]]))
++else
++  glib_conf.set_quoted('GLIB_LOCALE_DIR', glib_localedir)
++endif
+ 
+ glib_conf.set_quoted('GLIB_LOCALSTATEDIR', glib_localstatedir)
+ glib_conf.set_quoted('GLIB_RUNSTATEDIR', glib_runstatedir)

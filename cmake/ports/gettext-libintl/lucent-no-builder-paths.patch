@@ -1,0 +1,44 @@
+diff --git a/gettext-runtime/intl/dcigettext.c b/gettext-runtime/intl/dcigettext.c
+index 7c122b1..656077e 100644
+--- a/gettext-runtime/intl/dcigettext.c
++++ b/gettext-runtime/intl/dcigettext.c
+@@ -298,7 +298,14 @@ extern const char _nl_default_dirname[];
+ extern const char _nl_default_dirname[];
+ libc_hidden_proto (_nl_default_dirname)
+ # endif
+-const char _nl_default_dirname[] = LOCALEDIR;
++/* Changed by the Lucent project, 2026-10-10.  The folder of the catalogs of text domains
++   that the program never bound with bindtextdomain(): not the configured LOCALEDIR, which
++   names the build machine's install prefix, but a name that no file can have ('<' and '>'
++   are not allowed in Windows file names), so that libintl never opens a catalog of an
++   unbound domain.  Lucent binds none; GLib binds its own domain below its DLL's folder and
++   reads the default domain's header only to decide whether to translate, which it does
++   whatever that lookup returns for the default domain "messages".  */
++const char _nl_default_dirname[] = "<no default message catalog folder>";
+ # ifdef _LIBC
+ libc_hidden_data_def (_nl_default_dirname)
+ # endif
+diff --git a/gettext-runtime/intl/gnulib-lib/relocatable.c b/gettext-runtime/intl/gnulib-lib/relocatable.c
+index 365c085..95674d3 100644
+--- a/gettext-runtime/intl/gnulib-lib/relocatable.c
++++ b/gettext-runtime/intl/gnulib-lib/relocatable.c
+@@ -104,13 +104,12 @@
+    prefix than the program.  But it is quite costly, especially on Cygwin
+    platforms, see below.  Therefore we enable it by default only on native
+    Windows platforms.  */
+-#ifndef ENABLE_COSTLY_RELOCATABLE
+-# if defined _WIN32 && !defined __CYGWIN__
+-#  define ENABLE_COSTLY_RELOCATABLE 1
+-# else
+-#  define ENABLE_COSTLY_RELOCATABLE 0
+-# endif
+-#endif
++/* Changed by the Lucent project, 2026-10-10: disabled for libintl.  The costly support
++   compiles the build machine's install prefix and library folder (INSTALLPREFIX,
++   INSTALLDIR) into the DLL, and relocate() is called only for the locale.alias files of
++   LOCALE_ALIAS_PATH, which is empty in this build.  */
++#undef ENABLE_COSTLY_RELOCATABLE
++#define ENABLE_COSTLY_RELOCATABLE 0
+ 
+ /* Original installation prefix.  */
+ static char *orig_prefix;
