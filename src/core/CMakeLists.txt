@@ -1,6 +1,8 @@
 # lucent_core: foundation utilities shared by every module (errors, text conversion, Win32
 # error mapping, read-only file access and identity, SHA-256 hashing, cancellation, logging,
-# versioning, storage classification, verified copies, per-user directories). Depends only on the C++ standard library, Win32 and tl-expected.
+# versioning, storage classification, verified copies, per-user directories; W12: ECDSA P-256
+# signatures and Authenticode checks for the update channel, ADR 0022). Depends only on the C++
+# standard library, Win32 and tl-expected.
 
 find_package(tl-expected CONFIG REQUIRED)
 
@@ -14,17 +16,20 @@ configure_file(
 lucent_add_library(core
     SOURCES
         include/lucent/core/app_paths.hpp
+        include/lucent/core/authenticode.hpp
         include/lucent/core/cancellation.hpp
         include/lucent/core/error.hpp
         include/lucent/core/file.hpp
         include/lucent/core/file_copy.hpp
         include/lucent/core/hash.hpp
         include/lucent/core/log.hpp
+        include/lucent/core/signature.hpp
         include/lucent/core/storage.hpp
         include/lucent/core/text.hpp
         include/lucent/core/version.hpp
         include/lucent/core/win32_error.hpp
         src/app_paths.cpp
+        src/authenticode.cpp
         src/cancellation.cpp
         src/error.cpp
         src/file.cpp
@@ -33,6 +38,7 @@ lucent_add_library(core
         src/hash.cpp
         src/hash_internal.hpp
         src/log.cpp
+        src/signature.cpp
         src/storage.cpp
         src/storage_internal.hpp
         src/text.cpp
@@ -44,7 +50,9 @@ lucent_add_library(core
     PUBLIC_DEPS
         tl::expected
     PRIVATE_DEPS
-        bcrypt  # Windows CNG (SHA-256)
+        bcrypt  # Windows CNG (SHA-256, ECDSA P-256)
+        wintrust # WinVerifyTrust (authenticode)
+        crypt32 # certificate names and thumbprints (authenticode)
         shell32 # SHGetKnownFolderPath (app_paths)
         ole32   # CoTaskMemFree (app_paths)
 )
