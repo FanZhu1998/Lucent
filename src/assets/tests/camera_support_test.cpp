@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <lucent/assets/camera_support.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/assets/mode_key.hpp>
 #include <lucent/engine/develop.hpp>
 
@@ -198,16 +199,64 @@ TEST(CameraSupport, ParserIsStrict) {
     corrupt(probe_facts, "DNG opcodes that are not a list");
 
     std::string newer = *text;
-    newer.replace(newer.find("\"schema_version\": 2"), 19, "\"schema_version\": 3");
+    newer.replace(newer.find("\"schema_version\": 3"), 19, "\"schema_version\": 4");
     auto parsed = parse_camera_support(newer);
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().code, ErrorCode::VersionMismatch);
     // Version 1 lacked the basis and the probe facts a Verified state needs (QUA-02, QUA-08).
     std::string older = *text;
-    older.replace(older.find("\"schema_version\": 2"), 19, "\"schema_version\": 1");
+    older.replace(older.find("\"schema_version\": 3"), 19, "\"schema_version\": 1");
     parsed = parse_camera_support(older);
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().code, ErrorCode::VersionMismatch);
+    // Version 3 requires the basis' lens database; version 2 has none (and may not name one).
+    std::string no_lens = *text;
+    const std::size_t key = no_lens.find("\"lens_database\"");
+    ASSERT_NE(key, std::string::npos) << *text;
+    const std::size_t comma = no_lens.rfind(',', key);  // after the member before it
+    no_lens.erase(comma, no_lens.find('\n', key) - comma);
+    corrupt(no_lens, "a version-3 basis without the lens database");
+    std::string version2 = no_lens;
+    version2.replace(version2.find("\"schema_version\": 3"), 19, "\"schema_version\": 2");
+    auto read2 = parse_camera_support(version2);
+    ASSERT_TRUE(read2.has_value()) << read2.error().describe();
+    EXPECT_TRUE(read2->basis.lens_database.empty());
+    // A version-3 basis names a lens database: an empty name is corrupt.
+    std::string empty_lens = *text;
+    const std::string named = lens_database_basis();
+    ASSERT_NE(empty_lens.find(named), std::string::npos);
+    empty_lens.replace(empty_lens.find(named), named.size(), "");
+    corrupt(empty_lens, "a version-3 basis with an empty lens database");
+
+    // The writer writes version 2 for a basis without a lens database (the export of a report made
+    // before lens corrections): the document such a report always exported, read back unchanged.
+    CameraSupportDatabase old = sample_database();
+    old.basis.lens_database.clear();
+    EXPECT_EQ(camera_support_schema_version(old), 2u);
+    EXPECT_EQ(camera_support_schema_version(sample_database()), kCameraSupportSchemaVersion);
+    auto old_text = write_camera_support(old);
+    ASSERT_TRUE(old_text) << old_text.error().describe();
+    EXPECT_NE(old_text->find("\"schema_version\": 2"), std::string::npos);
+    EXPECT_EQ(old_text->find("lens_database"), std::string::npos);
+    auto old_read = parse_camera_support(*old_text);
+    ASSERT_TRUE(old_read) << old_read.error().describe();
+    EXPECT_EQ(old_read->basis, old.basis);
+}
+
+// W13 closure (ADR 0023): a version-2 database (qualified without lens corrections) does not certify a
+// build that corrects lenses: the basis names the bundled lens database by its pinned manifest.
+TEST(CameraSupport, TheBasisNamesTheLensDatabase) {
+    const QualificationBasis running = running_basis();
+    EXPECT_EQ(running.lens_database, lens_database_basis());
+    EXPECT_NE(running.lens_database.find("lens-database (manifest "), std::string::npos) << running.lens_database;
+    QualificationBasis version2 = running;
+    version2.lens_database.clear();
+    const auto differences = basis_differences(version2, running);
+    ASSERT_EQ(differences.size(), 1u);
+    EXPECT_NE(differences[0].find("lens database"), std::string::npos) << differences[0];
+    QualificationBasis other = running;
+    other.lens_database = "lens-database (manifest 0000)";
+    EXPECT_EQ(basis_differences(other, running).size(), 1u);
 }
 
 TEST(CameraSupport, BasisDifferencesIgnoreHowEvidenceWasWeighed) {

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include <lucent/assets/asset_store.hpp>
@@ -43,6 +44,12 @@ struct LensDatabaseLookup {
 // Finds, verifies and loads the bundled lens database at `locations` (default_asset_locations()).
 // Problems: those of bundled_asset_request() and find_asset(), and those of lens_database_from().
 [[nodiscard]] LensDatabaseLookup load_lens_database(const AssetLocations& locations);
+
+// The lens database a qualification basis names (camera_support.hpp, QualificationBasis::
+// lens_database): "lens-database (manifest <SHA-256 of the bundled manifest, 64 hex digits>)" for the
+// asset this build bundles and pins (bundled_assets.hpp), "none" when it bundles none. The pin is the
+// asset's identity (its manifest lists every file's SHA-256); loading verifies the asset against it.
+[[nodiscard]] std::string lens_database_basis();
 
 // The database of an already verified asset (tools and tests): VersionMismatch
 // ("assets.lens.content") unless its content is "lensfun.database" version 1; Corrupt

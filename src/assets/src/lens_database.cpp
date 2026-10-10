@@ -1,6 +1,7 @@
 // The bundled lens database (lens_database.hpp).
 
 #include <format>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,6 +11,14 @@
 #include <lucent/core/hash.hpp>
 
 namespace lucent::assets {
+
+std::string lens_database_basis() {
+    const std::optional<core::Digest256> pin = bundled_manifest_pin(kLensDatabaseAssetId);
+    if (!pin) {
+        return "none";
+    }
+    return std::format("{} (manifest {})", kLensDatabaseAssetId, core::to_hex(*pin));
+}
 
 Expected<std::shared_ptr<const engine::LensDatabase>> lens_database_from(const VerifiedAsset& asset) {
     const AssetManifest& m = asset.manifest;
