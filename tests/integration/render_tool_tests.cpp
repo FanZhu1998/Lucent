@@ -489,16 +489,47 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     EXPECT_EQ(render["stage_one"]["kind"], "export");
     EXPECT_EQ(render["base_look"]["id"], "neutral");
     EXPECT_EQ(render["base_look"]["version"], 1);
-    // Every operation of the pipeline, in its order (ADR 0015), applied or not.
+    // Every operation of the pipeline, in its order (ADR 0015; the lens correction first, ADR 0023),
+    // applied or not.
     const std::vector<std::string> operations = {
-        "white_balance", "camera_color", "working_space", "exposure", "chroma_denoise", "local_tone",
-        "local_adjustments", "contrast", "tone_curve", "color", "base_look", "geometry"};
+        "lens_correction", "white_balance", "camera_color",      "working_space", "exposure",
+        "chroma_denoise",  "local_tone",    "local_adjustments", "contrast",      "tone_curve",
+        "color",           "base_look",     "geometry"};
     ASSERT_EQ(render["operations"].size(), operations.size());
     for (std::size_t i = 0; i < operations.size(); ++i) {
         EXPECT_EQ(render["operations"][i]["operation"], operations[i]);
     }
-    EXPECT_FALSE(render["operations"][5]["applied"].get<bool>());  // no highlights/shadows as shot
-    for (const std::size_t i : {std::size_t{4}, std::size_t{6}}) {
+    // The bundled lens database is used, as Lucent's exports use it (ADR 0023); the DJI FC4382 is not
+    // in it, so nothing is corrected, and its own DNG opcodes' distortion correction is recorded as
+    // carried by the file (never applied twice).
+    const Json& lens_database = report["lens_database"];
+    EXPECT_EQ(lens_database["status"], "active");
+    EXPECT_EQ(lens_database["identity"]["asset_id"], "lens-database");
+    EXPECT_EQ(lens_database["identity"]["version"], "1.0.0");
+    EXPECT_EQ(lens_database["identity"]["manifest_sha256"].get<std::string>().size(), 64u);
+    EXPECT_EQ(lens_database["library"], "Lensfun 0.3.4");
+    EXPECT_GT(lens_database["lenses"].get<int>(), 1000);
+    EXPECT_TRUE(lens_database["problem"].is_null());
+    EXPECT_EQ(report["generator"]["lens_profile_match_version"], 1);
+    EXPECT_FALSE(render["operations"][0]["applied"].get<bool>());
+    const Json& lens = render["lens_correction"];
+    EXPECT_EQ(lens["operation_version"], 1);
+    EXPECT_TRUE(lens["automatic"].get<bool>());
+    EXPECT_EQ(lens["database"], lens_database["identity"]);
+    EXPECT_EQ(lens["match"]["kind"], "none");
+    EXPECT_FALSE(lens["match"]["reasons"].empty());
+    EXPECT_TRUE(lens["profile"].is_null());
+    EXPECT_TRUE(lens["carried"]["distortion"].get<bool>());
+    ASSERT_EQ(lens["decisions"].size(), 3u);
+    EXPECT_EQ(lens["decisions"][0]["correction"], "distortion");
+    EXPECT_EQ(lens["decisions"][0]["outcome"], "carried_by_file");
+    EXPECT_EQ(lens["decisions"][1]["outcome"], "no_profile");
+    EXPECT_EQ(lens["decisions"][2]["outcome"], "no_profile");
+    EXPECT_TRUE(lens["geometry"].is_null());
+    EXPECT_FALSE(lens["resampled"].get<bool>());
+    EXPECT_EQ(lens["revision"], "0000000000000000");
+    EXPECT_FALSE(render["operations"][6]["applied"].get<bool>());  // no highlights/shadows as shot
+    for (const std::size_t i : {std::size_t{5}, std::size_t{7}}) {
         EXPECT_FALSE(render["operations"][i]["applied"].get<bool>()) << operations[i];
     }
     // As shot, the denoising and mask records are null; the geometry (version 2) renders the
@@ -514,7 +545,7 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     const Json area_rect = {{"x", 4}, {"y", 4}, {"width", 4024}, {"height", 3016}};
     EXPECT_EQ(render["image_area"]["rect"], area_rect);
     EXPECT_EQ(render["geometry_frame"], area_rect);
-    EXPECT_TRUE(render["operations"][11]["applied"].get<bool>());
+    EXPECT_TRUE(render["operations"][12]["applied"].get<bool>());
     ASSERT_FALSE(render["geometry"].is_null());
     EXPECT_EQ(render["geometry"]["version"], 2);
     EXPECT_EQ(render["geometry"]["frame"], area_rect);
@@ -543,14 +574,16 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     const Json edit_report = read_json(dir / L"edit-report.json");
     EXPECT_EQ(edit_report["recipe"]["file"], core::path_to_utf8_lossy(settings));
     EXPECT_EQ(edit_report["recipe"]["file_version"], app::kRecipeSchemaVersion);
-    EXPECT_TRUE(edit_report["render"]["operations"][5]["applied"].get<bool>());
+    EXPECT_TRUE(edit_report["render"]["operations"][6]["applied"].get<bool>());  // local tone
     EXPECT_FALSE(edit_report["render"]["white_balance"]["target_temperature"].is_null());
 
     // The same recipe as a version-1 document reads as its upgrade, which keeps rendering the whole
-    // visible area (geometry version 1, ADR 0017): the identity and pixels of the version-2
-    // document with geometry version 1, not those of the version-2 recipe above.
+    // visible area (geometry version 1, ADR 0017) without lens corrections (ADR 0023): the identity
+    // and pixels of the version-3 document with geometry version 1 and lens-correction version 0,
+    // not those of the recipe above.
     engine::DevelopSettings edited_g1 = edited;
     edited_g1.operations.geometry = engine::kOldestGeometryOperationVersion;
+    edited_g1.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
     const auto document_g1 = app::write_recipe(edited_g1);
     ASSERT_TRUE(document_g1);
     const std::filesystem::path settings_g1 = dir / L"edit-g1.json";
@@ -567,9 +600,11 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
     version1.erase("chroma_denoise");
     version1.erase("local_adjustments");
     version1.erase("geometry");
+    version1.erase("lens_correction");
     version1["operations"].erase("chroma_denoise");
     version1["operations"].erase("local_adjustments");
     version1["operations"].erase("geometry");
+    version1["operations"].erase("lens_correction");
     const std::filesystem::path settings_v1 = dir / L"edit-v1.json";
     write_text(settings_v1, version1.dump());
     const RunResult developed_v1 =
@@ -590,12 +625,103 @@ TEST(LucentRender, TheDevelopPipelineIsTheDefaultAndReportsTheRecipe) {
         run_tool({input->wstring(), L"--out", (dir / L"c").wstring(), L"--develop", settings.wstring()});
     ASSERT_EQ(again.exit_code, 0u) << again.out;
     EXPECT_EQ(last_line(again.out)["sha256"], edit_result["sha256"]);
+
+    // --no-lens-corrections renders without the database (reported as disabled); this file is not
+    // corrected either way, so the pixels are the same.
+    const std::filesystem::path no_lens_report = dir / L"no-lens-report.json";
+    const RunResult no_lens = run_tool({input->wstring(), L"--out", (dir / L"d").wstring(),
+                                        L"--no-lens-corrections", L"--report", no_lens_report.wstring()});
+    ASSERT_EQ(no_lens.exit_code, 0u) << no_lens.out;
+    EXPECT_EQ(last_line(no_lens.out)["sha256"], result["sha256"]);
+    const Json disabled = read_json(no_lens_report);
+    EXPECT_EQ(disabled["lens_database"]["status"], "disabled");
+    EXPECT_TRUE(disabled["lens_database"]["identity"].is_null());
+    EXPECT_TRUE(disabled["render"]["lens_correction"]["database"].is_null());
+    EXPECT_EQ(disabled["render"]["lens_correction"]["decisions"][1]["outcome"], "no_profile");
+    // It applies to the develop pipeline only.
+    const RunResult legacy_no_lens = run_tool({input->wstring(), L"--out", (dir / L"e").wstring(),
+                                               L"--legacy-neutral-v0", L"--no-lens-corrections"});
+    EXPECT_EQ(legacy_no_lens.exit_code, 1u) << legacy_no_lens.out;
+    EXPECT_EQ(last_line(legacy_no_lens.out)["error"]["code"], "invalid_argument");
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
 
-// A version-2 recipe with masks, geometry and chroma denoising: the report holds the three records
-// and the stage-one size, and the export is the cropped, turned image.
+// W13 (ADR 0023): a file whose camera and lens the lens database matches exactly (the Nikon Z 6 with
+// the NIKKOR Z 24-70mm f/4 S, smoke tier) is corrected as shot, and the report names the database,
+// the match, the profile and every correction's outcome. A recipe with the three corrections off
+// renders exactly the pixels of a render without the database.
+TEST(LucentRender, ReportsTheLensProfileItCorrectedWith) {
+    const std::vector<Fixture> fixtures = load_manifest();
+    const auto it = std::find_if(fixtures.begin(), fixtures.end(),
+                                 [](const Fixture& f) { return f.id == "nikon-z-6-nef-lossless"; });
+    ASSERT_NE(it, fixtures.end());
+    const std::filesystem::path input = cached_file(*it);
+    if (!std::filesystem::exists(input)) {
+        GTEST_SKIP() << "fixture 'nikon-z-6-nef-lossless' is not downloaded; run tools\\fetch-fixtures.ps1";
+    }
+    const std::filesystem::path dir = scratch_dir("lens");
+    const std::filesystem::path report_path = dir / L"report.json";
+    const RunResult corrected =
+        run_tool({input.wstring(), L"--out", (dir / L"a").wstring(), L"--report", report_path.wstring()});
+    ASSERT_EQ(corrected.exit_code, 0u) << corrected.out;
+    const Json report = read_json(report_path);
+    EXPECT_EQ(report["lens_database"]["status"], "active");
+    const Json& render = report["render"];
+    EXPECT_EQ(render["operations"][0]["operation"], "lens_correction");
+    EXPECT_TRUE(render["operations"][0]["applied"].get<bool>());
+    const Json& lens = render["lens_correction"];
+    EXPECT_EQ(lens["database"], report["lens_database"]["identity"]);
+    EXPECT_EQ(lens["match"]["kind"], "exact");
+    EXPECT_EQ(lens["match"]["camera"]["model"], "Nikon Z 6");
+    EXPECT_EQ(lens["profile"]["maker"], "Nikon");
+    EXPECT_EQ(lens["profile"]["model"], "Nikkor Z 24-70mm f/4 S");
+    EXPECT_EQ(lens["query"]["lens_model"], "NIKKOR Z 24-70mm f/4 S");
+    ASSERT_EQ(lens["decisions"].size(), 3u);
+    for (const Json& decision : lens["decisions"]) {
+        EXPECT_EQ(decision["outcome"], "applied") << decision.dump();
+    }
+    EXPECT_TRUE(lens["resampled"].get<bool>());
+    EXPECT_EQ(lens["outside_samples"], 0);
+    ASSERT_FALSE(lens["geometry"].is_null());
+    EXPECT_GT(lens["geometry"]["scale"].get<double>(), 1.03);  // the 4 % pincushion at 52 mm
+    EXPECT_FALSE(lens["vignetting"].is_null());
+    EXPECT_NE(lens["revision"], "0000000000000000");
+
+    // Without the database: not corrected, other pixels.
+    const RunResult plain =
+        run_tool({input.wstring(), L"--out", (dir / L"b").wstring(), L"--no-lens-corrections"});
+    ASSERT_EQ(plain.exit_code, 0u) << plain.out;
+    EXPECT_NE(last_line(plain.out)["sha256"], last_line(corrected.out)["sha256"]);
+    EXPECT_EQ(last_line(plain.out)["settings_sha256"], last_line(corrected.out)["settings_sha256"]);
+
+    // The three corrections off (an edit: another identity) render those uncorrected pixels exactly.
+    engine::DevelopSettings off;
+    off.lens_correction.distortion = false;
+    off.lens_correction.lateral_chromatic_aberration = false;
+    off.lens_correction.vignetting = false;
+    const auto document = app::write_recipe(off);
+    ASSERT_TRUE(document);
+    const std::filesystem::path settings = dir / L"off.json";
+    write_text(settings, document->json);
+    const std::filesystem::path off_report_path = dir / L"off-report.json";
+    const RunResult switched_off = run_tool({input.wstring(), L"--out", (dir / L"c").wstring(), L"--develop",
+                                             settings.wstring(), L"--report", off_report_path.wstring()});
+    ASSERT_EQ(switched_off.exit_code, 0u) << switched_off.out;
+    EXPECT_EQ(last_line(switched_off.out)["sha256"], last_line(plain.out)["sha256"]);
+    EXPECT_NE(last_line(switched_off.out)["settings_sha256"], last_line(corrected.out)["settings_sha256"]);
+    const Json off_report = read_json(off_report_path);
+    EXPECT_FALSE(off_report["render"]["operations"][0]["applied"].get<bool>());
+    EXPECT_EQ(off_report["render"]["lens_correction"]["match"]["kind"], "exact");
+    for (const Json& decision : off_report["render"]["lens_correction"]["decisions"]) {
+        EXPECT_EQ(decision["outcome"], "disabled") << decision.dump();
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// A recipe with masks, geometry and chroma denoising (the members version 2 added): the report holds
+// the three records and the stage-one size, and the export is the cropped, turned image.
 TEST(LucentRender, MasksGeometryAndDenoisingAreRenderedAndReported) {
     const std::optional<std::filesystem::path> input = small_fixture();
     if (!input) {
@@ -628,7 +754,8 @@ TEST(LucentRender, MasksGeometryAndDenoisingAreRenderedAndReported) {
     const Json result = last_line(r.out);
     EXPECT_EQ(result["settings_sha256"], core::to_hex(document->sha256));
     const Json report = read_json(report_path);
-    EXPECT_EQ(report["recipe"]["file_version"], 2);
+    // The document is written at the current version (3 since the lens correction, ADR 0023).
+    EXPECT_EQ(report["recipe"]["file_version"], app::kRecipeSchemaVersion);
     const Json& render = report["render"];
     EXPECT_EQ(render["settings"], Json::parse(document->json));
     // The records of the three operations.

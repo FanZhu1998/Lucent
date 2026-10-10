@@ -10,9 +10,10 @@
   (decisions 4, 10 and 13 amended, decision 15 added; decision 15 revised by the W9 part 2 closing
   review: brushing cost independent of the mask's size, Enter and Esc left to editors, the crop
   ratio's orientation, keyboard mask selection, tool panels brought into view, the paste category
-  "Masks")
+  "Masks"); amended 2026-10-10 for W13's lens corrections (decision 16 added; ADR 0023)
 - **Workflow:** W3 (Application shell); W6 (Recipes and editor), phase 3; W7 (Durable batch),
-  phase 3; W9 part 2 (Masks, geometry, chroma denoise), phase 3
+  phase 3; W9 part 2 (Masks, geometry, chroma denoise), phase 3; W13 (Lensfun lens corrections),
+  lens corrections UI phase
 
 ## Context
 
@@ -499,6 +500,70 @@ every thumbnail behind them. Decision 7 removes that dependency; the adapter tes
       | Straighten drag over a third of the slider (`--drag straighten`, constrained crop following) | 24 quick frames; median 98 ms, 90th percentile 130 ms; develop service median 76 ms; UI thread largest gap 40 ms |
       | Mask exposure drag with a radial mask and noise reduction 50 (`--drag maskExposure`) | 31 quick frames; median 96 ms, 90th percentile 116 ms; develop service median 60 ms; UI thread largest gap 50 ms |
       | One-step edits to their final frame on screen | straighten 78 ms, crop 61 ms, add a mask 70 to 98 ms (two revisions with its shape), the crop tool's uncropped frame 64 ms, the mask overlay 129 to 137 ms, noise reduction 132 ms |
+
+16. **Lens corrections (W13; ADR 0023, ADR 0010's W13 amendment).** The Edit view's panel "Lens
+    corrections" (`LensPanel.qml`, after Detail; `EditSession.lens`, `LensCorrections` and
+    `LensProfileListModel`, `models/lens_corrections.hpp`) edits `EditSettings::lens` (the recipe's
+    `lens_correction` member and its operation version) and shows what the newest frame's render did
+    with it (`EditFrame::lens`, the engine's `LensCorrectionPlan` in the shell's terms).
+    - *What it shows.* The camera and the lens as the file records them, with the focal length and the
+      f-number; the lens database's match as a badge, "Exact match", "Similar profiles only" or "No
+      profile", and one sentence on what it means for this photo (applied automatically; not applied
+      because the file corrects its lens itself, because the profile is not calibrated for the
+      photo, or because only similar profiles exist and Lucent never applies a guessed one; no profile
+      or no lens recorded; every correction switched off); the profile in use, or the exact match the
+      switched-off corrections would use; and, on demand ("Why this profile?"), the engine's reasons.
+    - *Switches.* "Automatic profile" and Distortion, Chromatic aberration and Vignetting, each with
+      what the render did (Applied, Off, Corrected by the file, Not applied automatically, No profile,
+      Not calibrated for this photo, Not needed for a monochrome photo; the engine's detail as a
+      tooltip). Each change is ONE revision (`apply`; a pending gesture is committed first). A
+      correction the file makes itself (applied DNG opcodes, `carried_lens_corrections()`) is shown
+      off and cannot be switched, and a note says that the file already corrects it and that Lucent
+      never applies the same correction twice.
+    - *Choosing a profile* (for similar or missing matches; any photo). Unticking "Automatic profile"
+      or "Choose…" opens the choice without changing anything: with an empty search it lists the
+      match's candidates, and typing searches the whole database by maker and model
+      (`EditService::search_lens_profiles()`: every word, case and '/' ignored, names whose words start
+      with the search words first, at most 60); profiles whose mounts fit the identified camera (its
+      own and those the database's search accepted for it) come first and are drawn brighter; each row
+      gives the mounts, the focal range, a calibration's crop factor other than 1 and the calibrations
+      it holds. Choosing one is one revision; Cancel or Esc closes the choice; ticking "Automatic
+      profile" again is one revision back to the automatic profile.
+    - *Older recipes and no database.* A recipe made before lens corrections (operation version 0)
+      shows no switch but "Turn on lens corrections" (one revision with the defaults). Without a lens
+      database (missing, refused) the panel says why (`LensDatabaseInfo::problem`, the same text as
+      Help > About) and offers nothing to change.
+    - *Masks and the crop.* A resampling correction moves the content, and masks stay defined in the
+      uncorrected image (ADR 0023 decision 7). Frames carry the correction's point mapping
+      (`EditFrame::lens_map`, `LensPointMap` over the plan's `LensGeometryMap`), which `GeometryMap::lens`
+      puts between the masks' normalised positions and the geometry's transforms
+      (`output_from_normalized()`, `normalized_from_output()`): handles, brush strokes and new masks
+      land on the content the mask is on; the outlines and the weight overlay come from the render's
+      own mapping. The crop, straightening and levelling work in the corrected frame (the affine part,
+      unchanged).
+    - *Copy, About, automation.* The copy dialog offers "Lens corrections", not selected (pasted only
+      to the same camera and lens; a skipped paste says why). Help > About gives the lens database's
+      version, library and licence (CC BY-SA 3.0, the Lensfun project's data) or why none is in use.
+      Developer automation: `--lens <spec>` (on, auto, off, all, `distortion=`, `ca=`, `vignetting=`
+      on or off, `profile=<search>`, `search=<text>`; each one revision waiting for its frame),
+      `--show-panel lens`, the panel's state reported before the screenshot ("lucent: lens: ...") and,
+      at start-up, the lens database in use ("lucent: lens database 1.0.0 ...").
+    - *Verified headlessly* (2026-10-10, a throwaway `--data-root`): the Nikon Z 6 NEF with its NIKKOR Z
+      24-70mm f/4 S (an exact match) shows "Exact match", the Nikkor profile and the three corrections
+      Applied, and its frame is visibly corrected (the content magnified by the 4 % pincushion's
+      scale, the corners brightened); `--lens off` makes one revision ("Lens corrections" in the
+      history), the three switches Off and the frame uncorrected. The Canon EOS R5 CR3 with a Sigma 50mm
+      Art lens shows "Similar profiles only" with the search open; the DJI Mavic 3's Hasselblad DNG
+      (an exact match whose opcodes correct all three) shows the three switches off and disabled with
+      the note.
+    - *Responsiveness.* A resampling correction is stage two's first pass's main cost (ADR 0023,
+      "Cost"). Measured on the reference laptop with the 24 MP Nikon Z 6 NEF, Lucent.exe `--measure
+      --drag exposure`, one run each: corrections on (all three applied), 9 quick frames per second of
+      drag, slider to frame on screen median 138 ms (90th percentile 166 ms), develop service median 119
+      ms, final frame 228 ms after the release; corrections off, 20 quick frames, median 65 ms (90th
+      percentile 72 ms), develop service median 55 ms, final frame 99 ms. The engine's optimisations
+      ADR 0023 lists (the distortion once per pixel, source positions on a coarse grid, float taps)
+      are the way back to the uncorrected figures; the shell needs no change for them.
 
 ## Consequences
 

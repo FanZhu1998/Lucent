@@ -1,6 +1,8 @@
 # ADR 0010: Develop pipeline, recipes and interactive previews
 
-- **Status:** Accepted (amended 2026-10-05 for DevelopSettings v2: "Amendment: DevelopSettings v2" below, ADR 0015)
+- **Status:** Accepted (amended 2026-10-05 for DevelopSettings v2: "Amendment: DevelopSettings v2" below, ADR 0015;
+  amended 2026-10-10 for DevelopSettings v3 and lens corrections: "Amendment: DevelopSettings v3 and lens
+  corrections" below, ADR 0023)
 - **Date:** 2026-10-03
 - **Workflow:** W6 (Recipes and editor), phase 2 of 4
 
@@ -329,3 +331,83 @@ ADR 0015 extends this record; its "Amendment: phase 2 of 4" holds the details. I
   `RenderSummary::rendered_size` is the developed image's full-resolution size after the geometry.
 - **Decision 10 (`lucent-render`).** `--develop` reads version 1 and 2; the report adds the stage-one
   size and the three new operation records.
+
+## Amendment: DevelopSettings v3 and lens corrections (W13, 2026-10-10)
+
+ADR 0023 decides the engine's side (Lensfun, the verified lens database, exact matches only, the
+model, DevelopSettings v3); this amendment records the application's.
+
+- **Decisions 2 and 3 (recipes).** The recipe document is "lucent.develop" **version 3**: the member
+  `lens_correction` (`distortion`, `lateral_chromatic_aberration` and `vignetting` booleans, and
+  `profile`: `null` for the automatic profile or `{"crop_factor", "maker", "model"}` for a named
+  Lensfun profile) and the operation `lens_correction`: 1, or 0 ("none": settings made before lens
+  corrections; the member then holds its default). Canonical as before: every member is written,
+  `"profile": null` included, so every identity changed once more (the default recipe's is now
+  `61cdfb80...`; with geometry version 1 `282bed0a...`). Version-1 and version-2 documents are still
+  read strictly (a lens member or operation in them is `InvalidArgument`) and returned as their
+  version-3 conversion with lens-correction operation version 0, so **every recipe made before W13
+  renders exactly as before** (ADR 0023 decision 6); only version 3 is written. A version-3 document
+  is read with lens-correction operation version 0 or 1: 2 or above is `VersionMismatch` (read-only,
+  never "none"); version 0 with a member other than the default, profile names of 0 or more than 256
+  bytes or with control characters, and crop factors outside [0.01, 100] are `InvalidArgument`. The
+  as-shot documents of earlier builds convert as: version 2, geometry 2 (`879de8b7...`, W10 to W12)
+  to `338dd4c1...`; version 2, geometry 1 (`3104dbcc...`, W9) and version 1 (`671dbaa8...`, W6 to W8)
+  to `b7b00277...`.
+- **Batches frozen before W13.** A job frozen as shot by W9 to W12 names the SHA-256 of that build's
+  version-2 as-shot text. `recipe.hpp` keeps both texts (`kVersion2AsShotRecipes`, beside
+  `kVersion1AsShotRecipe`), and the batch service renders a job naming either as its conversion (no
+  lens correction), exactly as it was frozen (as ADR 0022 does for version 1). Jobs frozen from a
+  revision read that revision, as before.
+- **Decision 4 (revisions).** Notes gain `parts=lens_correction`. Each switch, a chosen profile, the
+  return to the automatic profile and "Turn on lens corrections" are one `apply()` each: one
+  revision, never a gesture. Reset to as shot writes this build's defaults (automatic corrections),
+  also for a recipe of operation version 0, as it writes geometry version 2 for an older crop.
+  `is_as_shot()` counts both operation version 0 and the automatic defaults as not edited.
+- **Decision 5 (copy and paste).** Category `lens_corrections` (the part `lens_correction` with its
+  operation version), **not pasted by default**. It is pasted only to a photo of the same camera make
+  and model AND the same lens as both files record it (`CameraCapabilities::lens`, "<make> <model>"
+  from the item's probe or the edit session's decoded metadata); otherwise, also when either file does
+  not record its lens, it is skipped and the paste report says why (another camera, another lens, a
+  lens not recorded). A named profile describes one lens, and switches were judged on that lens's
+  photos: they never travel to another lens or camera model.
+- **Decisions 6 and 7 (renders).** The Backend loads the bundled lens database at start
+  (`assets::load_lens_database()`: the same pin and hash checks as every asset, per-user data packs
+  refused). Missing or refused, the session runs without lens corrections, with the reason in Help >
+  About, the Lens corrections panel and the log: never a failure to start. The engine renderer gets it
+  (`EngineRendererOptions::lens_database`) for every estimate and stage two (the edit sessions'
+  stage-two claims too: `SourceRenderer::estimate_stage_two()`), so edit sessions, previews,
+  Lucent-rendered thumbnails and single exports apply each recipe's corrections; batch
+  exports run in `lucent-worker.exe`, which verifies and loads the same bundled asset with its first
+  export job (not at start: starting a worker, and an analyze job, cost nothing more, and the workers'
+  memory-limit behaviour is unchanged). A batch export of the Z 6 NEF decodes to exactly the pixels of
+  `lucent-render`'s export with the database, and differs from one without it (verified 2026-10-10).
+  The database is data that changes pixels: rendered thumbnails are keyed by its identity as well
+  (`rendered_thumbnail_key(..., lens_database_key(SourceRenderer::lens_database()))`, ADR 0023
+  decision 8). Frames carry the render's own mapping, through the correction
+  (`engine::GeometryMapping` with the plan's `LensGeometryMap`), so mask outlines and the mask
+  overlay stay on their content; the before/after render carries the lens correction shown, as it
+  carries the geometry shown, so the halves line up.
+- **Auto never changes the lens settings.** Its choice, every attempt of its check and its revisions
+  carry the photo's lens member and operation version unchanged (the search changes global controls
+  only), and their notes name no lens change. Its analysis and full-resolution check run **without
+  the lens database**, on the uncorrected image: the analysis module's native crops and band renders
+  are parts of the frame, which stage two does not correct (ADR 0023: a correction needs the whole
+  frame), and its streamed baseline and context mapping assume a per-pixel stage two without the
+  correction's point mapping, so a corrected candidate would be compared with uncorrected bands. The
+  decision is therefore the one Auto makes for the same photo without lens corrections
+  (`AutoServiceTest.AutoNeverChangesTheLensCorrections`). Consequence: a vignetting correction can
+  brighten the export's corners beyond what Auto's check measured (by the profile's corner gain: up
+  to 1.2 to 1.6 EV wide open in the corpus); revisit when the analysis learns lens corrections
+  (corrected analysis images, the context mapped through the correction, no streamed baseline for a
+  correction that resamples).
+- **Decision 10 (`lucent-render`).** `--develop` reads versions 1 to 3. The tool loads the bundled
+  lens database next to it, as the application's exports use one, and the report adds
+  `lens_database` (status `active`, `unavailable` with the problem, or `disabled`; the identity, the
+  Lensfun library and the counts) and the develop report's `lens_correction` record (the plan:
+  operation version, setting, database identity, the file's query, the match with its kind,
+  candidates and reasons, the profile, the camera, the crop factor and its basis, what the file
+  carries, each correction's decision, the geometry and vignetting models, the plan's revision; and
+  what the render did). `--no-lens-corrections` renders without the database (like-for-like
+  comparisons with decoders that correct nothing); a database that cannot be activated is a warning,
+  not a failure. Performance figures of `tools\bench` exports now include the corrections of exactly
+  matched fixtures (ADR 0021's budgets were measured without them).
