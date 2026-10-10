@@ -32,6 +32,26 @@ constexpr std::uint16_t kTiffTypeLong = 4;
 constexpr std::uint64_t kPanasonicPixelsPerBlock = 14;
 constexpr std::uint64_t kPanasonicBlockBytes = 16;
 constexpr std::uint64_t kPanasonicLastFixedRateFormat = 7;
+// LibRaw 0.22.2 decodes RawFormat absent or 1 to 5 with panasonic_load_raw(), which reads the raw
+// data in 16 KiB pages with load_flags 0x2008 (set by a LONG RawDataOffset, src/metadata/tiff.cpp):
+// each page is read as fread(buf + 0x2008, 0x1FF8) then fread(buf, 0x2008), and the bitstream is
+// consumed from buf[0], so a page's first bitstream bytes are its file bytes 0x1FF8 onwards
+// (pana_data(), src/decoders/decoders_dcraw.cpp). RawFormat 6 and 7 are read row by row.
+constexpr std::uint64_t kPanasonicPageBytes = 0x4000;
+constexpr std::uint64_t kPanasonicPageSplit = 0x2008;
+constexpr std::uint64_t kPanasonicLastPagedFormat = 5;
+
+// How far into the raw data LibRaw's paged reader consumes the file for `bitstream` bytes of
+// bitstream: whole pages, then for a last page holding K bytes, its bytes up to 0x1FF8 + K when
+// K <= 0x2008 (the first part LibRaw consumes), otherwise the whole page.
+std::uint64_t panasonic_paged_end(std::uint64_t bitstream) noexcept {
+    const std::uint64_t rest = bitstream % kPanasonicPageBytes;
+    std::uint64_t end = bitstream - rest;
+    if (rest != 0) {
+        end += rest <= kPanasonicPageSplit ? (kPanasonicPageBytes - kPanasonicPageSplit) + rest : kPanasonicPageBytes;
+    }
+    return end;
+}
 
 struct PendingIfd {
     std::uint64_t offset = 0;
@@ -183,22 +203,31 @@ Status ExtentScan::check_panasonic_data(const PendingIfd& current, const TiffIfd
         return nullptr;
     };
     // The length: StripByteCounts when declared (LibRaw's data size), otherwise the least a
-    // fixed-rate encoding needs for the sensor area.
+    // fixed-rate encoding needs for the sensor area; for the encodings LibRaw reads in pages, at
+    // least as far as its page order consumes that bitstream (COR-6, W12).
+    const auto format = first_value(find(kPanasonicRawFormat), current.path);
+    const auto width = first_value(find(kPanasonicSensorWidth), current.path);
+    const auto height = first_value(find(kPanasonicSensorHeight), current.path);
+    const bool fixed_rate = !format || (*format >= 1 && *format <= kPanasonicLastFixedRateFormat);
+    const bool paged = !format || (*format >= 1 && *format <= kPanasonicLastPagedFormat);
+    std::uint64_t encoded = 0;  // 16 bytes per 14 pixels: at most as many pixels as any fixed-rate encoding packs
+    if (fixed_rate && width && height && *width > 0 && *height > 0 && *width <= 0xFFFF && *height <= 0xFFFF) {
+        encoded = (*width * *height + kPanasonicPixelsPerBlock - 1) / kPanasonicPixelsPerBlock * kPanasonicBlockBytes;
+    }
     std::uint64_t length = 0;
     std::string basis;
     if (const auto declared = first_value(strip_counts, current.path); declared && *declared != 0) {
         length = *declared;
         basis = "StripByteCounts";
-    } else {
-        const auto format = first_value(find(kPanasonicRawFormat), current.path);
-        const auto width = first_value(find(kPanasonicSensorWidth), current.path);
-        const auto height = first_value(find(kPanasonicSensorHeight), current.path);
-        const bool fixed_rate = !format || (*format >= 1 && *format <= kPanasonicLastFixedRateFormat);
-        if (fixed_rate && width && height && *width > 0 && *height > 0 && *width <= 0xFFFF && *height <= 0xFFFF) {
-            length = (*width * *height + kPanasonicPixelsPerBlock - 1) / kPanasonicPixelsPerBlock *
-                     kPanasonicBlockBytes;
-            basis = std::format("16 bytes per 14 pixels of the {}x{} sensor", *width, *height);
-        }
+    } else if (encoded != 0) {
+        length = encoded;
+        basis = std::format("16 bytes per 14 pixels of the {}x{} sensor", *width, *height);
+    }
+    if (paged && encoded != 0 && panasonic_paged_end(encoded) > length) {
+        length = panasonic_paged_end(encoded);
+        basis = std::format("16 bytes per 14 pixels of the {}x{} sensor, read by LibRaw in 16 KiB pages whose last "
+                            "{} bytes come first",
+                            *width, *height, kPanasonicPageSplit);
     }
     const std::uint64_t size = reader_.source_size();
     if (offset >= size) {

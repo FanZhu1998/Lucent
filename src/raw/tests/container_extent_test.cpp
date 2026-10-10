@@ -289,6 +289,48 @@ TEST(ContainerExtent, Rw2RawDataMustFitTheFile) {
     EXPECT_NE(result->overruns[0].detail.find("starts at byte"), std::string::npos) << result->overruns[0].detail;
 }
 
+TEST(ContainerExtent, Rw2RawDataFollowsLibRawsPageOrder) {
+    // COR-6 (W12 review): LibRaw reads the classic encoding in 16 KiB pages whose last 0x2008 bytes
+    // it consumes first, so the DMC-FZ70's last page (6144 bytes of bitstream) needs the file to
+    // reach 0x1FF8 + 6144 bytes into it, 8184 bytes beyond 16 bytes per 14 pixels: a copy cut in
+    // between decoded with stale bytes in its last rows.
+    const OlderRw2 file = older_rw2(4816, 3472);
+    ASSERT_EQ(file.data_needed, 19109888u);
+    const std::uint64_t pages = file.data_needed / 16384;
+    const std::uint64_t paged_end = pages * 16384 + 0x1FF8 + (file.data_needed - pages * 16384);
+    ASSERT_EQ(paged_end, 19118072u);
+    const auto cut_to = [&](std::uint64_t raw_bytes) {
+        return std::vector<std::byte>(file.bytes.begin(),
+                                      file.bytes.begin() + static_cast<std::ptrdiff_t>(file.data_offset + raw_bytes));
+    };
+    for (const std::uint64_t kept : {file.data_needed, file.data_needed + 4096, paged_end - 1}) {
+        SCOPED_TRACE(kept);
+        auto result = check(cut_to(kept), ContainerFormat::Rw2);
+        ASSERT_TRUE(result) << result.error().describe();
+        ASSERT_EQ(result->overruns.size(), 1u);
+        EXPECT_EQ(result->overruns[0].declared_end, file.data_offset + paged_end);
+        EXPECT_NE(result->overruns[0].detail.find("16 KiB pages"), std::string::npos) << result->overruns[0].detail;
+    }
+    auto exact = check(cut_to(paged_end), ContainerFormat::Rw2);
+    ASSERT_TRUE(exact) << exact.error().describe();
+    EXPECT_TRUE(exact->overruns.empty()) << exact->overruns.front().detail;
+    // A last page with more than 0x2008 bytes of bitstream is consumed whole: 4144 x 2697 pixels need
+    // 12,772,992 bytes, 779 pages and 9,856 bytes.
+    const OlderRw2 whole = older_rw2(4144, 2697);
+    ASSERT_EQ(whole.data_needed % 16384, 9856u);
+    std::vector<std::byte> short_page(whole.bytes.begin(), whole.bytes.end() - 1);
+    auto refused = check(short_page, ContainerFormat::Rw2);
+    ASSERT_TRUE(refused) << refused.error().describe();
+    ASSERT_EQ(refused->overruns.size(), 1u);
+    EXPECT_EQ(refused->overruns[0].declared_end, whole.data_offset + (whole.data_needed / 16384 + 1) * 16384);
+    // RawFormat 6 and 7 are read row by row: their minimum is unchanged.
+    OlderRw2 rows = older_rw2(4816, 3472, 7);
+    rows.bytes.resize(static_cast<std::size_t>(rows.data_offset + rows.data_needed));
+    auto row_read = check(rows.bytes, ContainerFormat::Rw2);
+    ASSERT_TRUE(row_read) << row_read.error().describe();
+    EXPECT_TRUE(row_read->overruns.empty());
+}
+
 TEST(ContainerExtent, Rw2RawDataLengthFollowsStripByteCountsOrTheEncoding) {
     // A declared StripByteCounts is the raw data's length (LibRaw's data size).
     OlderRw2 declared = older_rw2(64, 32, 4, 100000);
