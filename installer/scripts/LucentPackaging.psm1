@@ -1534,6 +1534,16 @@ function New-LicenseBundle {
             Sources = @($sources | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Location = $_.Location; Sha512 = $_.Sha512 } })
             Spdx = $spdx })
         $components[$components.Count - 1].RecipeRef = Get-RecipeReference -Component $components[$components.Count - 1] -VcpkgRoot $VcpkgRoot -Baseline $Baseline -RepoRoot $RepoRoot
+        # A port Lucent overlays (W13: gettext-libintl, glib): its recipe exists only in Lucent's own
+        # source, with Lucent's patches. It is part of the "scripts used to control compilation" of an
+        # LGPL library, so the recipe itself ships in the licence bundle (licenses\<port>\recipe\), and
+        # the notice and the SBOM point at that copy, which needs no published source repository.
+        $recipeRef = $components[$components.Count - 1].RecipeRef
+        if ($recipeRef -and $recipeRef.OverlayPath) {
+            $recipeDir = Join-Path $portDir 'recipe'
+            Copy-Item -LiteralPath $recipeRef.OverlayPath -Destination $recipeDir -Recurse
+            $recipeRef | Add-Member -NotePropertyName ShippedRecipe -NotePropertyValue "licenses\$port\recipe"
+        }
     }
 
     # Every licence named for code inside the Qt files (or linked statically) must have its text in
@@ -1573,10 +1583,11 @@ function New-LicenseBundle {
             $componentLines.Add("          SHA-512 $($source.Sha512)")
         }
         if ($component.RecipeRef.Overlay) {
-            # A port Lucent overlays: vcpkg's recipe with Lucent's build changes, in Lucent's source.
-            $componentLines.Add("  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion), the overlay port")
-            $componentLines.Add("                $($component.RecipeRef.Overlay) of Lucent's source" + $(if ($GitCommit) { " at commit $GitCommit" } else { '' }))
-            if ($Info.homepage -and $GitCommit) { $componentLines.Add("                $($Info.homepage)/tree/$GitCommit/$($component.RecipeRef.Overlay)") }
+            # A port Lucent overlays: vcpkg's recipe with Lucent's build changes, shipped with Lucent.
+            $componentLines.Add("  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion) with Lucent's")
+            $componentLines.Add("                changes (patches and build options), installed with Lucent in")
+            $componentLines.Add("                $($component.RecipeRef.ShippedRecipe) (the overlay port $($component.RecipeRef.Overlay)")
+            $componentLines.Add("                of Lucent's source" + $(if ($GitCommit) { " at commit $GitCommit)" } else { ')' }))
         }
         else {
             $recipe = "  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion)"
@@ -1856,10 +1867,10 @@ function New-PackageSbom {
                 $copy.licenseConcluded = $component.LicenseConcluded
                 $tree = if ($component.RecipeRef) { $component.RecipeRef.Tree } else { $null }
                 if ($component.RecipeRef -and $component.RecipeRef.Overlay) {
-                    # An overlay port (vcpkg-configuration.json "overlay-ports"): the recipe is the
-                    # repository's folder at the commit Lucent was built from.
-                    $copy.downloadLocation = "git+$($Info.homepage).git@$GitCommit#$($component.RecipeRef.Overlay)"
-                    $copy.comment = "The vcpkg port (recipe): the overlay port $($component.RecipeRef.Overlay) of Lucent's source at commit $GitCommit, vcpkg's port with Lucent's build changes; its files carry the SHA-1 of that folder's copy."
+                    # An overlay port (vcpkg-configuration.json "overlay-ports"): the recipe is Lucent's
+                    # own folder, shipped in the licence bundle; no download location is asserted.
+                    $copy.downloadLocation = 'NOASSERTION'
+                    $copy.comment = "The vcpkg port (recipe): vcpkg's port with Lucent's build changes, the overlay port $($component.RecipeRef.Overlay) of Lucent's source$(if ($GitCommit) { " at commit $GitCommit" } else { '' }), installed with Lucent in $($component.RecipeRef.ShippedRecipe); its files carry the SHA-1 of that copy."
                 }
                 else {
                     $copy.comment = 'The vcpkg port (recipe). Its downloadLocation names the git tree of the port folder in the vcpkg registry' +

@@ -100,19 +100,19 @@
     "lensfun": {
       "reviewedVersion": "0.3.4",
       "concluded": "LGPL-3.0-only",
-      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the other library sources carry no notice), so the library is used under LGPL-3.0-only; the port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built. Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see assets below; ADR 0023). Used unmodified as a replaceable DLL (ADR 0003).",
+      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the other library sources carry no notice), so the library is used under LGPL-3.0-only; the port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built. Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see Data below; ADR 0023). Used unmodified as a replaceable DLL (ADR 0003).",
       "lgpl": true
     },
     "glib": {
       "reviewedVersion": "2.90.0",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Used unmodified as a replaceable DLL (ADR 0003, ADR 0023).",
+      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Built from Lucent's overlay port (cmake/ports/glib, shipped as licenses\\glib\\recipe) with one patch, lucent-neutral-locale-dir.patch, which keeps the build machine's install prefix out of the DLL and changes no behaviour of glib-2.0-0.dll. A replaceable DLL (ADR 0003, ADR 0023).",
       "lgpl": true
     },
     "gettext-libintl": {
       "reviewedVersion": "0.22.5",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Used unmodified as a replaceable DLL (ADR 0023).",
+      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Built from Lucent's overlay port (cmake/ports/gettext-libintl, shipped as licenses\\gettext-libintl\\recipe) with one patch, lucent-no-builder-paths.patch, which keeps the build machine's folders out of the DLL (its default catalog folder and the relocation prefixes Lucent never uses). A replaceable DLL (ADR 0023).",
       "lgpl": true
     },
     "libiconv": {
