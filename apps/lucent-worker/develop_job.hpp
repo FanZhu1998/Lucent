@@ -17,7 +17,10 @@
 //               NotFound when it is gone) and, when the request carries a SHA-256, hash to it with a
 //               stable read; the source's capture metadata is read (raw::read_capture_metadata,
 //               completed from a probe); the engine estimates the render's memory.
-//  [Rendering]  app::SourceRenderer::render (render_develop_file's composition); an image whose
+//  [Rendering]  app::SourceRenderer::render (render_develop_file's composition) with the worker's
+//               lens database (DevelopJobOptions::lens_database: the bundled asset, verified and
+//               loaded by the first export job, ADR 0023), so the recipe's lens corrections are
+//               applied exactly as Lucent.exe's previews apply them; an image whose
 //               decoded interpretation is Unsupported fails with Unsupported ("worker.job.support")
 //               unless allow_unsupported.
 //  [Encoding]   exporter::encode_for_output to the output profile and bit depth.
@@ -34,8 +37,11 @@
 // Thread-safety: run() may be called concurrently (each call has its own state); the worker calls
 // it on one thread.
 
+#include <functional>
 #include <memory>
+#include <mutex>
 
+#include <lucent/engine/lens_correction.hpp>
 #include <lucent/raw/decoder_registry.hpp>
 #include <lucent/raw/raw_decoder.hpp>
 #include <lucent/workers/worker_server.hpp>
@@ -45,6 +51,11 @@ namespace lucent::worker_app {
 struct DevelopJobOptions {
     raw::DecodeLimits decode_limits;
     bool parallel = true;
+    // Gives the lens database the export render corrects lenses with (a null result: none, nothing is
+    // corrected). Called once, by the first export job, so that starting a worker costs neither the
+    // time nor the memory of loading it (an analyze job never needs it: Auto evaluates the uncorrected
+    // image, ADR 0010's W13 amendment). Empty: no lens database.
+    std::function<std::shared_ptr<const engine::LensDatabase>()> lens_database;
 };
 
 class DevelopJobRunner final : public workers::JobRunner {
@@ -61,8 +72,18 @@ public:
                                                             workers::JobContext& context) override;
 
 private:
+    // The lens database, loaded by the first export job that needs it (thread-safe).
+    [[nodiscard]] std::shared_ptr<const engine::LensDatabase> lens_database();
+
+    struct LensState {
+        std::mutex mutex;
+        bool loaded = false;
+        std::shared_ptr<const engine::LensDatabase> database;
+    };
+
     std::shared_ptr<const raw::DecoderRegistry> registry_;
     DevelopJobOptions options_;
+    std::shared_ptr<LensState> lens_ = std::make_shared<LensState>();
 };
 
 }  // namespace lucent::worker_app

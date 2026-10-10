@@ -1,19 +1,20 @@
 // lucent-render: renders one RAW file through the engine's develop pipeline (ADR 0010: the export
-// render, engine::render_develop_file's composition, with DevelopSettings v2 (ADR 0015: chroma
-// denoising, masks, geometry) and the "neutral" v1 base look) and exports it with lucent::exporter
+// render, engine::render_develop_file's composition, with DevelopSettings v3 (ADR 0015: chroma
+// denoising, masks, geometry; ADR 0023: lens-profile corrections with the bundled lens database, as
+// Lucent's exports apply them) and the "neutral" v1 base look) and exports it with lucent::exporter
 // (verified, no-clobber publication).
 //
 // Usage:
 //   lucent-render <raw> --out <dir> [--format jpeg|tiff16] [--profile srgb|display-p3]
 //                 [--quality N] [--subimage N] [--develop <settings.json>] [--exposure EV]
-//                 [--no-camera-crop] [--report <file.json>]
+//                 [--no-camera-crop] [--no-lens-corrections] [--report <file.json>]
 //   lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV] [--dump-linear <file.tiff>]
 //                 [--no-dng-opcodes] [--no-camera-crop] [other options as above, without --develop]
 //
 //   --develop F        the settings to render: a "lucent.develop" recipe document (recipe.hpp),
-//                      version 1 (upgraded on read) or 2, read strictly (an unknown field or
+//                      version 1 or 2 (upgraded on read) or 3, read strictly (an unknown field or
 //                      operation, or a newer version, is an error, never ignored). Default: "as
-//                      shot".
+//                      shot" (automatic lens-profile corrections: an exact profile match only).
 //   --legacy-neutral-v0  render with the W2 path instead (engine::render_file, provisional
 //                      Neutral v0 display rendering; ADR 0006), for the W2 reference comparisons
 //                      (research/tools/render_reference.py).
@@ -43,6 +44,13 @@
 //                      is the frame; the recipe identity says so); a usage error when the settings
 //                      hold a version-2 crop or straighten angle, which is relative to the camera's
 //                      area and would move.
+//   --no-lens-corrections
+//                      develop pipeline: render without a lens database, so no lens-profile
+//                      correction is applied whatever the settings ask (ADR 0023), for comparisons
+//                      with decoders that apply none. Otherwise the bundled lens database next to
+//                      the executable (assets\lens-database, verified against the build's pin
+//                      like Lucent.exe's) is used; when it cannot be activated the render goes on
+//                      without it, with a warning, and the report says why ("lens_database").
 //   --report F         write the lucent.render-report JSON (render_json.hpp), also for failures.
 //
 // Nothing is ever overwritten: an existing export, report or dump file is an error
@@ -89,6 +97,8 @@
 // clang-format on
 
 #include <lucent/application/recipe.hpp>
+#include <lucent/assets/asset_store.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/file.hpp>
 #include <lucent/core/hash.hpp>
@@ -173,6 +183,7 @@ struct Arguments {
     bool legacy = false;          // --legacy-neutral-v0
     bool no_dng_opcodes = false;  // --no-dng-opcodes
     bool no_camera_crop = false;  // --no-camera-crop
+    bool no_lens_corrections = false;  // --no-lens-corrections
     std::optional<std::filesystem::path> dump_linear;
     std::optional<std::filesystem::path> report;
     bool help = false;
@@ -186,6 +197,7 @@ void print_usage(std::FILE* stream) {
         "       lucent-render <raw> --out <dir> --legacy-neutral-v0 [--exposure EV]\n"
         "                     [--dump-linear <file.tiff>] [--no-dng-opcodes] [other options]\n"
         "       --no-camera-crop renders the decoder's whole visible area (both paths)\n"
+        "       --no-lens-corrections renders without the lens database (develop pipeline)\n"
         "Renders a RAW file (develop pipeline, neutral v1 look; --legacy-neutral-v0: the W2 render path)\n"
         "and exports <stem>_Lucent.jpg|.tif to <dir> without overwriting anything. Prints one\n"
         "lucent.render-result JSON line.\n"
@@ -312,6 +324,8 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
             args.no_dng_opcodes = true;
         } else if (arg == L"--no-camera-crop") {
             args.no_camera_crop = true;
+        } else if (arg == L"--no-lens-corrections") {
+            args.no_lens_corrections = true;
         } else if (arg == L"--dump-linear" && has_value) {
             args.dump_linear = std::filesystem::path(argv[++i]);
         } else if (arg == L"--report" && has_value) {
@@ -336,6 +350,11 @@ std::variant<Arguments, std::string> parse(int argc, wchar_t** argv) {
         return std::string(
             "--no-dng-opcodes switches the W2 path's opcode processing off for reference comparisons; add "
             "--legacy-neutral-v0 (the develop pipeline always applies the DNG opcodes)");
+    }
+    if (args.no_lens_corrections && args.legacy) {
+        return std::string(
+            "--no-lens-corrections applies to the develop pipeline (the W2 path of --legacy-neutral-v0 never "
+            "corrects lenses)");
     }
     if (args.dump_linear && !args.legacy) {
         return std::string(
@@ -473,6 +492,7 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
                                 {"subimage", args.subimage ? Json(*args.subimage) : Json(nullptr)}}},
                 {"pipeline", pipeline},
                 {"recipe", recipe_json},
+                {"lens_database", nullptr},
                 {"status", "error"},
                 {"error", nullptr},
                 {"metadata", nullptr},
@@ -603,23 +623,39 @@ int run(const Arguments& args, const lucent::core::CancellationToken& cancel) {
         }
         display = std::move(rendered->display);
     } else {
+        // The lens database Lucent's exports correct lenses with (ADR 0023): the bundled asset next
+        // to this executable, verified against the build's pin. Without one nothing is corrected.
+        lucent::engine::DevelopOptions develop;
+        std::optional<lucent::Error> lens_problem;
+        if (!args.no_lens_corrections) {
+            lucent::assets::LensDatabaseLookup lens =
+                lucent::assets::load_lens_database(lucent::assets::default_asset_locations(nullptr));
+            develop.lens_database = std::move(lens.database);
+            lens_problem = std::move(lens.problem);
+        }
+        report["lens_database"] = lucent::render_tool::lens_database_json(
+            develop.lens_database.get(), lens_problem, args.no_lens_corrections);
         // The develop pipeline's export render: exactly engine::render_develop_file (develop.cpp),
         // run in its two steps to report the decoded metadata.
         lucent::engine::StageOneRequest request;
         request.kind = lucent::engine::StageOneKind::Export;
         request.white_balance = settings.white_balance;
-        auto one =
-            lucent::engine::render_stage_one_file(*registry, args.input, args.subimage, request, {}, cancel);
+        auto one = lucent::engine::render_stage_one_file(*registry, args.input, args.subimage, request,
+                                                         develop, cancel);
         if (!one) {
             return finish(one.error(), {});
         }
         report["metadata"] = lucent::probe::metadata_json(one->metadata);
-        auto developed = lucent::engine::render_stage_two(std::move(*one), settings, {}, cancel);
+        auto developed = lucent::engine::render_stage_two(std::move(*one), settings, develop, cancel);
         if (!developed) {
             return finish(developed.error(), {});
         }
         report["render"] = lucent::render_tool::develop_report_json(developed->report);
         warnings = developed->report.warnings;
+        if (!develop.lens_database && !args.no_lens_corrections) {
+            warnings.push_back("no lens database is active, so no lens-profile correction was applied: " +
+                               (lens_problem ? lens_problem->describe() : std::string("unknown reason")));
+        }
         display = std::move(developed->display);
     }
     for (const std::string& warning : warnings) {

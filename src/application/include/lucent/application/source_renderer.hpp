@@ -12,18 +12,28 @@
 // The application runs the two steps itself only to check the decoded file's identity between them
 // and to report progress; the pixels are those of render_develop_file (pinned by a test).
 //
+// The lens database (W13, ADR 0023). The production renderer is given the session's verified lens
+// database (EngineRendererOptions::lens_database, from assets::load_lens_database()) and passes it
+// to every estimate and stage two (engine::DevelopOptions::lens_database), so previews, thumbnails
+// and exports apply the lens-profile corrections the settings ask for; without one nothing is
+// corrected (every plan says "no lens database"). The database is data that changes pixels:
+// lens_database() names it, and pixels persisted under a recipe identity (rendered thumbnails,
+// preview_service.hpp) are keyed by it too.
+//
 // Thread-safety: implementations are immutable and their const members may be called
 // concurrently.
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include <lucent/application/source_item.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/engine/develop.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/lens_correction.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 #include <lucent/raw/decoder_registry.hpp>
 #include <lucent/raw/raw_decoder.hpp>
@@ -71,6 +81,17 @@ public:
         return estimate(item, request, cancel);
     }
 
+    // The estimate for `settings` on a stage one made for `request` (engine::estimate_develop_memory
+    // from its metadata, without probing the file again) with the options this renderer's stage two
+    // runs with: the lens correction its lens database plans maps the masks' supports (ADR 0023), as
+    // the render's own memory check does. The interactive preview claims its stage-two renders with
+    // it (develop_preview.hpp). The default estimates with the engine's default options.
+    [[nodiscard]] virtual Expected<engine::DevelopMemoryEstimate> estimate_stage_two(
+        const engine::StageOneImage& stage_one, const engine::StageOneRequest& request,
+        const engine::DevelopSettings& settings) const {
+        return engine::estimate_develop_memory(stage_one.metadata, request, settings);
+    }
+
     // Stage one of image item.subimage of item.path (engine::render_stage_one_file).
     [[nodiscard]] virtual Expected<engine::StageOneImage> render_stage_one(
         const SourceItem& item, const engine::StageOneRequest& request,
@@ -96,6 +117,12 @@ public:
                                                          const RenderProgress& progress,
                                                          const core::CancellationToken& cancel) const = 0;
 
+    // The identity of the lens database the renders correct lenses with (see the file comment);
+    // std::nullopt without one. The default has none.
+    [[nodiscard]] virtual std::optional<engine::LensDatabaseIdentity> lens_database() const {
+        return std::nullopt;
+    }
+
 protected:
     SourceRenderer() = default;
 };
@@ -105,6 +132,8 @@ struct EngineRendererOptions {
     // engine::DevelopOptions::memory_budget_bytes: the engine's own refusal threshold.
     std::uint64_t memory_budget_bytes = engine::kDefaultRenderMemoryBudget;
     bool parallel = true;
+    // engine::DevelopOptions::lens_database (see the file comment); null: no lens correction.
+    std::shared_ptr<const engine::LensDatabase> lens_database;
 };
 
 // The production renderer over the engine's develop pipeline. InvalidArgument ("app.render") for a

@@ -339,6 +339,45 @@ TEST_F(AutoServiceTest, ACropWithoutNeutralSurfacesKeepsTheWhiteBalanceDecision)
 // aside: Auto decides the same for a recipe of geometry version 1 (the whole visible area) and one of
 // version 2 (the DNG's DefaultCrop), keeps each recipe's version, and the full-resolution check
 // measures the version-2 output (the area) without failing.
+// W13 (ADR 0023): Auto never changes the lens corrections. A named profile with a correction switched
+// off, and the "none" of a recipe made before lens corrections, are carried by the choice, every
+// attempt and the revision unchanged; the decision is the same for each (Auto evaluates the
+// uncorrected image: no lens database is given to its analysis).
+TEST_F(AutoServiceTest, AutoNeverChangesTheLensCorrections) {
+    engine::DevelopSettings named;
+    named.lens_correction.vignetting = false;
+    named.lens_correction.profile = engine::LensProfileId{"Lucent", "Synthetic 35mm f/2", 1.0};
+    engine::DevelopSettings none;
+    none.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+    const std::filesystem::path path = fixture_.library->find(item_)->path;
+    auto automatic = run_automatic(*registry_, path, 0, engine::DevelopSettings{}, AutoRunRequest{});
+    ASSERT_TRUE(automatic) << automatic.error().describe();
+    for (const engine::DevelopSettings& current : {named, none}) {
+        auto run = run_automatic(*registry_, path, 0, current, AutoRunRequest{});
+        ASSERT_TRUE(run) << run.error().describe();
+        EXPECT_EQ(run->chosen.lens_correction, current.lens_correction);
+        EXPECT_EQ(run->chosen.operations.lens_correction, current.operations.lens_correction);
+        for (const AutoAttempt& attempt : run->attempts) {
+            EXPECT_EQ(attempt.settings.lens_correction, current.lens_correction);
+            EXPECT_EQ(attempt.settings.operations.lens_correction, current.operations.lens_correction);
+        }
+        engine::DevelopSettings as_automatic = run->chosen;
+        as_automatic.lens_correction = engine::LensCorrectionSetting{};
+        as_automatic.operations.lens_correction = engine::kLensCorrectionOperationVersion;
+        EXPECT_EQ(as_automatic, automatic->chosen);
+    }
+    // Through the service: the automatic revision keeps them, and its note names no lens change.
+    ASSERT_TRUE(recipes_->apply(item_, named));
+    const AutoTaskResult result = run(service());
+    ASSERT_FALSE(result.error) << result.error->describe();
+    const RecipeState after = state();
+    EXPECT_EQ(after.committed.lens_correction, named.lens_correction);
+    auto history = recipes_->history(item_);
+    ASSERT_TRUE(history);
+    EXPECT_EQ(history->entries.back().info.origin, catalog::RevisionOrigin::Auto);
+    EXPECT_TRUE(history->entries.back().parts.empty());
+}
+
 TEST_F(AutoServiceTest, TheCameraAreaDoesNotChangeTheAutoDecision) {
     rts::SyntheticDngSpec spec = dark_spec();
     spec.default_crop_origin = std::array<std::pair<std::uint32_t, std::uint32_t>, 2>{{{12, 1}, {8, 1}}};

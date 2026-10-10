@@ -1,6 +1,7 @@
 #include <lucent/application/batch_service.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <format>
 #include <map>
@@ -482,13 +483,18 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
                 break;
             }
         }
-        // W6 to W8 froze the as-shot settings as their recipe version 1 document (ADR 0022): those
-        // settings, read by this build, are rendered exactly as then.
-        if (document->sha256 != job.settings_sha256) {
-            const std::string_view version_1 = kVersion1AsShotRecipe;
-            auto digest = core::sha256(std::as_bytes(std::span(version_1.data(), version_1.size())));
+        // W6 to W8 froze the as-shot settings as their recipe version 1 document (ADR 0022), W9 to
+        // W12 as their version 2 document (ADR 0023): those settings, read by this build (version 2:
+        // no lens correction), are rendered exactly as then.
+        const std::array<std::string_view, 3> earlier_documents = {
+            kVersion2AsShotRecipes[0], kVersion2AsShotRecipes[1], kVersion1AsShotRecipe};
+        for (const std::string_view earlier : earlier_documents) {
+            if (document->sha256 == job.settings_sha256) {
+                break;
+            }
+            auto digest = core::sha256(std::as_bytes(std::span(earlier.data(), earlier.size())));
             if (digest && *digest == job.settings_sha256) {
-                auto read = read_recipe(version_1);
+                auto read = read_recipe(earlier);
                 if (!read) {
                     return Unexpected(std::move(read.error()));
                 }
@@ -498,6 +504,7 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
                 }
                 document = std::move(converted);
                 frozen_revision = true;  // the frozen recipe, in this build's canonical form
+                break;
             }
         }
     }

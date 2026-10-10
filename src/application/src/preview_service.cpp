@@ -226,9 +226,17 @@ std::string_view to_string(PreviewOutcome outcome) noexcept {
     return "unknown";
 }
 
+std::string lens_database_key(const std::optional<engine::LensDatabaseIdentity>& identity) {
+    if (!identity) {
+        return "lens-database:none";
+    }
+    return std::format("lens-database:{} {} {}", identity->asset_id, identity->asset_version,
+                       identity->manifest_sha256);
+}
+
 ThumbnailKey rendered_thumbnail_key(const core::Digest256& source_sha256, std::uint32_t subimage,
-                                    const core::Digest256& settings_sha256,
-                                    std::string_view decoder_version) {
+                                    const core::Digest256& settings_sha256, std::string_view decoder_version,
+                                    std::string_view lens_database) {
     std::vector<std::byte> material;
     const auto append = [&](const void* data, std::size_t size) {
         const auto* bytes = static_cast<const std::byte*>(data);
@@ -243,6 +251,7 @@ ThumbnailKey rendered_thumbnail_key(const core::Digest256& source_sha256, std::u
         append(le, sizeof(le));
     }
     append(decoder_version.data(), decoder_version.size());
+    append(lens_database.data(), lens_database.size());
     ThumbnailKey key;
     key.source_sha256 = source_sha256;
     key.subimage = subimage;
@@ -491,7 +500,8 @@ struct PreviewService::State : std::enable_shared_from_this<State> {
             return std::nullopt;
         }
         return rendered_thumbnail_key(*item.sha256, item.subimage, resolved.document.sha256,
-                                      decoder_text(item));
+                                      decoder_text(item),
+                                      lens_database_key(renderer ? renderer->lens_database() : std::nullopt));
     }
 
     std::filesystem::path scratch_directory() const {

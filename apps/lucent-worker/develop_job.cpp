@@ -175,6 +175,17 @@ private:
 DevelopJobRunner::DevelopJobRunner(std::shared_ptr<const raw::DecoderRegistry> registry, DevelopJobOptions options)
     : registry_(std::move(registry)), options_(std::move(options)) {}
 
+std::shared_ptr<const engine::LensDatabase> DevelopJobRunner::lens_database() {
+    const std::lock_guard lock(lens_->mutex);
+    if (!lens_->loaded) {
+        lens_->loaded = true;
+        if (options_.lens_database) {
+            lens_->database = options_.lens_database();
+        }
+    }
+    return lens_->database;
+}
+
 Expected<workers::AnalysisResult> DevelopJobRunner::analyze(const workers::AnalysisRequest& request,
                                                             workers::JobContext& context) {
     if (!registry_) {
@@ -224,6 +235,7 @@ Expected<workers::JobResult> DevelopJobRunner::run(const workers::JobRequest& re
     app::EngineRendererOptions renderer_options;
     renderer_options.decode_limits = options_.decode_limits;
     renderer_options.parallel = options_.parallel;
+    renderer_options.lens_database = lens_database();
     if (request.memory_budget_bytes != 0) {
         renderer_options.memory_budget_bytes = request.memory_budget_bytes;
     }

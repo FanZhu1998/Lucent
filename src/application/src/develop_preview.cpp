@@ -37,10 +37,13 @@ std::uint64_t fallback_stage_two_bytes(image::Size size) {
 }
 
 // Working memory of a stage-two render of `source` with `settings` and its display products: the
-// engine's settings-aware stage-two estimate at the source's size (its RGB image and the largest
-// operation's working memory: local tone, chroma denoising, brush rasters and the masks' base
-// layer, the geometry's output), plus the 8-bit image and the clipping mask (4 bytes per pixel).
-std::uint64_t stage_two_claim(const engine::StageOneImage& source, const engine::DevelopSettings& settings) {
+// renderer's settings-aware stage-two estimate at the source's size (SourceRenderer::
+// estimate_stage_two(): its RGB image and the largest operation's working memory: local tone,
+// chroma denoising, brush rasters and the masks' base layer over their supports mapped through the
+// lens correction, the geometry's output), plus the 8-bit image and the clipping mask (4 bytes per
+// pixel).
+std::uint64_t stage_two_claim(const SourceRenderer& renderer, const engine::StageOneImage& source,
+                              const engine::DevelopSettings& settings) {
     const image::Size size = source.pixels.size();
     if (size.empty()) {
         return 0;
@@ -48,7 +51,7 @@ std::uint64_t stage_two_claim(const engine::StageOneImage& source, const engine:
     engine::StageOneRequest request;
     request.kind = source.kind;
     request.proxy_long_edge = source.scale < 1.0 ? std::max(size.width, size.height) : 0;
-    auto estimate = engine::estimate_develop_memory(source.metadata, request, settings);
+    auto estimate = renderer.estimate_stage_two(source, request, settings);
     if (!estimate || estimate->stage_two_bytes == 0) {
         return fallback_stage_two_bytes(size);
     }
@@ -485,7 +488,7 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         std::uint64_t bytes = 0;
         try {
             if (!cancel.is_cancelled() && source) {
-                bytes = stage_two_claim(*source, settings);
+                bytes = stage_two_claim(*renderer, *source, settings);
                 Expected<AdmissionLease> lease = kind == RenderKind::Full
                                                      ? context.admit(bytes)
                                                      : context.admission().retain(bytes + cache_room, cancel);
@@ -523,9 +526,18 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
                                     summarize_render(rendered->report, source->metadata.interpretation);
                                 out->summary.estimated_peak_bytes = bytes;
                                 out->stage_two_seconds = rendered->report.stage_two_seconds;
-                                // The geometry's frame: the camera's image area for geometry
-                                // version 2 (ADR 0017), the whole upright image otherwise.
-                                if (auto mapping = engine::geometry_mapping(settings, *source)) {
+                                // The mapping stage two rendered with: the geometry's frame (the
+                                // camera's image area for geometry version 2, ADR 0017, the whole
+                                // upright image otherwise) and the lens correction's point mapping
+                                // (ADR 0023: engine::geometry_mapping() of the report), so the
+                                // outlines stay on the masks' content.
+                                auto mapping = engine::geometry_mapping(settings, *source);
+                                if (mapping && rendered->report.lens_correction.plan.geometry) {
+                                    mapping = engine::GeometryMapping::create(
+                                        settings.geometry, mapping->upright_size(), mapping->frame(),
+                                        *rendered->report.lens_correction.plan.geometry, source->full_size);
+                                }
+                                if (mapping) {
                                     out->masks = mask_overlays(settings, *mapping);
                                     out->geometry = std::move(*mapping);
                                 }

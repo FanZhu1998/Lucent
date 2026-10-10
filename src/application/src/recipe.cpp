@@ -1,5 +1,5 @@
-// Recipe documents: canonical writing (RFC 8785) of "lucent.develop" v2 and strict reading of v1
-// and v2 (recipe.hpp).
+// Recipe documents: canonical writing (RFC 8785) of "lucent.develop" v3 and strict reading of v1,
+// v2 and v3 (recipe.hpp).
 
 #include <algorithm>
 #include <charconv>
@@ -51,6 +51,8 @@ constexpr std::string_view kLocksKey = "locks";
 constexpr std::string_view kChromaDenoiseKey = "chroma_denoise";
 constexpr std::string_view kLocalAdjustmentsKey = "local_adjustments";
 constexpr std::string_view kGeometryKey = "geometry";
+// Added by version 3.
+constexpr std::string_view kLensCorrectionKey = "lens_correction";
 
 // Operation names in "operations".
 constexpr std::string_view kOpWhiteBalance = "white_balance";
@@ -63,6 +65,8 @@ constexpr std::string_view kOpColor = "color";
 constexpr std::string_view kOpChromaDenoise = "chroma_denoise";
 constexpr std::string_view kOpLocalAdjustments = "local_adjustments";
 constexpr std::string_view kOpGeometry = "geometry";
+// Added by version 3.
+constexpr std::string_view kOpLensCorrection = "lens_correction";
 
 Error invalid(std::string message) {
     return Error{ErrorCode::InvalidArgument, std::move(message), std::string(kWhere), 0};
@@ -252,20 +256,35 @@ Json geometry_json(const engine::GeometrySetting& g) {
                 {"flip_horizontal", g.flip_horizontal}};
 }
 
-// The version-2 document of current (version-2) settings.
+Json lens_correction_json(const engine::LensCorrectionSetting& l) {
+    Json profile = nullptr;
+    if (l.profile) {
+        profile = Json{{"maker", l.profile->maker},
+                       {"model", l.profile->model},
+                       {"crop_factor", l.profile->crop_factor}};
+    }
+    return Json{{"distortion", l.distortion},
+                {"lateral_chromatic_aberration", l.lateral_chromatic_aberration},
+                {"vignetting", l.vignetting},
+                {"profile", std::move(profile)}};
+}
+
+// The version-3 document of current (version-3) settings.
 Json settings_json(const engine::DevelopSettings& s) {
     Json doc = Json::object();
     doc[std::string(kSchemaKey)] = std::string(kRecipeSchema);
     doc[std::string(kVersionKey)] = s.version;
-    doc[std::string(kOperationsKey)] = Json{{std::string(kOpWhiteBalance), s.operations.white_balance},
-                                            {std::string(kOpExposure), s.operations.exposure},
-                                            {std::string(kOpLocalTone), s.operations.local_tone},
-                                            {std::string(kOpContrast), s.operations.contrast},
-                                            {std::string(kOpToneCurve), s.operations.tone_curve},
-                                            {std::string(kOpColor), s.operations.color},
-                                            {std::string(kOpChromaDenoise), s.operations.chroma_denoise},
-                                            {std::string(kOpLocalAdjustments), s.operations.local_adjustments},
-                                            {std::string(kOpGeometry), s.operations.geometry}};
+    doc[std::string(kOperationsKey)] =
+        Json{{std::string(kOpWhiteBalance), s.operations.white_balance},
+             {std::string(kOpExposure), s.operations.exposure},
+             {std::string(kOpLocalTone), s.operations.local_tone},
+             {std::string(kOpContrast), s.operations.contrast},
+             {std::string(kOpToneCurve), s.operations.tone_curve},
+             {std::string(kOpColor), s.operations.color},
+             {std::string(kOpChromaDenoise), s.operations.chroma_denoise},
+             {std::string(kOpLocalAdjustments), s.operations.local_adjustments},
+             {std::string(kOpGeometry), s.operations.geometry},
+             {std::string(kOpLensCorrection), s.operations.lens_correction}};
     doc[std::string(kWhiteBalanceKey)] = white_balance_json(s.white_balance);
     doc[std::string(kExposureKey)] = s.exposure_ev;
     doc[std::string(kContrastKey)] = s.contrast;
@@ -292,6 +311,7 @@ Json settings_json(const engine::DevelopSettings& s) {
     }
     doc[std::string(kLocalAdjustmentsKey)] = std::move(adjustments);
     doc[std::string(kGeometryKey)] = geometry_json(s.geometry);
+    doc[std::string(kLensCorrectionKey)] = lens_correction_json(s.lens_correction);
     return doc;
 }
 
@@ -380,14 +400,18 @@ Status read_numbers(const Json& object, std::initializer_list<std::pair<std::str
 }
 
 // An operation version this build renders: `supported`, or for the geometry any version from
-// `oldest` (version 1, the whole visible area, still rendered for the recipes made with it).
+// `oldest` (version 1, the whole visible area, still rendered for the recipes made with it). With
+// `zero_allowed` (the lens correction, whose version 0 means "none": settings made before the
+// operation existed), 0 is a version too.
 Status operation_version(const Json& operations, std::string_view name, std::uint32_t supported,
-                         std::uint32_t& out, std::uint32_t oldest = 0) {
-    auto version = version_of(operations.at(std::string(name)), std::format("operation '{}' version", name));
+                         std::uint32_t& out, std::uint32_t oldest = 0, bool zero_allowed = false) {
+    const std::string what = std::format("operation '{}' version", name);
+    auto version = zero_allowed ? unsigned_of(operations.at(std::string(name)), what)
+                                : version_of(operations.at(std::string(name)), what);
     if (!version) {
         return Unexpected(std::move(version.error()));
     }
-    const std::uint32_t lowest = oldest == 0 ? supported : oldest;
+    const std::uint32_t lowest = zero_allowed ? 0 : oldest == 0 ? supported : oldest;
     if (*version < lowest || *version > supported) {
         return Unexpected(newer(
             lowest == supported ? std::format("the recipe needs version {} of the '{}' operation; this build "
@@ -668,6 +692,56 @@ Expected<engine::MaskShape> read_mask(const Json& value, const std::string& what
     return Unexpected(invalid(std::format("unknown mask kind '{}' in a version 2 recipe", kind_text)));
 }
 
+// ---- Version-3 members ------------------------------------------------------------------------
+
+Expected<std::string> string_of(const Json& value, std::string_view what) {
+    if (!value.is_string()) {
+        return Unexpected(invalid(std::format("{} must be a string", what)));
+    }
+    return value.get<std::string>();
+}
+
+Expected<engine::LensCorrectionSetting> read_lens_correction(const Json& value) {
+    if (auto status =
+            exact_members(value, {"distortion", "lateral_chromatic_aberration", "profile", "vignetting"},
+                          "lens_correction", 3);
+        !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    engine::LensCorrectionSetting out;
+    for (const auto& [name, flag] : {std::pair<std::string_view, bool*>{"distortion", &out.distortion},
+                                     {"lateral_chromatic_aberration", &out.lateral_chromatic_aberration},
+                                     {"vignetting", &out.vignetting}}) {
+        auto read = bool_of(value.at(std::string(name)), std::format("lens_correction.{}", name));
+        if (!read) {
+            return Unexpected(std::move(read.error()));
+        }
+        *flag = *read;
+    }
+    const Json& profile = value.at("profile");
+    if (profile.is_null()) {
+        return out;  // automatic
+    }
+    if (auto status = exact_members(profile, {"crop_factor", "maker", "model"}, "lens_correction.profile", 3);
+        !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    engine::LensProfileId id;
+    auto maker = string_of(profile.at("maker"), "lens_correction.profile.maker");
+    auto model = string_of(profile.at("model"), "lens_correction.profile.model");
+    if (!maker || !model) {
+        return Unexpected(!maker ? std::move(maker.error()) : std::move(model.error()));
+    }
+    id.maker = std::move(*maker);
+    id.model = std::move(*model);
+    if (auto status = read_numbers(profile, {{"crop_factor", &id.crop_factor}}, "lens_correction.profile.");
+        !status) {
+        return Unexpected(std::move(status.error()));
+    }
+    out.profile = std::move(id);
+    return out;
+}
+
 Expected<std::vector<engine::LocalAdjustment>> read_local_adjustments(const Json& value) {
     if (!value.is_array()) {
         return Unexpected(invalid("local_adjustments must be an array"));
@@ -732,9 +806,10 @@ Expected<std::vector<engine::LocalAdjustment>> read_local_adjustments(const Json
     return out;
 }
 
-// Reads a version-1 or version-2 document (`version` is the document's).
+// Reads a version-1, version-2 or version-3 document (`version` is the document's).
 Expected<engine::DevelopSettings> read_document(const Json& doc, std::uint32_t version) {
     const bool v2 = version >= 2;
+    const bool v3 = version >= 3;
     Names members = {kSchemaKey,     kVersionKey,    kOperationsKey, kWhiteBalanceKey, kExposureKey,
                      kContrastKey,   kHighlightsKey, kShadowsKey,    kToneCurveKey,    kSaturationKey,
                      kVibranceKey,   kBaseLookKey,   kLocksKey};
@@ -742,6 +817,10 @@ Expected<engine::DevelopSettings> read_document(const Json& doc, std::uint32_t v
     if (v2) {
         members.insert(members.end(), {kChromaDenoiseKey, kLocalAdjustmentsKey, kGeometryKey});
         operation_names.insert(operation_names.end(), {kOpChromaDenoise, kOpLocalAdjustments, kOpGeometry});
+    }
+    if (v3) {
+        members.push_back(kLensCorrectionKey);
+        operation_names.push_back(kOpLensCorrection);
     }
     if (auto status = exact_members(doc, members, "the recipe", version); !status) {
         return Unexpected(std::move(status.error()));
@@ -779,6 +858,16 @@ Expected<engine::DevelopSettings> read_document(const Json& doc, std::uint32_t v
     }
     for (const auto& [name, supported, out, oldest] : ops) {
         if (auto status = operation_version(operations, name, supported, *out, oldest); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+    }
+    if (v3) {
+        // The lens correction is read in versions 0 ("none": settings made before the operation
+        // existed, which a version-1 or version-2 recipe converts to) and 1 (ADR 0023).
+        if (auto status =
+                operation_version(operations, kOpLensCorrection, engine::kLensCorrectionOperationVersion,
+                                  s.operations.lens_correction, 0, /*zero_allowed=*/true);
+            !status) {
             return Unexpected(std::move(status.error()));
         }
     }
@@ -853,18 +942,28 @@ Expected<engine::DevelopSettings> read_document(const Json& doc, std::uint32_t v
         }
         s.geometry = *geometry;
     }
+    if (v3) {
+        auto lens = read_lens_correction(doc.at(std::string(kLensCorrectionKey)));
+        if (!lens) {
+            return Unexpected(std::move(lens.error()));
+        }
+        s.lens_correction = std::move(*lens);
+    }
 
     if (auto valid = s.validate(); !valid) {
         const Error& e = valid.error();
         return Unexpected(Error{e.code, "the recipe's values are not valid: " + e.message, std::string(kWhere), 0});
     }
-    if (!v2) {
-        // Version 1: its conversion (no denoising, no masks, identity geometry).
+    if (version < kRecipeSchemaVersion) {
+        // Version 1 or 2: its conversion (version 1: no denoising, no masks, identity geometry of
+        // version 1; both: lens-correction operation version 0, nothing corrected). It renders
+        // exactly as the document did.
         auto upgraded = engine::upgrade_develop_settings(std::move(s));
         if (!upgraded) {
             const Error& e = upgraded.error();
-            return Unexpected(Error{e.code, "the version 1 recipe cannot be upgraded: " + e.message,
-                                    std::string(kWhere), 0});
+            return Unexpected(
+                Error{e.code, std::format("the version {} recipe cannot be upgraded: {}", version, e.message),
+                      std::string(kWhere), 0});
         }
         return upgraded;
     }
@@ -1050,6 +1149,8 @@ std::string_view to_string(RecipeCategory category) noexcept {
             return "detail";
         case RecipeCategory::Geometry:
             return "geometry";
+        case RecipeCategory::LensCorrections:
+            return "lens_corrections";
     }
     return "invalid";
 }
@@ -1182,6 +1283,8 @@ std::string_view to_string(RecipePart part) noexcept {
             return "masks";
         case RecipePart::Geometry:
             return "geometry";
+        case RecipePart::LensCorrection:
+            return "lens_correction";
     }
     return "invalid";
 }
@@ -1203,6 +1306,8 @@ RecipeCategory category_of(RecipePart part) noexcept {
             return RecipeCategory::Masks;
         case RecipePart::Geometry:
             return RecipeCategory::Geometry;
+        case RecipePart::LensCorrection:
+            return RecipeCategory::LensCorrections;
     }
     return RecipeCategory::Geometry;
 }
@@ -1227,6 +1332,11 @@ bool same_value(const engine::DevelopSettings& a, const engine::DevelopSettings&
             // The geometry part is the value and the frame its operation version places it in.
             return a.geometry == b.geometry &&
                    engine::geometry_operation_version(a) == engine::geometry_operation_version(b);
+        case RecipePart::LensCorrection:
+            // What renders: the operation version (0: none, the setting unused) and the setting.
+            return engine::lens_correction_operation_version(a) ==
+                       engine::lens_correction_operation_version(b) &&
+                   engine::effective_lens_correction(a) == engine::effective_lens_correction(b);
     }
     return true;
 }
@@ -1244,6 +1354,15 @@ void copy_value(const engine::DevelopSettings& from, engine::DevelopSettings& to
             // one of version 2 to the camera's image area (ADR 0017).
             to.geometry = from.geometry;
             to.operations.geometry = engine::geometry_operation_version(from);
+            return;
+        case RecipePart::LensCorrection:
+            // With its operation version: version 0 (settings made before lens corrections existed)
+            // corrects nothing, whatever the member holds (it then holds the default).
+            to.operations.lens_correction = engine::lens_correction_operation_version(from);
+            to.lens_correction =
+                to.operations.lens_correction == engine::kOldestLensCorrectionOperationVersion
+                    ? engine::LensCorrectionSetting{}
+                    : from.lens_correction;
             return;
     }
 }

@@ -46,10 +46,16 @@
 // the newest generation only.
 //
 // Overlays (ADR 0015). Every frame carries the geometry of its render (DevelopFrame::geometry: the
-// engine::GeometryMapping of the settings' geometry for the upright size of the stage one it was
-// rendered from, i.e. at the frame's scale), which maps normalised mask points and upright pixels to
-// the frame's pixels and back (pointer positions to brush points), and the outlines of its masks
-// (engine::mask_outline()) already mapped to the frame's pixels.
+// engine::GeometryMapping stage two rendered with, engine::geometry_mapping() of its report: the
+// settings' geometry for the upright size of the stage one it was rendered from, i.e. at the frame's
+// scale, and the lens correction's point mapping when one was applied, ADR 0023), which maps
+// normalised mask points and upright pixels to the frame's pixels and back (pointer positions to
+// brush points), and the outlines of its masks (engine::mask_outline()) already mapped to the
+// frame's pixels: through the correction, so they stay on the masks' content.
+//
+// Lens corrections (ADR 0023). The renderer's lens database (SourceRenderer::lens_database())
+// corrects every render the settings ask it to; the plan of each frame (the match, the profile and
+// every correction's outcome) is in its report (DevelopReport::lens_correction).
 //
 // Caches (ADR 0015 decisions 5 and 7). Each session owns an engine::MaskRasterCache (brush rasters
 // at the proxy's size; a brush raster is made again only when its shape changes) and an
@@ -63,8 +69,10 @@
 // retained claim of its own bytes (the proxy: 2048 x 1366 x 3 floats, about 34 MB; the 45 MP full
 // resolution: about 540 MB), so exports see it but it holds no render place. A proxy stage-two
 // render claims its working memory as retained memory too: it never waits for a running export.
-// Its claim is the engine's settings-aware stage-two estimate (engine::estimate_develop_memory with
-// the settings: denoising radius, brush rasters, masks' base layer) plus the 8-bit image and the
+// Its claim is the renderer's settings-aware stage-two estimate (SourceRenderer::
+// estimate_stage_two(): engine::estimate_develop_memory with the settings and the renderer's lens
+// database: denoising radius, brush rasters, the masks' base layer over their supports mapped
+// through the lens correction, as the render's own check counts them) plus the 8-bit image and the
 // clipping mask, and, when the settings use a cache (denoising applied or a brush mask with an
 // effect), room for the caches to fill up to their capacities; after the render the caches' bytes
 // stay claimed as retained memory of the session (DevelopSessionStats::cache_bytes) and the rest is
@@ -154,9 +162,10 @@ struct DevelopFrame {
     ClippingMask clipping;           // of `image`
     RenderSummary summary;
     std::shared_ptr<const engine::DevelopReport> report;
-    // The geometry of this render: GeometryMapping::create(settings.geometry, the upright size of the
-    // stage one it was rendered from); its output_size() is the image's size. std::nullopt only when
-    // the mapping cannot be made (never for a successful engine render).
+    // The geometry of this render: engine::geometry_mapping() of its report (the settings' geometry
+    // for the upright size of the stage one it was rendered from, and the lens correction's point
+    // mapping); its output_size() is the image's size. std::nullopt only when the mapping cannot be
+    // made (never for a successful engine render).
     std::optional<engine::GeometryMapping> geometry;
     std::vector<MaskOverlay> masks;  // in the settings' order (disabled ones included)
     double latency_seconds = 0.0;    // request() to frame ready (before the sink is called)

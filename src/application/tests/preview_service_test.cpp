@@ -406,12 +406,15 @@ TEST_F(PreviewEngineTest, RendersASyntheticDngUprightAtFitAndFullQuality) {
         EXPECT_FALSE(p.summary.demosaic.empty());
         ASSERT_TRUE(p.report);
         // Every operation of the pipeline is recorded, applied or not: version 2's chroma
-        // denoising, local adjustments and geometry included (none applied as shot).
-        ASSERT_EQ(p.report->operations.size(), 12u);
+        // denoising, local adjustments and geometry included (none applied as shot), and version 3's
+        // lens correction first (none applied: the renderer has no lens database, ADR 0023).
+        ASSERT_EQ(p.report->operations.size(), 13u);
+        EXPECT_EQ(p.report->operations.front().operation, engine::DevelopOperation::LensCorrection);
         for (const engine::OperationRecord& operation : p.report->operations) {
             if (operation.operation == engine::DevelopOperation::ChromaDenoise ||
                 operation.operation == engine::DevelopOperation::LocalAdjustments ||
-                operation.operation == engine::DevelopOperation::Geometry) {
+                operation.operation == engine::DevelopOperation::Geometry ||
+                operation.operation == engine::DevelopOperation::LensCorrection) {
                 EXPECT_FALSE(operation.applied) << engine::to_string(operation.operation);
             }
         }
@@ -747,13 +750,18 @@ TEST(PreviewRecipes, RenderedThumbnailsAreKeyedBySettingsAndSurviveTheSession) {
         EXPECT_EQ(again->get(), first->get());
     }
     const SourceItem item = *fixture.library->find(id);
-    const ThumbnailKey key = rendered_thumbnail_key(hashed->digest, 0, edited->committed_sha256,
-                                                    item.probe->decoder + " " + item.probe->decoder_version);
+    // The renderer corrects lenses with no database here ("lens-database:none").
+    const std::string lens_database = lens_database_key((*renderer)->lens_database());
+    EXPECT_EQ(lens_database, "lens-database:none");
+    const ThumbnailKey key =
+        rendered_thumbnail_key(hashed->digest, 0, edited->committed_sha256,
+                               item.probe->decoder + " " + item.probe->decoder_version, lens_database);
     EXPECT_EQ(key.generator, ThumbnailGenerator::LucentRender);
     ASSERT_TRUE(cache->find(key));
     EXPECT_NE(key, camera_thumbnail_key(hashed->digest, 0));
     // The variant, independently: the settings identity, every engine algorithm version a recipe
-    // does not carry (so a new engine never shows an old thumbnail) and the decoder build.
+    // does not carry (so a new engine never shows an old thumbnail), the decoder build and the lens
+    // database (data that changes pixels, ADR 0023).
     {
         const std::string decoder = item.probe->decoder + " " + item.probe->decoder_version;
         std::vector<std::byte> material;
@@ -769,14 +777,22 @@ TEST(PreviewRecipes, RenderedThumbnailsAreKeyedBySettingsAndSurviveTheSession) {
               engine::kWhiteBalanceVersion, engine::kMalvarHeCutlerVersion, engine::kXTransBaselineVersion,
               engine::kBypassVersion, engine::kCameraColorVersion, engine::kWorkingSpaceVersion,
               engine::kGuidedFilterVersion, engine::kBoxDownscaleVersion, engine::kDngOpcodeProcessingVersion,
-              engine::kImageAreaPlacementVersion}) {
+              engine::kImageAreaPlacementVersion, engine::kLensProfileMatchVersion}) {
             const std::uint8_t le[4] = {static_cast<std::uint8_t>(version), static_cast<std::uint8_t>(version >> 8),
                                         static_cast<std::uint8_t>(version >> 16),
                                         static_cast<std::uint8_t>(version >> 24)};
             append(le, sizeof(le));
         }
         append(decoder.data(), decoder.size());
+        append(lens_database.data(), lens_database.size());
         EXPECT_EQ(key.variant, *core::sha256(material));
+        // Another lens database (or none) is another thumbnail.
+        const engine::LensDatabaseIdentity other{"lens-database", "1.0.0", std::string(64, 'a')};
+        EXPECT_EQ(lens_database_key(other), "lens-database:lens-database 1.0.0 " + std::string(64, 'a'));
+        EXPECT_NE(rendered_thumbnail_key(hashed->digest, 0, edited->committed_sha256, decoder,
+                                         lens_database_key(other))
+                      .variant,
+                  key.variant);
     }
 
     {

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <string>
 #include <variant>
@@ -53,6 +54,94 @@ Json local_adjustments_json(const std::optional<engine::LocalAdjustmentsRecord>&
                 {"tone_radius", r->tone_radius},
                 {"tone_region", rect_json(r->tone_region)},
                 {"changed_pixels", r->changed_pixels}};
+}
+
+Json numbers_of(const std::vector<double>& values) {
+    Json out = Json::array();
+    for (const double v : values) {
+        out.push_back(number(v));
+    }
+    return out;
+}
+
+Json optional_number(const std::optional<double>& value) {
+    return value ? number(*value) : Json(nullptr);
+}
+
+Json profile_id_json(const std::optional<engine::LensProfileId>& id) {
+    if (!id) {
+        return nullptr;
+    }
+    return Json{{"maker", id->maker}, {"model", id->model}, {"crop_factor", number(id->crop_factor)}};
+}
+
+Json lens_camera_json(const std::optional<engine::LensCameraProfile>& camera) {
+    if (!camera) {
+        return nullptr;
+    }
+    return Json{{"maker", camera->maker},
+                {"model", camera->model},
+                {"mount", camera->mount},
+                {"crop_factor", number(camera->crop_factor)}};
+}
+
+Json lens_setting_json(const engine::LensCorrectionSetting& s) {
+    return Json{{"distortion", s.distortion},
+                {"lateral_chromatic_aberration", s.lateral_chromatic_aberration},
+                {"vignetting", s.vignetting},
+                {"profile", profile_id_json(s.profile)}};
+}
+
+Json lens_frame_json(const engine::LensfunFrame& f) {
+    return Json{{"stored_size", size_json(f.size)},
+                {"crop_factor", number(f.crop_factor)},
+                {"calibration_crop_factor", number(f.calibration_crop_factor)},
+                {"calibration_aspect_ratio", number(f.calibration_aspect_ratio)},
+                {"lens_center", Json::array({number(f.lens_center_x), number(f.lens_center_y)})}};
+}
+
+Json lens_geometry_json(const std::optional<engine::LensGeometryMap>& g) {
+    if (!g) {
+        return nullptr;
+    }
+    Json distortion = nullptr;
+    if (g->distortion) {
+        const std::vector<double> terms(g->distortion->terms.begin(), g->distortion->terms.end());
+        distortion = Json{{"model", std::string(engine::to_string(g->distortion->model))},
+                          {"terms", numbers_of(terms)},
+                          {"focal_mm", number(g->distortion->focal_mm)},
+                          {"calibrated_focal_mm", numbers_of(g->distortion->calibrated_focal_mm)}};
+    }
+    Json tca = nullptr;
+    if (g->tca) {
+        const std::vector<double> terms(g->tca->terms.begin(), g->tca->terms.end());
+        tca = Json{{"model", std::string(engine::to_string(g->tca->model))},
+                   {"terms", numbers_of(terms)},
+                   {"focal_mm", number(g->tca->focal_mm)},
+                   {"calibrated_focal_mm", numbers_of(g->tca->calibrated_focal_mm)}};
+    }
+    return Json{{"frame", lens_frame_json(g->frame)},
+                {"orientation", std::string(image::to_string(g->orientation))},
+                {"upright_size", size_json(g->upright_size)},
+                {"scale", number(g->scale)},
+                {"lensfun_scale", number(g->lensfun_scale)},
+                {"distortion", std::move(distortion)},
+                {"lateral_chromatic_aberration", std::move(tca)}};
+}
+
+Json lens_vignetting_json(const std::optional<engine::LensVignettingCorrection>& v) {
+    if (!v) {
+        return nullptr;
+    }
+    const engine::LensVignettingCalibration& c = v->calibration;
+    return Json{{"frame", lens_frame_json(v->frame)},
+                {"model", std::string(engine::to_string(c.model))},
+                {"terms", numbers_of(std::vector<double>(c.terms.begin(), c.terms.end()))},
+                {"focal_mm", number(c.focal_mm)},
+                {"f_number", number(c.f_number)},
+                {"distance_m", number(c.distance_m)},
+                {"calibrated_focal_mm", numbers_of(c.calibrated_focal_mm)},
+                {"calibrated_f_numbers", numbers_of(c.calibrated_f_numbers)}};
 }
 
 Json geometry_json(const std::optional<engine::GeometryRecord>& r) {
@@ -265,6 +354,94 @@ Json color_json(const engine::CameraColorRecord& c) {
     return color;
 }
 
+Json lens_database_identity_json(const std::optional<engine::LensDatabaseIdentity>& identity) {
+    if (!identity) {
+        return nullptr;
+    }
+    return Json{{"asset_id", identity->asset_id},
+                {"version", identity->asset_version},
+                {"manifest_sha256", identity->manifest_sha256}};
+}
+
+Json lens_correction_json(const engine::LensCorrectionRecord& record) {
+    const engine::LensCorrectionPlan& p = record.plan;
+    const engine::LensQuery& q = p.query;
+    Json candidates = Json::array();
+    for (const engine::LensCandidate& c : p.match.candidates) {
+        candidates.push_back(Json{{"lens", profile_id_json(c.lens)},
+                                  {"mounts", c.mounts},
+                                  {"score", c.score},
+                                  {"same_name", c.same_name}});
+    }
+    Json decisions = Json::array();
+    for (const engine::LensCorrectionDecision& d : p.decisions) {
+        decisions.push_back(Json{{"correction", std::string(engine::to_string(d.kind))},
+                                 {"outcome", std::string(engine::to_string(d.outcome))},
+                                 {"detail", d.detail}});
+    }
+    return Json{{"operation_version", p.operation_version},
+                {"match_version", p.match_version},
+                {"setting", lens_setting_json(p.setting)},
+                {"automatic", p.automatic},
+                {"database", lens_database_identity_json(p.database)},
+                {"query", Json{{"camera_make", q.camera_make},
+                               {"camera_model", q.camera_model},
+                               {"camera_normalized_make", q.camera_normalized_make},
+                               {"camera_normalized_model", q.camera_normalized_model},
+                               {"lens_make", q.lens_make},
+                               {"lens_model", q.lens_model},
+                               {"lens_min_focal_mm", optional_number(q.lens_min_focal_mm)},
+                               {"lens_max_focal_mm", optional_number(q.lens_max_focal_mm)},
+                               {"focal_length_mm", optional_number(q.focal_length_mm)},
+                               {"f_number", optional_number(q.f_number)},
+                               {"focal_length_35mm_mm", optional_number(q.focal_length_35mm_mm)},
+                               {"focus_distance_m", optional_number(q.focus_distance_m)}}},
+                {"match", Json{{"version", p.match.version},
+                               {"kind", std::string(engine::to_string(p.match.kind))},
+                               {"camera", lens_camera_json(p.match.camera)},
+                               {"lens", profile_id_json(p.match.lens)},
+                               {"candidates", std::move(candidates)},
+                               {"reasons", p.match.reasons}}},
+                {"profile", profile_id_json(p.profile)},
+                {"camera", lens_camera_json(p.camera)},
+                {"lens_type", p.lens_type},
+                {"crop_factor", number(p.crop_factor)},
+                {"crop_factor_basis", p.crop_factor_basis},
+                {"carried", Json{{"distortion", p.carried.distortion},
+                                 {"lateral_chromatic_aberration", p.carried.lateral_chromatic_aberration},
+                                 {"vignetting", p.carried.vignetting},
+                                 {"sources", p.carried.sources}}},
+                {"decisions", std::move(decisions)},
+                {"geometry", lens_geometry_json(p.geometry)},
+                {"vignetting", lens_vignetting_json(p.vignetting)},
+                {"revision", std::format("{:016x}", p.revision())},
+                {"render_size", size_json(record.render_size)},
+                {"resampled", record.resampled},
+                {"outside_samples", record.outside_samples},
+                {"seconds", number(record.seconds)}};
+}
+
+Json lens_database_json(const engine::LensDatabase* database, const std::optional<Error>& problem,
+                        bool disabled) {
+    if (database != nullptr) {
+        const engine::LensDatabaseInfo& info = database->info();
+        return Json{{"status", "active"},      {"identity", lens_database_identity_json(info.identity)},
+                    {"library", info.library}, {"data_format", info.data_format},
+                    {"files", info.files},     {"mounts", info.mounts},
+                    {"cameras", info.cameras}, {"lenses", info.lenses},
+                    {"problem", nullptr}};
+    }
+    return Json{{"status", disabled ? "disabled" : "unavailable"},
+                {"identity", nullptr},
+                {"library", nullptr},
+                {"data_format", nullptr},
+                {"files", nullptr},
+                {"mounts", nullptr},
+                {"cameras", nullptr},
+                {"lenses", nullptr},
+                {"problem", problem ? error_json(*problem) : Json(nullptr)}};
+}
+
 Json develop_report_json(const engine::DevelopReport& r) {
     Json settings = nullptr;
     if (auto document = app::write_recipe(r.settings)) {
@@ -351,6 +528,7 @@ Json develop_report_json(const engine::DevelopReport& r) {
                 {"gain", number(r.gain)},
                 {"scene_white", number(r.scene_white)},
                 {"white", number(r.white)},
+                {"lens_correction", lens_correction_json(r.lens_correction)},
                 {"chroma_denoise", chroma_denoise_json(r.chroma_denoise)},
                 {"local_tone", std::move(local_tone)},
                 {"local_adjustments", local_adjustments_json(r.local_adjustments)},
@@ -395,6 +573,8 @@ Json generator_json() {
                 {"render_settings_schema", engine::kRenderSettingsVersion.to_string()},
                 {"pipeline_version", engine::kRenderPipelineVersion},
                 {"develop_pipeline_version", engine::kDevelopPipelineVersion},
+                {"lens_profile_match_version", engine::kLensProfileMatchVersion},
+                {"lensfun_data_format", engine::kLensfunDataFormatVersion},
                 {"recipe_schema", std::string(app::kRecipeSchema)},
                 {"recipe_schema_version", app::kRecipeSchemaVersion}};
 }

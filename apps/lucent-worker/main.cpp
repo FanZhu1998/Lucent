@@ -1,6 +1,9 @@
 // lucent-worker.exe: Lucent's isolated processing worker (W7; blueprint sections 4 and 7). Started
 // only by lucent_workers' WorkerHost with the command line of worker_launch.hpp; it speaks the
 // protocol of protocol.hpp over two inherited pipes and runs DevelopJobRunner jobs one at a time.
+// Its first export job verifies and loads the bundled lens database next to it (W13, ADR 0023), the
+// asset Lucent.exe uses, so exports apply each recipe's lens corrections as the previews do; when none
+// can be activated the worker runs without it (nothing is corrected), as Lucent.exe does.
 //
 // It is a GUI-subsystem program without a window, so starting it never shows a console. Failures
 // never open a dialog: Windows error boxes are disabled, and an unhandled exception, an abort, an
@@ -15,9 +18,13 @@
 #include <string>
 #include <vector>
 
+// clang-format off: shellapi.h needs the declarations of windows.h.
 #include <windows.h>
 #include <shellapi.h>
+// clang-format on
 
+#include <lucent/assets/asset_store.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/raw/decoder_registry.hpp>
 #include <lucent/workers/channel.hpp>
 #include <lucent/workers/worker_launch.hpp>
@@ -88,8 +95,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (!registry) {
         return static_cast<int>(WorkerExitCode::Internal);
     }
+    lucent::worker_app::DevelopJobOptions job_options;
+    job_options.lens_database = [] {
+        return lucent::assets::load_lens_database(lucent::assets::default_asset_locations(nullptr)).database;
+    };
     lucent::worker_app::DevelopJobRunner runner(
-        std::make_shared<const lucent::raw::DecoderRegistry>(std::move(*registry)));
+        std::make_shared<const lucent::raw::DecoderRegistry>(std::move(*registry)), std::move(job_options));
 
     lucent::workers::WorkerServerOptions options;
     options.hooks = launch->hooks;
