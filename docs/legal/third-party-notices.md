@@ -10,9 +10,11 @@
 
 - **Lucent's own code:** MIT (`LICENSE` at the repository root).
 - **Policy:** [ADR 0003: linking model and third-party licensing](../adr/0003-linking-and-licensing.md).
-  In short, every third-party library is a DLL; LGPL libraries (LibRaw, Qt) are shipped
-  unmodified and replaceable; LibRaw is used under LGPL-2.1; GPL applications are visual
-  references only.
+  In short, every third-party library is a DLL; LGPL libraries (LibRaw, Qt, and since W13 Lensfun
+  with GLib, libintl and libiconv) are shipped unmodified and replaceable; LibRaw is used under
+  LGPL-2.1; GPL applications are visual references only. Third-party data (the Lensfun lens
+  database, CC BY-SA 3.0) ships unmodified as a verified asset with its licence text
+  ([ADR 0023](../adr/0023-lens-profile-corrections.md)).
 - **Dependency pinning:** vcpkg registry baseline `e143402b5545bab137cc465225a82da63cb2148f`,
   triplet `x64-windows-lucent` (shared, dynamic CRT, release-only). See
   [ADR 0002](../adr/0002-build-and-dependency-management.md).
@@ -92,6 +94,29 @@ Lucent uses LibRaw under **LGPL-2.1** (ADR 0003, decision 2). The installed LibR
 
 The port's copyright file lists no GPL demosaic packs. Enabling the `openmp` feature does not
 change the licence, but it does change the build and would be recorded here.
+
+## Lens-profile corrections (W13, [ADR 0023](../adr/0023-lens-profile-corrections.md))
+
+Added with the user's approval of 2026-10-09: the Lensfun library (`vcpkg.json` dependency
+`lensfun`) and the Lensfun lens database (the bundled asset `assets/lens-database`). The port closure
+is the install plan of the W13 `dev-core` configure at the pinned baseline; the licences below are
+the port manifests' declarations and the upstream terms named by each port's copyright step (read in
+the pinned vcpkg checkout and the upstream sources on 2026-10-10). The shipped DLL set and the
+installed copyright files are re-derived by the packaging audit (`tools\package.ps1`) for every
+package; `installer\license-policy.json` records the reviewed versions and conclusions.
+
+| Component (port) | Version | Licence | Usage | Main obligations when distributed | Licence text source |
+|---|---|---|---|---|---|
+| Lensfun (`lensfun`) | 0.3.4, port 2 | **LGPL-3.0-only**: the README licenses the libraries under "the GNU Lesser General Public License, version 3" (the public header `lensfun.h` additionally says LGPL-2.0-or-later; the other library sources carry no notice). Its applications are GPL-3.0 and are not built (`BUILD_LENSTOOL=OFF`); the port manifest declares no licence | Shipped DLL `lensfun.dll`, imported by `Lucent.exe` and `lucent-worker.exe` through `lucent_engine` (a private dependency: no Lensfun type in Lucent's headers) | As for the other LGPL libraries (ADR 0003): unmodified, replaceable DLL; licence texts; corresponding source (`lensfun/lensfun` tag `v0.3.4`, pinned by SHA-512 in the port, with the port's `fix_build.patch`); end-user terms that permit modification and reverse engineering for debugging. The database is not part of the port (row below) | `share/lensfun/copyright` (the README's licence section, GPL-3.0 and LGPL-3.0 texts) |
+| GLib (`glib`) | 2.90.0 | LGPL-2.1-or-later (the port declares `LGPL-2.1-or-later AND (LGPL-2.1-only OR MPL-1.1)` for its whole tree) | Shipped DLL `glib-2.0-0.dll`, imported by `lensfun.dll` (Lensfun's data structures, XML parsing). GObject, GIO, GModule and GThread are not imported and do not ship (the packaging audit of the W13 stage, 2026-10-10) | As for LGPL libraries | `share/glib/copyright` (`LICENSES/LGPL-2.1-or-later.txt`, `LGPL-2.1-only.txt`, `MPL-1.1.txt`) |
+| GNU libintl (`gettext-libintl`) | 0.22.5, port 4 | LGPL-2.1-or-later | Shipped DLL `intl-8.dll`, imported by GLib. Built from Lucent's overlay of the port (`cmake/ports/gettext-libintl`: a configure-time locale probe preset, the library unchanged), which `LGPL-NOTICE.txt` and the SBOM name as its recipe | As for LGPL libraries | `share/gettext-libintl/copyright` (`gettext-runtime/intl/COPYING.LIB`) |
+| GNU libiconv (`libiconv`) | 1.19 | LGPL-2.1-or-later (libiconv and libcharset); the `iconv` program and the documentation are GPL-3.0 and are not shipped. The port manifest declares no licence | Shipped DLL `iconv-2.dll`, imported by GNU libintl and GLib; `charset-1.dll` is not imported and does not ship (the packaging audit, 2026-10-10) | As for LGPL libraries | `share/libiconv/copyright` (read 2026-10-10: the port's note "The libiconv and libcharset libraries and their header files are under LGPL ... The iconv program and the documentation are under GPL", then `COPYING.LIB` and `COPYING`) |
+| PCRE2 (`pcre2`) | 10.47, port 1 | As in the Qt section | The 8-bit library, imported by GLib, ships in addition to Qt's 16-bit one | As in the Qt section | As in the Qt section |
+| libffi (`libffi`) | 3.8.0 | MIT | Dependency of GLib's GObject; does not ship (`glib-2.0-0.dll` does not import it, confirmed by the packaging audit of 2026-10-10; `installer/license-policy.json` reviews it in case `ffi-8.dll` ever ships) | Reproduce the MIT notice if it ships | `share/libffi/copyright` (read 2026-10-10: the MIT permission notice, "Copyright (c) 1996-2026 Anthony Green, Red Hat, Inc and others") |
+| dirent (`dirent`) | 1.26 | MIT | Build-only header for GLib (`neverShipped` in the licence policy) | None while not shipped | `share/dirent/copyright` |
+| GNU gettext tools (`gettext[core,tools]`, host) | 0.22.5, port 4 | GPL-3.0 (programs) | Build-only: GLib's build runs them. Listed in `neverShipped`: the packaging audit rejects any of its files | None while not shipped | `share/gettext/copyright` |
+| `vcpkg-make` | 2026-07-09 | MIT (vcpkg helper scripts) | Build-only (autotools ports) | None | `share/vcpkg-make/copyright` |
+| **Lensfun lens database** (asset `lens-database` 1.0.0, not a vcpkg port) | Data format 1, published 2026-10-08 (`https://lensfun.github.io/db/version_1.tar.bz2`, SHA-256 `97c9f8059accae0128a413bc610a04a4548e8da2764a6d3d60d82bf917639457`), generated from lensfun commit `43f9e001ab66c4fcdd4f400463f13b72f94b2288` | **CC BY-SA 3.0** Unported (copyright the Lensfun project and its contributors) | Bundled data: `assets\lens-database` (56 XML files, unmodified, with `COPYING.CC_BY-SA_3.0` and `provenance.json`), verified against the build's pin and parsed by Lensfun in the engine | Attribution (credit line in `THIRD-PARTY-NOTICES.txt`, "Data"); the licence text (`licenses\lens-database\COPYING.CC_BY-SA_3.0`, also inside the asset); keep the files unmodified or license any adaptation of the database under BY-SA. Lucent ships the files unchanged beside its own code: a collection, not an adaptation, so the share-alike terms bind the database alone | `assets/lens-database/COPYING.CC_BY-SA_3.0` (`data/COPYING.CC_BY-SA_3.0` of the same commit) |
 
 ## Test dependencies (vcpkg `tests` feature)
 

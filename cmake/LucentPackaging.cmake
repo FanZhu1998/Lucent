@@ -15,8 +15,9 @@
 #   assets\<id>\...            the bundled data assets (W10, ADR 0018; LUCENT_BUNDLED_ASSETS below):
 #                              each asset's manifest.json and exactly the files it lists, copied
 #                              unchanged from the source tree's assets\<id> (the camera support
-#                              database first). Lucent.exe verifies them against the manifest hash
-#                              compiled into it; tools/package.ps1 audits the same hashes.
+#                              database, and the Lensfun lens database with its CC BY-SA 3.0 licence
+#                              text, W13 / ADR 0023). Lucent.exe verifies them against the manifest
+#                              hash compiled into it; tools/package.ps1 audits the same hashes.
 #
 # Deployment runs at install time:
 #   1. windeployqt deploys the Qt libraries, plugins and the QML imports found by scanning
@@ -291,8 +292,12 @@ endif()
 # and the files it lists. src/assets/CMakeLists.txt pins the SHA-256 of each manifest into the build
 # and copies the asset next to the build's executables; lucent_install_application() installs it into
 # <prefix>/assets/<id> and records it in lucent-package.json for the packaging audit.
+#   camera-support   the camera support database (W10, ADR 0018), Lucent's own data (MIT)
+#   lens-database    the Lensfun lens database, data format 1, unmodified (W13, ADR 0023); CC BY-SA 3.0:
+#                    its licence text travels inside the asset and the licence bundle names it
+#                    (installer/license-policy.json "assets")
 set(LUCENT_ASSETS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/assets")
-set(LUCENT_BUNDLED_ASSETS camera-support)
+set(LUCENT_BUNDLED_ASSETS camera-support lens-database)
 
 # lucent_asset_files(<id> <files_var> <sha256_var>)
 #

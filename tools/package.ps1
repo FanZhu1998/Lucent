@@ -8,8 +8,10 @@
        then deleted, so they can never be paired with a different layout.
     2. Lays out the installation folder with `cmake --install`: Lucent.exe, lucent-worker.exe (the
        isolated export worker it starts, W7 / ADR 0012), Qt deployed by windeployqt,
-       every other runtime DLL, an installed-layout qt.conf and the bundled data assets
-       (assets\<id>: the camera support database, W10 / ADR 0018) (cmake/LucentPackaging.cmake).
+       every other runtime DLL (Lensfun and the GLib libraries it uses among them, W13 / ADR 0023),
+       an installed-layout qt.conf and the bundled data assets (assets\<id>: the camera support
+       database, W10 / ADR 0018; the Lensfun lens database, W13 / ADR 0023)
+       (cmake/LucentPackaging.cmake).
     3. Audits that folder with dumpbin: every import of every DLL and executable must resolve to the
        folder, to Windows or to the Visual C++ runtime installed by Microsoft's redistributable, every
        DLL in the folder must be imported, the required Qt plugins and every QML module Lucent uses
@@ -26,7 +28,9 @@
        and verifies each signature: the configured certificate's thumbprint, an offline
        WinVerifyTrust result, the timestamp.
     5. Writes licenses\: Lucent's licence, the copyright file of every shipped vcpkg port, licence
-       texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, LGPL-NOTICE.txt, THIRD-PARTY-NOTICES.txt
+       texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, the licence text of every third-party data
+       asset (the lens database's CC BY-SA 3.0, installer\license-policy.json "assets"), LGPL-NOTICE.txt,
+       THIRD-PARTY-NOTICES.txt
        (including the third-party code inside Qt from Qt's own SBOM and the libraries linked
        statically into Lucent's executables), then Lucent-files.txt (the installed-file list that the next
        version's Setup uses to upgrade) and the SBOM Lucent.spdx.json (SPDX 2.3, checked
@@ -365,18 +369,20 @@ $vc = [pscustomobject]@{
 
 Write-Step 'Writing licences, notices, the installed-file list and the SBOM'
 $downloads = if ($env:VCPKG_DOWNLOADS) { $env:VCPKG_DOWNLOADS } else { Join-Path $env:VCPKG_ROOT 'downloads' }
+$assetLicences = @(Get-AssetLicences -StageDir $stage -Info $info -Policy $policy)
 $components = New-LicenseBundle -StageDir $stage -Info $info -Report $report -Policy $policy -RepoRoot $repoRoot `
     -DownloadsDir $downloads -NoticesDir (Join-Path $installerDir 'notices') -StaticLibraries $staticLibraries `
-    -VcpkgRoot $env:VCPKG_ROOT -Baseline $vcpkgBaseline
+    -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT -Baseline $vcpkgBaseline -GitCommit $gitCommit
 $sbomRelative = 'licenses\Lucent.spdx.json'
 $sbomPath = Join-Path $stage $sbomRelative
 $listed = Write-InstalledFileList -StageDir $stage -Version $info.version -AlsoList @($sbomRelative)
 $sbom = New-PackageSbom -Path $sbomPath -Info $info -Components $components -Report $report -StageDir $stage `
-    -GitCommit $gitCommit -VcRedist $vc -Policy $policy -VcpkgRoot $env:VCPKG_ROOT
+    -GitCommit $gitCommit -VcRedist $vc -Policy $policy -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT
 Test-InstalledFileList -StageDir $stage
 $attributions = @($components | Where-Object { $_.QtSbom } | ForEach-Object { $_.QtSbom.Attributions }).Count
 Write-Host ("    {0} components ({1})" -f $components.Count, (($components | ForEach-Object { "$($_.Port) $($_.Version)" }) -join ', '))
 Write-Host ("    {0} third-party components inside the shipped Qt files (from Qt's SBOMs)" -f $attributions)
+Write-Host ("    Data assets: {0}" -f ((@($assetLicences) | ForEach-Object { "$($_.Id) $($_.Version) ($($_.Concluded))" }) -join ', '))
 Write-Host ("    Installed-file list: {0} files" -f $listed)
 Write-Host ("    SBOM: {0} packages, {1} files, {2} relationships; structural check passed" -f $sbom.Packages, $sbom.Files, $sbom.Relationships)
 if ($sbom.DroppedRecipeFiles -gt 0) { Write-Warning "$($sbom.DroppedRecipeFiles) vcpkg recipe file(s) left out of the SBOM: not identical in the vcpkg ports tree." }

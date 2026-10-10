@@ -13,11 +13,17 @@
     - Invoke-SmokeRun             starts the staged Lucent.exe with a Windows-only PATH and checks it.
     - Get-StaticVcpkgLibraries    vcpkg libraries linked statically into Lucent.exe and its helper
                                   executables (lucent-worker.exe, W7) (build.ninja, lib).
+    - Get-AssetLicences           the licence of every bundled data asset: Lucent's own (MIT), or the
+                                  third-party terms installer\license-policy.json names for it, with
+                                  the licence text the verified asset carries and its provenance
+                                  record (the Lensfun lens database, W13, ADR 0023).
     - New-LicenseBundle           writes licenses\ (Lucent's licence, each shipped port's copyright
                                   file, licence texts missing from vcpkg, the third-party code inside
-                                  Qt from Qt's own SBOM, LGPL notice, notices file).
+                                  Qt from Qt's own SBOM, the licence texts of third-party data assets,
+                                  LGPL notice, notices file).
     - New-PackageSbom             aggregates vcpkg's per-port SPDX documents and Qt's SBOMs into one
-                                  SPDX 2.3 SBOM, and checks it structurally.
+                                  SPDX 2.3 SBOM, with a package for each third-party data asset, and
+                                  checks it structurally.
     - Write-InstalledFileList     writes Lucent-files.txt, the list the next Setup's upgrade uses.
     - Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit
                                   scan every shipped file (and the installer, and the package
@@ -1254,14 +1260,46 @@ function Set-TemplateTitle {
     return ($title + "`n" + ('=' * $title.Length) + "`n" + $rest).Replace('@VERSION@', $Version)
 }
 
+function Get-OverlayPortFolder {
+    <#
+    .SYNOPSIS
+        The repository's vcpkg overlay port of that name (vcpkg-configuration.json "overlay-ports"),
+        or $null. vcpkg builds such a port from the repository's folder, not from its registry, so its
+        recipe is identified by that folder (W13: gettext-libintl, which Lucent ships as intl-8.dll).
+    .OUTPUTS
+        Path (full) and Relative (from the repository root, with forward slashes).
+    #>
+    param([string]$RepoRoot, [Parameter(Mandatory)][string]$Port)
+    if (-not $RepoRoot) { return $null }
+    $configurationPath = Join-Path $RepoRoot 'vcpkg-configuration.json'
+    if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf)) { return $null }
+    $configuration = Get-Content -LiteralPath $configurationPath -Raw | ConvertFrom-Json
+    if (-not ($configuration.PSObject.Properties.Name -contains 'overlay-ports')) { return $null }
+    $root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\') + '\'
+    foreach ($overlay in @($configuration.'overlay-ports')) {
+        $base = if ([System.IO.Path]::IsPathRooted($overlay)) { $overlay } else { Join-Path $RepoRoot $overlay }
+        $folder = [System.IO.Path]::GetFullPath((Join-Path $base $Port))
+        if (Test-Path -LiteralPath (Join-Path $folder 'portfile.cmake') -PathType Leaf) {
+            $relative = if ($folder.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { $folder.Substring($root.Length).Replace('\', '/') } else { $folder }
+            return [pscustomobject]@{ Path = $folder; Relative = $relative }
+        }
+    }
+    return $null
+}
+
 function Get-RecipeReference {
     <#
     .SYNOPSIS
         Identifies a port's vcpkg recipe. vcpkg's SPDX downloadLocation ends in the git tree hash of
         the port folder, not a commit; when the registry baseline commit holds exactly that tree, the
-        port's folder at that commit is a browsable, checkable link.
+        port's folder at that commit is a browsable, checkable link. A port the repository overlays
+        (Get-OverlayPortFolder) is identified by its folder in the repository instead (Overlay).
     #>
-    param([Parameter(Mandatory)]$Component, [string]$VcpkgRoot, [string]$Baseline)
+    param([Parameter(Mandatory)]$Component, [string]$VcpkgRoot, [string]$Baseline, [string]$RepoRoot)
+    $overlay = Get-OverlayPortFolder -RepoRoot $RepoRoot -Port $Component.Port
+    if ($overlay) {
+        return [pscustomobject]@{ Tree = $null; AtBaseline = $false; Url = $null; Overlay = $overlay.Relative; OverlayPath = $overlay.Path }
+    }
     $tree = if ($Component.Recipe -match '@([0-9a-f]{40})$') { $Matches[1] } else { $null }
     $atBaseline = $false
     if ($tree -and $VcpkgRoot -and $Baseline -and (Test-Path -LiteralPath (Join-Path $VcpkgRoot '.git'))) {
@@ -1270,13 +1308,73 @@ function Get-RecipeReference {
     }
     return [pscustomobject]@{
         Tree = $tree; AtBaseline = $atBaseline
-        Url = $(if ($atBaseline) { "https://github.com/microsoft/vcpkg/tree/$Baseline/ports/$($Component.Port)" } else { $null }) }
+        Url = $(if ($atBaseline) { "https://github.com/microsoft/vcpkg/tree/$Baseline/ports/$($Component.Port)" } else { $null })
+        Overlay = $null; OverlayPath = $null }
 }
 
 function Get-CopyrightSectionNames {
     # Names of the "<licence id>.txt:" sections of a Qt copyright file (vcpkg concatenates LICENSES\*.txt).
     param([Parameter(Mandatory)][string]$Path)
     return @([System.IO.File]::ReadAllLines($Path) | ForEach-Object { if ($_ -match '^([A-Za-z0-9.+-]+)\.txt:$') { $Matches[1] } })
+}
+
+function Get-AssetLicences {
+    <#
+    .SYNOPSIS
+        The licence of every bundled data asset of the layout (W13, ADR 0023).
+    .DESCRIPTION
+        An asset that installer\license-policy.json lists under "assets" is third-party data under the
+        terms it names: its licence text (a file the asset's verified manifest lists, licenseFile) is
+        required, and its files get that licence in the SBOM except those named lucentFiles (Lucent's
+        own description of the data, MIT) and the manifest. A provenance.json the asset holds (its
+        upstream source, archive SHA-256 and commit) is read into the record. Every other asset is
+        Lucent's own (MIT). Returns one record per asset.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$StageDir,
+        [Parameter(Mandatory)]$Info,
+        [Parameter(Mandatory)]$Policy)
+    $records = New-Object System.Collections.Generic.List[object]
+    $policyAssets = $null
+    if ($Policy.PSObject.Properties.Name -contains 'assets') { $policyAssets = $Policy.assets }
+    foreach ($asset in @($Info.assets)) {
+        if (-not $asset) { continue }
+        $folder = Join-Path $StageDir "assets\$($asset.id)"
+        $manifestPath = Join-Path $folder 'manifest.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "assets\$($asset.id)\manifest.json is missing." }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $entry = $null
+        if ($policyAssets -and ($policyAssets.PSObject.Properties.Name -contains $asset.id)) { $entry = $policyAssets.($asset.id) }
+        $record = [pscustomobject]@{
+            Id = $asset.id; Version = $manifest.version; Folder = "assets\$($asset.id)"
+            ThirdParty = [bool]$entry; Name = $asset.id; Concluded = 'MIT'; LicenseFile = $null; LucentFiles = @('manifest.json')
+            Homepage = $null; Copyright = $null; Notices = @(); Comment = $null; Provenance = $null }
+        if ($entry) {
+            foreach ($field in 'name', 'concluded', 'licenseFile', 'copyright') {
+                if (-not ($entry.PSObject.Properties.Name -contains $field) -or -not $entry.$field) {
+                    throw "installer\license-policy.json: assets.$($asset.id) has no $field."
+                }
+            }
+            $listed = @($manifest.files | ForEach-Object { $_.path })
+            if ($listed -notcontains $entry.licenseFile) {
+                throw "installer\license-policy.json names $($entry.licenseFile) as the licence text of asset $($asset.id), but its manifest does not list that file."
+            }
+            $record.Name = $entry.name
+            $record.Concluded = $entry.concluded
+            $record.LicenseFile = $entry.licenseFile
+            if ($entry.PSObject.Properties.Name -contains 'lucentFiles') { $record.LucentFiles = @('manifest.json') + @($entry.lucentFiles) }
+            if ($entry.PSObject.Properties.Name -contains 'homepage') { $record.Homepage = $entry.homepage }
+            $record.Copyright = $entry.copyright
+            if ($entry.PSObject.Properties.Name -contains 'notices') { $record.Notices = @($entry.notices) }
+            if ($entry.PSObject.Properties.Name -contains 'comment') { $record.Comment = $entry.comment }
+            $provenancePath = Join-Path $folder 'provenance.json'
+            if (Test-Path -LiteralPath $provenancePath -PathType Leaf) {
+                $record.Provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+            }
+        }
+        $records.Add($record)
+    }
+    return $records.ToArray()
 }
 
 function New-LicenseBundle {
@@ -1287,8 +1385,9 @@ function New-LicenseBundle {
         For each shipped port and each header-only direct dependency: its copyright file, licence
         texts named by installer\license-policy.json, credit lines, the libraries the executable links
         statically (each must be reviewed in the policy), and for Qt ports the third-party code inside
-        the shipped Qt files as recorded by Qt's own SBOM. Then LGPL-NOTICE.txt and
-        THIRD-PARTY-NOTICES.txt.
+        the shipped Qt files as recorded by Qt's own SBOM. For each third-party data asset
+        (Get-AssetLicences): licenses\<asset id>\ with its licence text, its credit lines and its
+        provenance. Then LGPL-NOTICE.txt and THIRD-PARTY-NOTICES.txt.
     #>
     param(
         [Parameter(Mandatory)][string]$StageDir,
@@ -1299,8 +1398,10 @@ function New-LicenseBundle {
         [Parameter(Mandatory)][string]$DownloadsDir,
         [Parameter(Mandatory)][string]$NoticesDir,
         [AllowEmptyCollection()][object[]]$StaticLibraries = @(),
+        [AllowEmptyCollection()][object[]]$AssetLicences = @(),
         [string]$VcpkgRoot,
-        [string]$Baseline)
+        [string]$Baseline,
+        [string]$GitCommit)
 
     $licenses = Join-Path $StageDir 'licenses'
     if (Test-Path -LiteralPath $licenses) { Remove-Item -LiteralPath $licenses -Recurse -Force }
@@ -1432,7 +1533,7 @@ function New-LicenseBundle {
             StaticLibraries = $statics.ToArray(); QtSbom = $qtSbom; RecipeRef = $null
             Sources = @($sources | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Location = $_.Location; Sha512 = $_.Sha512 } })
             Spdx = $spdx })
-        $components[$components.Count - 1].RecipeRef = Get-RecipeReference -Component $components[$components.Count - 1] -VcpkgRoot $VcpkgRoot -Baseline $Baseline
+        $components[$components.Count - 1].RecipeRef = Get-RecipeReference -Component $components[$components.Count - 1] -VcpkgRoot $VcpkgRoot -Baseline $Baseline -RepoRoot $RepoRoot
     }
 
     # Every licence named for code inside the Qt files (or linked statically) must have its text in
@@ -1471,11 +1572,19 @@ function New-LicenseBundle {
             $componentLines.Add("  Source: $($source.Location)")
             $componentLines.Add("          SHA-512 $($source.Sha512)")
         }
-        $recipe = "  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion)"
-        if ($component.RecipeRef.Tree) { $recipe += ", port tree $($component.RecipeRef.Tree)" }
-        $componentLines.Add($recipe)
-        if ($component.RecipeRef.Url) { $componentLines.Add("                $($component.RecipeRef.Url)") }
-        else { $componentLines.Add("                (git tree object in https://github.com/microsoft/vcpkg; not the port folder at the registry baseline)") }
+        if ($component.RecipeRef.Overlay) {
+            # A port Lucent overlays: vcpkg's recipe with Lucent's build changes, in Lucent's source.
+            $componentLines.Add("  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion), the overlay port")
+            $componentLines.Add("                $($component.RecipeRef.Overlay) of Lucent's source" + $(if ($GitCommit) { " at commit $GitCommit" } else { '' }))
+            if ($Info.homepage -and $GitCommit) { $componentLines.Add("                $($Info.homepage)/tree/$GitCommit/$($component.RecipeRef.Overlay)") }
+        }
+        else {
+            $recipe = "  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion)"
+            if ($component.RecipeRef.Tree) { $recipe += ", port tree $($component.RecipeRef.Tree)" }
+            $componentLines.Add($recipe)
+            if ($component.RecipeRef.Url) { $componentLines.Add("                $($component.RecipeRef.Url)") }
+            else { $componentLines.Add("                (git tree object in https://github.com/microsoft/vcpkg; not the port folder at the registry baseline)") }
+        }
         $componentLines.Add('')
     }
     $staticNote = ''
@@ -1527,9 +1636,34 @@ function New-LicenseBundle {
         }
         $listLines.Add('')
     }
+    # Third-party data assets (W13, ADR 0023): the licence text the verified asset carries, credit
+    # lines and where the data came from.
+    $dataLines = New-Object System.Collections.Generic.List[string]
+    foreach ($asset in @($AssetLicences | Where-Object { $_.ThirdParty })) {
+        $assetDir = Join-Path $licenses $asset.Id
+        New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
+        $text = [System.IO.File]::ReadAllText((Join-Path $StageDir "$($asset.Folder)\$($asset.LicenseFile)"))
+        Write-TextFile -Path (Join-Path $assetDir $asset.LicenseFile) -Text $text
+        foreach ($notice in $asset.Notices) { $noticeLines.Add("- $notice") }
+        $dataLines.Add("$($asset.Name), asset $($asset.Id) $($asset.Version), in $($asset.Folder)")
+        $dataLines.Add("  Licence: $($asset.Concluded)")
+        $dataLines.Add("  $($asset.Copyright)")
+        if ($asset.Homepage) { $dataLines.Add("  Home page: $($asset.Homepage)") }
+        if ($asset.Provenance) {
+            $source = $asset.Provenance.source
+            $dataLines.Add("  Source: $($source.archive_url) (SHA-256 $($source.archive_sha256)), retrieved $($source.retrieved),")
+            $dataLines.Add("          generated from $($source.repository) commit $($source.commit) ($($source.commit_date))")
+            $dataLines.Add("  Modifications: $($asset.Provenance.modifications)")
+        }
+        if ($asset.Comment) { $dataLines.Add("  Note: $($asset.Comment)") }
+        $dataLines.Add("  Licence text: $($asset.Id)\$($asset.LicenseFile) (also $($asset.Folder)\$($asset.LicenseFile))")
+        $dataLines.Add('')
+    }
+    if ($dataLines.Count -eq 0) { $dataLines.Add('(none)') }
+
     if ($noticeLines.Count -eq 0) { $noticeLines.Add('(none)') }
     $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'THIRD-PARTY-NOTICES.txt.in'))
-    $noticesText = (Set-TemplateTitle -Template $template -Version $Info.version).Replace('@NOTICES@', ($noticeLines -join "`n")).Replace('@COMPONENTS@', ($listLines -join "`n").TrimEnd())
+    $noticesText = (Set-TemplateTitle -Template $template -Version $Info.version).Replace('@NOTICES@', ($noticeLines -join "`n")).Replace('@COMPONENTS@', ($listLines -join "`n").TrimEnd()).Replace('@DATA@', ($dataLines -join "`n").TrimEnd())
     Write-TextFile -Path (Join-Path $licenses 'THIRD-PARTY-NOTICES.txt') -Text $noticesText
 
     return $components
@@ -1615,7 +1749,8 @@ function New-PackageSbom {
         One SPDX 2.3 document for the installed layout: Lucent and its own files (with the package
         verification code), every shipped port (vcpkg's port, binary and source packages, the
         recipe files, and the binary files that ship), the third-party code Qt records inside the
-        shipped Qt files, libraries linked statically into the executable, and the Visual C++
+        shipped Qt files, libraries linked statically into the executable, each third-party data
+        asset (its files carry the asset's licence; Get-AssetLicences), and the Visual C++
         redistributable bundled in Setup.
     #>
     param(
@@ -1627,6 +1762,7 @@ function New-PackageSbom {
         [Parameter(Mandatory)][string]$GitCommit,
         [Parameter(Mandatory)]$VcRedist,
         [Parameter(Mandatory)]$Policy,
+        [AllowEmptyCollection()][object[]]$AssetLicences = @(),
         [string]$VcpkgRoot)
 
     $packages = New-Object System.Collections.Generic.List[object]
@@ -1651,16 +1787,32 @@ function New-PackageSbom {
         Sort-Object Relative)
     $lucentId = 'SPDXRef-Lucent'
     $ownEntries = New-Object System.Collections.Generic.List[object]
+    $assetFileIds = @{}
     $counter = 0
     foreach ($file in $ownFiles) {
         $counter++
         $sha1 = Get-Sha1 $file.Full
+        $licence = if ($file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative -or $file.Relative -like 'assets\*') { 'MIT' } else { 'NOASSERTION' }
+        $copyright = 'NOASSERTION'
+        # A third-party data asset's files carry its licence (W13, ADR 0023), except Lucent's own files in it.
+        foreach ($asset in @($AssetLicences | Where-Object { $_.ThirdParty })) {
+            $prefix = $asset.Folder + '\'
+            if ($file.Relative.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $inside = $file.Relative.Substring($prefix.Length).Replace('\', '/')
+                if (@($asset.LucentFiles) -notcontains $inside) {
+                    $licence = $asset.Concluded
+                    $copyright = $asset.Copyright
+                    if (-not $assetFileIds.ContainsKey($asset.Id)) { $assetFileIds[$asset.Id] = New-Object System.Collections.Generic.List[string] }
+                    $assetFileIds[$asset.Id].Add("SPDXRef-Lucent-file-$counter")
+                }
+            }
+        }
         $ownEntries.Add([ordered]@{
             fileName = './' + $file.Relative.Replace('\', '/'); SPDXID = "SPDXRef-Lucent-file-$counter"
             checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $sha1 },
                           [ordered]@{ algorithm = 'SHA256'; checksumValue = (Get-Sha256 $file.Full) })
-            licenseConcluded = $(if ($file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative -or $file.Relative -like 'assets\*') { 'MIT' } else { 'NOASSERTION' })
-            copyrightText = 'NOASSERTION' })
+            licenseConcluded = $licence
+            copyrightText = $copyright })
     }
     $packages.Add([ordered]@{
         name = 'Lucent'; SPDXID = $lucentId; versionInfo = $Info.version
@@ -1673,7 +1825,7 @@ function New-PackageSbom {
             packageVerificationCodeExcludedFiles = @($sbomFileName) }
         licenseConcluded = 'MIT'; licenseDeclared = 'MIT'
         copyrightText = 'Copyright (c) 2026 Fan Zhu'
-        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list, the bundled data assets such as the camera support database, and the licence bundle); the third-party files are listed under each component's binary package." })
+        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list, the bundled data assets such as the camera support database, and the licence bundle) and the files of third-party data assets (the Lensfun lens database), which carry their own licence; the third-party binary files are listed under each component's binary package." })
     $ids[$lucentId] = $true
     Add-Relationship 'SPDXRef-DOCUMENT' 'DESCRIBES' $lucentId
     foreach ($entry in $ownEntries) {
@@ -1703,8 +1855,16 @@ function New-PackageSbom {
                 $copy.licenseDeclared = $component.LicenseDeclared
                 $copy.licenseConcluded = $component.LicenseConcluded
                 $tree = if ($component.RecipeRef) { $component.RecipeRef.Tree } else { $null }
-                $copy.comment = 'The vcpkg port (recipe). Its downloadLocation names the git tree of the port folder in the vcpkg registry' +
-                    $(if ($component.RecipeRef -and $component.RecipeRef.Url) { ", which is the port at the registry baseline: $($component.RecipeRef.Url)" } elseif ($tree) { " ($tree)" } else { '' }) + '.'
+                if ($component.RecipeRef -and $component.RecipeRef.Overlay) {
+                    # An overlay port (vcpkg-configuration.json "overlay-ports"): the recipe is the
+                    # repository's folder at the commit Lucent was built from.
+                    $copy.downloadLocation = "git+$($Info.homepage).git@$GitCommit#$($component.RecipeRef.Overlay)"
+                    $copy.comment = "The vcpkg port (recipe): the overlay port $($component.RecipeRef.Overlay) of Lucent's source at commit $GitCommit, vcpkg's port with Lucent's build changes; its files carry the SHA-1 of that folder's copy."
+                }
+                else {
+                    $copy.comment = 'The vcpkg port (recipe). Its downloadLocation names the git tree of the port folder in the vcpkg registry' +
+                        $(if ($component.RecipeRef -and $component.RecipeRef.Url) { ", which is the port at the registry baseline: $($component.RecipeRef.Url)" } elseif ($tree) { " ($tree)" } else { '' }) + '.'
+                }
             }
             elseif ($package.SPDXID -eq 'SPDXRef-binary') {
                 $copy.licenseConcluded = $component.LicenseConcluded
@@ -1724,9 +1884,13 @@ function New-PackageSbom {
             $staged = $null
             if ($file.SPDXID -like 'SPDXRef-port-file-*') {
                 # Recipe files carry only SHA-256 in vcpkg's document; SPDX 2.3 requires SHA-1. Take it
-                # from the vcpkg ports tree when that file is byte-identical, else leave the file out.
+                # from the port's folder (the repository's overlay port, else the vcpkg ports tree)
+                # when that file is byte-identical, else leave the file out.
                 $expected = (@($file.checksums) | Where-Object { $_.algorithm -eq 'SHA256' } | Select-Object -First 1).checksumValue
-                $candidate = if ($VcpkgRoot) { Join-Path $VcpkgRoot ("ports\$($component.Port)\" + (ConvertTo-NativePath ($file.fileName -replace '^\./', ''))) } else { $null }
+                $relativeFile = ConvertTo-NativePath ($file.fileName -replace '^\./', '')
+                $candidate = $null
+                if ($component.RecipeRef -and $component.RecipeRef.OverlayPath) { $candidate = Join-Path $component.RecipeRef.OverlayPath $relativeFile }
+                elseif ($VcpkgRoot) { $candidate = Join-Path $VcpkgRoot ("ports\$($component.Port)\" + $relativeFile) }
                 if ($candidate -and $expected -and (Test-Path -LiteralPath $candidate -PathType Leaf) -and (Get-Sha256 $candidate) -eq $expected.ToLowerInvariant()) {
                     $sha1 = Get-Sha1 $candidate
                 }
@@ -1794,6 +1958,34 @@ function New-PackageSbom {
         }
     }
 
+    # Third-party data assets (W13, ADR 0023): a package per asset, with its upstream source; the
+    # layout's files of the asset are Lucent's package's files (above) and carry the asset's licence.
+    foreach ($asset in @($AssetLicences | Where-Object { $_.ThirdParty })) {
+        $assetId = 'SPDXRef-asset-' + (ConvertTo-SpdxIdPart $asset.Id)
+        $entry = [ordered]@{ name = $asset.Name; SPDXID = $assetId; versionInfo = $asset.Version }
+        $entry.downloadLocation = 'NOASSERTION'
+        $comment = "Bundled data asset $($asset.Id) $($asset.Version), installed in $($asset.Folder) and verified against the manifest hash compiled into $($Info.executable)."
+        if ($asset.Provenance) {
+            $source = $asset.Provenance.source
+            $entry.packageFileName = [System.IO.Path]::GetFileName(([uri]$source.archive_url).AbsolutePath)
+            $entry.downloadLocation = $source.archive_url
+            $entry.checksums = @([ordered]@{ algorithm = 'SHA256'; checksumValue = $source.archive_sha256 })
+            $comment += " Upstream: $($source.archive_url) (SHA-256 $($source.archive_sha256), retrieved $($source.retrieved)), generated from $($source.repository) commit $($source.commit) ($($source.commit_date)); modifications: $($asset.Provenance.modifications)."
+        }
+        if ($asset.Homepage) { $entry.homepage = $asset.Homepage }
+        $entry.filesAnalyzed = $false
+        $entry.licenseConcluded = $asset.Concluded
+        $entry.licenseDeclared = $asset.Concluded
+        $entry.copyrightText = $asset.Copyright
+        $entry.comment = $comment
+        $packages.Add($entry)
+        $ids[$assetId] = $true
+        Add-Relationship $lucentId 'CONTAINS' $assetId
+        if ($assetFileIds.ContainsKey($asset.Id)) {
+            foreach ($fileId in $assetFileIds[$asset.Id]) { Add-Relationship $fileId 'GENERATED_FROM' $assetId }
+        }
+    }
+
     # The Visual C++ redistributable inside Setup.
     $vcId = 'SPDXRef-VCRedist'
     $packages.Add([ordered]@{
@@ -1836,7 +2028,7 @@ function New-PackageSbom {
         creationInfo = [ordered]@{
             created = $created
             creators = @('Tool: Lucent tools/package.ps1', 'Organization: Lucent project')
-            comment = "Aggregated from the vcpkg SPDX documents (share/<port>/vcpkg.spdx.json) of the ports whose files ship, triplet $($Info.vcpkgTriplet), and from Qt's own SBOMs (sbom/<qt port>-<version>.spdx) for the third-party code inside the shipped Qt files. Only shipped binary files are listed; recipe files carry the SHA-1 of the identical file in the vcpkg ports tree ($droppedRecipeFiles left out because that file differs or is missing). Licence conclusions follow installer/license-policy.json (ADR 0003, ADR 0009)." }
+            comment = "Aggregated from the vcpkg SPDX documents (share/<port>/vcpkg.spdx.json) of the ports whose files ship, triplet $($Info.vcpkgTriplet), and from Qt's own SBOMs (sbom/<qt port>-<version>.spdx) for the third-party code inside the shipped Qt files. Only shipped binary files are listed; recipe files carry the SHA-1 of the identical file in the vcpkg ports tree, or in the repository's overlay port for a port Lucent overlays ($droppedRecipeFiles left out because that file differs or is missing). Licence conclusions follow installer/license-policy.json (ADR 0003, ADR 0009)." }
         packages = $packages
         files = $files
         relationships = $relationships
@@ -2406,7 +2598,7 @@ function Get-FileInventory {
 
 Export-ModuleMember -Function Read-LucentPackageInfo, Get-PeHeader, Get-PeDependencies, Get-VcpkgFileIndex,
     Get-StagedFileOrigins, Invoke-LayoutAudit, Write-AuditReport, Invoke-SmokeRun, Get-StaticVcpkgLibraries, Get-LucentExecutablesText,
-    New-LicenseBundle, New-PackageSbom, Write-InstalledFileList, Test-InstalledFileList, Find-InnoSetupCompiler, Get-FileInventory,
+    Get-AssetLicences, New-LicenseBundle, New-PackageSbom, Write-InstalledFileList, Test-InstalledFileList, Find-InnoSetupCompiler, Get-FileInventory,
     Write-TextFile, Write-JsonFile, Get-Sha256, Get-Sha1, Get-RelativePathText, Invoke-NativeCommand,
     Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit, Write-BuilderPathReport,
     Get-CodeSigningCertificate, Test-AuthenticodeFile, Get-UpdateKeyId, Get-LucentUpdateChannelRecord,
