@@ -469,23 +469,11 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
         return Unexpected(std::move(document.error()));
     }
     if (document->sha256 != job.settings_sha256 && !job.revision) {
-        // QUA-04: as-shot settings frozen by an earlier build carry that build's geometry version (W9
-        // froze geometry version 1, the whole visible area; ADR 0017). This build still renders every
-        // geometry version it reads, so the as-shot settings of each are tried for the job's identity
-        // and the matching one is rendered exactly as it was frozen.
-        for (std::uint32_t version = engine::kOldestGeometryOperationVersion;
-             version < engine::kGeometryOperationVersion; ++version) {
-            engine::DevelopSettings earlier;
-            earlier.operations.geometry = version;
-            auto candidate = write_recipe(earlier);
-            if (candidate && candidate->sha256 == job.settings_sha256) {
-                document = std::move(candidate);
-                break;
-            }
-        }
-        // W6 to W8 froze the as-shot settings as their recipe version 1 document (ADR 0022), W9 to
-        // W12 as their version 2 document (ADR 0023): those settings, read by this build (version 2:
-        // no lens correction), are rendered exactly as then.
+        // QUA-04: as-shot settings frozen by an earlier build. W6 to W8 froze them as their recipe
+        // version 1 document (ADR 0022); W9 (geometry version 1, the whole visible area) and W10 to
+        // W12 (geometry version 2, ADR 0017) as their version 2 document (ADR 0023): those settings,
+        // read by this build (lens-correction operation version 0: no lens correction), are rendered
+        // exactly as then. (Every build that writes version 3 writes this build's as-shot document.)
         const std::array<std::string_view, 3> earlier_documents = {
             kVersion2AsShotRecipes[0], kVersion2AsShotRecipes[1], kVersion1AsShotRecipe};
         for (const std::string_view earlier : earlier_documents) {
@@ -1185,9 +1173,10 @@ Expected<std::unique_ptr<BatchService>> BatchService::open(Library& library, std
     try {
         auto impl = std::make_unique<Impl>(library, std::move(catalog), recipes, std::move(options));
         impl->session = detail::random_hex(6);
-        impl->renderer_version = std::format("lucent {}; develop {}; worker protocol {}",
-                                             workers::describe(workers::current_build_identity()),
-                                             describe_versions(), workers::kMaxProtocolVersion);
+        impl->renderer_version = std::format(
+            "lucent {}; develop {}; worker protocol {}; lens database {}",
+            workers::describe(workers::current_build_identity()), describe_versions(), workers::kMaxProtocolVersion,
+            impl->options.lens_database.empty() ? std::string("none") : impl->options.lens_database);
         if (impl->renderer_version.size() > catalog::kMaxJobLabelBytes) {
             impl->renderer_version.resize(catalog::kMaxJobLabelBytes);
         }

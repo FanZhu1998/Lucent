@@ -58,10 +58,17 @@ std::uint64_t stage_two_claim(const SourceRenderer& renderer, const engine::Stag
     return estimate->stage_two_bytes + static_cast<std::uint64_t>(size.area()) * 4;
 }
 
-// True when a render of `settings` can fill a session cache: the denoised image is kept when
-// denoising is applied, brush rasters when a brush mask has an effect.
-bool uses_stage_two_cache(const engine::DevelopSettings& settings) {
-    return !settings.chroma_denoise.is_identity();
+// True when a render of `settings` can fill the session's stage-two cache: the denoised image is
+// kept when denoising is applied, the lens-corrected image when the renderer has a lens database
+// and the settings ask for a lens correction (whether the photograph's plan corrects anything is
+// known only when it renders, so the claim is made for any such settings).
+bool uses_stage_two_cache(const engine::DevelopSettings& settings, bool lens_database) {
+    if (!settings.chroma_denoise.is_identity()) {
+        return true;
+    }
+    const std::optional<engine::LensCorrectionSetting> lens = engine::effective_lens_correction(settings);
+    return lens_database && lens &&
+           (lens->distortion || lens->lateral_chromatic_aberration || lens->vignetting);
 }
 
 bool uses_mask_cache(const engine::DevelopSettings& settings) {
@@ -472,7 +479,8 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         std::uint64_t cache_room = 0;
         if (proxy) {
             const bool masks = caches.masks && uses_mask_cache(settings);
-            const bool denoised = caches.stage_two && uses_stage_two_cache(settings);
+            const bool denoised =
+                caches.stage_two && uses_stage_two_cache(settings, renderer->lens_database().has_value());
             if (masks || denoised) {
                 const std::uint64_t capacity = (caches.masks ? options.mask_cache_bytes : 0) +
                                                (caches.stage_two ? options.stage_two_cache_bytes : 0);
@@ -894,7 +902,9 @@ std::optional<DevelopSessionStats> DevelopPreviewService::stats(ItemId item) con
         stats.mask_cache_hits = s->mask_cache->stats().hits;
     }
     if (s->stage_two_cache) {
-        stats.stage_two_cache_hits = s->stage_two_cache->stats().hits;
+        const engine::StageTwoCache::Stats cache = s->stage_two_cache->stats();
+        stats.stage_two_cache_hits = cache.hits;
+        stats.lens_cache_hits = cache.lens_hits;
     }
     stats.retained_bytes = s->proxy_lease.bytes() + s->full_lease.bytes() + s->cache_claim.bytes();
     return stats;

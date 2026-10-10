@@ -3,6 +3,7 @@
 // pause / cancel / resume and destination problems.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <format>
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -22,6 +24,8 @@
 
 #include <lucent/application/batch_service.hpp>
 #include <lucent/application/export_service.hpp>
+#include <lucent/application/recipe.hpp>
+#include <lucent/core/hash.hpp>
 #include <lucent/engine/develop_geometry.hpp>
 #include <lucent/export/metadata.hpp>
 
@@ -481,9 +485,12 @@ TEST_F(BatchServiceTest, APhotoThatBecameUnsupportedAfterCreationIsSkipped) {
     EXPECT_EQ(count_with_extension(out_, L".jpg"), 1u);
 }
 
-// QUA-04: a batch frozen by an earlier build with the as-shot settings of geometry version 1 (W9,
-// identity 3104dbcc...) still runs after the update, rendering exactly that frozen recipe.
-TEST_F(BatchServiceTest, AsShotJobsFrozenWithAnEarlierGeometryVersionStillRun) {
+// QUA-04: batches frozen by earlier builds with the as-shot settings they wrote still run after the
+// update, rendering exactly those frozen recipes: W10 to W12's version-2 document (geometry version 2,
+// identity 879de8b7...), W9's (geometry version 1, 3104dbcc...) and W6 to W8's version-1 document
+// (671dbaa8...). Each is read by this build (lens-correction operation version 0: no lens correction)
+// and rendered in its canonical version-3 form, which the receipt names.
+TEST_F(BatchServiceTest, AsShotJobsFrozenByEarlierBuildsStillRun) {
     const auto files = ts::write_dngs(dir_, L"in", 1);
     const std::vector<ItemId> ids = h().import(files);
     // A Draft batch gives the destination, export and policy documents this build writes.
@@ -496,38 +503,89 @@ TEST_F(BatchServiceTest, AsShotJobsFrozenWithAnEarlierGeometryVersionStillRun) {
     ASSERT_EQ(jobs.size(), 1u);
     ASSERT_TRUE(jobs[0].item.has_value());
 
-    // The same batch as the earlier build froze it: no revision, the geometry-1 as-shot identity.
-    engine::DevelopSettings earlier;
-    earlier.operations.geometry = 1;
-    const auto earlier_document = write_recipe(earlier);
-    ASSERT_TRUE(earlier_document);
-    ASSERT_NE(earlier_document->sha256, write_recipe(engine::DevelopSettings{})->sha256);
-    catalog::NewBatch batch;
-    batch.name = "frozen before the update";
-    batch.selection_description = "1 selected photo";
-    batch.destination_json = record.destination_json;
-    batch.export_settings_json = record.export_settings_json;
-    batch.policy_json = record.policy_json;
-    batch.renderer_version = record.renderer_version;
-    batch.created_at = record.created_at;
-    batch.start = true;
-    catalog::NewJob job;
-    job.item = jobs[0].item.value();
-    job.settings_sha256 = earlier_document->sha256;
-    auto created = h().catalog().transact(
-        [&](catalog::WriteTransaction& tx) { return tx.create_batch(batch, std::span(&job, 1)); });
-    ASSERT_TRUE(created) << created.error().describe();
-    h().reopen();  // the updated build starts and resumes the unfinished batch
-    ASSERT_TRUE(h().log.wait_for_kind(created->id, BatchEventKind::Finished));
+    const std::array<std::string_view, 3> frozen_documents = {kVersion2AsShotRecipes[0], kVersion2AsShotRecipes[1],
+                                                               kVersion1AsShotRecipe};
+    std::vector<core::Digest256> converted;
+    for (const std::string_view earlier : frozen_documents) {
+        auto settings = read_recipe(earlier);
+        ASSERT_TRUE(settings) << settings.error().describe();
+        EXPECT_EQ(engine::lens_correction_operation_version(*settings), engine::kOldestLensCorrectionOperationVersion);
+        auto canonical = write_recipe(*settings);
+        ASSERT_TRUE(canonical);
+        ASSERT_NE(canonical->sha256, write_recipe(engine::DevelopSettings{})->sha256) << "not today's defaults";
+        converted.push_back(canonical->sha256);
+    }
+    std::vector<catalog::BatchId> batches;
+    for (std::size_t i = 0; i < frozen_documents.size(); ++i) {
+        const std::string_view earlier = frozen_documents[i];
+        auto frozen = core::sha256(std::as_bytes(std::span(earlier.data(), earlier.size())));
+        ASSERT_TRUE(frozen);
+        // The same batch as the earlier build froze it: no revision, that build's as-shot identity.
+        catalog::NewBatch batch;
+        batch.name = std::format("frozen before the update {}", i);
+        batch.selection_description = "1 selected photo";
+        batch.destination_json = record.destination_json;
+        batch.export_settings_json = record.export_settings_json;
+        batch.policy_json = record.policy_json;
+        batch.renderer_version = record.renderer_version;
+        batch.created_at = record.created_at;
+        batch.start = true;
+        catalog::NewJob job;
+        job.item = jobs[0].item.value();
+        job.settings_sha256 = *frozen;
+        auto created = h().catalog().transact(
+            [&](catalog::WriteTransaction& tx) { return tx.create_batch(batch, std::span(&job, 1)); });
+        ASSERT_TRUE(created) << created.error().describe();
+        batches.push_back(created->id);
+    }
+    h().reopen();  // the updated build starts and resumes the unfinished batches
+    for (std::size_t i = 0; i < batches.size(); ++i) {
+        SCOPED_TRACE(i);
+        ASSERT_TRUE(h().log.wait_for_kind(batches[i], BatchEventKind::Finished));
+        const catalog::BatchRecord resumed = h().record(batches[i]);
+        EXPECT_EQ(resumed.counts.complete, 1u);
+        EXPECT_EQ(resumed.counts.failed, 0u);
+        const auto receipts = h().receipts(batches[i]);
+        ASSERT_EQ(receipts.size(), 1u);
+        auto details = read_receipt_details(receipts[0].settings_json);
+        ASSERT_TRUE(details) << details.error().describe();
+        EXPECT_EQ(details->recipe_sha256, converted[i]) << "the frozen recipe in this build's canonical form";
+        EXPECT_TRUE(details->lens_corrections.empty()) << "operation version 0 corrects no lens";
+    }
+}
 
-    const catalog::BatchRecord resumed = h().record(created->id);
-    EXPECT_EQ(resumed.counts.complete, 1u);
-    EXPECT_EQ(resumed.counts.failed, 0u);
-    const auto receipts = h().receipts(created->id);
-    ASSERT_EQ(receipts.size(), 1u);
-    auto details = read_receipt_details(receipts[0].settings_json);
-    ASSERT_TRUE(details) << details.error().describe();
-    EXPECT_EQ(details->recipe_sha256, earlier_document->sha256) << "the frozen recipe, not today's defaults";
+// W13 closure (APL-04, LNS-3): a recipe that names a lens profile the worker's database does not hold
+// renders without that correction; the export is flagged for review instead of reported as if nothing
+// were missing, and the receipt names the lens database the worker rendered with.
+TEST_F(BatchServiceTest, ALensCorrectionAMissingDependencyPreventsIsFlagged) {
+    const auto files = ts::write_dngs(dir_, L"in", 2);
+    const std::vector<ItemId> ids = h().import(files);
+    engine::DevelopSettings named;
+    named.lens_correction.profile = engine::LensProfileId{"Nobody", "No such lens 50mm f/2", 1.0};
+    ASSERT_TRUE(h().recipes().apply(ids[0], named));
+    const catalog::BatchId id = h().run(h().request(ids, out_));
+    ASSERT_TRUE(id.valid());
+    const catalog::BatchRecord record = h().record(id);
+    EXPECT_NE(record.renderer_version.find("lens database"), std::string::npos) << record.renderer_version;
+    const auto receipts = h().receipts(id);
+    ASSERT_EQ(receipts.size(), 2u);
+    std::size_t flagged = 0;
+    for (const auto& receipt : receipts) {
+        auto details = read_receipt_details(receipt.settings_json);
+        ASSERT_TRUE(details) << details.error().describe();
+        const bool missing = std::any_of(details->review.begin(), details->review.end(), [](const std::string& note) {
+            return note.find("Lens corrections the recipe asks for were not applied") != std::string::npos;
+        });
+        if (missing) {
+            ++flagged;
+            const bool named_in_note =
+                std::any_of(details->review.begin(), details->review.end(),
+                            [](const std::string& note) { return note.find("No such lens 50mm f/2") != std::string::npos; });
+            EXPECT_TRUE(named_in_note);
+        }
+        EXPECT_TRUE(details->lens_corrections.empty()) << details->lens_corrections;  // nothing is corrected
+    }
+    EXPECT_EQ(flagged, 1u) << "only the photo whose recipe names the missing profile";
 }
 
 TEST_F(BatchServiceTest, AGeometryEditSetsTheOutputSizeWithoutAReviewNote) {

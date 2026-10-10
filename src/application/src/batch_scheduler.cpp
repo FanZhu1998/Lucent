@@ -1783,11 +1783,29 @@ std::vector<std::string> Attempt::review_notes(const workers::JobResult& result)
     for (std::size_t i = 0; i < result.render.warnings.size() && i < 3; ++i) {
         notes.push_back("The renderer reported: " + result.render.warnings[i]);
     }
+    // A recipe that asks for lens corrections the worker could not plan (no lens database, or a named
+    // profile it does not hold) renders without them: its result is not the recipe's (blueprint
+    // section 8), so the photo is flagged instead of exported as if nothing were missing (ADR 0023).
+    if (!result.render.lens_note.empty()) {
+        notes.push_back("Lens corrections the recipe asks for were not applied: " + result.render.lens_note);
+    }
     const std::uint64_t pixels = static_cast<std::uint64_t>(result.render.width) * result.render.height;
     if (pixels > 0 && result.render.limited_display_pixels * 100 > pixels) {
         notes.push_back(std::format("{:.1f} % of the pixels are brighter than the output can show.",
                                     100.0 * static_cast<double>(result.render.limited_display_pixels) /
                                         static_cast<double>(pixels)));
+    } else if (pixels > 0 && auto_state_ != catalog::AutoJobState::None &&
+               result.render.lens_corrections.find("vignetting") != std::string::npos &&
+               result.render.limited_display_pixels * 1000 > pixels) {
+        // Automatic settings are chosen and checked on the image before lens corrections (ADR 0013's
+        // W13 amendment): the export's vignetting correction brightens its corners beyond what the
+        // check measured, so an automatic export that shows clipped highlights is flagged at a tenth
+        // of the general threshold above.
+        notes.push_back(std::format(
+            "Automatic settings were checked before lens corrections; this export's vignetting correction "
+            "brightens its corners, and {:.2f} % of its pixels are brighter than the output can show: check "
+            "the corners.",
+            100.0 * static_cast<double>(result.render.limited_display_pixels) / static_cast<double>(pixels)));
     }
     if (!result.output.metadata_notes.empty()) {
         notes.push_back("Some metadata was changed or left out: " + result.output.metadata_notes.front());
@@ -2134,6 +2152,12 @@ void Attempt::run() {
         if (item_->support.camera) {
             details.camera_support_version = item_->support.camera->database_version;
         }
+    }
+    details.lens_database = result.render.lens_database;
+    details.lens_corrections = result.render.lens_corrections;
+    if (!result.render.lens_note.empty()) {
+        core::log_warn(kWhere, "job {}: lens corrections the recipe asks for were not applied: {}", job_.id.value,
+                       result.render.lens_note);
     }
     auto details_json = write_receipt_details(details);
     catalog::NewReceipt receipt;

@@ -164,13 +164,37 @@ TEST(WorkerProtocol, AnalyzeJobsCarryTheirDocumentsAsText) {
     EXPECT_FALSE(encode_message(no_document));
 }
 
-TEST(WorkerProtocol, VersionTwoIsSpoken) {
-    EXPECT_EQ(kMinProtocolVersion, 2u);
-    EXPECT_EQ(kMaxProtocolVersion, 2u);
-    // A version-1 peer (export jobs only) is refused: it could not answer analyze jobs.
-    auto refused = negotiate_version(kMinProtocolVersion, kMaxProtocolVersion, 1, 1);
-    ASSERT_FALSE(refused);
-    EXPECT_EQ(refused.error().code, ErrorCode::VersionMismatch);
+TEST(WorkerProtocol, VersionThreeIsSpoken) {
+    EXPECT_EQ(kMinProtocolVersion, 3u);
+    EXPECT_EQ(kMaxProtocolVersion, 3u);
+    // A version-1 peer (export jobs only) could not answer analyze jobs, and a version-2 peer would
+    // not report its lens corrections: both are refused.
+    for (const std::uint32_t old : {1u, 2u}) {
+        auto refused = negotiate_version(kMinProtocolVersion, kMaxProtocolVersion, old, old);
+        ASSERT_FALSE(refused);
+        EXPECT_EQ(refused.error().code, ErrorCode::VersionMismatch);
+    }
+}
+
+TEST(WorkerProtocol, ResultsCarryTheLensCorrections) {
+    JobResult result = sample_result();
+    auto decoded = decode_message(encode_ok(result), Direction::WorkerToHost);
+    ASSERT_TRUE(decoded) << decoded.error().describe();
+    const JobResult& back = std::get<JobResult>(*decoded);
+    EXPECT_EQ(back.render.lens_database, result.render.lens_database);
+    EXPECT_EQ(back.render.lens_corrections, result.render.lens_corrections);
+    EXPECT_EQ(back.render.lens_note, result.render.lens_note);
+    // Over-long text is truncated, never refused.
+    result.render.lens_note = std::string(kMaxWarningBytes + 100, 'n');
+    result.render.lens_database = std::string(kMaxShortTextBytes + 1, 'd');
+    auto truncated = decode_message(encode_ok(result), Direction::WorkerToHost);
+    ASSERT_TRUE(truncated) << truncated.error().describe();
+    EXPECT_EQ(std::get<JobResult>(*truncated).render.lens_note.size(), kMaxWarningBytes);
+    EXPECT_EQ(std::get<JobResult>(*truncated).render.lens_database.size(), kMaxShortTextBytes);
+    // A version-2 result (without the members) is not read.
+    Json json = Json::parse(encode_ok(sample_result()));
+    json["render"].erase("lens_note");
+    EXPECT_EQ(decode_error(json.dump(), Direction::WorkerToHost).code, ErrorCode::Corrupt);
 }
 
 TEST(WorkerProtocol, DecodedJobHasTheSentValues) {

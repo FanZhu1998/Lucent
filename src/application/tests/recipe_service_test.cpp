@@ -684,6 +684,49 @@ TEST_F(RecipeServiceTest, LensCorrectionsArePastedOnlyToTheSameCameraAndLens) {
         << (*again)[0].skipped[0].reason;
 }
 
+// W13 closure (APL-12): settings made before lens corrections existed (operation version 0) hold
+// none; pasting them would switch the target's corrections off, so the category is skipped.
+TEST_F(RecipeServiceTest, LensCorrectionsOfARecipeMadeBeforeThemAreNotPasted) {
+    const auto note_lens = [&](ItemId item) {
+        const std::optional<SourceItem> found = library_.find(item);
+        ASSERT_TRUE(found);
+        raw::ProbeOptions probe;
+        probe.describe_subimages = false;
+        auto selection = registry_->select(found->path, probe, {});
+        ASSERT_TRUE(selection) << selection.error().describe();
+        raw::RawMetadata metadata = selection->probe.metadata;
+        metadata.lens.make = "Sony";
+        metadata.lens.model = "FE 50mm F2.5 G";
+        service_->note_camera(item, metadata);
+    };
+    note_lens(a());
+    note_lens(b());
+    ASSERT_TRUE(service_->camera(a())->same_lens(*service_->camera(b())));
+    // A photo edited before W13: its recipe reads with lens-correction operation version 0.
+    engine::DevelopSettings old = with_exposure(0.4);
+    old.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+    ASSERT_TRUE(old.validate()) << old.validate().error().describe();
+    ASSERT_TRUE(service_->apply(a(), old));
+    ASSERT_EQ(engine::lens_correction_operation_version(state(a()).settings),
+              engine::kOldestLensCorrectionOperationVersion);
+    auto clipboard = service_->copy(a(), {RecipeCategory::LensCorrections, RecipeCategory::Exposure});
+    ASSERT_TRUE(clipboard) << clipboard.error().describe();
+    auto outcomes = service_->paste(*clipboard, std::vector<ItemId>{b()});
+    ASSERT_TRUE(outcomes) << outcomes.error().describe();
+    const PasteOutcome& outcome = (*outcomes)[0];
+    ASSERT_EQ(outcome.skipped.size(), 1u);
+    EXPECT_EQ(outcome.skipped[0].category, RecipeCategory::LensCorrections);
+    EXPECT_EQ(outcome.skipped[0].part, RecipePart::LensCorrection);
+    EXPECT_NE(outcome.skipped[0].reason.find("before Lucent had lens corrections"), std::string::npos)
+        << outcome.skipped[0].reason;
+    EXPECT_EQ(outcome.applied, std::vector<RecipeCategory>{RecipeCategory::Exposure});
+    // The target keeps its own (automatic) lens corrections.
+    EXPECT_EQ(engine::lens_correction_operation_version(state(b()).settings),
+              engine::kLensCorrectionOperationVersion);
+    EXPECT_EQ(state(b()).settings.lens_correction, engine::LensCorrectionSetting{});
+    EXPECT_EQ(state(b()).settings.exposure_ev, 0.4);
+}
+
 TEST_F(RecipeServiceTest, WithoutCalibrationKnowledgeKelvinIsNotPasted) {
     RecipeService blind(library_, create_memory_recipe_store());  // no registry
     engine::DevelopSettings kelvin;

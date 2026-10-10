@@ -20,9 +20,12 @@
 //  [Rendering]  app::SourceRenderer::render (render_develop_file's composition) with the worker's
 //               lens database (DevelopJobOptions::lens_database: the bundled asset, verified and
 //               loaded by the first export job, ADR 0023), so the recipe's lens corrections are
-//               applied exactly as Lucent.exe's previews apply them; an image whose
-//               decoded interpretation is Unsupported fails with Unsupported ("worker.job.support")
-//               unless allow_unsupported.
+//               applied exactly as Lucent.exe's previews apply them; the result names the database,
+//               the corrections applied and, when the recipe asked for one the worker could not plan
+//               (no database, or a named profile it does not hold), why, with the database's load
+//               problem (JobResult::render.lens_*: the host records them and raises a review note);
+//               an image whose decoded interpretation is Unsupported fails with Unsupported
+//               ("worker.job.support") unless allow_unsupported.
 //  [Encoding]   exporter::encode_for_output to the output profile and bit depth.
 //  [Writing]    a free-space check (the uncompressed size: DiskFull), then exporter::write_verified
 //               into the scratch directory (temporary file, flush, re-read verification, metadata
@@ -40,6 +43,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 
 #include <lucent/engine/lens_correction.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -48,14 +52,21 @@
 
 namespace lucent::worker_app {
 
+// The lens database a worker loaded: the database (null: none) and, without one, why (developer-facing
+// English, e.g. assets::LensDatabaseLookup::problem).
+struct WorkerLensDatabase {
+    std::shared_ptr<const engine::LensDatabase> database;
+    std::string problem;
+};
+
 struct DevelopJobOptions {
     raw::DecodeLimits decode_limits;
     bool parallel = true;
-    // Gives the lens database the export render corrects lenses with (a null result: none, nothing is
-    // corrected). Called once, by the first export job, so that starting a worker costs neither the
+    // Gives the lens database the export render corrects lenses with (a null database: none, nothing
+    // is corrected). Called once, by the first export job, so that starting a worker costs neither the
     // time nor the memory of loading it (an analyze job never needs it: Auto evaluates the uncorrected
     // image, ADR 0010's W13 amendment). Empty: no lens database.
-    std::function<std::shared_ptr<const engine::LensDatabase>()> lens_database;
+    std::function<WorkerLensDatabase()> lens_database;
 };
 
 class DevelopJobRunner final : public workers::JobRunner {
@@ -73,12 +84,12 @@ public:
 
 private:
     // The lens database, loaded by the first export job that needs it (thread-safe).
-    [[nodiscard]] std::shared_ptr<const engine::LensDatabase> lens_database();
+    [[nodiscard]] WorkerLensDatabase lens_database();
 
     struct LensState {
         std::mutex mutex;
         bool loaded = false;
-        std::shared_ptr<const engine::LensDatabase> database;
+        WorkerLensDatabase loaded_database;
     };
 
     std::shared_ptr<const raw::DecoderRegistry> registry_;

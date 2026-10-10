@@ -182,6 +182,14 @@ TEST(CatalogMapping, TheProbeContractIsStoredWithTheDecoderVersion) {
     // An older contract is outdated as well; a suffix that is not a contract stays decoder text.
     item.probe->contract = core::ContractVersion{1, 2};
     EXPECT_TRUE(probe_outdated(item));
+    item.probe->contract = core::ContractVersion{1, 3};
+    EXPECT_TRUE(probe_outdated(item));  // before the camera's image area (the mode key)
+    // W13: contract 1.5 adds only the sensor crop, which no stored record uses: a probe of 1.4 is
+    // current, and a library is not probed again for it.
+    item.probe->contract = core::ContractVersion{1, 4};
+    EXPECT_FALSE(probe_outdated(item));
+    EXPECT_EQ(kOldestCurrentProbeContract, (core::ContractVersion{1, 4}));
+    item.probe->contract = core::ContractVersion{1, 2};
     old.decoder_version = "odd; decoded-RAW x.y";
     const std::optional<ProbeSummary> odd = detail::probe_from_metadata(old, item.support);
     ASSERT_TRUE(odd);

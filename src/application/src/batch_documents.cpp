@@ -515,6 +515,12 @@ Expected<std::string> write_receipt_details(const ReceiptDetails& details) {
                                       : Json(core::sanitize_utf8(details.camera_support_version));
             out["support"] = std::move(support);
         }
+        if (!details.lens_database.empty() || !details.lens_corrections.empty()) {
+            Json lens = Json::object();
+            lens["database"] = core::sanitize_utf8(details.lens_database);
+            lens["corrections"] = core::sanitize_utf8(details.lens_corrections);
+            out["lens"] = std::move(lens);
+        }
         return out.dump();
     });
 }
@@ -580,6 +586,17 @@ Expected<ReceiptDetails> read_receipt_details(std::string_view json) {
             const auto database = support->find("database");
             if (details.support && database != support->end() && database->is_string()) {
                 details.camera_support_version = database->get<std::string>();
+            }
+        }
+        // W13 (ADR 0023): optional; receipts of earlier builds have none.
+        if (const auto lens = in.find("lens"); lens != in.end() && lens->is_object()) {
+            const auto database = lens->find("database");
+            if (database != lens->end() && database->is_string()) {
+                details.lens_database = database->get<std::string>();
+            }
+            const auto corrections = lens->find("corrections");
+            if (corrections != lens->end() && corrections->is_string()) {
+                details.lens_corrections = corrections->get<std::string>();
             }
         }
         return details;

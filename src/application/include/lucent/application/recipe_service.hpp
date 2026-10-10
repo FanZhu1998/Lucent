@@ -79,7 +79,9 @@
 //     profile's) were judged on that lens's photos. It is pasted only to a target of the same camera
 //     make and model (CameraCapabilities::same_camera) AND the same lens (same_lens: the lens model
 //     both files record, equal); otherwise, also when either lens is unknown, it is skipped
-//     (PasteSkip::part LensCorrection) with the reason;
+//     (PasteSkip::part LensCorrection) with the reason. Copied settings made before lens corrections
+//     existed (lens-correction operation version 0) hold none, so the category is skipped for every
+//     target with that reason instead of switching the target's corrections off (W13 closure);
 //   * the Geometry category (not pasted unless chosen: kDefaultRecipeCategories) is pasted when
 //     its crop is the whole image (a straighten angle and quarter turns fit any photo) or the
 //     upright aspect ratios are the same; otherwise it is skipped as a whole;

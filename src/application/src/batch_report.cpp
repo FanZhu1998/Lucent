@@ -420,6 +420,8 @@ Expected<BatchReport> BatchService::Impl::build_report(catalog::BatchId id) cons
                         if (auto details = read_receipt_details((*receipt)->settings_json)) {
                             entry.review = details->review;
                             entry.support = details->support;
+                            entry.lens_database = details->lens_database;
+                            entry.lens_corrections = details->lens_corrections;
                             entry.details = std::move(*details);
                         }
                     }
@@ -580,6 +582,14 @@ Expected<std::string> report_json(const BatchReport& report) {
             }
             e["review"] = std::move(review);
             e["support"] = entry.support ? Json(std::string(assets::to_string(*entry.support))) : Json();
+            if (!entry.lens_database.empty() || !entry.lens_corrections.empty()) {
+                Json lens = Json::object();
+                lens["database"] = core::sanitize_utf8(entry.lens_database);
+                lens["corrections"] = core::sanitize_utf8(entry.lens_corrections);
+                e["lens"] = std::move(lens);
+            } else {
+                e["lens"] = Json();
+            }
             e["attempts"] = entry.attempts;
             e["automatic"] = entry.automatic ? automatic_json(*entry.automatic) : Json();
             if (entry.error) {

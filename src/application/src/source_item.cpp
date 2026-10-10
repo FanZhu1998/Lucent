@@ -166,7 +166,7 @@ bool probe_outdated(const SourceItem& item) noexcept {
     if (!item.probe) {
         return false;
     }
-    if (!item.probe->contract || *item.probe->contract < raw::kDecodedRawContractVersion) {
+    if (!item.probe->contract || *item.probe->contract < kOldestCurrentProbeContract) {
         return true;
     }
     // AST-08: a probe of another LibRaw version may have another mode key (a new visible area).

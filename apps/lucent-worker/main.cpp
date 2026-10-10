@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // clang-format off: shellapi.h needs the declarations of windows.h.
@@ -97,7 +98,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
     lucent::worker_app::DevelopJobOptions job_options;
     job_options.lens_database = [] {
-        return lucent::assets::load_lens_database(lucent::assets::default_asset_locations(nullptr)).database;
+        lucent::assets::LensDatabaseLookup load =
+            lucent::assets::load_lens_database(lucent::assets::default_asset_locations(nullptr));
+        lucent::worker_app::WorkerLensDatabase out;
+        out.database = std::move(load.database);
+        if (!out.database) {
+            out.problem = load.problem ? load.problem->describe() : std::string("no lens database was found");
+        }
+        return out;
     };
     lucent::worker_app::DevelopJobRunner runner(
         std::make_shared<const lucent::raw::DecoderRegistry>(std::move(*registry)), std::move(job_options));

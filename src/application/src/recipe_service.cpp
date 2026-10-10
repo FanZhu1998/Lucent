@@ -1207,6 +1207,18 @@ Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& 
                     continue;
                 }
                 if (category == RecipeCategory::LensCorrections) {
+                    // Settings made before lens corrections existed (operation version 0) hold none:
+                    // pasting that "none" would switch the target's corrections off and make it look
+                    // edited before they existed (ADR 0023), so nothing is pasted.
+                    if (engine::lens_correction_operation_version(clipboard.settings) ==
+                        engine::kOldestLensCorrectionOperationVersion) {
+                        skipped_parts.insert(RecipePart::LensCorrection);
+                        outcome.skipped.push_back(PasteSkip{
+                            category, RecipePart::LensCorrection,
+                            "the lens corrections are not pasted: the copied photo was edited before Lucent had "
+                            "lens corrections, so it has none to paste"});
+                        continue;
+                    }
                     // One camera's and lens's (see the header): never pasted across camera or lens
                     // models, nor when either lens is unknown.
                     if (const std::string lens = lens_mismatch(clipboard.camera, *caps); !lens.empty()) {

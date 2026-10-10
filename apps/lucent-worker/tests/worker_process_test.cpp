@@ -383,7 +383,9 @@ TEST_F(WorkerProcess, ASmallRenderFitsUnderAModestLimit) {
 
 TEST_F(WorkerProcess, MismatchedComponentsFailClearly) {
     {
-        WorkerHost host(host_options({"protocol:3-4"}));
+        // A worker that speaks only protocol versions newer than this host's.
+        WorkerHost host(host_options({"protocol:" + std::to_string(workers::kMaxProtocolVersion + 1) + "-" +
+                                      std::to_string(workers::kMaxProtocolVersion + 2)}));
         auto started = host.start();
         ASSERT_FALSE(started);
         EXPECT_EQ(started.error().code, ErrorCode::VersionMismatch);
