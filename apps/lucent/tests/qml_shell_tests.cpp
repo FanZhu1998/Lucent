@@ -458,6 +458,10 @@ TEST_F(QmlShellTest, AboutShowsTheCameraSupportDatabaseAndWhatTheStatesMean) {
     EXPECT_TRUE(database.contains(QStringLiteral("Version 1.0.0, qualified 2026-10-08")))
         << database.toStdString();
     EXPECT_EQ(child("aboutSupportStates")->property("count").toInt(), 4);
+    // W13 (ADR 0023): the lens database the lens corrections use.
+    const QString lenses = child("aboutLensDatabase")->property("text").toString();
+    EXPECT_TRUE(lenses.contains(QStringLiteral("Version 1.0.0 of the Lensfun lens database")))
+        << lenses.toStdString();
     ASSERT_TRUE(QMetaObject::invokeMethod(child("aboutCloseButton"), "clicked"));
     ASSERT_TRUE(QTest::qWaitFor([dialog] { return !dialog->property("visible").toBool(); }, kWaitMs));
 
@@ -468,6 +472,72 @@ TEST_F(QmlShellTest, AboutShowsTheCameraSupportDatabaseAndWhatTheStatesMean) {
     const QString meaning = child("supportMeaning")->property("text").toString();
     EXPECT_TRUE(meaning.startsWith(QStringLiteral("What this means: "))) << meaning.toStdString();
     EXPECT_TRUE(meaning.contains(controller->current()->support_meaning()));
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// W13 (ADR 0023): the Lens corrections panel shows the (simulated) exact match and its profile; a
+// switch is one revision; corrections the file makes itself are shown off and disabled, with a note;
+// the profile choice opens and closes without changing anything.
+TEST_F(QmlShellTest, TheLensCorrectionsPanelShowsTheMatchAndEachSwitchIsOneRevision) {
+    write_photos(1);
+    import_folder();
+    ASSERT_TRUE(controller->openItem(0));
+    ASSERT_TRUE(settle());
+    auto* edits = dynamic_cast<fakes::FakeEditService*>(&controller->edit_service());
+    ASSERT_NE(edits, nullptr);
+    const ItemId item = controller->current()->item_id();
+    EditSession& edit = *controller->edit();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return edit.lens()->known(); }, kWaitMs));
+    auto* panel = child<QQuickItem>("lensPanel");
+    ASSERT_NE(panel, nullptr);
+    EXPECT_TRUE(panel->isVisible());
+    EXPECT_EQ(child("lensMatchBadge")->property("text").toString(), QStringLiteral("Exact match"));
+    EXPECT_EQ(child("lensProfile")->property("text").toString(),
+              QStringLiteral("Simulated Optics Zoom 24-70mm f/4"));
+    EXPECT_EQ(child("lensCamera")->property("text").toString(), QStringLiteral("Simulated Camera"));
+    EXPECT_FALSE(child<QQuickItem>("lensUnavailable")->isVisible());
+    EXPECT_FALSE(child<QQuickItem>("lensTurnOn")->isVisible());
+    const QList<QQuickItem*> distortion = visual_items("lensCorrection_distortion", false);
+    ASSERT_EQ(distortion.size(), 1);
+    EXPECT_TRUE(distortion.front()->property("checked").toBool());
+    EXPECT_TRUE(distortion.front()->isEnabled());
+    EXPECT_EQ(visual_items("lensStatus_distortion", false).front()->property("text").toString(),
+              QStringLiteral("Applied"));
+
+    // A click on a switch: one revision, rendered without that correction.
+    const int before = edits->revision_count(item);
+    ASSERT_TRUE(QMetaObject::invokeMethod(distortion.front(), "click"));
+    ASSERT_TRUE(settle());
+    EXPECT_EQ(edits->revision_count(item), before + 1);
+    EXPECT_FALSE(edit.settings().lens.distortion);
+    EXPECT_FALSE(distortion.front()->property("checked").toBool());
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] {
+            return visual_items("lensStatus_distortion", false).front()->property("text").toString() ==
+                   u"Off";
+        },
+        kWaitMs));
+    // The profile choice opens without a revision and closes again.
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("lensChooseProfile"), "click"));
+    EXPECT_TRUE(edit.lens()->picking());
+    EXPECT_TRUE(child<QQuickItem>("lensPicker")->isVisible());
+    EXPECT_EQ(edits->revision_count(item), before + 1);
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("lensPickerCancel"), "click"));
+    EXPECT_FALSE(edit.lens()->picking());
+
+    // A file that corrects distortion and vignetting itself: those switches are off and disabled.
+    fakes::FakeEditService::FakeLens carried;
+    carried.carried_distortion = true;
+    carried.carried_vignetting = true;
+    edits->set_lens(carried);
+    edit.setValue(QStringLiteral("exposure"), 0.3);  // a new frame
+    ASSERT_TRUE(settle());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return child<QQuickItem>("lensCarriedNote")->isVisible(); }, kWaitMs));
+    EXPECT_FALSE(visual_items("lensCorrection_vignetting", false).front()->isEnabled());
+    EXPECT_FALSE(visual_items("lensCorrection_vignetting", false).front()->property("checked").toBool());
+    EXPECT_TRUE(visual_items("lensCorrection_chromaticAberration", false).front()->isEnabled());
+    EXPECT_TRUE(
+        child("lensCarriedNote")->property("text").toString().contains(QStringLiteral("DNG opcodes")));
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

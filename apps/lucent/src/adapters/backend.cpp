@@ -60,6 +60,36 @@ assets::CameraSupportLoad load_camera_support(const BackendOptions& options) {
     return load;
 }
 
+// W13 (ADR 0023): finds, verifies and loads the lens database, logging what was found and what was
+// refused. Never fails: without one the session corrects no lens.
+assets::LensDatabaseLookup load_lens_database(const BackendOptions& options) {
+    assets::AssetLocations locations;
+    if (options.asset_locations) {
+        locations = *options.asset_locations;
+    } else {
+        core::AppDirectories directories;
+        directories.data = options.user_data_directory;
+        locations =
+            assets::default_asset_locations(options.user_data_directory.empty() ? nullptr : &directories);
+    }
+    assets::LensDatabaseLookup load = assets::load_lens_database(locations);
+    for (const assets::AssetCandidate& candidate : load.lookup.candidates) {
+        if (candidate.present && candidate.refused && candidate.origin == assets::AssetOrigin::UserDataPack) {
+            core::log_warn(kLog, "lens database data pack refused: {}", candidate.refused->describe());
+        }
+    }
+    if (load.database) {
+        const engine::LensDatabaseInfo& info = load.database->info();
+        core::log_info(kLog, "lens database {} {} active ({}, {} files: {} cameras, {} lenses, {} mounts)",
+                       info.identity.asset_id, info.identity.asset_version, info.library, info.files,
+                       info.cameras, info.lenses, info.mounts);
+    } else {
+        core::log_error(kLog, "no lens database is active, so no lens correction is applied: {}",
+                        load.problem ? load.problem->describe() : std::string("unknown reason"));
+    }
+    return load;
+}
+
 }  // namespace
 
 void OutputFolders::add(const std::filesystem::path& folder) {
@@ -178,6 +208,9 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             }
         }
 
+        // W13: the lens database (none: no lens correction).
+        backend->lens_database_load_ = load_lens_database(options);
+
         // Recipes: the catalog's revisions with the persistent library, memory otherwise.
         if (backend->catalog_) {
             auto store = app::create_catalog_recipe_store(backend->catalog_);
@@ -237,7 +270,11 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         if (options.renderer_override) {
             backend->renderer_ = options.renderer_override;
         } else {
-            auto renderer = app::create_engine_renderer(backend->registry_, options.renderer);
+            app::EngineRendererOptions renderer_options = options.renderer;
+            if (!renderer_options.lens_database) {
+                renderer_options.lens_database = backend->lens_database_load_.database;
+            }
+            auto renderer = app::create_engine_renderer(backend->registry_, renderer_options);
             if (!renderer) {
                 return Unexpected(std::move(renderer.error()));
             }

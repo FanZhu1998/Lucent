@@ -30,6 +30,16 @@
 // Verified, stored Limited and Unsupported answers are kept (a missing database never improves a
 // state), camera_support_load() says why and the log file records it.
 //
+// W13 (ADR 0023): the lens database. Right after the camera support database, the Backend finds,
+// verifies and loads the bundled Lensfun database (assets::load_lens_database: the same pin and
+// hash checks, per-user data packs refused). The renderer gets it (EngineRendererOptions::
+// lens_database), so previews, thumbnails, single exports and the editor's frames apply each
+// recipe's lens corrections; batch exports run in lucent-worker.exe, which loads the same bundled
+// asset itself. Auto's analysis and final check run without it (the analysis measures the
+// uncorrected image; Auto never changes the lens settings, which its revisions carry unchanged).
+// When none can be activated the session runs without lens corrections, lens_database_load() says
+// why and the log file records it: never a failure to start.
+//
 // W8: the AutoService (auto_service.hpp, ADR 0013) runs the editor's "Auto" in process on the
 // executor's Background lane, over the recipe service; it is created after the executor and
 // destroyed before it (its destructor cancels the runs in progress and waits for them).
@@ -88,6 +98,7 @@
 #include <lucent/application/update_service.hpp>
 #include <lucent/assets/asset_store.hpp>
 #include <lucent/assets/camera_support.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/catalog/catalog.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -208,6 +219,13 @@ public:
     [[nodiscard]] const assets::CameraSupportLoad& camera_support_load() const noexcept {
         return camera_support_load_;
     }
+    // W13. The session's lens database (null when none could be activated) and how it was found.
+    [[nodiscard]] const std::shared_ptr<const engine::LensDatabase>& lens_database() const noexcept {
+        return lens_database_load_.database;
+    }
+    [[nodiscard]] const assets::LensDatabaseLookup& lens_database_load() const noexcept {
+        return lens_database_load_;
+    }
     [[nodiscard]] OutputFolders& output_folders() noexcept { return output_folders_; }
     // The recipe store under recipes() (tests write revisions through it directly).
     [[nodiscard]] app::RecipeStore& recipe_store() noexcept { return *recipe_store_; }
@@ -243,6 +261,7 @@ private:
     std::optional<Error> library_problem_;
     assets::CameraSupportLoad camera_support_load_;
     app::CameraSupportRef camera_support_;
+    assets::LensDatabaseLookup lens_database_load_;
     std::shared_ptr<app::RecipeStore> recipe_store_;
     std::unique_ptr<app::RecipeService> recipes_;
     std::unique_ptr<app::BatchService> batches_;

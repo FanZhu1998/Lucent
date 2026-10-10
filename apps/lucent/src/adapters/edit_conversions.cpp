@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 #include <new>
+#include <string>
+#include <utility>
 #include <variant>
 
 #include <lucent/engine/local_adjustments.hpp>
@@ -93,6 +95,37 @@ void add_unique(QStringList& list, const QString& text) {
     }
 }
 
+// The lens correction's point mapping (engine LensGeometryMap: full-resolution upright continuous
+// coordinates, the green channel's source position).
+class EngineLensPointMap final : public LensPointMap {
+public:
+    explicit EngineLensPointMap(engine::LensGeometryMap map) : map_(std::move(map)) {}
+
+    QPointF upright_of(QPointF corrected) const override {
+        const image::PointD source = map_.source_of(image::PointD{corrected.x(), corrected.y()}, 1);
+        return QPointF(source.x, source.y);
+    }
+
+    std::optional<QPointF> corrected_of(QPointF upright) const override {
+        const std::optional<image::PointD> corrected =
+            map_.corrected_of(image::PointD{upright.x(), upright.y()});
+        if (!corrected) {
+            return std::nullopt;
+        }
+        return QPointF(corrected->x, corrected->y);
+    }
+
+private:
+    engine::LensGeometryMap map_;
+};
+
+// A search text's words: lower case, '/' dropped ("f/4" and "f4" are the same word).
+QString search_form(const QString& text) {
+    QString out = text.toLower();
+    out.remove(u'/');
+    return out;
+}
+
 }  // namespace
 
 // ---- Settings ------------------------------------------------------------------------------------
@@ -133,7 +166,34 @@ EditSettings to_edit_settings(const engine::DevelopSettings& settings) {
         out.masks << to_edit_mask(adjustment);
     }
     out.geometry = to_edit_geometry(settings.geometry);
+    out.lens = to_edit_lens_correction(settings);
     return out;
+}
+
+EditLensCorrection to_edit_lens_correction(const engine::DevelopSettings& settings) {
+    EditLensCorrection out;
+    const std::optional<engine::LensCorrectionSetting> effective =
+        engine::effective_lens_correction(settings);
+    if (!effective) {
+        out.enabled = false;  // operation version 0: made before lens corrections (the member unused)
+        return out;
+    }
+    out.distortion = effective->distortion;
+    out.chromatic_aberration = effective->lateral_chromatic_aberration;
+    out.vignetting = effective->vignetting;
+    if (effective->profile) {
+        out.profile = to_edit_lens_profile(*effective->profile);
+    }
+    return out;
+}
+
+EditLensProfile to_edit_lens_profile(const engine::LensProfileId& id) {
+    return EditLensProfile{from_utf8(id.maker), from_utf8(id.model), id.crop_factor};
+}
+
+engine::LensProfileId to_lens_profile_id(const EditLensProfile& profile) {
+    return engine::LensProfileId{profile.maker.toStdString(), profile.model.toStdString(),
+                                 profile.crop_factor};
 }
 
 engine::DevelopSettings to_develop_settings(const EditSettings& settings, const engine::DevelopSettings& base) {
@@ -179,6 +239,21 @@ engine::DevelopSettings to_develop_settings(const EditSettings& settings, const 
         out.local_adjustments.push_back(to_local_adjustment(mask));
     }
     out.geometry = to_geometry_setting(settings.geometry);
+    // Version 3: the lens correction's operation version follows the editor's switch (version 0 keeps
+    // the default member, unused).
+    if (settings.lens.enabled) {
+        out.operations.lens_correction = engine::kLensCorrectionOperationVersion;
+        out.lens_correction.distortion = settings.lens.distortion;
+        out.lens_correction.lateral_chromatic_aberration = settings.lens.chromatic_aberration;
+        out.lens_correction.vignetting = settings.lens.vignetting;
+        out.lens_correction.profile.reset();
+        if (settings.lens.profile) {
+            out.lens_correction.profile = to_lens_profile_id(*settings.lens.profile);
+        }
+    } else {
+        out.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+        out.lens_correction = engine::LensCorrectionSetting{};
+    }
     return out;
 }
 
@@ -595,6 +670,23 @@ AutoOutcome to_auto_outcome(ItemId item, const app::AutoTaskResult& result) {
 QString describe_paste_skip(const app::PasteSkip& skip, const app::RecipeClipboard& clipboard,
                             const std::optional<app::CameraCapabilities>& target) {
     const QString category = category_label(to_settings_category(skip.category));
+    if (skip.part == app::RecipePart::LensCorrection) {
+        if (target && !clipboard.camera.same_camera(*target)) {
+            return tr_text("%1: not pasted because they belong to the %2 and this photo is from %3.")
+                .arg(category, camera_name(clipboard.camera), camera_name(*target));
+        }
+        if (target && !clipboard.camera.lens.empty() && !target->lens.empty()) {
+            return tr_text(
+                       "%1: not pasted because they belong to the %2 lens and this photo was taken with the "
+                       "%3.")
+                .arg(category, from_utf8(clipboard.camera.lens), from_utf8(target->lens));
+        }
+        return tr_text(
+                   "%1: not pasted because the lens of one of the photos is not recorded, so Lucent cannot "
+                   "tell "
+                   "that it is the same lens.")
+            .arg(category);
+    }
     if (skip.part == app::RecipePart::LocalAdjustments) {
         return tr_text("%1: not pasted because this photo has another shape, so the masks would land on other "
                        "parts of the picture.")
@@ -792,6 +884,134 @@ QImage mask_overlay_image(const engine::LocalAdjustment& adjustment, const engin
     return overlay;
 }
 
+// ---- Lens corrections ----------------------------------------------------------------------------------
+
+LensInfoPtr to_lens_info(const engine::LensCorrectionRecord& record) {
+    try {
+        const engine::LensCorrectionPlan& p = record.plan;
+        auto info = std::make_shared<LensInfo>();
+        info->database = p.database.has_value();
+        if (p.database) {
+            info->database_version = from_utf8(p.database->asset_version);
+        }
+        info->enabled = p.operation_version != engine::kOldestLensCorrectionOperationVersion;
+        info->automatic = p.automatic;
+        const engine::LensQuery& q = p.query;
+        app::CameraCapabilities camera;
+        camera.make = q.camera_normalized_make.empty() ? q.camera_make : q.camera_normalized_make;
+        camera.model = q.camera_normalized_model.empty() ? q.camera_model : q.camera_normalized_model;
+        info->camera = camera.make.empty() && camera.model.empty() ? QString() : camera_name(camera);
+        info->lens = from_utf8(q.lens_make.empty() || q.lens_model.starts_with(q.lens_make)
+                                   ? q.lens_model
+                                   : q.lens_make + " " + q.lens_model);
+        info->focal_length_mm = q.focal_length_mm.value_or(0.0);
+        info->f_number = q.f_number.value_or(0.0);
+        info->match = static_cast<LensMatchQuality>(static_cast<std::uint8_t>(p.match.kind));
+        if (p.match.camera) {
+            app::CameraCapabilities identified;  // "Nikon Corporation" + "Nikon Z 6": "Nikon Z 6"
+            identified.make = p.match.camera->maker;
+            identified.model = p.match.camera->model;
+            info->database_camera = camera_name(identified);
+            info->database_mount = from_utf8(p.match.camera->mount);
+            add_unique(info->compatible_mounts, info->database_mount);
+            // The search for this camera returns lenses of the mounts it accepts only.
+            for (const engine::LensCandidate& candidate : p.match.candidates) {
+                for (const QString& mount :
+                     from_utf8(candidate.mounts).split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
+                    add_unique(info->compatible_mounts, mount);
+                }
+            }
+        }
+        if (p.match.lens) {
+            info->matched = to_edit_lens_profile(*p.match.lens);
+        }
+        for (const engine::LensCandidate& candidate : p.match.candidates) {
+            info->candidates << to_edit_lens_profile(candidate.lens);
+        }
+        for (const std::string& reason : p.match.reasons) {
+            info->reasons << from_utf8(reason);
+        }
+        if (p.profile) {
+            info->profile = to_edit_lens_profile(*p.profile);
+        }
+        // By kind: distortion (1), lateral chromatic aberration (2), vignetting (3).
+        for (const engine::LensCorrectionDecision& decision : p.decisions) {
+            const auto index = static_cast<std::size_t>(decision.kind) - 1;
+            if (index < info->corrections.size()) {
+                info->corrections[index].outcome =
+                    static_cast<LensOutcome>(static_cast<std::uint8_t>(decision.outcome));
+                info->corrections[index].detail = from_utf8(decision.detail);
+            }
+        }
+        info->carried_distortion = p.carried.distortion;
+        info->carried_chromatic_aberration = p.carried.lateral_chromatic_aberration;
+        info->carried_vignetting = p.carried.vignetting;
+        info->scale = p.geometry ? p.geometry->scale : 1.0;
+        return info;
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+std::shared_ptr<const LensPointMap> lens_point_map(const engine::LensCorrectionPlan& plan) {
+    if (!plan.geometry) {
+        return nullptr;
+    }
+    try {
+        return std::make_shared<const EngineLensPointMap>(*plan.geometry);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+QList<LensProfileEntry> lens_profile_search(const std::vector<engine::LensProfileSummary>& profiles,
+                                            const QString& text, int limit) {
+    QList<LensProfileEntry> out;
+    if (limit <= 0) {
+        return out;
+    }
+    const QStringList words = search_form(text).split(u' ', Qt::SkipEmptyParts);
+    // Two passes: first the profiles in which every search word starts a word of the name ("50mm"
+    // finds "50mm", "24-70" finds "24-70mm"), then those that only contain them ("50mm" in "150mm").
+    std::vector<const engine::LensProfileSummary*> found[2];
+    for (const engine::LensProfileSummary& profile : profiles) {
+        const QString haystack =
+            search_form(from_utf8(profile.id.maker) + u' ' + from_utf8(profile.id.model));
+        if (!std::all_of(words.cbegin(), words.cend(),
+                         [&](const QString& word) { return haystack.contains(word); })) {
+            continue;
+        }
+        const QStringList name_words = haystack.split(u' ', Qt::SkipEmptyParts);
+        const bool starts = std::all_of(words.cbegin(), words.cend(), [&](const QString& word) {
+            return std::any_of(name_words.cbegin(), name_words.cend(),
+                               [&](const QString& name_word) { return name_word.startsWith(word); });
+        });
+        found[starts ? 0 : 1].push_back(&profile);
+    }
+    for (const std::vector<const engine::LensProfileSummary*>& tier : found) {
+        for (const engine::LensProfileSummary* summary : tier) {
+            const engine::LensProfileSummary& profile = *summary;
+            const QString maker = from_utf8(profile.id.maker);
+            const QString model = from_utf8(profile.id.model);
+            LensProfileEntry entry;
+            entry.profile = EditLensProfile{maker, model, profile.id.crop_factor};
+            entry.mounts = from_utf8(profile.mounts);
+            entry.lens_type = from_utf8(profile.lens_type);
+            entry.min_focal_mm = profile.min_focal_mm;
+            entry.max_focal_mm = profile.max_focal_mm;
+            entry.min_f_number = profile.min_f_number;
+            entry.distortion = profile.distortion;
+            entry.chromatic_aberration = profile.lateral_chromatic_aberration;
+            entry.vignetting = profile.vignetting;
+            out << entry;
+            if (out.size() >= limit) {
+                return out;
+            }
+        }
+    }
+    return out;
+}
+
 // ---- Frames ------------------------------------------------------------------------------------------
 
 QImage clipping_overlay(const app::ClippingMask& mask) {
@@ -846,6 +1066,10 @@ std::shared_ptr<EditFrame> to_edit_frame(const app::DevelopFrame& frame, bool cl
             out->full_upright_size = QSize(frame.report->full_size.width, frame.report->full_size.height);
             out->geometry = to_edit_geometry(frame.report->settings.geometry);
             out->full_frame = full_geometry_frame(*frame.report);
+            // W13 (ADR 0023): what the render did for the lens, and the point mapping the tools put
+            // between mask positions and the displayed pixels.
+            out->lens = to_lens_info(frame.report->lens_correction);
+            out->lens_map = lens_point_map(frame.report->lens_correction.plan);
         }
         const double width = std::max(1, frame.image.width);
         const double height = std::max(1, frame.image.height);

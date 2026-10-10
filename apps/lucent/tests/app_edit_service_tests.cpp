@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QThread>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -222,6 +223,70 @@ TEST_F(AppEditServiceTest, AGestureIsOneRevisionAndUndoRedoAndResetMoveThroughTh
     EXPECT_FALSE(off_ui_thread_);
 }
 
+// W13 (ADR 0023): the Backend loads the bundled lens database; every frame says what its render did
+// for the lens; a switch is one revision of the lens-correction part; the database is searched for the
+// manual profile choice.
+TEST_F(AppEditServiceTest, FramesSayWhatTheLensCorrectionDidAndASwitchIsOneRevision) {
+    const LensDatabaseInfo database = edits_->lens_database();
+    ASSERT_TRUE(database.available) << database.problem.toStdString();
+    EXPECT_EQ(database.version, u"1.0.0");
+    EXPECT_TRUE(database.library.startsWith(u"Lensfun 0.3.4"));
+    EXPECT_GT(database.lenses, 1000);
+    EXPECT_EQ(library_->lens_database().version, database.version);
+    // The manual choice searches the database by maker and model.
+    const QList<LensProfileEntry> found =
+        edits_->search_lens_profiles(QStringLiteral("nikkor z 24-70 f4"), 10);
+    ASSERT_FALSE(found.isEmpty());
+    EXPECT_TRUE(std::any_of(found.cbegin(), found.cend(), [](const LensProfileEntry& e) {
+        return e.profile.maker == u"Nikon" && e.profile.model == u"Nikkor Z 24-70mm f/4 S" &&
+               e.mounts.contains(u"Nikon Z");
+    }));
+
+    const ItemId id = import_file(L"lens.dng");
+    edits_->open(id);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !frames_.isEmpty(); }, kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+    const EditFramePtr first = frames_.back();
+    ASSERT_TRUE(first->lens);
+    EXPECT_TRUE(first->lens->database);
+    EXPECT_EQ(first->lens->database_version, u"1.0.0");
+    EXPECT_TRUE(first->lens->enabled);
+    EXPECT_TRUE(first->lens->automatic);
+    // The synthetic camera is not in the database: nothing to correct, and the reasons say why.
+    EXPECT_EQ(first->lens->match, LensMatchQuality::None);
+    EXPECT_FALSE(first->lens->reasons.isEmpty());
+    EXPECT_EQ(first->lens->corrections[0].outcome, LensOutcome::NoProfile);
+    EXPECT_FALSE(first->lens_map);
+    EXPECT_TRUE(state_for(id)->settings.lens == EditLensCorrection{});
+
+    // One switch: one revision of the lens-correction part, rendered as switched off.
+    EditSettings settings = state_for(id)->settings;
+    settings.lens.distortion = false;
+    const quint64 token = edits_->apply(id, settings);
+    ASSERT_TRUE(wait_state(id, token));
+    ASSERT_TRUE(wait_final_frame(id, token));
+    ASSERT_TRUE(wait_idle());
+    EXPECT_FALSE(state_for(id, token)->committed.lens.distortion);
+    EXPECT_TRUE(state_for(id, token)->edited);
+    ASSERT_EQ(history_.size(), 1);
+    EXPECT_EQ(history_.front().parts, QList<EditPart>{EditPart::LensCorrections});
+    EXPECT_TRUE(history_.front().changed.isEmpty());
+    for (const EditFramePtr& frame : frames_) {
+        if (frame->token == token && frame->phase == FramePhase::Final) {
+            ASSERT_TRUE(frame->lens);
+            EXPECT_EQ(frame->lens->corrections[0].outcome, LensOutcome::Disabled);
+            EXPECT_EQ(frame->lens->corrections[2].outcome, LensOutcome::NoProfile);
+        }
+    }
+    // The recipe stores it (version 3, the lens-correction operation 1).
+    auto current = backend_->recipes().current_settings(app::ItemId{id});
+    ASSERT_TRUE(current) << current.error().describe();
+    EXPECT_FALSE(current->settings.lens_correction.distortion);
+    EXPECT_EQ(current->settings.operations.lens_correction, engine::kLensCorrectionOperationVersion);
+    EXPECT_NE(current->document.json.find(R"("version":3)"), std::string::npos);
+    EXPECT_TRUE(command_failures_.isEmpty()) << command_failures_.join('\n').toStdString();
+}
+
 TEST_F(AppEditServiceTest, ARecipeFromANewerLucentOpensReadOnlyWithItsReason) {
     const ItemId id = import_file(L"newer.dng");
     catalog::NewRevision revision;
@@ -320,10 +385,15 @@ TEST_F(AppEditServiceTest, PasteKeepsCameraSpecificWhiteBalanceOnItsCameraAndSay
     EXPECT_TRUE(report.applied.contains(SettingsCategory::Exposure));
     EXPECT_TRUE(report.applied.contains(SettingsCategory::Color));
     EXPECT_FALSE(report.applied.contains(SettingsCategory::WhiteBalance));
-    ASSERT_EQ(report.skipped.size(), 1);
+    // The lens corrections (W13) are another camera's too.
+    EXPECT_FALSE(report.applied.contains(SettingsCategory::LensCorrections));
+    ASSERT_EQ(report.skipped.size(), 2);
     EXPECT_TRUE(report.skipped.front().startsWith(QStringLiteral("White balance: ")))
         << report.skipped.front().toStdString();
     EXPECT_TRUE(report.skipped.front().contains(QStringLiteral("Synthetic A"))) << report.skipped.front().toStdString();
+    EXPECT_TRUE(report.skipped.back().startsWith(
+        QStringLiteral("Lens corrections: not pasted because they belong to")))
+        << report.skipped.back().toStdString();
     EXPECT_TRUE(report.errors.isEmpty());
     ASSERT_TRUE(wait_idle());
     const EditState pasted = *state_for(other);
@@ -593,7 +663,11 @@ TEST_F(AppEditServiceTest, NoiseReductionMasksAndTheCropPasteByCategoryOnlyOntoT
     ASSERT_TRUE(QTest::qWaitFor([&] { return state_for(same).has_value(); }, kAdapterWaitMs));
     edits_->paste_settings({same});
     ASSERT_TRUE(QTest::qWaitFor([&] { return pastes_.size() == 1; }, kAdapterWaitMs));
-    EXPECT_TRUE(pastes_.back().skipped.isEmpty()) << pastes_.back().skipped.join('\n').toStdString();
+    // But for the lens corrections (W13): the synthetic files record no lens, so Lucent cannot tell
+    // that it is the same lens.
+    ASSERT_EQ(pastes_.back().skipped.size(), 1) << pastes_.back().skipped.join('\n').toStdString();
+    EXPECT_TRUE(pastes_.back().skipped.front().startsWith(QStringLiteral("Lens corrections: ")))
+        << pastes_.back().skipped.front().toStdString();
     for (const SettingsCategory category :
          {SettingsCategory::Local, SettingsCategory::Masks, SettingsCategory::Detail, SettingsCategory::Geometry}) {
         EXPECT_TRUE(pastes_.back().applied.contains(category)) << int(category);
@@ -612,7 +686,8 @@ TEST_F(AppEditServiceTest, NoiseReductionMasksAndTheCropPasteByCategoryOnlyOntoT
     edits_->paste_settings({square});
     ASSERT_TRUE(QTest::qWaitFor([&] { return pastes_.size() == 2; }, kAdapterWaitMs));
     const PasteReport& report = pastes_.back();
-    ASSERT_EQ(report.skipped.size(), 2) << report.skipped.join('\n').toStdString();
+    // The masks, the crop and the lens corrections.
+    ASSERT_EQ(report.skipped.size(), 3) << report.skipped.join('\n').toStdString();
     EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("Masks: not pasted because this photo has another shape")))
         << report.skipped.join('\n').toStdString();
     EXPECT_TRUE(report.skipped.join(' ').contains(QStringLiteral("crop and rotation were not pasted")))

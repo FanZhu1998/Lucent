@@ -70,6 +70,17 @@ CameraSupportInfo FakeLibraryService::camera_support() const {
     return info;
 }
 
+LensDatabaseInfo FakeLibraryService::lens_database() const {
+    LensDatabaseInfo info;
+    info.available = true;
+    info.version = QStringLiteral("1.0.0");
+    info.library = QStringLiteral("Simulated lens database");
+    info.location = QStringLiteral("(simulated)");
+    info.cameras = 1;
+    info.lenses = 3;
+    return info;
+}
+
 void FakeLibraryService::start_import(const QStringList& paths, const ImportOptions& options) {
     const bool include_subfolders = options.include_subfolders;
     ++active_imports_;

@@ -40,6 +40,16 @@
 // mask_outline()) are the engine's (develop_geometry.hpp, local_adjustments.hpp): the view maps
 // handles and pointer positions through them and never re-implements the frames.
 //
+// Version 3 (W13; ADR 0023): lens-profile corrections are part of the settings (EditSettings::lens):
+// automatic profile or a named one, and separate switches for distortion, chromatic aberration and
+// vignetting; each change is one apply() (one revision). Every frame says what its render did for the
+// lens (EditFrame::lens: the database match with its quality and reasons, the profile used, each
+// correction's outcome, what the file corrects itself) and carries the correction's point mapping
+// (EditFrame::lens_map), which the tools put between mask positions (defined in the uncorrected
+// image) and the displayed pixels; the crop and the straightening stay in the corrected frame.
+// lens_database() says which database the session uses (or why none); search_lens_profiles()
+// searches it for the manual profile choice. Auto never changes the lens settings.
+//
 // Automatic settings (W8; blueprint section 2: "Auto creates a new editable revision. The
 // photographer can lock controls before rerunning it. The optimizer may change only unlocked
 // controls and must report when the locks prevent its usual technical targets"; ADR 0013).
@@ -57,6 +67,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include <QDateTime>
 #include <QImage>
@@ -93,34 +104,38 @@ enum class EditControl : std::uint8_t {
 }
 
 // Copy and paste categories (the recipe contract's RecipeCategory values; stable). The editor offers
-// all eight (kAllSettingsCategories); Masks and Geometry are not selected by default (placed on one
-// photo's content: kDefaultCategoryBits, the recipe contract's kDefaultRecipeCategories).
+// all nine (kAllSettingsCategories); Masks and Geometry are not selected by default (placed on one
+// photo's content), nor LensCorrections (one camera's and lens's: pasted only to photos of the same
+// camera and lens): kDefaultCategoryBits, the recipe contract's kDefaultRecipeCategories.
 enum class SettingsCategory : std::uint8_t {
     WhiteBalance = 1,
     Exposure = 2,
-    Tone = 3,      // contrast, tone curve, base look
-    Color = 4,     // saturation, vibrance
-    Local = 5,     // highlights and shadows
-    Detail = 6,    // chroma noise reduction
-    Geometry = 7,  // crop, straighten, quarter turns
-    Masks = 8,     // the masks (pasting them replaces the photo's own)
+    Tone = 3,             // contrast, tone curve, base look
+    Color = 4,            // saturation, vibrance
+    Local = 5,            // highlights and shadows
+    Detail = 6,           // chroma noise reduction
+    Geometry = 7,         // crop, straighten, quarter turns
+    Masks = 8,            // the masks (pasting them replaces the photo's own)
+    LensCorrections = 9,  // the lens-profile corrections (version 3)
 };
 
 [[nodiscard]] constexpr quint32 category_bit(SettingsCategory category) noexcept {
     return quint32{1} << static_cast<unsigned>(category);
 }
 
-inline constexpr std::array<SettingsCategory, 8> kAllSettingsCategories = {
-    SettingsCategory::WhiteBalance, SettingsCategory::Exposure, SettingsCategory::Tone,   SettingsCategory::Color,
-    SettingsCategory::Local,        SettingsCategory::Masks,    SettingsCategory::Detail, SettingsCategory::Geometry};
+inline constexpr std::array<SettingsCategory, 9> kAllSettingsCategories = {
+    SettingsCategory::WhiteBalance, SettingsCategory::Exposure, SettingsCategory::Tone,
+    SettingsCategory::Color,        SettingsCategory::Local,    SettingsCategory::Masks,
+    SettingsCategory::Detail,       SettingsCategory::Geometry, SettingsCategory::LensCorrections};
 
 inline constexpr quint32 kDefaultCategoryBits =
     category_bit(SettingsCategory::WhiteBalance) | category_bit(SettingsCategory::Exposure) |
     category_bit(SettingsCategory::Tone) | category_bit(SettingsCategory::Color) |
     category_bit(SettingsCategory::Local) | category_bit(SettingsCategory::Detail);
 
-inline constexpr quint32 kAllCategoryBits =
-    kDefaultCategoryBits | category_bit(SettingsCategory::Masks) | category_bit(SettingsCategory::Geometry);
+inline constexpr quint32 kAllCategoryBits = kDefaultCategoryBits | category_bit(SettingsCategory::Masks) |
+                                            category_bit(SettingsCategory::Geometry) |
+                                            category_bit(SettingsCategory::LensCorrections);
 
 enum class WhiteBalanceMode : std::uint8_t {
     AsShot = 1,
@@ -262,8 +277,32 @@ struct EditMask {
     friend bool operator==(const EditMask&, const EditMask&) = default;
 };
 
-// The photographic settings the editor shows and changes (DevelopSettings v2 without the parts the
-// editor does not change: the base look and the operation versions are kept by the service).
+// A lens profile of the lens database (engine LensProfileId: the database's maker and model, and the
+// crop factor of the camera the lens was calibrated with).
+struct EditLensProfile {
+    QString maker;
+    QString model;
+    double crop_factor = 1.0;
+
+    friend bool operator==(const EditLensProfile&, const EditLensProfile&) = default;
+};
+
+// The lens-profile corrections (engine LensCorrectionSetting with its operation version; ADR 0023).
+struct EditLensCorrection {
+    // False: the settings were made before Lucent had lens corrections (operation version 0): nothing
+    // is corrected and the members below are not used. Turning corrections on makes it true (version 1).
+    bool enabled = true;
+    bool distortion = true;
+    bool chromatic_aberration = true;  // lateral chromatic aberration (colour fringes)
+    bool vignetting = true;
+    // std::nullopt: automatic, the database's exact match for the photo's camera and lens only.
+    std::optional<EditLensProfile> profile;
+
+    friend bool operator==(const EditLensCorrection&, const EditLensCorrection&) = default;
+};
+
+// The photographic settings the editor shows and changes (DevelopSettings v3 without the parts the
+// editor does not change: the base look and the other operation versions are kept by the service).
 struct EditSettings {
     WhiteBalanceMode white_balance = WhiteBalanceMode::AsShot;
     double temperature_k = 5000.0;          // Kelvin
@@ -283,12 +322,16 @@ struct EditSettings {
     EditDenoise chroma_denoise;
     QList<EditMask> masks;  // applied in this order
     EditGeometry geometry;
+    // Version 3.
+    EditLensCorrection lens;
 
     [[nodiscard]] bool locked(EditControl control) const noexcept { return (locks & control_bit(control)) != 0; }
     void set_locked(EditControl control, bool locked) noexcept {
         locks = locked ? (locks | control_bit(control)) : (locks & ~control_bit(control));
     }
-    // Every photographic value is the default (locks ignored): the photo renders as shot.
+    // Every photographic value is the default (locks ignored): the photo renders as shot. The lens
+    // corrections count as shot when they are the defaults (automatic, all on) or not used (made before
+    // Lucent had them), as the recipe contract says.
     [[nodiscard]] bool renders_as_shot() const noexcept;
 
     friend bool operator==(const EditSettings&, const EditSettings&) = default;
@@ -336,19 +379,19 @@ struct EditState {
     bool settings_unknown = false;
 };
 
-// The version-2 parts of the settings a revision changed (the recipe contract's RecipePart values;
-// stable).
+// The parts of the settings a revision changed (the recipe contract's RecipePart values; stable).
 enum class EditPart : std::uint8_t {
     ChromaDenoise = 1,
     Masks = 2,
     Geometry = 3,
+    LensCorrections = 4,  // version 3
 };
 
 // User-facing names: "White balance", "Exposure", "Contrast", "Highlights", "Shadows", "Tone curve",
 // "Saturation", "Vibrance", "Base look"; the categories "White balance", "Exposure", "Tone",
-// "Color", "Highlights and shadows", "Masks", "Noise reduction", "Crop and rotation"; the parts
-// "Noise reduction", "Masks", "Crop and rotation"; the mask kinds "Brush", "Linear gradient",
-// "Radial gradient".
+// "Color", "Highlights and shadows", "Masks", "Noise reduction", "Crop and rotation", "Lens
+// corrections"; the parts "Noise reduction", "Masks", "Crop and rotation", "Lens corrections"; the
+// mask kinds "Brush", "Linear gradient", "Radial gradient".
 [[nodiscard]] QString control_label(EditControl control);
 [[nodiscard]] QString category_label(SettingsCategory category);
 [[nodiscard]] QString part_label(EditPart part);
@@ -363,7 +406,7 @@ struct EditHistoryEntry {
     QDateTime created;  // UTC
     QList<EditControl> changed;  // controls whose values changed in this revision
     QList<EditControl> locks;    // controls whose lock changed
-    QList<EditPart> parts;       // version-2 parts whose values changed (masks, crop, noise reduction)
+    QList<EditPart> parts;  // parts whose values changed (masks, crop, noise reduction, lens corrections)
     quint32 reverted_from = 0;   // a copy of this revision number (0: none)
     bool current = false;
     bool on_current_path = false;  // the current revision or one of its ancestors
@@ -426,11 +469,98 @@ struct AutoSummary {
     friend bool operator==(const AutoSummary&, const AutoSummary&) = default;
 };
 
+// ---- Lens corrections of frames (version 3; ADR 0023) -------------------------------------------------
+
+// The lens-profile correction's point mapping of a frame, in full-resolution upright pixels
+// (continuous coordinates, pixel (i, j) covering [i, i + 1) x [j, j + 1)): the corrected image U'
+// (the same size as the upright image U) shows at `corrected` the content of U at upright_of().
+// Masks are defined in U; the crop and the straightening work in U'. Immutable; any thread.
+class LensPointMap {
+public:
+    virtual ~LensPointMap() = default;
+    [[nodiscard]] virtual QPointF upright_of(QPointF corrected) const = 0;
+    // The corrected point that shows `upright`; std::nullopt where the model cannot be inverted (far
+    // outside the image).
+    [[nodiscard]] virtual std::optional<QPointF> corrected_of(QPointF upright) const = 0;
+};
+
+// The quality of the lens database's match for the photo's camera and lens (engine LensMatchKind).
+enum class LensMatchQuality : std::uint8_t {
+    None = 1,   // no profile for this camera and lens (or no lens recorded)
+    Fuzzy = 2,  // similar profiles, but none is certainly this lens: nothing is applied automatically
+    Exact = 3,  // this lens's profile: applied automatically
+};
+
+// What became of one correction in a frame's render (engine LensCorrectionOutcome).
+enum class LensOutcome : std::uint8_t {
+    Applied = 1,
+    Disabled = 2,       // switched off (or the settings predate lens corrections)
+    CarriedByFile = 3,  // the file already corrects it (DNG opcodes): never applied twice
+    Withheld = 4,       // automatic profile, and the file corrects its lens itself
+    NoProfile = 5,      // no profile (no exact match, no database, the named profile unknown)
+    NotApplicable = 6,  // chromatic aberration of a monochrome photo
+    NoCalibration = 7,  // the profile does not cover this photo (focal length, aperture, sensor)
+};
+
+// One correction of a frame (distortion, chromatic aberration or vignetting).
+struct LensCorrectionState {
+    LensOutcome outcome = LensOutcome::Disabled;
+    QString detail;  // developer-facing English (the engine's), for the panel's details
+};
+
+// What the lens-profile correction of a frame's render did (the engine's LensCorrectionPlan).
+struct LensInfo {
+    bool database = false;  // a lens database was used (false: corrections unavailable)
+    QString database_version;
+    bool enabled = true;    // operation version 1 (false: the settings predate lens corrections)
+    bool automatic = true;  // the profile is chosen automatically
+    // The photo's camera and lens as the file records them, its focal length and f-number (0: unknown).
+    QString camera;
+    QString lens;
+    double focal_length_mm = 0.0;
+    double f_number = 0.0;
+    LensMatchQuality match = LensMatchQuality::None;
+    QString database_camera;  // the camera the database identified ("Nikon Z 6"); empty: none
+    QString database_mount;   // its mount ("Nikon Z")
+    // Mounts whose lenses fit that camera: its own and those of the lenses the database's search
+    // returned for it (mounts it accepts through an adapter); empty without an identified camera.
+    QStringList compatible_mounts;
+    std::optional<EditLensProfile> matched;  // the exact match
+    QList<EditLensProfile> candidates;       // a fuzzy match's candidates, best first
+    QStringList reasons;                     // the match's reasons (developer-facing English)
+    std::optional<EditLensProfile> profile;  // the profile used (automatic: the exact match), if any
+    // Distortion, chromatic aberration, vignetting.
+    std::array<LensCorrectionState, 3> corrections;
+    // What the file corrects itself (applied DNG opcodes).
+    bool carried_distortion = false;
+    bool carried_chromatic_aberration = false;
+    bool carried_vignetting = false;
+    double scale = 1.0;  // the correction's magnification (1: nothing resampled)
+};
+
+using LensInfoPtr = std::shared_ptr<const LensInfo>;
+
+// A profile of the lens database, as the manual choice lists them (engine LensProfileSummary).
+struct LensProfileEntry {
+    EditLensProfile profile;
+    QString mounts;     // ", " separated
+    QString lens_type;  // "rectilinear", "fisheye", ...
+    double min_focal_mm = 0.0;
+    double max_focal_mm = 0.0;
+    double min_f_number = 0.0;
+    bool distortion = false;  // calibrations the profile holds
+    bool chromatic_aberration = false;
+    bool vignetting = false;
+};
+
 // ---- Geometry and masks of frames -----------------------------------------------------------------
 
 // The point mapping of a geometry for an upright image of `upright_size` pixels and its frame F
 // (the engine's GeometryMapping, develop_geometry.hpp; F is the camera's image area for geometry
-// version 2, the whole image otherwise). Every step is affine, so the transforms are exact.
+// version 2, the whole image otherwise). Every geometry step is affine, so the transforms are exact;
+// a lens correction (ADR 0023) is not: `lens` is its point mapping, which lies between the masks'
+// normalised upright coordinates and the transforms (normalised coordinates of the corrected image).
+// Map mask positions with output_from_normalized() and normalized_from_output(), which apply both.
 struct GeometryMap {
     bool valid = false;  // false: an empty size or an invalid geometry
     QSize upright_size;
@@ -444,6 +574,13 @@ struct GeometryMap {
     QTransform straightened_to_output;
     // Output (and upright) pixels per normalised length: max(W, H).
     double pixels_per_unit_length = 0.0;
+    // The lens correction of the pixels (null: none); full-resolution upright pixels.
+    std::shared_ptr<const LensPointMap> lens;
+
+    // Normalised upright (mask) coordinates <-> continuous output pixels, through the lens correction
+    // when there is one; std::nullopt when the map is not valid or the point cannot be mapped.
+    [[nodiscard]] std::optional<QPointF> output_from_normalized(QPointF normalized) const;
+    [[nodiscard]] std::optional<QPointF> normalized_from_output(QPointF output) const;
 };
 
 // What the user turns or mirrors as displayed (engine rotated_clockwise() and the others).
@@ -496,6 +633,10 @@ struct EditFrame {
     EditGeometry geometry;   // of the pixels (the crop is the whole image when `uncropped`)
     bool uncropped = false;  // rendered without the crop for the crop tool (set_crop_editing)
     QList<FrameMaskOutline> masks;  // every mask of the settings shown, in their order
+    // Version 3 (ADR 0023): what the render did for the lens, and its point mapping (null: nothing
+    // resampled; the masks are mapped through it).
+    LensInfoPtr lens;
+    std::shared_ptr<const LensPointMap> lens_map;
     // Weight overlay of mask `mask_overlay_id` (set_mask_overlay): premultiplied ARGB, the size of
     // the image or smaller (stretched over it). Null unless asked for.
     QImage mask_overlay;
@@ -596,6 +737,19 @@ public:
     [[nodiscard]] virtual EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const = 0;
     // engine::mask_outline() of `mask` in normalised upright coordinates (empty for an invalid mask).
     [[nodiscard]] virtual QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const = 0;
+
+    // ---- Lens corrections (version 3; see the file comment) -----------------------------------------
+
+    // The lens database the session's renders correct lenses with, or why there is none. The default
+    // has none.
+    [[nodiscard]] virtual LensDatabaseInfo lens_database() const { return {}; }
+    // Profiles of the lens database whose maker and model hold every word of `text` (case ignored;
+    // an empty text lists them all), at most `limit`, by maker and model. The default has none.
+    [[nodiscard]] virtual QList<LensProfileEntry> search_lens_profiles(const QString& text, int limit) const {
+        (void)text;
+        (void)limit;
+        return {};
+    }
 
     // True while a command is pending or the newest settings have not been rendered (Final).
     [[nodiscard]] virtual bool is_busy() const = 0;

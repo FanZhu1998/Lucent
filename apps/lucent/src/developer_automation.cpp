@@ -373,6 +373,18 @@ CommandLine parse_command_line(const QStringList& arguments) {
                                          QStringLiteral("With --open-first, open a tool before the screenshot: crop "
                                                         "or masks."),
                                          QStringLiteral("tool"));
+    // W13 lens corrections.
+    const QCommandLineOption lens_option(
+        QStringLiteral("lens"),
+        QStringLiteral(
+            "With --open-first, change the lens corrections once the photo is shown: on, auto, off, "
+            "all, distortion=on|off, ca=on|off, vignetting=on|off or profile=<search> (repeatable)."),
+        QStringLiteral("spec"));
+    const QCommandLineOption panel_option(
+        QStringLiteral("show-panel"),
+        QStringLiteral("With --open-first, scroll the Edit view's side panel to this section before the "
+                       "screenshot: lens."),
+        QStringLiteral("panel"));
     const QCommandLineOption measure_option(QStringLiteral("measure"),
                                             QStringLiteral("Report start-up, thumbnail, preview and "
                                                            "responsiveness timings on stderr."));
@@ -398,17 +410,18 @@ CommandLine parse_command_line(const QStringList& arguments) {
     const QCommandLineOption cancel_auto_option(
         QStringLiteral("cancel-auto-after"),
         QStringLiteral("With --auto, cancel the run this many milliseconds after it started."), QStringLiteral("ms"));
-    parser.addOptions(
-        {import_option,        subfolders_option,   open_first_option,   view_option,         export_option,
-         screenshot_option,    quit_option,         timeout_option,      format_option,       color_option,
-         quality_option,       zoom_option,         measure_option,      dialog_option,       data_root_option,
-         set_option,           drag_option,         drag_steps_option,   compare_option,      clipping_option,
-         scroll_option,        batch_option,        to_option,           preset_option,       batch_dialog_option,
-         running_option,       done_option,         auto_option,         automatic_option,    consistent_option,
-         turn_option,          straighten_option,   crop_option,         add_mask_option,     mask_set_option,
-         mask_exposure_option, brush_option,        brush_size_option,   mask_overlay_option, tool_option,
-         about_option,         resume_batch_option, cancel_batch_option, pause_batch_option,  resume_after_option,
-         cancel_auto_option});
+    parser.addOptions({import_option,       subfolders_option,   open_first_option,   view_option,
+                       export_option,       screenshot_option,   quit_option,         timeout_option,
+                       format_option,       color_option,        quality_option,      zoom_option,
+                       measure_option,      dialog_option,       data_root_option,    set_option,
+                       drag_option,         drag_steps_option,   compare_option,      clipping_option,
+                       scroll_option,       batch_option,        to_option,           preset_option,
+                       batch_dialog_option, running_option,      done_option,         auto_option,
+                       automatic_option,    consistent_option,   turn_option,         straighten_option,
+                       crop_option,         add_mask_option,     mask_set_option,     mask_exposure_option,
+                       brush_option,        brush_size_option,   mask_overlay_option, tool_option,
+                       about_option,        resume_batch_option, cancel_batch_option, pause_batch_option,
+                       resume_after_option, cancel_auto_option,  lens_option,         panel_option});
     parser.addPositionalArgument(QStringLiteral("paths"), QStringLiteral("Photos or folders to add."),
                                  QStringLiteral("[paths...]"));
 
@@ -628,14 +641,39 @@ CommandLine parse_command_line(const QStringList& arguments) {
             return fail(QStringLiteral("Unknown --tool '%1': use crop or masks.").arg(options.tool));
         }
     }
+    // W13 lens corrections.
+    for (const QString& spec : parser.values(lens_option)) {
+        const QString value = spec.trimmed();
+        const QString lower = value.toLower();
+        const bool valid = lower == u"on" || lower == u"auto" || lower == u"off" || lower == u"all" ||
+                           ((lower.startsWith(u"distortion=") || lower.startsWith(u"ca=") ||
+                             lower.startsWith(u"vignetting=")) &&
+                            (lower.endsWith(u"=on") || lower.endsWith(u"=off"))) ||
+                           (lower.startsWith(u"profile=") && value.size() > 8) ||
+                           (lower.startsWith(u"search=") && value.size() > 7);
+        if (!valid) {
+            return fail(QStringLiteral("--lens needs on, auto, off, all, distortion=on|off, ca=on|off, "
+                                       "vignetting=on|off, profile=<search> or search=<text> (got '%1').")
+                            .arg(spec));
+        }
+        options.lens_edits << value;
+    }
+    if (parser.isSet(panel_option)) {
+        options.show_panel = parser.value(panel_option).trimmed().toLower();
+        if (options.show_panel != u"lens") {
+            return fail(QStringLiteral("Unknown --show-panel '%1': use lens.").arg(options.show_panel));
+        }
+    }
     const bool w9_editing = !options.turns.isEmpty() || options.straighten || options.crop ||
-                            !options.add_masks.isEmpty() || !options.mask_values.empty() || !options.brushes.empty() ||
-                            options.mask_overlay || !options.tool.isEmpty();
+                            !options.add_masks.isEmpty() || !options.mask_values.empty() ||
+                            !options.brushes.empty() || options.mask_overlay || !options.tool.isEmpty() ||
+                            !options.lens_edits.isEmpty() || !options.show_panel.isEmpty();
     if ((!options.edits.empty() || !options.drag.isEmpty() || !options.compare.isEmpty() || options.clipping ||
          options.panel_scroll || options.run_auto || w9_editing) &&
         !options.open_first) {
-        return fail(QStringLiteral("--set, --drag, --compare, --clipping, --scroll-panel, --auto and the geometry and "
-                                   "mask options need --open-first."));
+        return fail(
+            QStringLiteral("--set, --drag, --compare, --clipping, --scroll-panel, --auto and the geometry, "
+                           "mask and lens options need --open-first."));
     }
     options.resume_batch = parser.isSet(resume_batch_option);
     if (parser.isSet(batch_option)) {
@@ -855,6 +893,18 @@ void DeveloperAutomation::start() {
                              : channel);
     for (const QString& note : support.notes) {
         report(QStringLiteral("camera support note: %1").arg(note));
+    }
+    // W13 (ADR 0023): which lens database the session's lens corrections use.
+    const LensDatabaseInfo lens = controller_.library_service().lens_database();
+    if (lens.available) {
+        report(QStringLiteral("lens database %1 (%2): %3 lenses, %4 cameras, from %5")
+                   .arg(lens.version, lens.library)
+                   .arg(lens.lenses)
+                   .arg(lens.cameras)
+                   .arg(lens.location));
+    } else {
+        report(QStringLiteral("lens database unavailable: %1")
+                   .arg(lens.problem.isEmpty() ? QStringLiteral("none configured") : lens.problem));
     }
     if (options_.measure) {
         report(QStringLiteral("measure: window loaded %1 ms after the process started")
@@ -1512,15 +1562,103 @@ void DeveloperAutomation::after_imports() {
 }
 
 bool DeveloperAutomation::wants_editing() const {
-    return !options_.edits.empty() || !options_.drag.isEmpty() || !options_.compare.isEmpty() || options_.clipping ||
-           options_.panel_scroll.has_value() || options_.run_auto || !options_.turns.isEmpty() ||
-           options_.straighten.has_value() || options_.crop.has_value() || !options_.add_masks.isEmpty() ||
-           !options_.brushes.empty() || options_.mask_overlay || !options_.tool.isEmpty();
+    return !options_.edits.empty() || !options_.drag.isEmpty() || !options_.compare.isEmpty() ||
+           options_.clipping || options_.panel_scroll.has_value() || options_.run_auto ||
+           !options_.turns.isEmpty() || options_.straighten.has_value() || options_.crop.has_value() ||
+           !options_.add_masks.isEmpty() || !options_.brushes.empty() || options_.mask_overlay ||
+           !options_.tool.isEmpty() || !options_.lens_edits.isEmpty() || !options_.show_panel.isEmpty();
+}
+
+bool DeveloperAutomation::apply_lens(const QString& spec) {
+    EditSession& edit = *controller_.edit();
+    LensCorrections& lens = *edit.lens();
+    const EditLensCorrection before = edit.settings().lens;
+    const QString lower = spec.toLower();
+    if (lower == u"on") {
+        lens.turnOn();
+    } else if (lower == u"auto") {
+        lens.setAutomatic(true);
+    } else if (lower == u"off" || lower == u"all") {
+        // One revision: the three switches at once, as a paste of the category would.
+        EditSettings settings = edit.settings();
+        const bool on = lower == u"all";
+        settings.lens.distortion = on;
+        settings.lens.chromatic_aberration = on;
+        settings.lens.vignetting = on;
+        if (settings.lens.enabled) {
+            edit.finish_pending_gesture();
+            edit.edit_settings(settings);
+        }
+    } else if (lower.startsWith(u"search=")) {
+        // The manual choice open with this search, nothing chosen (no revision, no frame).
+        lens.openPicker();
+        lens.setSearchText(spec.sliced(7));
+        report(QStringLiteral("--lens %1: %2 profiles found").arg(spec).arg(lens.profiles()->count()));
+        return false;
+    } else if (lower.startsWith(u"profile=")) {
+        lens.openPicker();
+        lens.setSearchText(spec.sliced(8));
+        if (lens.profiles()->count() == 0) {
+            report(QStringLiteral("--lens %1: no profile of the lens database matches").arg(spec));
+            lens.closePicker();
+            return false;
+        }
+        report(QStringLiteral("--lens %1: choosing %2 of %3 profiles found")
+                   .arg(spec, lens.profiles()
+                                  ->data(lens.profiles()->index(0), LensProfileListModel::LabelRole)
+                                  .toString())
+                   .arg(lens.profiles()->count()));
+        lens.chooseProfile(0);
+    } else {
+        const qsizetype equals = lower.indexOf(u'=');
+        const QString key = lower.first(equals);
+        const bool on = lower.sliced(equals + 1) == u"on";
+        lens.setCorrection(key == u"ca" ? QStringLiteral("chromaticAberration") : key, on);
+    }
+    const bool changed = !(edit.settings().lens == before);
+    if (!changed) {
+        report(QStringLiteral("--lens %1: nothing changed (%2)")
+                   .arg(spec, lens.editable() ? QStringLiteral("already so, or the file corrects it itself")
+                                              : QStringLiteral("lens corrections cannot be changed")));
+    }
+    return changed;
+}
+
+void DeveloperAutomation::report_lens() {
+    const LensCorrections& lens = *controller_.edit()->lens();
+    if (!lens.available()) {
+        report(QStringLiteral("lens: unavailable: %1").arg(lens.unavailable_reason()));
+        return;
+    }
+    report(QStringLiteral("lens: %1 %2; match %3; profile %4%5")
+               .arg(lens.camera_text(), lens.lens_text(),
+                    lens.match_kind().isEmpty() ? QStringLiteral("unknown") : lens.match_kind(),
+                    lens.profile_text().isEmpty() ? QStringLiteral("none") : lens.profile_text(),
+                    lens.legacy()      ? QStringLiteral(" (recipe made before lens corrections)")
+                    : lens.automatic() ? QStringLiteral(" (automatic)")
+                                       : QStringLiteral(" (chosen)")));
+    for (const QVariant& entry : lens.corrections()) {
+        const QVariantMap map = entry.toMap();
+        report(QStringLiteral("lens: %1 %2: %3")
+                   .arg(map.value(QStringLiteral("key")).toString(),
+                        map.value(QStringLiteral("checked")).toBool() ? QStringLiteral("on")
+                                                                      : QStringLiteral("off"),
+                        map.value(QStringLiteral("status")).toString()));
+    }
+    if (!lens.carried_note().isEmpty()) {
+        report(QStringLiteral("lens: %1").arg(lens.carried_note()));
+    }
+    for (const QString& reason : lens.reasons()) {
+        report(QStringLiteral("lens: reason: %1").arg(reason));
+    }
 }
 
 std::deque<std::pair<QString, std::function<bool()>>> DeveloperAutomation::geometry_and_mask_steps() {
     std::deque<std::pair<QString, std::function<bool()>>> steps;
     EditSession& edit = *controller_.edit();
+    for (const QString& spec : options_.lens_edits) {
+        steps.emplace_back(QStringLiteral("lens=") + spec, [this, spec] { return apply_lens(spec); });
+    }
     for (const QString& turn : options_.turns) {
         steps.emplace_back(QStringLiteral("turn=") + turn, [&edit, turn] {
             if (turn == u"cw") {
@@ -1888,6 +2026,26 @@ void DeveloperAutomation::edit_step() {
             const double range = std::max(0.0, panel->property("contentHeight").toDouble() - panel->height());
             panel->setProperty("contentY", range * *options_.panel_scroll);
         }
+    }
+    if (!options_.show_panel.isEmpty()) {
+        // W13: the section at the top of the side panel, expanded.
+        auto* panel = window_.findChild<QQuickItem*>(QStringLiteral("editPanel"));
+        auto* section = window_.findChild<QQuickItem*>(options_.show_panel + QStringLiteral("Panel"));
+        if (panel != nullptr && section != nullptr) {
+            section->setProperty("expanded", true);
+            static_cast<void>(grab());  // lays the panel out at its expanded size
+            if (auto* content = panel->property("contentItem").value<QQuickItem*>(); content != nullptr) {
+                const double top = section->mapToItem(content, QPointF(0.0, 0.0)).y() - 8.0;
+                const double range =
+                    std::max(0.0, panel->property("contentHeight").toDouble() - panel->height());
+                panel->setProperty("contentY", std::clamp(top, 0.0, range));
+            }
+        } else {
+            report(QStringLiteral("--show-panel %1: the section was not found").arg(options_.show_panel));
+        }
+    }
+    if (!options_.lens_edits.isEmpty() || options_.show_panel == u"lens") {
+        report_lens();
     }
     if (options_.compare == u"before") {
         edit.set_compare(true);

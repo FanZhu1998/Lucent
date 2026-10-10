@@ -2,7 +2,11 @@
 
 #include <QImage>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -11,6 +15,7 @@
 #include "adapter_test_support.hpp"
 #include "adapters/conversions.hpp"
 #include "adapters/edit_conversions.hpp"
+#include "models/presentation.hpp"
 
 namespace lucent::ui::adapters {
 namespace {
@@ -167,6 +172,67 @@ TEST(AdapterConversions, AboutDescribesTheCameraSupportDatabase) {
         EXPECT_TRUE(unreadable.problem.contains(QStringLiteral("could not be read"))) << to_string(code);
         EXPECT_FALSE(unreadable.problem.contains(QStringLiteral("integrity"))) << to_string(code);
     }
+}
+
+// W13 (ADR 0023): About and the Lens corrections panel describe the lens database, or why there is
+// none; its profiles are listed for the manual choice.
+TEST(AdapterConversions, AboutDescribesTheLensDatabase) {
+    constexpr std::string_view xml =
+        R"(<lensdatabase version="1">
+             <mount><name>Test</name></mount>
+             <camera><maker>Lucent</maker><model>Test Camera</model><mount>Test</mount><cropfactor>1</cropfactor></camera>
+             <lens><maker>Lucent</maker><model>Test 35mm f/2</model><mount>Test</mount><cropfactor>1.5</cropfactor>
+               <focal value="35"/><aperture min="2" max="16"/>
+               <calibration><distortion model="poly3" focal="35" k1="0.01"/></calibration></lens>
+           </lensdatabase>)";
+    const std::array<engine::LensDatabaseFile, 1> files = {engine::LensDatabaseFile{"test.xml", xml}};
+    auto database = engine::LensDatabase::load(
+        files, engine::LensDatabaseIdentity{"lens-database", "1.0.0", std::string(64, 'a')});
+    ASSERT_TRUE(database) << database.error().describe();
+    // The profiles a photographer can choose from.
+    ASSERT_EQ((*database)->profiles().size(), 1u);
+    const engine::LensProfileSummary& profile = (*database)->profiles().front();
+    EXPECT_EQ(profile.id.maker, "Lucent");
+    EXPECT_EQ(profile.id.model, "Test 35mm f/2");
+    EXPECT_NEAR(profile.id.crop_factor, 1.5, 1e-6);
+    EXPECT_EQ(profile.mounts, "Test");
+    EXPECT_TRUE(profile.distortion);
+    EXPECT_FALSE(profile.lateral_chromatic_aberration);
+    EXPECT_FALSE(profile.vignetting);
+    EXPECT_TRUE((*database)->contains(profile.id));
+
+    assets::LensDatabaseLookup load;
+    load.database = *database;
+    const LensDatabaseInfo info = to_lens_database_info(load);
+    EXPECT_TRUE(info.available);
+    EXPECT_EQ(info.version, u"1.0.0");
+    EXPECT_TRUE(info.library.startsWith(u"Lensfun 0.3"));
+    EXPECT_EQ(info.cameras, 1);
+    EXPECT_EQ(info.lenses, 1);
+    EXPECT_TRUE(info.problem.isEmpty());
+
+    // None: why, in the user's words (never a crash, corrections unavailable).
+    assets::LensDatabaseLookup missing;
+    missing.problem = Error{ErrorCode::NotFound, "no asset", "assets.load.missing", 0};
+    EXPECT_FALSE(to_lens_database_info(missing).available);
+    EXPECT_TRUE(to_lens_database_info(missing).problem.contains(u"not installed"));
+    assets::LensDatabaseLookup tampered;
+    tampered.problem = Error{ErrorCode::Corrupt, "hash", "assets.load.hash", 0};
+    EXPECT_TRUE(to_lens_database_info(tampered).problem.contains(u"integrity check"));
+    assets::LensDatabaseLookup unreadable;
+    unreadable.problem = Error{ErrorCode::PermissionDenied, "denied", "core.file", 5};
+    EXPECT_TRUE(to_lens_database_info(unreadable).problem.contains(u"could not be read"));
+    assets::LensDatabaseLookup newer;
+    newer.problem = Error{ErrorCode::VersionMismatch, "newer", "assets.lens.content", 0};
+    EXPECT_TRUE(to_lens_database_info(newer).problem.contains(u"another version of Lucent"));
+    // The About dialog's map.
+    const QVariantMap map = presentation::lens_database_map(info);
+    EXPECT_TRUE(map.value(QStringLiteral("summary"))
+                    .toString()
+                    .contains(u"Version 1.0.0 of the Lensfun lens database"));
+    EXPECT_EQ(
+        presentation::lens_database_map(to_lens_database_info(tampered)).value(QStringLiteral("summary")),
+        to_lens_database_info(tampered).problem);
 }
 
 TEST(AdapterConversions, SupportDetailExplainsEveryDistinctReason) {
@@ -546,6 +612,169 @@ TEST(AdapterConversions, VersionTwoSettingsRoundTripThroughTheEditor) {
     const engine::DevelopSettings upgraded = to_develop_settings(EditSettings{}, old);
     EXPECT_EQ(upgraded.version, engine::kDevelopSettingsVersion);
     EXPECT_TRUE(upgraded.validate());
+}
+
+// W13 (ADR 0023): the lens correction travels through the editor with its operation version.
+TEST(AdapterConversions, LensCorrectionsRoundTripThroughTheEditor) {
+    // The defaults: automatic, every correction on.
+    EXPECT_EQ(to_edit_settings(engine::DevelopSettings{}).lens, EditLensCorrection{});
+    EXPECT_TRUE(to_edit_settings(engine::DevelopSettings{}).renders_as_shot());
+
+    // A named profile with chromatic aberration off.
+    engine::DevelopSettings named;
+    named.lens_correction.lateral_chromatic_aberration = false;
+    named.lens_correction.profile = engine::LensProfileId{"Nikon", "Nikkor Z 24-70mm f/4 S", 1.0};
+    const EditSettings edit = to_edit_settings(named);
+    EXPECT_TRUE(edit.lens.enabled);
+    EXPECT_TRUE(edit.lens.distortion);
+    EXPECT_FALSE(edit.lens.chromatic_aberration);
+    ASSERT_TRUE(edit.lens.profile);
+    EXPECT_EQ(edit.lens.profile->model, u"Nikkor Z 24-70mm f/4 S");
+    EXPECT_FALSE(edit.renders_as_shot());
+    EXPECT_EQ(to_develop_settings(edit, engine::DevelopSettings{}), named);
+
+    // Settings made before lens corrections (operation version 0): off in the editor, and kept so.
+    engine::DevelopSettings legacy;
+    legacy.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+    const EditSettings off = to_edit_settings(legacy);
+    EXPECT_FALSE(off.lens.enabled);
+    EXPECT_TRUE(off.renders_as_shot());
+    EXPECT_EQ(to_develop_settings(off, legacy), legacy);
+    // A version-2 base (upgraded to version 0) stays without corrections under its own values.
+    engine::DevelopSettings v2;
+    v2.version = 2;
+    EXPECT_EQ(to_develop_settings(to_edit_settings(*engine::upgrade_develop_settings(v2)), v2)
+                  .operations.lens_correction,
+              0u);
+    // Turning them on writes operation version 1 with the editor's values.
+    EditSettings on = off;
+    on.lens = EditLensCorrection{};
+    on.lens.vignetting = false;
+    const engine::DevelopSettings turned_on = to_develop_settings(on, legacy);
+    EXPECT_EQ(turned_on.operations.lens_correction, engine::kLensCorrectionOperationVersion);
+    EXPECT_FALSE(turned_on.lens_correction.vignetting);
+    EXPECT_TRUE(turned_on.validate());
+}
+
+TEST(AdapterConversions, ALensRecordBecomesThePanelsInformation) {
+    engine::LensCorrectionRecord record;
+    engine::LensCorrectionPlan& plan = record.plan;
+    plan.operation_version = 1;
+    plan.automatic = true;
+    plan.database = engine::LensDatabaseIdentity{"lens-database", "1.0.0", std::string(64, '0')};
+    plan.query.camera_make = "NIKON CORPORATION";
+    plan.query.camera_model = "NIKON Z 6";
+    plan.query.camera_normalized_make = "Nikon";
+    plan.query.camera_normalized_model = "Z 6";
+    plan.query.lens_make = "NIKON";
+    plan.query.lens_model = "NIKKOR Z 24-70mm f/4 S";
+    plan.query.focal_length_mm = 52.0;
+    plan.query.f_number = 6.7;
+    plan.match.kind = engine::LensMatchKind::Exact;
+    plan.match.camera = engine::LensCameraProfile{"Nikon Corporation", "Nikon Z 6", "Nikon Z", 1.0};
+    plan.match.lens = engine::LensProfileId{"Nikon", "Nikkor Z 24-70mm f/4 S", 1.0};
+    plan.match.candidates = {engine::LensCandidate{*plan.match.lens, "Nikon Z, Nikon F AF", 90, true}};
+    plan.match.reasons = {"camera identified", "one database lens has the file's lens name"};
+    plan.profile = plan.match.lens;
+    plan.carried.vignetting = true;
+    plan.decisions[0].outcome = engine::LensCorrectionOutcome::Applied;
+    plan.decisions[1].outcome = engine::LensCorrectionOutcome::NoCalibration;
+    plan.decisions[1].detail = "no lateral CA calibration";
+    plan.decisions[2].outcome = engine::LensCorrectionOutcome::CarriedByFile;
+    const LensInfoPtr info = to_lens_info(record);
+    ASSERT_TRUE(info);
+    EXPECT_TRUE(info->database);
+    EXPECT_EQ(info->database_version, u"1.0.0");
+    EXPECT_TRUE(info->enabled);
+    EXPECT_TRUE(info->automatic);
+    EXPECT_EQ(info->camera, u"Nikon Z 6");
+    EXPECT_EQ(info->lens, u"NIKON NIKKOR Z 24-70mm f/4 S");
+    EXPECT_DOUBLE_EQ(info->focal_length_mm, 52.0);
+    EXPECT_EQ(info->match, LensMatchQuality::Exact);
+    EXPECT_EQ(info->database_camera, u"Nikon Z 6");
+    EXPECT_EQ(info->database_mount, u"Nikon Z");
+    EXPECT_EQ(info->compatible_mounts,
+              (QStringList{QStringLiteral("Nikon Z"), QStringLiteral("Nikon F AF")}));
+    ASSERT_TRUE(info->matched);
+    EXPECT_EQ(info->matched->maker, u"Nikon");
+    ASSERT_TRUE(info->profile);
+    EXPECT_EQ(info->reasons.size(), 2);
+    EXPECT_EQ(info->corrections[0].outcome, LensOutcome::Applied);
+    EXPECT_EQ(info->corrections[1].outcome, LensOutcome::NoCalibration);
+    EXPECT_EQ(info->corrections[1].detail, u"no lateral CA calibration");
+    EXPECT_EQ(info->corrections[2].outcome, LensOutcome::CarriedByFile);
+    EXPECT_TRUE(info->carried_vignetting);
+    EXPECT_FALSE(info->carried_distortion);
+    EXPECT_DOUBLE_EQ(info->scale, 1.0);
+    // Nothing resampled: no point mapping.
+    EXPECT_FALSE(lens_point_map(plan));
+    // Without a database (and the operation version 0 of an older recipe).
+    engine::LensCorrectionRecord none;
+    none.plan.operation_version = 0;
+    const LensInfoPtr empty = to_lens_info(none);
+    ASSERT_TRUE(empty);
+    EXPECT_FALSE(empty->database);
+    EXPECT_FALSE(empty->enabled);
+    EXPECT_EQ(empty->match, LensMatchQuality::None);
+    EXPECT_TRUE(empty->camera.isEmpty());
+}
+
+TEST(AdapterConversions, LensProfilesAreSearchedByEveryWordOfMakerAndModel) {
+    const auto summary = [](std::string maker, std::string model, double crop) {
+        engine::LensProfileSummary s;
+        s.id = engine::LensProfileId{std::move(maker), std::move(model), crop};
+        s.mounts = "Nikon Z";
+        s.distortion = true;
+        return s;
+    };
+    const std::vector<engine::LensProfileSummary> profiles = {
+        summary("Nikon", "Nikkor Z 24-70mm f/2.8 S", 1.0), summary("Nikon", "Nikkor Z 24-70mm f/4 S", 1.0),
+        summary("Sigma", "24-70mm f/2.8 DG DN | A", 1.0), summary("Sigma", "24-70mm f/2.8 DG DN | A", 1.5)};
+    EXPECT_EQ(lens_profile_search(profiles, QString(), 10).size(), 4);  // no word: all of them
+    EXPECT_EQ(lens_profile_search(profiles, QStringLiteral("  "), 10).size(), 4);
+    EXPECT_EQ(lens_profile_search(profiles, QStringLiteral("24-70"), 2).size(), 2);  // the limit
+    const QList<LensProfileEntry> nikon = lens_profile_search(profiles, QStringLiteral("NIKKOR f4"), 10);
+    ASSERT_EQ(nikon.size(), 1);  // "f/4" holds the word "f4"; case is ignored
+    EXPECT_EQ(nikon[0].profile.model, u"Nikkor Z 24-70mm f/4 S");
+    EXPECT_EQ(nikon[0].mounts, u"Nikon Z");
+    EXPECT_TRUE(nikon[0].distortion);
+    const QList<LensProfileEntry> sigma = lens_profile_search(profiles, QStringLiteral("sigma 24-70"), 10);
+    ASSERT_EQ(sigma.size(), 2);  // two calibrations of one lens (crop factors 1 and 1.5)
+    EXPECT_DOUBLE_EQ(sigma[1].profile.crop_factor, 1.5);
+    // Names whose words start with the search words come first ("4-70" is only inside "24-70mm").
+    const std::vector<engine::LensProfileSummary> more = {summary("Other", "14-70mm f/4", 1.0),
+                                                          summary("Other", "4-70mm f/4", 1.0)};
+    const QList<LensProfileEntry> ranked = lens_profile_search(more, QStringLiteral("4-70"), 10);
+    ASSERT_EQ(ranked.size(), 2);
+    EXPECT_EQ(ranked[0].profile.model, u"4-70mm f/4");
+    EXPECT_EQ(ranked[1].profile.model, u"14-70mm f/4");
+    EXPECT_TRUE(lens_profile_search(profiles, QStringLiteral("zeiss"), 10).isEmpty());
+    EXPECT_TRUE(lens_profile_search(profiles, QStringLiteral("nikon"), 0).isEmpty());
+}
+
+TEST(AdapterConversions, LensCorrectionsNotPastedSayWhy) {
+    app::RecipeClipboard clipboard;
+    clipboard.camera.make = "Sony";
+    clipboard.camera.model = "ILCE-7M4";
+    clipboard.camera.lens = "Sony FE 50mm F2.5 G";
+    app::PasteSkip skip{app::RecipeCategory::LensCorrections, app::RecipePart::LensCorrection,
+                        "developer text"};
+    app::CameraCapabilities other_camera;
+    other_camera.make = "Nikon";
+    other_camera.model = "Z 6";
+    other_camera.lens = clipboard.camera.lens;
+    EXPECT_EQ(describe_paste_skip(skip, clipboard, other_camera),
+              u"Lens corrections: not pasted because they belong to the Sony ILCE-7M4 and this photo is from "
+              u"Nikon Z 6.");
+    app::CameraCapabilities other_lens = clipboard.camera;
+    other_lens.lens = "Sony FE 24-70mm F2.8 GM";
+    EXPECT_EQ(
+        describe_paste_skip(skip, clipboard, other_lens),
+        u"Lens corrections: not pasted because they belong to the Sony FE 50mm F2.5 G lens and this photo "
+        u"was taken with the Sony FE 24-70mm F2.8 GM.");
+    app::CameraCapabilities unknown = clipboard.camera;
+    unknown.lens.clear();
+    EXPECT_TRUE(describe_paste_skip(skip, clipboard, unknown).contains(u"is not recorded"));
 }
 
 TEST(AdapterConversions, GeometryMapsAreTheEnginesMappingAsExactTransforms) {

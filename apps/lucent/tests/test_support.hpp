@@ -249,6 +249,10 @@ public:
     [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
     [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;
     [[nodiscard]] bool is_busy() const override { return busy; }
+    // W13: the lens database the session reports (lens_database_info) and a search of
+    // `lens_profiles` (the adapters' word rule).
+    [[nodiscard]] LensDatabaseInfo lens_database() const override { return lens_database_info; }
+    [[nodiscard]] QList<LensProfileEntry> search_lens_profiles(const QString& text, int limit) const override;
 
     // Auto's signals, as the service would emit them.
     void emit_auto_progress(const AutoProgress& progress) { emit auto_progress(progress); }
@@ -280,6 +284,8 @@ public:
     bool clipboard = false;
     bool busy = false;
     QSet<ItemId> auto_running;
+    LensDatabaseInfo lens_database_info;
+    QList<LensProfileEntry> lens_profiles;
 
 private:
     quint64 next_token() { return ++last_token_; }

@@ -295,12 +295,9 @@ std::optional<QPointF> MaskEditor::to_normalized(double u, double v) const {
     if (!map.valid || !std::isfinite(u) || !std::isfinite(v)) {
         return std::nullopt;
     }
-    bool invertible = false;
-    const QTransform inverse = map.normalized_to_output.inverted(&invertible);
-    if (!invertible) {
-        return std::nullopt;
-    }
-    return inverse.map(QPointF(u * map.output_size.width(), v * map.output_size.height()));
+    // Through the frame's lens correction when it has one (ADR 0023: masks live in the uncorrected
+    // image).
+    return map.normalized_from_output(QPointF(u * map.output_size.width(), v * map.output_size.height()));
 }
 
 std::optional<QPointF> MaskEditor::normalized_at(double u, double v) const {
@@ -321,7 +318,9 @@ QPointF MaskEditor::to_upright_pixels(QPointF normalized) const {
 
 QPointF MaskEditor::to_displayed(QPointF normalized) const {
     const GeometryMap& map = session_.frame_map();
-    const QPointF output = map.normalized_to_output.map(normalized);
+    // Through the lens correction (a point it cannot map, far outside the image, keeps the geometry's).
+    const QPointF output =
+        map.output_from_normalized(normalized).value_or(map.normalized_to_output.map(normalized));
     return QPointF(output.x() / std::max(1, map.output_size.width()), output.y() / std::max(1, map.output_size.height()));
 }
 
@@ -348,16 +347,14 @@ bool MaskEditor::add(const QString& kind) {
     // (still the crop tool's uncropped frame when the mask is added from it).
     GeometryMap map = session_.service().map_geometry(session_.settings().geometry, session_.frame_full_upright_size(),
                                                       session_.frame_full_frame());
-    bool invertible = false;
-    QTransform inverse = map.normalized_to_output.inverted(&invertible);
-    if (!map.valid || !invertible || map.output_size.isEmpty()) {
+    map.lens = session_.frame_map().lens;  // the lens correction shown (ADR 0023)
+    if (!map.valid || map.output_size.isEmpty()) {
         map = session_.frame_map();
-        inverse = map.normalized_to_output.inverted(&invertible);
     }
     const auto at = [&](double u, double v) {
-        const QPointF normalized =
-            invertible ? inverse.map(QPointF(u * map.output_size.width(), v * map.output_size.height())) : QPointF(u, v);
-        return tidy_point(normalized);
+        const std::optional<QPointF> normalized =
+            map.normalized_from_output(QPointF(u * map.output_size.width(), v * map.output_size.height()));
+        return tidy_point(normalized.value_or(QPointF(u, v)));
     };
     EditMask mask;
     mask.id = next_id();

@@ -96,6 +96,9 @@ public:
     // W10 (ADR 0018). The camera support database the items' support states come from (Help >
     // About). Default: none (available false, no problem).
     [[nodiscard]] virtual CameraSupportInfo camera_support() const { return {}; }
+    // W13 (ADR 0023). The lens database the lens-profile corrections use (Help > About). Default: none
+    // (available false, no problem).
+    [[nodiscard]] virtual LensDatabaseInfo lens_database() const { return {}; }
 
     // True from the first import_started until the last import_finished.
     [[nodiscard]] virtual bool is_importing() const = 0;

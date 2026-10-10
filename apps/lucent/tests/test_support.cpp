@@ -117,6 +117,22 @@ QList<QPolygonF> RecordingEditService::mask_outline(const EditMask& mask, QSize 
     return adapters::mask_outline_of(mask, upright_size);
 }
 
+QList<LensProfileEntry> RecordingEditService::search_lens_profiles(const QString& text, int limit) const {
+    QList<LensProfileEntry> out;
+    const QStringList words = text.toLower().remove(u'/').split(u' ', Qt::SkipEmptyParts);
+    for (const LensProfileEntry& entry : lens_profiles) {
+        const QString haystack = (entry.profile.maker + u' ' + entry.profile.model).toLower().remove(u'/');
+        bool found = true;
+        for (const QString& word : words) {
+            found = found && haystack.contains(word);
+        }
+        if (found && out.size() < limit) {
+            out << entry;
+        }
+    }
+    return out;
+}
+
 std::vector<RecordingEditService::Call> RecordingEditService::calls_named(const QString& name) const {
     std::vector<Call> found;
     for (const Call& call : calls) {

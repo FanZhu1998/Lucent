@@ -95,6 +95,21 @@
 //   --mask-overlay             Shows the selected mask's weight overlay (O) before the screenshot.
 //   --tool <crop|masks>        Opens that tool before the screenshot (crop: waits for the uncropped
 //                              frame).
+//   W13 lens corrections (ADR 0023), with --open-first, after the --set edits and before the geometry
+//   and mask options, each one revision waiting for its final frame (a spec that changes nothing
+//   makes none):
+//   --lens <spec>              As the Lens corrections panel does: "on" (turn corrections on for a
+//                              photo edited before Lucent had them), "auto" (the automatic profile),
+//                              "off" (all three corrections off), "all" (all three on),
+//                              "distortion=on|off", "ca=on|off" (chromatic aberration),
+//                              "vignetting=on|off", "profile=<search>" (search the lens database by
+//                              maker and model and choose the first profile found), or "search=<text>"
+//                              (open the profile choice with that search, choosing nothing). Repeatable.
+//                              Before the screenshot the panel's state is reported ("lucent: lens: ...").
+//   --show-panel <lens>        Scrolls the Edit view's side panel so that this section is at its top
+//                              (and expands it) before the screenshot; reports the panel's state too.
+//                              At start-up every run reports the lens database it uses on stderr
+//                              ("lucent: lens database 1.0.0 ..." or "... unavailable:").
 //   --export-batch <folder>    W7: when the imports have finished, export every photo of <folder>
 //                              (and its subfolders with --include-subfolders) as one durable batch,
 //                              as the Export batch dialog's Start does: the folder is added to the
@@ -213,6 +228,9 @@ struct DeveloperOptions {
     double brush_size = 3.0;                               // --brush-size, percent
     bool mask_overlay = false;                             // --mask-overlay
     QString tool;                                          // --tool
+    // W13 lens corrections (see the file comment).
+    QStringList lens_edits;  // --lens specs
+    QString show_panel;      // --show-panel
     // W7 batch automation (see the file comment).
     QString batch_folder;  // --export-batch
     QString batch_to;      // --to
@@ -287,6 +305,10 @@ private:
     [[nodiscard]] std::deque<std::pair<QString, std::function<bool()>>> geometry_and_mask_steps();
     bool add_mask(const QString& spec);
     bool apply_mask_values();
+    // W13 --lens: one lens-correction change (see the file comment); whether a final frame follows.
+    bool apply_lens(const QString& spec);
+    // The Lens corrections panel's state ("lens: ..." lines).
+    void report_lens();
     // Starts a synthetic stroke (see --brush); false when the masks tool cannot paint.
     bool paint_brush(const QList<QPointF>& points);
     void start_drag();

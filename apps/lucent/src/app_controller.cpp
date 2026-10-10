@@ -402,6 +402,10 @@ QVariantMap AppController::camera_support() const {
     return presentation::camera_support_map(services_.library->camera_support());
 }
 
+QVariantMap AppController::lens_database() const {
+    return presentation::lens_database_map(services_.library->lens_database());
+}
+
 QVariantList AppController::support_states() const {
     return presentation::support_states();
 }

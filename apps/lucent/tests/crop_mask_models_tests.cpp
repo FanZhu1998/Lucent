@@ -695,14 +695,17 @@ TEST_F(CropMaskModelsTest, NoiseReductionKeysAndTheCopyCategories) {
     EXPECT_DOUBLE_EQ(session.value(QStringLiteral("noiseRadius")), 8.0);
 
     const QVariantList categories = session.categories();
-    ASSERT_EQ(categories.size(), 8);
+    ASSERT_EQ(categories.size(), 9);
     QStringList keys;
     for (const QVariant& category : categories) {
         const QVariantMap entry = category.toMap();
         const QString key = entry.value(QStringLiteral("key")).toString();
         keys << key;
-        // Masks and the crop are placed on this photo's content: not selected by default.
-        EXPECT_EQ(entry.value(QStringLiteral("checked")).toBool(), key != u"geometry" && key != u"masks") << key.toStdString();
+        // Masks and the crop are placed on this photo's content, the lens corrections belong to its camera
+        // and lens: not selected by default.
+        EXPECT_EQ(entry.value(QStringLiteral("checked")).toBool(),
+                  key != u"geometry" && key != u"masks" && key != u"lensCorrections")
+            << key.toStdString();
     }
     EXPECT_TRUE(keys.contains(QStringLiteral("masks")));
     EXPECT_TRUE(keys.contains(QStringLiteral("detail")));

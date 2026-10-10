@@ -6,13 +6,15 @@ import Lucent
 // Help > About (W10, ADR 0018): Lucent's version, the camera support database the session uses
 // (its version and qualification date, or why none is in use) and what the four support states
 // mean (blueprint section 3, "User-visible compatibility states"). W12 (ADR 0022): "Check for
-// updates" (UpdatePanel).
+// updates" (UpdatePanel). W13 (ADR 0023): the lens database the lens corrections use, with its
+// licence (CC BY-SA 3.0, the Lensfun project's data).
 Popup {
     id: about
 
     required property AppController controller
 
     readonly property var support: controller.cameraSupport
+    readonly property var lenses: controller.lensDatabase
 
     objectName: "aboutDialog"
     parent: Overlay.overlay
@@ -111,6 +113,37 @@ Popup {
                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                     Layout.fillWidth: true
                 }
+            }
+
+            Text {
+                text: qsTr("Lens database")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontBody
+                font.weight: Font.DemiBold
+                Layout.topMargin: 6
+                Accessible.role: Accessible.Heading
+                Accessible.name: text
+            }
+
+            Text {
+                objectName: "aboutLensDatabase"
+                text: about.lenses.summary
+                color: about.lenses.available ? Theme.textSecondary : Theme.unsupported
+                font.pixelSize: Theme.fontBody
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
+            }
+
+            Text {
+                visible: about.lenses.available
+                text: qsTr("Lens profiles from the Lensfun project, licensed CC BY-SA 3.0. Installed with Lucent in %1.")
+                      .arg(about.lenses.location)
+                color: Theme.textTertiary
+                font.pixelSize: Theme.fontSmall
+                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                Layout.fillWidth: true
             }
 
             Text {

@@ -234,6 +234,36 @@ TEST(ApplicationAdaptersCameraSupport, AMissingDatabaseIsReportedNotReplaced) {
     EXPECT_TRUE(info.problem.contains(QStringLiteral("not installed"))) << info.problem.toStdString();
 }
 
+// W13 (ADR 0023): the services verify and load the bundled lens database next to the executable, and
+// without it Lucent still starts: lens corrections are unavailable, with the reason (About and the
+// Lens corrections panel), and nothing can be chosen.
+TEST_F(ApplicationAdaptersTest, TheBundledLensDatabaseIsActive) {
+    create();
+    const LensDatabaseInfo info = library_->lens_database();
+    EXPECT_TRUE(info.available) << info.problem.toStdString();
+    EXPECT_EQ(info.version, QStringLiteral("1.0.0"));
+    EXPECT_GT(info.lenses, 1000);
+    EXPECT_GT(info.cameras, 1000);
+    EXPECT_TRUE(info.location.endsWith(QStringLiteral("assets\\lens-database"))) << info.location.toStdString();
+    EXPECT_TRUE(info.problem.isEmpty());
+}
+
+TEST(ApplicationAdaptersLensDatabase, AMissingDatabaseLeavesCorrectionsUnavailable) {
+    QTemporaryDir empty;
+    ASSERT_TRUE(empty.isValid());
+    adapters::BackendOptions options = testing::test_backend_options();
+    assets::AssetLocations locations;
+    locations.bundled = std::filesystem::path(QDir::toNativeSeparators(empty.path()).toStdWString());
+    options.asset_locations = locations;
+    auto services = adapters::create_application_services(options);
+    ASSERT_TRUE(services) << services.error().describe();
+    const LensDatabaseInfo info = services->library->lens_database();
+    EXPECT_FALSE(info.available);
+    EXPECT_TRUE(info.problem.contains(QStringLiteral("not installed"))) << info.problem.toStdString();
+    EXPECT_EQ(services->edits->lens_database().problem, info.problem);
+    EXPECT_TRUE(services->edits->search_lens_profiles(QStringLiteral("nikkor"), 10).isEmpty());
+}
+
 TEST_F(ApplicationAdaptersTest, SupportedSuffixesAreTheImportRawExtensions) {
     create();
     const QStringList suffixes = library_->supported_suffixes();
