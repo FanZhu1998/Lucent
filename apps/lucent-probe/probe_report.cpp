@@ -341,6 +341,10 @@ Json metadata_json(const raw::RawMetadata& m) {
               {"max_aperture_at_min_focal", optional_value(m.lens.max_aperture_at_min_focal)},
               {"max_aperture_at_max_focal", optional_value(m.lens.max_aperture_at_max_focal)},
               {"focal_length_35mm_equivalent_mm", optional_value(m.lens.focal_length_35mm_equivalent_mm)}}},
+        {"sensor_crop", m.sensor_crop ? Json{{"factor", optional_value(m.sensor_crop->factor)},
+                                             {"provenance", std::string(raw::to_string(m.sensor_crop->provenance))},
+                                             {"basis", m.sensor_crop->basis}}
+                                      : Json(nullptr)},
         {"capture", Json{{"iso", optional_value(m.capture.iso)},
                          {"exposure_time_s", optional_value(m.capture.exposure_time_s)},
                          {"f_number", optional_value(m.capture.f_number)},

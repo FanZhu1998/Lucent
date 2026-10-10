@@ -934,6 +934,33 @@ InsetCrop libraw_adjusted_inset_crop(InsetCrop c, std::uint32_t period) noexcept
     return c;
 }
 
+std::optional<SensorCrop> canon_sensor_crop(bool canon_non_dng, const std::optional<CanonAspectInfo>& info,
+                                            const image::PixelRect& visible) {
+    if (!canon_non_dng || !info ||
+        (info->ratio_code != kCanonAspectApsHCrop && info->ratio_code != kCanonAspectApsCCrop)) {
+        return std::nullopt;
+    }
+    // The camera recorded the crop when the visible area is the AspectInfo rectangle (LibRaw's visible
+    // area is that of the recorded raw data, 1 pixel smaller per side in the corpus's R5 crop files).
+    const auto close = [](std::int32_t recorded, std::uint32_t crop) {
+        const double c = static_cast<double>(crop);
+        return crop > 0 && std::abs(static_cast<double>(recorded) - c) <= std::max(8.0, 0.02 * c);
+    };
+    if (!close(visible.width, info->width) || !close(visible.height, info->height)) {
+        return std::nullopt;  // a whole-sensor image with the crop attached: the image covers the sensor
+    }
+    const bool aps_c = info->ratio_code == kCanonAspectApsCCrop;
+    SensorCrop crop;
+    crop.factor = aps_c ? kCanonApsCCropFactor : kCanonApsHCropFactor;
+    crop.provenance = Provenance::LucentRule;
+    crop.basis = std::format(
+        "Canon AspectInfo (maker note 0x009a) AspectRatio {} \"3:2 ({} crop)\": the camera recorded a {} x {} crop "
+        "of its sensor (visible area {} x {}); Canon's {} crop factor {:.1f}",
+        info->ratio_code, aps_c ? "APS-C" : "APS-H", info->width, info->height, visible.width, visible.height,
+        aps_c ? "APS-C" : "APS-H", *crop.factor);
+    return crop;
+}
+
 void canon_aspect_crops(InsetCropFacts& facts, const CanonCropFacts& canon) {
     // LIBRAW_IMAGE_ASPECT_UNKNOWN (0): AspectInfo was not parsed; LIBRAW_IMAGE_ASPECT_3to2 (1500):
     // a 3:2 frame (including the APS-H and APS-C crop values), whose AspectInfo is the whole area.
@@ -1434,6 +1461,8 @@ Expected<RawMetadata> extract_metadata(LibRaw& raw, const ExtractionContext& con
         canon.sensor_bottom = sensor.b;
         canon_aspect_crops(facts, canon);
         m.image_area = image_area_from_inset_crops(facts);
+        // ---- In-camera sensor crop (contract 1.5) ----------------------------------------------
+        m.sensor_crop = canon_sensor_crop(canon.canon_non_dng, context.canon_aspect, m.geometry.visible_area);
     }
 
     // ---- Levels and colour ------------------------------------------------------------------

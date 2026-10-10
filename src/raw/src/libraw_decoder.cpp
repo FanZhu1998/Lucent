@@ -205,6 +205,8 @@ public:
         return run(detail::kStageUnpack, raw_->unpack());
     }
     [[nodiscard]] std::uint64_t past_end_bytes() const noexcept { return stream_->past_end_bytes(); }
+    // What the callbacks captured while LibRaw opened the file (the maker-note values the adapter reads).
+    [[nodiscard]] const detail::LibRawCallState& state() const noexcept { return state_; }
     [[nodiscard]] std::uint64_t reads_at_end() const noexcept { return stream_->reads_at_end(); }
 
 private:
@@ -261,7 +263,8 @@ Inspection inspect_source(const OpenedSource& source, LibRaw& raw) {
 }
 
 ExtractionContext make_context(const std::filesystem::path& path, const OpenedSource& source,
-                               const Inspection& inspection, std::uint32_t subimage) {
+                               const Inspection& inspection, std::uint32_t subimage,
+                               const detail::LibRawCallState& state) {
     ExtractionContext context;
     context.stage = MetadataStage::AfterOpen;
     context.source.path = path;
@@ -272,6 +275,7 @@ ExtractionContext make_context(const std::filesystem::path& path, const OpenedSo
     context.tiff = inspection.summary ? &*inspection.summary : nullptr;
     context.tiff_error = inspection.error;
     context.raf_crop = inspection.raf_crop;
+    context.canon_aspect = state.canon_aspect;
     return context;
 }
 
@@ -641,7 +645,7 @@ private:
         }
         const Inspection inspection = inspect_source(*source, session.raw());
         auto metadata =
-            detail::extract_metadata(session.raw(), make_context(path, *source, inspection, shot));
+            detail::extract_metadata(session.raw(), make_context(path, *source, inspection, shot, session.state()));
         if (!metadata) {
             return Unexpected(std::move(metadata.error()));
         }
@@ -694,7 +698,8 @@ private:
         }
         Session session(source, cancel, index, options.limits);
         Expected<RawMetadata> metadata = session.open().and_then([&]() {
-            return detail::extract_metadata(session.raw(), make_context(path, source, inspection, index));
+            return detail::extract_metadata(session.raw(),
+                                            make_context(path, source, inspection, index, session.state()));
         });
         if (!metadata) {
             const ErrorCode code = metadata.error().code;
@@ -737,7 +742,7 @@ private:
         }
 
         const Inspection inspection = inspect_source(*source, raw);
-        ExtractionContext context = make_context(path, *source, inspection, shot);
+        ExtractionContext context = make_context(path, *source, inspection, shot, session.state());
         auto opened_metadata = detail::extract_metadata(raw, context);
         if (!opened_metadata) {
             return Unexpected(std::move(opened_metadata.error()));

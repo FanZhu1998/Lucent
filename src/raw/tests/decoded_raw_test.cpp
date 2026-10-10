@@ -74,9 +74,10 @@ TEST(DecodedRawContract, PersistedEnumValuesNeverChange) {
     EXPECT_EQ(static_cast<int>(Lossiness::Unknown), 0);
     EXPECT_EQ(static_cast<int>(Lossiness::Lossy), 2);
     // 1.1 added fields (subimage role, projection, compression provenance), 1.2 the black
-    // deltas and 1.3 the decoded opcode parameters and Lucent's opcode support: minor changes.
+    // deltas, 1.3 the decoded opcode parameters and Lucent's opcode support, 1.4 the image area and
+    // 1.5 the sensor crop: minor changes.
     EXPECT_EQ(kDecodedRawContractVersion.major, 1u);
-    EXPECT_EQ(kDecodedRawContractVersion.minor, 4u);
+    EXPECT_EQ(kDecodedRawContractVersion.minor, 5u);
     EXPECT_EQ(static_cast<int>(DngBayerPhase::Red), 0);
     EXPECT_EQ(static_cast<int>(DngBayerPhase::Blue), 3);
 }

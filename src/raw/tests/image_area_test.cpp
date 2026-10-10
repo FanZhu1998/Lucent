@@ -288,6 +288,37 @@ TEST(InsetCrops, ACanonAspectRatioSettingIsTheUserCropOfTheWholeSensorArea) {
     EXPECT_EQ(*image_area_from_inset_crops(other).rect, (AreaRect{144.0, 112.0, 8192.0, 5464.0}));
 }
 
+// Contract 1.5: Canon's crop modes. The corpus's R5 crop files record AspectInfo [13, 5088, 3392, 0,
+// 0] ("3:2 (APS-C crop)") with a visible area of 5087 x 3391; its full-frame files [0, 8192, 5464, 0,
+// 0] with 8191 x 5463 (read with research's maker-note reader, 2026-10-10).
+TEST(SensorCrops, CanonCropModesAreSensorCropsWithCanonsFactor) {
+    const image::PixelRect crop_visible{144, 108, 5087, 3391};
+    const auto aps_c = detail::canon_sensor_crop(true, detail::CanonAspectInfo{13, 5088, 3392, 0, 0}, crop_visible);
+    ASSERT_TRUE(aps_c);
+    ASSERT_TRUE(aps_c->factor);
+    EXPECT_DOUBLE_EQ(*aps_c->factor, 1.6);
+    EXPECT_EQ(aps_c->provenance, Provenance::LucentRule);
+    EXPECT_NE(aps_c->basis.find("APS-C crop"), std::string::npos) << aps_c->basis;
+    EXPECT_NE(aps_c->basis.find("0x009a"), std::string::npos) << aps_c->basis;
+    const auto aps_h = detail::canon_sensor_crop(true, detail::CanonAspectInfo{12, 6400, 4266, 0, 0},
+                                                 image::PixelRect{0, 0, 6397, 4265});
+    ASSERT_TRUE(aps_h);
+    EXPECT_DOUBLE_EQ(*aps_h->factor, 1.3);
+}
+
+TEST(SensorCrops, WholeSensorImagesAndOtherFilesAreNoSensorCrop) {
+    const image::PixelRect full_visible{144, 112, 8191, 5463};
+    // A 3:2 (or any other plain aspect-ratio) setting.
+    EXPECT_FALSE(detail::canon_sensor_crop(true, detail::CanonAspectInfo{0, 8192, 5464, 0, 0}, full_visible));
+    EXPECT_FALSE(detail::canon_sensor_crop(true, detail::CanonAspectInfo{1, 5464, 5464, 1364, 0}, full_visible));
+    // A crop code on a whole-sensor image (the crop only attached): the image covers the sensor.
+    EXPECT_FALSE(detail::canon_sensor_crop(true, detail::CanonAspectInfo{13, 5088, 3392, 1552, 1036}, full_visible));
+    // No AspectInfo, not Canon or a DNG.
+    EXPECT_FALSE(detail::canon_sensor_crop(true, std::nullopt, full_visible));
+    EXPECT_FALSE(detail::canon_sensor_crop(false, detail::CanonAspectInfo{13, 5088, 3392, 0, 0},
+                                           image::PixelRect{0, 0, 5087, 3391}));
+}
+
 TEST(InsetCrops, CanonThreeToTwoFilesAndOtherMakersKeepLibRawsCrop) {
     // 3:2 (the corpus R5 files): AspectInfo is the whole area, nothing changes.
     InsetCropFacts f = r5_facts(InsetCrop{144, 112, 8192, 5464});
@@ -458,7 +489,7 @@ TEST_F(ImageAreaAdapter, ADngWithoutDefaultCropHasTheWholeActiveArea) {
 
 TEST(ImageAreaContract, ConsistencyRules) {
     EXPECT_EQ(kDecodedRawContractVersion.major, 1u);
-    EXPECT_EQ(kDecodedRawContractVersion.minor, 4u);
+    EXPECT_GE(kDecodedRawContractVersion.minor, 4u);  // the image area since 1.4
     EXPECT_EQ(to_string(ImageAreaSource::Unknown), "unknown");
     EXPECT_EQ(to_string(ImageAreaSource::DngDefaultCrop), "dng_default_crop");
     EXPECT_EQ(to_string(ImageAreaSource::DngDefaultWholeImage), "dng_default_whole_image");
