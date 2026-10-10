@@ -1,10 +1,13 @@
 #include "adapters/backend.hpp"
 
 #include <algorithm>
+#include <format>
 #include <new>
+#include <string>
 #include <utility>
 
 #include <lucent/application/catalog_library.hpp>
+#include <lucent/application/preview.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/version.hpp>
@@ -224,6 +227,13 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         app::RecipeServiceOptions recipe_options;
         recipe_options.registry = backend->registry_;
         recipe_options.probe_limits = options.renderer.decode_limits;
+        // W13 (ADR 0023): every revision records the lens database this session renders it with
+        // (blueprint section 8: a recipe records its "camera/lens calibration" and resource hashes).
+        recipe_options.engine_version = std::format(
+            "{}; lens database {}", core::build_info().version,
+            backend->lens_database_load_.database
+                ? app::lens_database_text(backend->lens_database_load_.database->info().identity)
+                : std::string("none"));
         backend->recipes_ = std::make_unique<app::RecipeService>(*backend->library_, backend->recipe_store_,
                                                                  std::move(recipe_options));
 
@@ -234,6 +244,9 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             batch.registry = backend->registry_;
             batch.lucent_directories = backend->lucent_directories_;
             batch.camera_support = backend->camera_support_;
+            if (backend->lens_database_load_.database) {
+                batch.lens_database = app::lens_database_text(backend->lens_database_load_.database->info().identity);
+            }
             if (!batch.interactive_busy) {
                 batch.interactive_busy = [activity = &backend->interactive_] { return activity->busy(); };
             }

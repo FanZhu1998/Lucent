@@ -202,8 +202,12 @@ TEST_F(LensCorrectionsTest, AProfileIsChosenOnlyByThePhotographer) {
     EXPECT_EQ(lens().profiles()->data(first, LensProfileListModel::LabelRole).toString(),
               u"Nikon Nikkor Z 24-70mm f/4 S");
     EXPECT_TRUE(lens().profiles()->data(first, LensProfileListModel::CompatibleRole).toBool());
-    EXPECT_TRUE(
-        lens().profiles()->data(first, LensProfileListModel::DetailRole).toString().contains(u"Nikon Z"));
+    const QString detail = lens().profiles()->data(first, LensProfileListModel::DetailRole).toString();
+    EXPECT_TRUE(detail.contains(u"Nikon Z")) << detail.toStdString();
+    // The sensor the calibration was made on comes first, before the mounts (W13 closure: calibrations
+    // of one lens for different sensors are told apart even when the line is elided).
+    EXPECT_TRUE(detail.startsWith(u"crop factor 1")) << detail.toStdString();
+    EXPECT_LT(detail.indexOf(u"crop factor"), detail.indexOf(u"Nikon Z")) << detail.toStdString();
     // A search by maker and model ("f/2.8" and "f2.8" are the same word).
     lens().setSearchText(QStringLiteral("24-70 f2.8"));
     ASSERT_EQ(lens().profiles()->count(), 2);

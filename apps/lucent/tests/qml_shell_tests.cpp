@@ -517,13 +517,31 @@ TEST_F(QmlShellTest, TheLensCorrectionsPanelShowsTheMatchAndEachSwitchIsOneRevis
                    u"Off";
         },
         kWaitMs));
-    // The profile choice opens without a revision and closes again.
+    // The profile choice opens without a revision, with its search field focused, and closes again:
+    // with Cancel, and with Esc from any of its controls, never leaving the Edit view (the window's
+    // Esc is off while the choice is open; W13 closure, APL-07).
+    window->requestActivate();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window));
     ASSERT_TRUE(QMetaObject::invokeMethod(child("lensChooseProfile"), "click"));
     EXPECT_TRUE(edit.lens()->picking());
     EXPECT_TRUE(child<QQuickItem>("lensPicker")->isVisible());
     EXPECT_EQ(edits->revision_count(item), before + 1);
+    auto* search = child<QQuickItem>("lensSearch");
+    ASSERT_TRUE(QTest::qWaitFor([search] { return search->hasActiveFocus(); }, kWaitMs));
     ASSERT_TRUE(QMetaObject::invokeMethod(child("lensPickerCancel"), "click"));
     EXPECT_FALSE(edit.lens()->picking());
+    for (const char* focused : {"lensSearch", "lensPickerCancel"}) {
+        SCOPED_TRACE(focused);
+        ASSERT_TRUE(QMetaObject::invokeMethod(child("lensChooseProfile"), "click"));
+        ASSERT_TRUE(edit.lens()->picking());
+        auto* control = child<QQuickItem>(focused);
+        control->forceActiveFocus();
+        ASSERT_TRUE(QTest::qWaitFor([control] { return control->hasActiveFocus(); }, kWaitMs));
+        QTest::keyClick(window, Qt::Key_Escape);
+        ASSERT_TRUE(QTest::qWaitFor([&] { return !edit.lens()->picking(); }, kWaitMs));
+        EXPECT_EQ(controller->current_view(), AppController::Edit);
+    }
+    EXPECT_EQ(edits->revision_count(item), before + 1);
 
     // A file that corrects distortion and vignetting itself: those switches are off and disabled.
     fakes::FakeEditService::FakeLens carried;

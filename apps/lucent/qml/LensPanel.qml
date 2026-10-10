@@ -57,7 +57,10 @@ PanelSection {
                 panel.lens.setCorrection(row.entry.key, checked)
                 checked = Qt.binding(function() { return row.entry.checked })  // the settings decide
             }
-            Accessible.description: row.entry.status
+            // What the render did and why (the engine's words), for keyboard and screen-reader users
+            // too: the status text's tooltip is shown while the switch has keyboard focus.
+            Accessible.description: row.entry.detail.length > 0 ? row.entry.status + ". " + row.entry.detail
+                                                                : row.entry.status
         }
 
         Item {
@@ -77,7 +80,7 @@ PanelSection {
                 id: statusHover
             }
 
-            ToolTip.visible: statusHover.hovered && row.entry.detail.length > 0
+            ToolTip.visible: (statusHover.hovered || toggle.visualFocus) && row.entry.detail.length > 0
             ToolTip.text: row.entry.detail
             ToolTip.delay: 600
         }
@@ -213,13 +216,29 @@ PanelSection {
     }
 
     // The manual profile choice: suggestions (the match's similar profiles) or a search of the
-    // database by maker and model.
+    // database by maker and model. Esc closes it from any of its controls (Main.qml's Esc, which
+    // leaves the Edit view, is off while it is open); it opens with the search field focused.
     ColumnLayout {
+        id: picker
+
         objectName: "lensPicker"
         visible: panel.active && panel.lens.picking
         spacing: 4
         Layout.fillWidth: true
         Layout.leftMargin: 26
+
+        onVisibleChanged: {
+            if (visible) {
+                search.forceActiveFocus()
+            }
+        }
+
+        // An open tool's Esc (EditView) comes first: two enabled Esc shortcuts would both be ignored.
+        Shortcut {
+            sequence: "Esc"
+            enabled: picker.visible && !panel.edit.toolActive
+            onActivated: panel.lens.closePicker()
+        }
 
         TextField {
             id: search
@@ -274,13 +293,21 @@ PanelSection {
                 required property bool compatible
                 required property bool current
 
+                // The state the row's colour and weight show, in words.
+                readonly property string stateText: (current ? qsTr("In use") + ". " : "")
+                    + (compatible ? qsTr("Fits this camera's mount") : qsTr("For another mount")) + ". "
+
                 width: ListView.view.width
                 implicitHeight: choiceColumn.implicitHeight + 8
                 focusPolicy: Qt.StrongFocus
                 onClicked: panel.lens.chooseProfile(index)
                 Accessible.role: Accessible.Button
                 Accessible.name: label
-                Accessible.description: detail
+                Accessible.description: stateText + detail
+                // The whole detail (the line below the name is elided at the panel's width).
+                ToolTip.visible: (hovered || visualFocus) && detail.length > 0
+                ToolTip.text: stateText + detail
+                ToolTip.delay: 600
 
                 background: Rectangle {
                     color: choice.hovered || choice.visualFocus ? Theme.surfaceHover

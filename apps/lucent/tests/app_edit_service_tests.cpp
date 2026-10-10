@@ -284,6 +284,14 @@ TEST_F(AppEditServiceTest, FramesSayWhatTheLensCorrectionDidAndASwitchIsOneRevis
     EXPECT_FALSE(current->settings.lens_correction.distortion);
     EXPECT_EQ(current->settings.operations.lens_correction, engine::kLensCorrectionOperationVersion);
     EXPECT_NE(current->document.json.find(R"("version":3)"), std::string::npos);
+    // W13 closure (LNS-3): the revision records the lens database the session renders with.
+    auto history = backend_->recipe_store().history(app::ItemId{id});
+    ASSERT_TRUE(history) << history.error().describe();
+    ASSERT_EQ(history->revisions.size(), 1u);
+    const std::string& engine_version = history->revisions.front().engine_version;
+    EXPECT_NE(engine_version.find("; lens database lens-database 1.0.0 (manifest "), std::string::npos)
+        << engine_version;
+    EXPECT_EQ(engine_version, backend_->recipes().engine_version());
     EXPECT_TRUE(command_failures_.isEmpty()) << command_failures_.join('\n').toStdString();
 }
 

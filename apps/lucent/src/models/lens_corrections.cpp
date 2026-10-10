@@ -96,18 +96,16 @@ QVariant LensProfileListModel::data(const QModelIndex& index, int role) const {
         case LabelRole:
             return label_of(entry.profile);
         case DetailRole: {
+            // What tells calibrations of the same lens apart first (the line is elided at the panel's
+            // width): the sensor they were made on, then the focal range, the calibrations and the
+            // mounts.
             QStringList parts;
-            if (!entry.mounts.isEmpty()) {
-                parts << entry.mounts;
-            }
+            parts << tr_text("crop factor %1").arg(number_text(entry.profile.crop_factor));
             if (entry.min_focal_mm > 0.0) {
                 parts << (entry.max_focal_mm > entry.min_focal_mm
                               ? tr_text("%1-%2 mm")
                                     .arg(number_text(entry.min_focal_mm), number_text(entry.max_focal_mm))
                               : tr_text("%1 mm").arg(number_text(entry.min_focal_mm)));
-            }
-            if (std::abs(entry.profile.crop_factor - 1.0) >= 0.01) {
-                parts << tr_text("crop factor %1").arg(number_text(entry.profile.crop_factor));
             }
             QStringList calibrations;
             if (entry.distortion) {
@@ -119,9 +117,9 @@ QVariant LensProfileListModel::data(const QModelIndex& index, int role) const {
             if (entry.vignetting) {
                 calibrations << tr_text("vignetting");
             }
-            if (!entry.mounts.isEmpty() || entry.min_focal_mm > 0.0 || !calibrations.isEmpty()) {
-                parts << (calibrations.isEmpty() ? tr_text("no calibration")
-                                                 : calibrations.join(QStringLiteral(", ")));
+            parts << (calibrations.isEmpty() ? tr_text("no calibration") : calibrations.join(QStringLiteral(", ")));
+            if (!entry.mounts.isEmpty()) {
+                parts << entry.mounts;
             }
             return parts.join(QStringLiteral(" · "));
         }
@@ -286,6 +284,13 @@ QString LensCorrections::match_summary() const {
                            [outcome](const LensCorrectionState& c) { return c.outcome == outcome; });
     };
     if (!automatic()) {
+        if (!any(LensOutcome::Applied) && any(LensOutcome::NoProfile)) {
+            // A recipe naming a profile this database does not hold (made with another database):
+            // reported, never silently replaced (ADR 0023, W13 closure).
+            return tr_text(
+                "The profile chosen for this photo is not in this lens database, so nothing is applied. "
+                "Choose a profile again, or switch to the automatic profile.");
+        }
         if (!any(LensOutcome::Applied) && any(LensOutcome::NoCalibration)) {
             return tr_text(
                 "The profile you chose is not calibrated for this photo (its focal length, aperture or "
