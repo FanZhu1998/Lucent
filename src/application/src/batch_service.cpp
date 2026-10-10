@@ -7,6 +7,7 @@
 #include <new>
 #include <random>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -440,6 +441,9 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
                                                                      ItemId item) const {
     engine::DevelopSettings settings;
     detail::FrozenDocument frozen;
+    // The job froze exactly this immutable revision: the catalog checked the revision's text against
+    // its SHA-256 when it read it, and that SHA-256 is the job's.
+    bool frozen_revision = false;
     if (job.revision) {
         auto revision = catalog->query([&](catalog::ReadTransaction& tx) { return tx.find_revision(*job.revision); });
         if (!revision) {
@@ -457,6 +461,7 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
         }
         settings = std::move(*read);
         frozen.revision_number = (*revision)->info.revision_number;
+        frozen_revision = (*revision)->info.settings_sha256 == job.settings_sha256;
     }
     auto document = write_recipe(settings);
     if (!document) {
@@ -477,8 +482,31 @@ Expected<detail::FrozenDocument> BatchService::Impl::frozen_document(const catal
                 break;
             }
         }
+        // W6 to W8 froze the as-shot settings as their recipe version 1 document (ADR 0022): those
+        // settings, read by this build, are rendered exactly as then.
+        if (document->sha256 != job.settings_sha256) {
+            const std::string_view version_1 = kVersion1AsShotRecipe;
+            auto digest = core::sha256(std::as_bytes(std::span(version_1.data(), version_1.size())));
+            if (digest && *digest == job.settings_sha256) {
+                auto read = read_recipe(version_1);
+                if (!read) {
+                    return Unexpected(std::move(read.error()));
+                }
+                auto converted = write_recipe(*read);
+                if (!converted) {
+                    return Unexpected(std::move(converted.error()));
+                }
+                document = std::move(converted);
+                frozen_revision = true;  // the frozen recipe, in this build's canonical form
+            }
+        }
     }
-    if (document->sha256 != job.settings_sha256) {
+    // A revision (or as-shot document) of an older recipe version is rendered in this build's
+    // canonical form of the same settings, which renders exactly as the frozen document (recipe.hpp:
+    // every version this build ever wrote is read and converted without change); W6 to W8 froze
+    // version-1 documents, which this build no longer writes (ADR 0022). Anything else that does not
+    // reproduce the frozen SHA-256 is refused.
+    if (document->sha256 != job.settings_sha256 && !frozen_revision) {
         return fail(ErrorCode::VersionMismatch,
                     "the recipe frozen for this job cannot be reproduced by this version of Lucent (its canonical "
                     "document has another SHA-256)",

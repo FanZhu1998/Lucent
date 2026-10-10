@@ -110,6 +110,15 @@ inline constexpr std::uint32_t kRecipeSchemaVersion = engine::kDevelopSettingsVe
 // The oldest document version read (converted on read, see the file comment).
 inline constexpr std::uint32_t kOldestRecipeSchemaVersion = engine::kOldestDevelopSettingsVersion;
 
+// The canonical text of the as-shot settings as recipe version 1 wrote them (W6 to W8, ADR 0010;
+// identity 671dbaa8...). Batches frozen by those builds name its SHA-256 for photos exported as shot;
+// this build reads it (geometry version 1) and renders it exactly as then (ADR 0022).
+inline constexpr std::string_view kVersion1AsShotRecipe =
+    R"({"base_look":{"id":"neutral","version":1},"contrast":0,"exposure_ev":0,"highlights":0,"locks":[],)"
+    R"("operations":{"color":1,"contrast":1,"exposure":1,"local_tone":1,"tone_curve":1,"white_balance":1},)"
+    R"("saturation":0,"schema":"lucent.develop","shadows":0,"tone_curve":[[0,0],[1,1]],"version":1,)"
+    R"("vibrance":0,"white_balance":{"mode":"as_shot"}})";
+
 // A recipe as stored: its canonical text and the SHA-256 of that text (the recipe identity).
 struct RecipeDocument {
     std::string json;

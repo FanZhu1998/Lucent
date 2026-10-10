@@ -2,7 +2,8 @@
 # (hashing, presence checks, relinking), embedded previews, background preview rendering, the
 # on-disk thumbnail cache and single-image export services (W3, W4); recipes, their revisions and
 # editing commands, and interactive develop previews (W6); the four support states assessed with the
-# camera support database (W10, ADR 0018). Pure C++, no Qt: the user interface
+# camera support database (W10, ADR 0018); "Check for updates" over a signed release manifest (W12,
+# ADR 0022). Pure C++, no Qt: the user interface
 # (apps/lucent) drives these services and marshals their callbacks to its own thread.
 # See docs/architecture/overview.md and docs/adr/0007, 0008, 0010.
 #
@@ -94,6 +95,19 @@ lucent_add_library(application
         src/auto_develop.cpp
         src/auto_documents.cpp
         src/auto_service.cpp
+
+        # Updates (W12, ADR 0022): the channel compiled into the build, the signed release manifest,
+        # https downloads (WinHTTP) and the update service (check, verified download, installation).
+        include/lucent/application/http_client.hpp
+        include/lucent/application/update_channel.hpp
+        include/lucent/application/update_manifest.hpp
+        include/lucent/application/update_service.hpp
+        src/http_client.cpp
+        src/update_channel.cpp
+        src/update_channel_config.hpp
+        src/update_channel_config.cpp.in
+        src/update_manifest.cpp
+        src/update_service.cpp
     PUBLIC_DEPS
         Lucent::core
         Lucent::image
@@ -106,7 +120,67 @@ lucent_add_library(application
         Lucent::workers
     PRIVATE_DEPS
         nlohmann_json::nlohmann_json
+        winhttp  # the update channel's downloads
 )
+
+# ---------------------------------------------------------------------------------------------
+# The update channel (W12, ADR 0022), compiled into the build. All empty (the default): updates are
+# not configured and Lucent never opens a network connection. Set them (or the environment variables
+# of the same names before the first configure) for a release build that checks a channel:
+#   LUCENT_UPDATE_CHANNEL                channel name, [a-z0-9] words joined by '-' ("stable")
+#   LUCENT_UPDATE_MANIFEST_URL           https URL of the signed release manifest (signature: <URL>.sig)
+#   LUCENT_UPDATE_PUBLIC_KEYS            ';'-separated ECDSA P-256 public keys (130 hex digits, "04...")
+#   LUCENT_UPDATE_PUBLISHER_THUMBPRINTS  optional ';'-separated SHA-1 or SHA-256 thumbprints of the
+#                                        certificates the installer must be Authenticode-signed with
+# ---------------------------------------------------------------------------------------------
+set(LUCENT_UPDATE_CHANNEL "$ENV{LUCENT_UPDATE_CHANNEL}" CACHE STRING
+    "Update channel name; empty: updates are not configured (ADR 0022)")
+set(LUCENT_UPDATE_MANIFEST_URL "$ENV{LUCENT_UPDATE_MANIFEST_URL}" CACHE STRING
+    "https URL of the update channel's signed release manifest (ADR 0022)")
+set(LUCENT_UPDATE_PUBLIC_KEYS "$ENV{LUCENT_UPDATE_PUBLIC_KEYS}" CACHE STRING
+    "';'-separated ECDSA P-256 public keys that sign release manifests (ADR 0022)")
+set(LUCENT_UPDATE_PUBLISHER_THUMBPRINTS "$ENV{LUCENT_UPDATE_PUBLISHER_THUMBPRINTS}" CACHE STRING
+    "Optional ';'-separated Authenticode signer thumbprints the installer must carry (ADR 0022)")
+
+if(LUCENT_UPDATE_CHANNEL OR LUCENT_UPDATE_MANIFEST_URL OR LUCENT_UPDATE_PUBLIC_KEYS OR
+   LUCENT_UPDATE_PUBLISHER_THUMBPRINTS)
+    if(NOT LUCENT_UPDATE_CHANNEL OR NOT LUCENT_UPDATE_MANIFEST_URL OR NOT LUCENT_UPDATE_PUBLIC_KEYS)
+        message(FATAL_ERROR "LUCENT_UPDATE_CHANNEL, LUCENT_UPDATE_MANIFEST_URL and LUCENT_UPDATE_PUBLIC_KEYS "
+                            "must be set together (ADR 0022)")
+    endif()
+    string(LENGTH "${LUCENT_UPDATE_CHANNEL}" _lucent_channel_length)
+    if(NOT LUCENT_UPDATE_CHANNEL MATCHES "^[a-z0-9]+(-[a-z0-9]+)*$" OR _lucent_channel_length GREATER 32)
+        message(FATAL_ERROR "LUCENT_UPDATE_CHANNEL '${LUCENT_UPDATE_CHANNEL}' is not a channel name")
+    endif()
+    if(NOT LUCENT_UPDATE_MANIFEST_URL MATCHES "^https://[A-Za-z0-9._~:/?!$&()*+,=%-]+$" OR
+       LUCENT_UPDATE_MANIFEST_URL MATCHES "^https://[^/]*@")
+        message(FATAL_ERROR "LUCENT_UPDATE_MANIFEST_URL must be an https URL without user information, "
+                            "spaces or quotes")
+    endif()
+    foreach(_lucent_key IN LISTS LUCENT_UPDATE_PUBLIC_KEYS)
+        string(STRIP "${_lucent_key}" _lucent_key)
+        string(LENGTH "${_lucent_key}" _lucent_key_length)
+        if(_lucent_key AND (NOT _lucent_key MATCHES "^04[0-9A-Fa-f]+$" OR NOT _lucent_key_length EQUAL 130))
+            message(FATAL_ERROR "LUCENT_UPDATE_PUBLIC_KEYS: '${_lucent_key}' is not an uncompressed P-256 point "
+                                "(130 hex digits starting with 04)")
+        endif()
+    endforeach()
+    foreach(_lucent_thumbprint IN LISTS LUCENT_UPDATE_PUBLISHER_THUMBPRINTS)
+        string(STRIP "${_lucent_thumbprint}" _lucent_thumbprint)
+        string(LENGTH "${_lucent_thumbprint}" _lucent_thumbprint_length)
+        if(_lucent_thumbprint AND (NOT _lucent_thumbprint MATCHES "^[0-9A-Fa-f]+$" OR
+                                   NOT (_lucent_thumbprint_length EQUAL 40 OR _lucent_thumbprint_length EQUAL 64)))
+            message(FATAL_ERROR "LUCENT_UPDATE_PUBLISHER_THUMBPRINTS: '${_lucent_thumbprint}' is not a SHA-1 or "
+                                "SHA-256 thumbprint")
+        endif()
+    endforeach()
+    message(STATUS "Update channel '${LUCENT_UPDATE_CHANNEL}': ${LUCENT_UPDATE_MANIFEST_URL}")
+else()
+    message(STATUS "Update channel: not configured (Lucent never opens a network connection)")
+endif()
+configure_file(src/update_channel_config.cpp.in
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/update_channel_config.cpp" @ONLY)
+target_sources(lucent_application PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/update_channel_config.cpp")
 
 # ---------------------------------------------------------------------------------------------
 # Tests
@@ -136,6 +210,8 @@ set(LUCENT_APPLICATION_TEST_SOURCES
     tests/thumbnail_cache_test.cpp
     tests/export_service_test.cpp
     tests/auto_service_test.cpp
+    tests/update_manifest_test.cpp
+    tests/update_compatibility_test.cpp
 )
 
 lucent_add_test(lucent_application_tests
@@ -170,6 +246,7 @@ if(LUCENT_BUILD_TESTS)
             tests/batch_service_test.cpp
             tests/batch_recovery_test.cpp
             tests/batch_auto_test.cpp
+            tests/batch_update_test.cpp
         DEPS
             Lucent::application
             nlohmann_json::nlohmann_json
@@ -209,6 +286,34 @@ if(LUCENT_BUILD_TESTS)
         PROPERTIES
             LABELS "application;workers;fixtures"
             RESOURCE_LOCK lucent_full_resolution_render)
+endif()
+
+# Updates (W12, ADR 0022): the WinHTTP client and the update service against a loopback HTTP server
+# (never another machine), with a stand-in installer program the service downloads, verifies and
+# starts.
+if(LUCENT_BUILD_TESTS)
+    add_executable(lucent_update_test_installer tests/update_test_installer_main.cpp)
+    target_link_libraries(lucent_update_test_installer PRIVATE Lucent::compiler_options)
+    set_target_properties(lucent_update_test_installer PROPERTIES FOLDER "tests")
+
+    lucent_add_test(lucent_update_tests
+        SOURCES
+            tests/loopback_http_server.cpp
+            tests/loopback_http_server.hpp
+            tests/http_client_test.cpp
+            tests/update_service_test.cpp
+        DEPS
+            Lucent::application
+            ws2_32  # the loopback server
+        LABELS
+            application update
+    )
+    target_include_directories(lucent_update_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/raw/tests")
+    target_compile_definitions(lucent_update_tests PRIVATE
+        LUCENT_UPDATE_TEST_INSTALLER_EXE="$<TARGET_FILE:lucent_update_test_installer>")
+    add_dependencies(lucent_update_tests lucent_update_test_installer)
 endif()
 
 # Camera-fixture tests (skipped when fixtures/cache is absent): import of the smoke fixtures,

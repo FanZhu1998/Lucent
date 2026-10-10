@@ -146,6 +146,8 @@ protected:
         }
         auto result = service.wait(*ticket, 120s);
         EXPECT_TRUE(result.has_value()) << "the automatic settings did not finish";
+        // W12 (ADR 0022): an update waits while a run is in progress; a finished run no longer counts.
+        EXPECT_EQ(service.runs_in_progress(), 0u);
         return result ? *result : AutoTaskResult{};
     }
 
@@ -179,6 +181,7 @@ TEST_F(AutoServiceTest, AutoCreatesAnEditableRevisionWithItsAnalysisRecord) {
         std::lock_guard lock(mutex);
         events.push_back(event);
     });
+    EXPECT_EQ(auto_service.runs_in_progress(), 0u);
     const AutoTaskResult result = run(auto_service);
     ASSERT_FALSE(result.error) << result.error->describe();
     ASSERT_TRUE(result.run);
@@ -472,10 +475,12 @@ TEST_F(AutoServiceTest, ACancelledRunWritesNothing) {
     auto busy = auto_service.run(item_);
     ASSERT_FALSE(busy);
     EXPECT_EQ(busy.error().where, "app.auto.busy");
+    EXPECT_EQ(auto_service.runs_in_progress(), 1u) << "a queued run counts (an update waits for it)";
     auto_service.cancel(*ticket);
     gate.open();
     auto result = auto_service.wait(*ticket, 120s);
     ASSERT_TRUE(result);
+    EXPECT_EQ(auto_service.runs_in_progress(), 0u);
     ASSERT_TRUE(result->error);
     EXPECT_EQ(result->error->code, ErrorCode::Cancelled);
     EXPECT_FALSE(state().revision.has_value());
