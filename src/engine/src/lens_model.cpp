@@ -3,6 +3,7 @@
 // 3). No Lensfun type is used here; lens_correction_test.cpp checks these against lfModifier.
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -159,6 +160,27 @@ image::PointD LensGeometryMap::normalized_source(image::PointD n, std::uint32_t 
         y *= f;
     }
     return image::PointD{x, y};
+}
+
+std::array<image::PointD, 3> LensGeometryMap::normalized_sources(image::PointD n) const noexcept {
+    // normalized_source() for the three channels, the distortion evaluated once.
+    double x = n.x / scale;
+    double y = n.y / scale;
+    if (distortion) {
+        const double f = distortion_factor(*distortion, x * x + y * y);
+        x *= f;
+        y *= f;
+    }
+    if (!tca) {
+        return {image::PointD{x, y}, image::PointD{x, y}, image::PointD{x, y}};
+    }
+    const double r2 = x * x + y * y;
+    std::array<image::PointD, 3> out;
+    for (std::uint32_t channel = 0; channel < 3; ++channel) {
+        const double f = tca_factor(*tca, r2, channel);
+        out[channel] = image::PointD{x * f, y * f};
+    }
+    return out;
 }
 
 image::PointD LensGeometryMap::source_of(image::PointD corrected, std::uint32_t channel) const noexcept {

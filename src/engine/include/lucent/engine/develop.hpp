@@ -157,16 +157,23 @@ struct StageOneRequest {
 
 inline constexpr std::uint64_t kDefaultStageTwoCacheBytes = std::uint64_t{256} << 20;
 
-// Stage two's scene-linear image after the fused pass and chroma denoising, kept between renders of
-// one stage-one image (an edit session's quick frames), so that moving a control that comes after
-// the denoising (local tone, masks, curves, colour, geometry) does not repeat it. Used only when
-// chroma denoising is applied, by the non-consuming render_stage_two() of a StageOneImage with an
-// id; keyed by that id, the white balance, the exposure, the chroma-denoise setting and the lens
-// correction's plan (LensCorrectionPlan::revision(); everything the fused pass and the denoising
-// depend on). One entry, replaced on every miss; an image larger
-// than `max_bytes` is not kept (the default keeps a 2048-pixel proxy's 32 MiB, not a full-resolution
-// image's). A hit copies the kept image and is bit-identical to a render without the cache. Its
-// memory is the caller's (stats().bytes). Internally synchronised.
+// What stage two can keep between renders of one stage-one image (an edit session's quick frames),
+// used by the non-consuming render_stage_two() of a StageOneImage with an id. Two entries:
+//   * the lens-corrected image (LensEntry): step 0's output, stage one's camera samples after the
+//     lens correction, before the white-balance correction, the clip and colour. It depends only on
+//     the stage-one image and the lens plan (LensCorrectionPlan::revision()), not on any slider, so
+//     every render of the session reuses it while the lens settings stay (ADR 0023, W13 closure: the
+//     resampling was most of an interactive frame's cost). Kept when the plan corrects something;
+//   * the denoised image (Entry): stage two's scene-linear image after the fused pass and chroma
+//     denoising, so that moving a control that comes after the denoising (local tone, masks, curves,
+//     colour, geometry) does not repeat it. Kept when chroma denoising is applied; keyed by the id,
+//     the white balance, the exposure, the chroma-denoise setting and the lens plan (everything the
+//     fused pass and the denoising depend on).
+// One entry of each kind, replaced on every miss. `max_bytes` bounds both together: an image that
+// cannot fit is not kept, and a denoised image is kept only beside the lens-corrected one (which
+// serves every render; the default keeps both for a 2048-pixel proxy, about 2 x 32 MiB, not a
+// full-resolution image). A hit copies or reads the kept image and is bit-identical to a render
+// without the cache. Its memory is the caller's (stats().bytes). Internally synchronised.
 class StageTwoCache {
 public:
     struct Key {
@@ -183,20 +190,38 @@ public:
         image::ImageBuffer<float> pixels;  // scene-linear Rec.2020 after chroma denoising
         ChromaDenoiseRecord record;
     };
+    struct LensKey {
+        std::uint64_t stage_one = 0;  // StageOneImage::id
+        std::uint64_t lens_plan = 0;  // LensCorrectionPlan::revision() (never 0: the plan corrects)
+
+        friend bool operator==(const LensKey&, const LensKey&) = default;
+    };
+    struct LensEntry {
+        LensKey key;
+        image::ImageBuffer<float> pixels;  // the corrected stage-one samples (its size and channels)
+        std::uint64_t outside_samples = 0;  // LensCorrectionRecord::outside_samples of the correction
+    };
     struct Stats {
-        std::uint64_t bytes = 0;
-        std::uint64_t hits = 0;
+        std::uint64_t bytes = 0;  // both entries
+        std::uint64_t hits = 0;   // denoised images
         std::uint64_t misses = 0;
+        std::uint64_t lens_hits = 0;  // lens-corrected images
+        std::uint64_t lens_misses = 0;
     };
 
     explicit StageTwoCache(std::uint64_t max_bytes = kDefaultStageTwoCacheBytes) noexcept : max_bytes_(max_bytes) {}
     StageTwoCache(const StageTwoCache&) = delete;
     StageTwoCache& operator=(const StageTwoCache&) = delete;
 
-    // The entry for `key`, or nullptr (counted as a hit or a miss).
+    // The denoised entry for `key`, or nullptr (counted as a hit or a miss).
     [[nodiscard]] std::shared_ptr<const Entry> find(const Key& key);
-    // Replaces the entry (ignored when its pixels exceed max_bytes).
+    // Replaces the denoised entry; ignored unless its pixels fit max_bytes beside the lens entry.
     void insert(std::shared_ptr<const Entry> entry) noexcept;
+    // The lens-corrected entry for `key`, or nullptr (counted as a lens hit or miss).
+    [[nodiscard]] std::shared_ptr<const LensEntry> find_lens(const LensKey& key);
+    // Replaces the lens-corrected entry (ignored when its pixels exceed max_bytes); drops the
+    // denoised entry when both no longer fit.
+    void insert_lens(std::shared_ptr<const LensEntry> entry) noexcept;
     [[nodiscard]] std::uint64_t max_bytes() const noexcept { return max_bytes_; }
     void clear() noexcept;
     [[nodiscard]] Stats stats() const;
@@ -204,9 +229,12 @@ public:
 private:
     mutable std::mutex mutex_;
     std::shared_ptr<const Entry> entry_;
+    std::shared_ptr<const LensEntry> lens_entry_;
     std::uint64_t max_bytes_ = 0;
     std::uint64_t hits_ = 0;
     std::uint64_t misses_ = 0;
+    std::uint64_t lens_hits_ = 0;
+    std::uint64_t lens_misses_ = 0;
 };
 
 // Execution options (they never change the pixels) and the lens database (data that does).
@@ -218,8 +246,8 @@ struct DevelopOptions {
     // Brush-mask rasters kept between stage-two renders of one image (an edit session's); null:
     // rasterised on every render. Its memory is the caller's (MaskRasterCache::stats()).
     std::shared_ptr<MaskRasterCache> mask_cache;
-    // The denoised image kept between stage-two renders of one stage-one image (an edit session's
-    // proxy); null: no reuse. Its memory is the caller's (StageTwoCache::stats()).
+    // The lens-corrected and the denoised image kept between stage-two renders of one stage-one image
+    // (an edit session's proxy); null: no reuse. Its memory is the caller's (StageTwoCache::stats()).
     std::shared_ptr<StageTwoCache> stage_two_cache;
     // The Lensfun database the lens-profile corrections use (lens_correction.hpp; the verified
     // asset, lucent_assets). Unlike the members above it is data that changes pixels: without it

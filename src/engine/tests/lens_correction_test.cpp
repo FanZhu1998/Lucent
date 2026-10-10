@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <numbers>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -510,6 +512,175 @@ TEST(LensPlans, VersionZeroMonochromeAndNoDatabase) {
     ASSERT_TRUE(no_db);
     EXPECT_FALSE(no_db->any_applied());
     EXPECT_EQ(no_db->decisions[0].outcome, LensCorrectionOutcome::NoProfile);
+}
+
+// W13 closure (LNS-1): a crop mode the camera records (Canon's APS-C crop of a full-frame body records
+// no 35 mm equivalent focal length) is never corrected with the whole sensor's profile automatically;
+// a named profile is planned for the cropped sensor.
+TEST(LensPlans, ACropModeTheCameraRecordsIsNeverCorrectedAutomatically) {
+    raw::RawMetadata m = lens_metadata("Test Camera", "24-70mm F2.8 Test", 50.0f, 4.0f);
+    raw::SensorCrop crop;
+    crop.factor = 1.6;
+    crop.basis = "Canon AspectInfo (maker note 0x009a) AspectRatio 13 \"3:2 (APS-C crop)\"";
+    m.sensor_crop = crop;
+    const LensQuery q = lens_query(m);
+    EXPECT_TRUE(q.sensor_crop);
+    ASSERT_TRUE(q.sensor_crop_factor);
+    EXPECT_DOUBLE_EQ(*q.sensor_crop_factor, 1.6);
+    const LensCorrectionPlan automatic = plan_of(m, LensCorrectionSetting{}, image::Size{600, 400});
+    EXPECT_EQ(automatic.match.kind, LensMatchKind::Fuzzy) << describe(automatic.match);
+    EXPECT_FALSE(automatic.any_applied());
+    const bool told = std::any_of(automatic.match.reasons.begin(), automatic.match.reasons.end(),
+                                  [](const std::string& r) { return r.find("crop of its sensor") != std::string::npos; });
+    EXPECT_TRUE(told) << describe(automatic.match);
+    // The same file without the record is the whole sensor, as before (and the reasons say so).
+    raw::RawMetadata whole = m;
+    whole.sensor_crop.reset();
+    EXPECT_EQ(plan_of(whole, LensCorrectionSetting{}, image::Size{600, 400}).match.kind, LensMatchKind::Exact);
+    // A named profile is planned for the cropped sensor: the camera's crop factor times the crop's.
+    LensCorrectionSetting named;
+    named.profile = LensProfileId{"Lucent", "Lucent 24-70mm f/2.8 Test", 1.0};
+    const LensCorrectionPlan chosen = plan_of(m, named, image::Size{600, 400});
+    EXPECT_DOUBLE_EQ(chosen.crop_factor, 1.6);
+    EXPECT_NE(chosen.crop_factor_basis.find("sensor crop"), std::string::npos) << chosen.crop_factor_basis;
+    EXPECT_EQ(outcome(chosen, LensCorrectionKind::Distortion), LensCorrectionOutcome::Applied);
+    // A recorded 35 mm equivalent gives the crop factor itself.
+    raw::RawMetadata with_35mm = m;
+    with_35mm.lens.focal_length_35mm_equivalent_mm = 75.0f;
+    EXPECT_DOUBLE_EQ(plan_of(with_35mm, named, image::Size{600, 400}).crop_factor, 1.5);
+    // A crop of unknown size: the image's crop factor is unknown, nothing is applied.
+    raw::RawMetadata unknown = m;
+    unknown.sensor_crop->factor.reset();
+    const LensCorrectionPlan unsized = plan_of(unknown, named, image::Size{600, 400});
+    EXPECT_FALSE(unsized.any_applied());
+    EXPECT_EQ(outcome(unsized, LensCorrectionKind::Distortion), LensCorrectionOutcome::NoProfile);
+}
+
+// W13 closure (LNS-4): a prime's calibration describes its own focal length; a teleconverter's
+// (1.4x or more) is not corrected with the bare lens's calibration.
+TEST(LensPlans, APrimeIsNotCorrectedAtATeleconvertersFocalLength) {
+    const LensCorrectionPlan converted =
+        plan_of(lens_metadata("Test Camera", "50mm F1.8", 70.0f, 2.8f, std::nullopt, "Lucent"),
+                LensCorrectionSetting{}, image::Size{600, 400});
+    ASSERT_EQ(converted.match.kind, LensMatchKind::Exact) << describe(converted.match);
+    for (const auto k : {LensCorrectionKind::Distortion, LensCorrectionKind::LateralChromaticAberration,
+                         LensCorrectionKind::Vignetting}) {
+        EXPECT_EQ(outcome(converted, k), LensCorrectionOutcome::NoCalibration) << converted.decision(k).detail;
+        EXPECT_NE(converted.decision(k).detail.find("teleconverter"), std::string::npos)
+            << converted.decision(k).detail;
+    }
+    EXPECT_FALSE(converted.any_applied());
+    // Within 5 % (a file that records 51.6 mm for the 50 mm prime) the prime's calibration applies,
+    // vignetting included: it is interpolated for the prime's calibrated focal length.
+    const LensCorrectionPlan near =
+        plan_of(lens_metadata("Test Camera", "50mm F1.8", 51.6f, 1.8f, std::nullopt, "Lucent"),
+                LensCorrectionSetting{}, image::Size{600, 400});
+    for (const auto k : {LensCorrectionKind::Distortion, LensCorrectionKind::LateralChromaticAberration,
+                         LensCorrectionKind::Vignetting}) {
+        EXPECT_EQ(outcome(near, k), LensCorrectionOutcome::Applied) << near.decision(k).detail;
+    }
+    ASSERT_TRUE(near.vignetting);
+    EXPECT_EQ(near.vignetting->calibration.focal_mm, 50.0);
+    // A file that records no focal length: the prime's own.
+    raw::RawMetadata unrecorded = lens_metadata("Test Camera", "50mm F1.8", 50.0f, 1.8f, std::nullopt, "Lucent");
+    unrecorded.capture.focal_length_mm.reset();
+    EXPECT_EQ(outcome(plan_of(unrecorded, LensCorrectionSetting{}, image::Size{600, 400}),
+                      LensCorrectionKind::Distortion),
+              LensCorrectionOutcome::Applied);
+}
+
+// W13 closure (LNS-2): without a focus distance, vignetting calibrated at several distances is
+// corrected with the calibrated distance that corrects the image's corners least.
+TEST(LensPlans, VignettingThatDependsOnTheFocusDistanceCorrectsLeast) {
+    const LensCorrectionPlan p =
+        plan_of(lens_metadata("Test Camera", "100mm F2.8 Macro", 100.0f, 2.8f, std::nullopt, "Lucent"),
+                LensCorrectionSetting{}, image::Size{600, 400});
+    ASSERT_EQ(p.match.kind, LensMatchKind::Exact) << describe(p.match);
+    ASSERT_EQ(outcome(p, LensCorrectionKind::Vignetting), LensCorrectionOutcome::Applied)
+        << p.decision(LensCorrectionKind::Vignetting).detail;
+    ASSERT_TRUE(p.vignetting);
+    const LensVignettingCalibration& c = p.vignetting->calibration;
+    EXPECT_NEAR(c.distance_m, 0.3, 1e-6);  // the 0.3 m entry (Lensfun stores floats)
+    EXPECT_NEAR(c.terms[0], -0.21, 1e-6);
+    EXPECT_EQ(c.calibrated_distances_m.size(), 2u);
+    EXPECT_NE(p.decision(LensCorrectionKind::Vignetting).detail.find("corrects the image's corners least"),
+              std::string::npos)
+        << p.decision(LensCorrectionKind::Vignetting).detail;
+    // Its corner gain is the smaller one: the infinity calibration would brighten the corners more.
+    LensVignettingCorrection infinity = *p.vignetting;
+    infinity.calibration.terms = {-0.52, 0.08, -0.02};
+    const image::PointD corner{0.0, 0.0};
+    EXPECT_LT(p.vignetting->gain_at(corner), infinity.gain_at(corner));
+    // A profile calibrated at one distance keeps Lensfun's "infinity" interpolation.
+    const LensCorrectionPlan single =
+        plan_of(lens_metadata("Test Camera", "24-70mm F2.8 Test", 35.0f, 4.0f), LensCorrectionSetting{},
+                image::Size{600, 400});
+    ASSERT_TRUE(single.vignetting);
+    EXPECT_EQ(single.vignetting->calibration.distance_m, kLensDefaultFocusDistanceM);
+}
+
+// W13 closure (LNS-3): settings that ask for a correction a missing dependency prevents say so.
+TEST(LensPlans, AMissingDependencyIsReportedNotSilent) {
+    const raw::RawMetadata m = lens_metadata("Test Camera", "24-70mm F2.8 Test", 35.0f, 4.0f);
+    EXPECT_FALSE(plan_of(m, LensCorrectionSetting{}, image::Size{600, 400}).missing_dependency);
+    LensCorrectionSetting named;
+    named.profile = LensProfileId{"Lucent", "Lucent 35mm f/1.4", 1.0};
+    const LensCorrectionPlan gone = plan_of(m, named, image::Size{600, 400});
+    ASSERT_TRUE(gone.missing_dependency);
+    EXPECT_NE(gone.missing_dependency->find("not in the lens database"), std::string::npos) << *gone.missing_dependency;
+    auto no_db = plan_lens_correction(nullptr, m, LensCorrectionSetting{}, image::Size{600, 400},
+                                      image::Orientation::Normal, false);
+    ASSERT_TRUE(no_db);
+    ASSERT_TRUE(no_db->missing_dependency);
+    // Settings that ask for nothing miss nothing: version 0, or every correction switched off.
+    auto old = plan_lens_correction(nullptr, m, std::nullopt, image::Size{600, 400}, image::Orientation::Normal, false);
+    ASSERT_TRUE(old);
+    EXPECT_FALSE(old->missing_dependency);
+    LensCorrectionSetting off;
+    off.distortion = off.lateral_chromatic_aberration = off.vignetting = false;
+    auto none = plan_lens_correction(nullptr, m, off, image::Size{600, 400}, image::Orientation::Normal, false);
+    ASSERT_TRUE(none);
+    EXPECT_FALSE(none->missing_dependency);
+    // A profile miss of the automatic match is not a missing dependency (the blueprint allows it).
+    EXPECT_FALSE(plan_of(lens_metadata("Test Camera", "Zeiss Otus 85mm f/1.4", 85.0f, 4.0f), LensCorrectionSetting{},
+                         image::Size{600, 400})
+                     .missing_dependency);
+}
+
+// W13 closure (LNS-5): Lensfun's process-wide state is guarded by one lock, so several databases can
+// be loaded, searched, planned with and destroyed on several threads at once.
+TEST(LensDatabaseThreads, SeveralDatabasesWorkConcurrently) {
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&failures, t] {
+            for (int round = 0; round < 6; ++round) {
+                const std::vector<LensDatabaseFile> files{{"synthetic.xml", ts::kSyntheticLensDatabase}};
+                auto db = LensDatabase::load(files, LensDatabaseIdentity{"test", "0.0.1", "threads"});
+                if (!db || (*db)->info().lenses == 0) {
+                    ++failures;
+                    continue;
+                }
+                for (int i = 0; i < 20; ++i) {
+                    const float focal = 24.0f + static_cast<float>((i * 7 + t * 3 + round) % 46);
+                    const LensQuery q = query_of("Test Camera", "24-70mm F2.8 Test", focal, 4.0f);
+                    if ((*db)->match(q).kind != LensMatchKind::Exact) {
+                        ++failures;
+                    }
+                    auto plan = (*db)->plan(lens_metadata("Test Camera", "24-70mm F2.8 Test", focal, 4.0f),
+                                            LensCorrectionSetting{}, image::Size{300, 200},
+                                            image::Orientation::Normal, false);
+                    if (!plan || !plan->any_applied()) {
+                        ++failures;
+                    }
+                }
+            }
+        });
+    }
+    for (std::thread& thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(failures.load(), 0);
 }
 
 // ---- The model against Lensfun ---------------------------------------------------------------------
@@ -1245,6 +1416,92 @@ TEST(LensStageTwo, TheExportEstimateCountsTheCorrectedImage) {
     auto unknown = estimate_develop_memory(d.metadata, request, database);
     ASSERT_TRUE(unknown);
     EXPECT_GE(unknown->export_peak, unknown->stage_one_bytes + rgb);
+}
+
+// W13 closure (APL-03): the lens-corrected image depends on the stage-one image and the plan only, so
+// an edit session's renders keep it (StageTwoCache::LensEntry) and every later frame reads it instead of
+// resampling again, bit-identically.
+TEST(LensStageTwo, TheLensCorrectedImageIsKeptAndReused) {
+    const StageOneImage one = stage_one_of(lens_scene(), 120);
+    ASSERT_NE(one.id, 0u);
+    DevelopOptions options = with_database();
+    options.stage_two_cache = std::make_shared<StageTwoCache>();
+    DevelopSettings s;
+    s.exposure_ev = 0.3;
+    auto first = render_stage_two(one, s, options);
+    ASSERT_TRUE(first) << first.error().describe();
+    EXPECT_TRUE(first->report.lens_correction.resampled);
+    EXPECT_FALSE(first->report.lens_correction.reused);
+    const StageTwoCache::Stats made = options.stage_two_cache->stats();
+    EXPECT_EQ(made.lens_misses, 1u);
+    EXPECT_EQ(made.bytes, one.pixels.byte_size());  // no denoising: the lens-corrected image alone
+    for (const double ev : {0.3, -0.7, 1.1}) {
+        SCOPED_TRACE(ev);
+        s.exposure_ev = ev;
+        s.contrast = ev * 0.2;  // within [-1, 1]
+        auto cached = render_stage_two(one, s, options);
+        auto plain = render_stage_two(one, s, with_database());
+        ASSERT_TRUE(cached && plain);
+        EXPECT_TRUE(cached->report.lens_correction.reused);
+        EXPECT_EQ(cached->report.lens_correction.outside_samples, plain->report.lens_correction.outside_samples);
+        EXPECT_TRUE(ts::bit_identical(cached->display.pixels, plain->display.pixels));
+    }
+    EXPECT_EQ(options.stage_two_cache->stats().lens_hits, 3u);
+    // Another plan (a correction switched off) makes a new one; denoising is kept beside it.
+    s.lens_correction.lateral_chromatic_aberration = false;
+    s.chroma_denoise.strength = 0.5;
+    auto other = render_stage_two(one, s, options);
+    ASSERT_TRUE(other);
+    EXPECT_FALSE(other->report.lens_correction.reused);
+    EXPECT_EQ(options.stage_two_cache->stats().bytes, one.pixels.byte_size() + other->display.pixels.byte_size());
+    // A cache too small for the image corrects every render's rows, with the same pixels.
+    DevelopOptions small = with_database();
+    small.stage_two_cache = std::make_shared<StageTwoCache>(one.pixels.byte_size() / 2);
+    auto unkept = render_stage_two(one, s, small);
+    auto again = render_stage_two(one, s, small);
+    ASSERT_TRUE(unkept && again);
+    EXPECT_FALSE(again->report.lens_correction.reused);
+    EXPECT_TRUE(ts::bit_identical(unkept->display.pixels, other->display.pixels));
+    EXPECT_EQ(small.stage_two_cache->stats().bytes, 0u);
+}
+
+// A cache with room for one image keeps the lens-corrected one, which serves every render.
+TEST(LensStageTwo, TheLensCorrectedImageHasPriorityInTheCache) {
+    const StageOneImage one = stage_one_of(lens_scene(), 120);
+    DevelopOptions options = with_database();
+    options.stage_two_cache = std::make_shared<StageTwoCache>(one.pixels.byte_size() * 3 / 2);
+    DevelopSettings s;
+    s.chroma_denoise.strength = 0.5;
+    auto first = render_stage_two(one, s, options);
+    ASSERT_TRUE(first);
+    StageTwoCache::Stats stats = options.stage_two_cache->stats();
+    EXPECT_EQ(stats.bytes, one.pixels.byte_size());  // the denoised image did not fit beside it
+    s.exposure_ev = 0.5;
+    auto second = render_stage_two(one, s, options);
+    ASSERT_TRUE(second);
+    EXPECT_TRUE(second->report.lens_correction.reused);
+}
+
+TEST(LensModel, TheThreeChannelsAtOnceAreThePerChannelModel) {
+    for (const ModelCase& mc : model_cases()) {
+        SCOPED_TRACE(mc.db_model);
+        const raw::RawMetadata m =
+            lens_metadata(mc.camera, mc.lens_name, mc.focal, mc.f_number, std::nullopt, mc.lens_make);
+        const LensCorrectionPlan p = plan_of(m, LensCorrectionSetting{}, mc.stored, image::Orientation::Normal);
+        if (!p.geometry) {
+            continue;
+        }
+        for (double x = -1.4; x <= 1.4; x += 0.07) {
+            for (double y = -1.0; y <= 1.0; y += 0.09) {
+                const std::array<image::PointD, 3> all = p.geometry->normalized_sources(image::PointD{x, y});
+                for (std::uint32_t c = 0; c < 3; ++c) {
+                    const image::PointD one_channel = p.geometry->normalized_source(image::PointD{x, y}, c);
+                    ASSERT_EQ(std::bit_cast<std::uint64_t>(all[c].x), std::bit_cast<std::uint64_t>(one_channel.x));
+                    ASSERT_EQ(std::bit_cast<std::uint64_t>(all[c].y), std::bit_cast<std::uint64_t>(one_channel.y));
+                }
+            }
+        }
+    }
 }
 
 // A small highlights/shadows brush near a corner: the base layer covers its support mapped into the

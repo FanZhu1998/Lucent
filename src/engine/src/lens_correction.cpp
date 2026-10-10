@@ -1,9 +1,14 @@
 // Lens-profile corrections: the Lensfun database, matching and planning (lens_correction.hpp).
 //
 // This is the only translation unit of Lucent that includes Lensfun (a private dependency of
-// lucent_engine, ADR 0023). Every Lensfun call that reads or searches the database runs under the
-// database's mutex: lfDatabase::FindCamerasExt and FindLenses write each candidate's Score into the
-// database's own objects, and lfLens::GuessParameters (called by FindLenses) switches LC_NUMERIC.
+// lucent_engine, ADR 0023). Every Lensfun call runs under one process-wide lock (lensfun_mutex()):
+// Lensfun 0.3.4 keeps mutable state no instance owns (lens.cpp: lfLens's constructor and destructor
+// count the users of the lens-name regular expressions, _lf_lens_regex_refs, which
+// _lf_parse_lens_name compiles lazily behind a plain flag and the last destructor frees), and
+// loading (lfDatabase::Load -> lfLens::Check -> GuessParameters), searching (FindLenses builds a
+// temporary lfLens) and destroying a database (~lfDatabase deletes its lenses) all touch it;
+// lfDatabase::FindCamerasExt and FindLenses also write each candidate's Score into the database's
+// own objects, and lfLens::GuessParameters switches LC_NUMERIC.
 
 #include <algorithm>
 #include <array>
@@ -36,6 +41,13 @@ constexpr const char* kWhereDb = "engine.lens.database";
 constexpr const char* kWherePlan = "engine.lens.plan";
 
 constexpr std::size_t kCacheEntries = 64;
+
+// The lock of every Lensfun call in the process (see the file comment). Recursive: a database whose
+// load fails is destroyed while load() holds it.
+std::recursive_mutex& lensfun_mutex() {
+    static std::recursive_mutex mutex;
+    return mutex;
+}
 
 // ---- Lensfun helpers -----------------------------------------------------------------------------
 
@@ -337,6 +349,14 @@ LensQuery lens_query(const raw::RawMetadata& metadata) {
     q.focal_length_mm = positive(metadata.capture.focal_length_mm);
     q.f_number = positive(metadata.capture.f_number);
     q.focal_length_35mm_mm = positive(metadata.lens.focal_length_35mm_equivalent_mm);
+    if (metadata.sensor_crop) {
+        q.sensor_crop = true;
+        const std::optional<double>& factor = metadata.sensor_crop->factor;
+        if (factor && std::isfinite(*factor) && *factor > 1.0) {
+            q.sensor_crop_factor = *factor;
+        }
+        q.sensor_crop_basis = metadata.sensor_crop->basis;
+    }
     return q;
 }
 
@@ -428,11 +448,11 @@ struct LensDatabase::Impl {
     lfDatabase db;
     LensDatabaseInfo info;
     std::vector<LensProfileSummary> profiles;  // made by load(), immutable afterwards
-    mutable std::mutex mutex;
+    // Under lensfun_mutex().
     mutable Lru<LensQuery, LensMatch> matches;
     mutable Lru<PlanKey, LensCorrectionPlan> plans;
 
-    // Under `mutex`.
+    // Under lensfun_mutex().
     [[nodiscard]] LensMatch match_locked(const LensQuery& query) const;
     [[nodiscard]] const lfLens* find_locked(const LensProfileId& id) const;
     [[nodiscard]] Expected<LensCorrectionPlan> plan_locked(
@@ -441,7 +461,12 @@ struct LensDatabase::Impl {
 };
 
 LensDatabase::LensDatabase() : impl_(std::make_unique<Impl>()) {}
-LensDatabase::~LensDatabase() = default;
+
+LensDatabase::~LensDatabase() {
+    // ~lfDatabase deletes its lenses, which releases Lensfun's process-wide regular expressions.
+    const std::lock_guard lock(lensfun_mutex());
+    impl_.reset();
+}
 
 const LensDatabaseInfo& LensDatabase::info() const noexcept {
     return impl_->info;
@@ -456,6 +481,7 @@ Expected<std::shared_ptr<const LensDatabase>> LensDatabase::load(std::span<const
     if (files.empty()) {
         return fail(ErrorCode::InvalidArgument, "a lens database needs at least one file", kWhereDb);
     }
+    const std::lock_guard lock(lensfun_mutex());
     try {
         std::shared_ptr<LensDatabase> database(new LensDatabase());
         Impl& impl = *database->impl_;
@@ -511,7 +537,7 @@ Expected<std::shared_ptr<const LensDatabase>> LensDatabase::load(std::span<const
 }
 
 LensMatch LensDatabase::match(const LensQuery& query) const {
-    const std::lock_guard lock(impl_->mutex);
+    const std::lock_guard lock(lensfun_mutex());
     if (auto cached = impl_->matches.find(query)) {
         return std::move(*cached);
     }
@@ -521,7 +547,7 @@ LensMatch LensDatabase::match(const LensQuery& query) const {
 }
 
 bool LensDatabase::contains(const LensProfileId& id) const {
-    const std::lock_guard lock(impl_->mutex);
+    const std::lock_guard lock(lensfun_mutex());
     return impl_->find_locked(id) != nullptr;
 }
 
@@ -531,7 +557,7 @@ Expected<LensCorrectionPlan> LensDatabase::plan(const raw::RawMetadata& metadata
                                                 bool monochrome) const {
     PlanKey key{lens_query(metadata), setting,     carried_lens_corrections(metadata),
                 upright_size,         orientation, monochrome};
-    const std::lock_guard lock(impl_->mutex);
+    const std::lock_guard lock(lensfun_mutex());
     if (auto cached = impl_->plans.find(key)) {
         return std::move(*cached);
     }
@@ -615,13 +641,20 @@ LensMatch LensDatabase::Impl::match_locked(const LensQuery& q) const {
                             exact_cameras.size(), names.front().first, names.front().second));
         }
     }
-    // A crop mode of the sensor: the file's focal lengths say another crop factor than the camera's.
-    // Without a 35 mm equivalent focal length a crop mode cannot be seen (Canon raw files record
-    // none): the image is taken to cover the camera's whole sensor, and the reasons say so.
+    // A crop mode of the sensor: the camera records a sensor crop (Canon's APS-H and APS-C crop
+    // modes, whose files record no 35 mm equivalent focal length), or the file's focal lengths say
+    // another crop factor than the camera's. A file with neither is taken to cover the camera's whole
+    // sensor, and the reasons say so.
     bool crop_mode = false;
     if (camera != nullptr) {
         const auto exif = crop_factor_from_focal_lengths(q);
-        if (exif && !within(*exif, static_cast<double>(camera->CropFactor), kLensCropModeTolerance)) {
+        if (q.sensor_crop) {
+            crop_mode = true;
+            m.reasons.push_back(std::format(
+                "the camera records a crop of its sensor ({}): automatic profiles are matched for the "
+                "camera's whole sensor only",
+                q.sensor_crop_basis.empty() ? std::string("no detail") : q.sensor_crop_basis));
+        } else if (exif && !within(*exif, static_cast<double>(camera->CropFactor), kLensCropModeTolerance)) {
             crop_mode = true;
             m.reasons.push_back(std::format(
                 "the file's 35 mm equivalent focal length ({:.4g} mm for {:.4g} mm) gives crop factor "
@@ -630,8 +663,8 @@ LensMatch LensDatabase::Impl::match_locked(const LensQuery& q) const {
                 *q.focal_length_35mm_mm, *q.focal_length_mm, *exif, camera->CropFactor));
         } else if (!exif) {
             m.reasons.push_back(
-                "the file records no 35 mm equivalent focal length: the image is taken to cover the "
-                "camera's whole sensor (a crop mode cannot be detected)");
+                "the file records no 35 mm equivalent focal length and no sensor crop Lucent can read: the "
+                "image is taken to cover the camera's whole sensor");
         }
     }
 
@@ -814,25 +847,37 @@ bool is_prime(const lfLens* lens) noexcept {
     return lens->MinFocal > 0.0f && std::abs(lens->MaxFocal - lens->MinFocal) < 1e-3f;
 }
 
-// Whether `focal` lies within the calibrated focal lengths (any focal length for a prime).
-bool focal_covered(const lfLens* lens, const std::vector<double>& focals, double focal) noexcept {
+// Whether the photograph's focal length `focal` lies within the calibrated focal lengths `focals`:
+// within kLensFocalTolerance of a zoom's calibrated range; within kLensPrimeFocalTolerance of a
+// prime's calibrated focal length(s), since a teleconverter multiplies the focal length by 1.4 or
+// more and the bare lens's calibration does not describe the combination (the database calibrates
+// such combinations as lenses of their own); any focal length for a prime when the file records
+// none (`from_file` false: `focal` is then the prime's own).
+bool focal_covered(const lfLens* lens, const std::vector<double>& focals, double focal, bool from_file) noexcept {
     if (focals.empty()) {
         return false;
     }
-    if (is_prime(lens)) {
+    const bool prime = is_prime(lens);
+    if (prime && !from_file) {
         return true;
     }
-    return focal >= focals.front() * (1.0 - kLensFocalTolerance) &&
-           focal <= focals.back() * (1.0 + kLensFocalTolerance);
+    const double tolerance = prime ? kLensPrimeFocalTolerance : kLensFocalTolerance;
+    return focal >= focals.front() * (1.0 - tolerance) && focal <= focals.back() * (1.0 + tolerance);
 }
 
-bool finite_terms(std::span<const float> terms) noexcept {
-    return std::all_of(terms.begin(), terms.end(), [](float v) { return std::isfinite(v); });
+// The focal length a calibration of `focals` is interpolated for: the photograph's, or for a prime
+// its calibrated focal length nearest to it (a prime has one focal length; Lensfun clamps distortion
+// and lateral CA to the calibrated ones anyway, but weighs vignetting by the focal length's distance
+// in millimetres for a prime, so a file that records 51.6 mm for a 50 mm prime would find none).
+double interpolation_focal(const lfLens* lens, const std::vector<double>& focals, double focal) noexcept {
+    if (!is_prime(lens) || focals.empty()) {
+        return focal;
+    }
+    return std::clamp(focal, focals.front(), focals.back());
 }
 
-// The composed green map of `map` is strictly increasing in the radius out to the image's corners.
-bool monotone(const LensGeometryMap& map) {
-    const LensfunFrame& f = map.frame;
+// The largest normalised radius of the image's corners in `f`.
+double corner_radius(const LensfunFrame& f) noexcept {
     double corner = 0.0;
     for (const image::PointD p :
          {image::PointD{0.0, 0.0}, image::PointD{static_cast<double>(f.size.width), 0.0},
@@ -841,6 +886,16 @@ bool monotone(const LensGeometryMap& map) {
         const image::PointD n = f.normalized(p);
         corner = std::max(corner, std::hypot(n.x, n.y));
     }
+    return corner;
+}
+
+bool finite_terms(std::span<const float> terms) noexcept {
+    return std::all_of(terms.begin(), terms.end(), [](float v) { return std::isfinite(v); });
+}
+
+// The composed green map of `map` is strictly increasing in the radius out to the image's corners.
+bool monotone(const LensGeometryMap& map) {
+    const double corner = corner_radius(map.frame);
     constexpr int kSteps = 1024;
     double previous = 0.0;
     for (int i = 1; i <= kSteps; ++i) {
@@ -856,15 +911,7 @@ bool monotone(const LensGeometryMap& map) {
 
 // The vignetting divisor stays positive (and the gain bounded) over the image.
 bool vignetting_valid(const LensVignettingCorrection& v) {
-    const LensfunFrame& f = v.frame;
-    double corner = 0.0;
-    for (const image::PointD p :
-         {image::PointD{0.0, 0.0}, image::PointD{static_cast<double>(f.size.width), 0.0},
-          image::PointD{0.0, static_cast<double>(f.size.height)},
-          image::PointD{static_cast<double>(f.size.width), static_cast<double>(f.size.height)}}) {
-        const image::PointD n = f.normalized(p);
-        corner = std::max(corner, std::hypot(n.x, n.y));
-    }
+    const double corner = corner_radius(v.frame);
     constexpr int kSteps = 1024;
     for (int i = 0; i <= kSteps; ++i) {
         const double g = v.gain_at_normalized(image::PointD{corner * 1.05 * i / kSteps, 0.0});
@@ -1022,10 +1069,11 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
     } else {
         lens = find_locked(*setting->profile);
         if (lens == nullptr) {
-            close_open(LensCorrectionOutcome::NoProfile,
-                       std::format("the chosen profile {} is not in the lens database {} {}",
-                                   describe(*setting->profile), info.identity.asset_id,
-                                   info.identity.asset_version));
+            const std::string detail =
+                std::format("the chosen profile {} is not in the lens database {} {}", describe(*setting->profile),
+                            info.identity.asset_id, info.identity.asset_version);
+            close_open(LensCorrectionOutcome::NoProfile, detail);
+            plan.missing_dependency = detail;
             return plan;
         }
     }
@@ -1033,19 +1081,33 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
     plan.camera = plan.match.camera;
     plan.lens_type = lens_type_name(lens->Type);
 
-    // 3. The image's crop factor.
+    // 3. The image's crop factor: the database camera's; for a crop of the sensor (a named profile
+    // only: an automatic match is not exact then) the file's 35 mm equivalent focal length, else the
+    // camera's times the factor of the sensor crop the file records, else unknown.
     const std::optional<double> exif_crop = crop_factor_from_focal_lengths(plan.query);
     if (plan.camera) {
         plan.crop_factor = plan.camera->crop_factor;
         plan.crop_factor_basis =
             std::format("the database camera '{} {}'", plan.camera->maker, plan.camera->model);
-        if (exif_crop && !within(*exif_crop, plan.crop_factor, kLensCropModeTolerance)) {
-            // Only a named profile gets here (an automatic match is not exact in a crop mode).
+        const bool exif_differs = exif_crop && !within(*exif_crop, plan.crop_factor, kLensCropModeTolerance);
+        if (exif_differs || (plan.query.sensor_crop && exif_crop)) {
             plan.crop_factor = *exif_crop;
             plan.crop_factor_basis = std::format(
                 "the file's 35 mm equivalent focal length ({:.4g} mm for {:.4g} mm; the camera's whole "
                 "sensor is {:.4g}: a crop mode)",
                 *plan.query.focal_length_35mm_mm, *plan.query.focal_length_mm, plan.camera->crop_factor);
+        } else if (plan.query.sensor_crop && plan.query.sensor_crop_factor) {
+            plan.crop_factor = plan.camera->crop_factor * *plan.query.sensor_crop_factor;
+            plan.crop_factor_basis = std::format(
+                "the database camera '{} {}' ({:.4g}) times the sensor crop the file records ({:.4g}: {})",
+                plan.camera->maker, plan.camera->model, plan.camera->crop_factor, *plan.query.sensor_crop_factor,
+                plan.query.sensor_crop_basis);
+        } else if (plan.query.sensor_crop) {
+            close_open(LensCorrectionOutcome::NoProfile,
+                       std::format("the image's crop factor is unknown: the camera records a crop of its sensor "
+                                   "({}) but not its size, and the file records no 35 mm equivalent focal length",
+                                   plan.query.sensor_crop_basis));
+            return plan;
         }
     } else if (exif_crop) {
         plan.crop_factor = *exif_crop;
@@ -1068,8 +1130,20 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
         return plan;
     }
 
-    // 4. The photograph's focal length, f-number and focus distance.
+    // 4. The model's frame: the stored-orientation image normalised for the calibration's sensor.
+    const image::Size stored = image::oriented_size(upright, image::inverse(orientation));
+    auto frame = LensfunFrame::create(stored, plan.crop_factor, static_cast<double>(lens->CropFactor),
+                                      static_cast<double>(lens->AspectRatio),
+                                      static_cast<double>(lens->CenterX), static_cast<double>(lens->CenterY));
+    if (!frame) {
+        close_open(LensCorrectionOutcome::NotApplicable,
+                   "the image is too small for a lens model: " + frame.error().message);
+        return plan;
+    }
+
+    // 5. The photograph's focal length and f-number.
     std::optional<double> focal = plan.query.focal_length_mm;
+    const bool focal_from_file = focal.has_value();
     std::string focal_basis = "the file's focal length";
     if (!focal && is_prime(lens)) {
         focal = static_cast<double>(lens->MinFocal);
@@ -1079,24 +1153,36 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
         close_open(LensCorrectionOutcome::NoCalibration, "the focal length is unknown");
         return plan;
     }
-    const double distance = plan.query.focus_distance_m.value_or(kLensDefaultFocusDistanceM);
-    const auto f = static_cast<float>(*focal);
+    // Why `focals` do not cover the photograph's focal length; `range` names the zoom's calibrated
+    // focal lengths, `calibrations` the prime's calibrations.
+    const auto outside_focals = [&](const std::vector<double>& focals, std::string_view range,
+                                    std::string_view calibrations) {
+        if (is_prime(lens)) {
+            return std::format(
+                "{} {:.4g} mm differs from the prime's calibrated {} mm by more than {:.0f} % (a teleconverter?): "
+                "the bare lens's {} do not describe it",
+                focal_basis, *focal, list_text(focals), kLensPrimeFocalTolerance * 100.0, calibrations);
+        }
+        return std::format("{} {:.4g} mm lies outside the {} ({} mm)", focal_basis, *focal, range, list_text(focals));
+    };
 
-    // 5. Calibrations.
+    // 6. Calibrations.
     std::optional<LensDistortionCalibration> distortion;
     std::optional<LensTcaCalibration> tca;
     std::optional<LensVignettingCalibration> vignetting;
+    std::string vignetting_distance_basis;
+    double geometry_focal = *focal;  // the focal length Lensfun's modifier is initialised with
     if (open[0]) {
         const std::vector<double> focals = calibrated_focals(lens->CalibDistortion);
         lfLensCalibDistortion res{};
         if (focals.empty()) {
             decisions[0] = {LensCorrectionKind::Distortion, LensCorrectionOutcome::NoCalibration,
                             "the profile has no distortion calibration"};
-        } else if (!focal_covered(lens, focals, *focal)) {
+        } else if (!focal_covered(lens, focals, *focal, focal_from_file)) {
             decisions[0] = {LensCorrectionKind::Distortion, LensCorrectionOutcome::NoCalibration,
-                            std::format("{} {:.4g} mm lies outside the calibrated focal lengths ({} mm)",
-                                        focal_basis, *focal, list_text(focals))};
-        } else if (!lens->InterpolateDistortion(f, res) || !finite_terms(res.Terms) ||
+                            outside_focals(focals, "calibrated focal lengths", "distortion calibrations")};
+        } else if (const double f = interpolation_focal(lens, focals, *focal);
+                   !lens->InterpolateDistortion(static_cast<float>(f), res) || !finite_terms(res.Terms) ||
                    (res.Model != LF_DIST_MODEL_POLY3 && res.Model != LF_DIST_MODEL_POLY5 &&
                     res.Model != LF_DIST_MODEL_PTLENS)) {
             decisions[0] = {LensCorrectionKind::Distortion, LensCorrectionOutcome::NoCalibration,
@@ -1109,9 +1195,10 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
             for (std::size_t i = 0; i < 3; ++i) {
                 c.terms[i] = static_cast<double>(res.Terms[i]);
             }
-            c.focal_mm = *focal;
+            c.focal_mm = f;
             c.calibrated_focal_mm = focals;
             distortion = c;
+            geometry_focal = f;
         }
     }
     if (open[1]) {
@@ -1125,12 +1212,12 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
             decisions[1] = {LensCorrectionKind::LateralChromaticAberration,
                             LensCorrectionOutcome::NoCalibration,
                             "the profile has no lateral chromatic aberration calibration"};
-        } else if (!focal_covered(lens, focals, *focal)) {
+        } else if (!focal_covered(lens, focals, *focal, focal_from_file)) {
             decisions[1] = {LensCorrectionKind::LateralChromaticAberration,
                             LensCorrectionOutcome::NoCalibration,
-                            std::format("{} {:.4g} mm lies outside the calibrated focal lengths ({} mm)",
-                                        focal_basis, *focal, list_text(focals))};
-        } else if (!lens->InterpolateTCA(f, res) || !finite_terms(res.Terms) ||
+                            outside_focals(focals, "calibrated focal lengths", "lateral chromatic aberration calibrations")};
+        } else if (const double f = interpolation_focal(lens, focals, *focal);
+                   !lens->InterpolateTCA(static_cast<float>(f), res) || !finite_terms(res.Terms) ||
                    (res.Model != LF_TCA_MODEL_LINEAR && res.Model != LF_TCA_MODEL_POLY3)) {
             decisions[1] = {
                 LensCorrectionKind::LateralChromaticAberration, LensCorrectionOutcome::NoCalibration,
@@ -1145,74 +1232,154 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
             if (c.model == LensTcaModel::Linear) {
                 c.terms[2] = c.terms[3] = c.terms[4] = c.terms[5] = 0.0;
             }
-            c.focal_mm = *focal;
+            c.focal_mm = f;
             c.calibrated_focal_mm = focals;
             tca = c;
+            if (!distortion) {
+                geometry_focal = f;
+            }
         }
     }
     if (open[2]) {
         std::vector<double> focals;
         std::vector<double> apertures;
+        std::vector<double> distances;
         for (std::size_t i = 0; lens->CalibVignetting != nullptr && lens->CalibVignetting[i] != nullptr;
              ++i) {
             focals.push_back(static_cast<double>(lens->CalibVignetting[i]->Focal));
             apertures.push_back(static_cast<double>(lens->CalibVignetting[i]->Aperture));
+            distances.push_back(static_cast<double>(lens->CalibVignetting[i]->Distance));
         }
         focals = sorted_unique(std::move(focals));
         apertures = sorted_unique(std::move(apertures));
-        lfLensCalibVignetting res{};
+        distances = sorted_unique(std::move(distances));
+        const double f = interpolation_focal(lens, focals, *focal);
+        // Lensfun's interpolation for one focus distance, with the gain it gives the image's corners.
+        struct AtDistance {
+            double distance = 0.0;
+            lfLensCalibVignetting res{};
+            double corner_gain = 0.0;
+        };
+        const double corner = corner_radius(*frame);
+        const auto interpolate = [&](double distance) -> std::optional<AtDistance> {
+            AtDistance a;
+            a.distance = distance;
+            if (!lens->InterpolateVignetting(static_cast<float>(f), static_cast<float>(*plan.query.f_number),
+                                             static_cast<float>(distance), a.res) ||
+                !finite_terms(a.res.Terms) || a.res.Model != LF_VIGNETTING_MODEL_PA) {
+                return std::nullopt;
+            }
+            LensVignettingCorrection v;
+            v.frame = *frame;
+            for (std::size_t i = 0; i < 3; ++i) {
+                v.calibration.terms[i] = static_cast<double>(a.res.Terms[i]);
+            }
+            a.corner_gain = v.gain_at_normalized(image::PointD{corner, 0.0});
+            if (!std::isfinite(a.corner_gain)) {
+                return std::nullopt;
+            }
+            return a;
+        };
+        std::string refused;  // why no calibration covers the photograph (empty: one does)
+        std::optional<AtDistance> chosen;
         if (focals.empty()) {
-            decisions[2] = {LensCorrectionKind::Vignetting, LensCorrectionOutcome::NoCalibration,
-                            "the profile has no vignetting calibration"};
+            refused = "the profile has no vignetting calibration";
         } else if (!plan.query.f_number) {
-            decisions[2] = {LensCorrectionKind::Vignetting, LensCorrectionOutcome::NoCalibration,
-                            "the f-number is unknown"};
-        } else if (!focal_covered(lens, focals, *focal)) {
-            decisions[2] = {
-                LensCorrectionKind::Vignetting, LensCorrectionOutcome::NoCalibration,
-                std::format("{} {:.4g} mm lies outside the vignetting calibrations' focal lengths ({} mm)",
-                            focal_basis, *focal, list_text(focals))};
+            refused = "the f-number is unknown";
+        } else if (!focal_covered(lens, focals, *focal, focal_from_file)) {
+            refused = outside_focals(focals, "vignetting calibrations' focal lengths", "vignetting calibrations");
         } else if (*plan.query.f_number < apertures.front() * (1.0 - kLensApertureTolerance) ||
                    *plan.query.f_number > apertures.back() * (1.0 + kLensApertureTolerance)) {
-            decisions[2] = {LensCorrectionKind::Vignetting, LensCorrectionOutcome::NoCalibration,
-                            std::format("f/{:.3g} lies outside the calibrated apertures (f/{})",
-                                        *plan.query.f_number, list_text(apertures))};
-        } else if (!lens->InterpolateVignetting(f, static_cast<float>(*plan.query.f_number),
-                                                static_cast<float>(distance), res) ||
-                   !finite_terms(res.Terms) || res.Model != LF_VIGNETTING_MODEL_PA) {
-            decisions[2] = {LensCorrectionKind::Vignetting, LensCorrectionOutcome::NoCalibration,
-                            "Lensfun has no vignetting calibration close enough to this photograph"};
+            refused = std::format("f/{:.3g} lies outside the calibrated apertures (f/{})", *plan.query.f_number,
+                                  list_text(apertures));
+        } else {
+            if (plan.query.focus_distance_m) {
+                chosen = interpolate(*plan.query.focus_distance_m);
+                vignetting_distance_basis =
+                    std::format(" for the file's focus distance {:.3g} m", *plan.query.focus_distance_m);
+            } else if (distances.size() <= 1) {
+                // One calibrated distance: Lensfun's interpolation for "infinity", as without a distance.
+                chosen = interpolate(kLensDefaultFocusDistanceM);
+                vignetting_distance_basis =
+                    std::format(" for {:.4g} m (the focus distance is unknown; the profile's vignetting is "
+                                "calibrated at one distance)",
+                                kLensDefaultFocusDistanceM);
+            } else {
+                // The focus distance is unknown and the vignetting may depend on it: the calibrated
+                // distance whose gain at the image's corners is the smallest, so the corners are never
+                // brightened more than the lens darkens them at any calibrated distance; the farthest
+                // (Lensfun's choice without a distance) unless a nearer one corrects the corners less
+                // by more than kLensVignettingDistanceTolerance (calibrations that agree across distances
+                // keep it). Distances Lensfun has no calibration close enough to (at this focal length and
+                // f-number) are left out.
+                std::optional<AtDistance> farthest;
+                std::optional<AtDistance> least;
+                std::optional<AtDistance> largest;
+                for (auto d = distances.rbegin(); d != distances.rend(); ++d) {
+                    const std::optional<AtDistance> at = interpolate(*d);
+                    if (!at) {
+                        continue;
+                    }
+                    if (!farthest) {
+                        farthest = at;
+                    }
+                    if (!least || at->corner_gain < least->corner_gain) {
+                        least = at;
+                    }
+                    if (!largest || at->corner_gain > largest->corner_gain) {
+                        largest = at;
+                    }
+                }
+                if (farthest && least) {
+                    chosen = farthest->corner_gain > least->corner_gain * (1.0 + kLensVignettingDistanceTolerance)
+                                 ? least
+                                 : farthest;
+                }
+                if (chosen && largest) {
+                    if (largest->corner_gain > chosen->corner_gain * (1.0 + kLensVignettingDistanceTolerance)) {
+                        vignetting_distance_basis = std::format(
+                            " for {:.4g} m: the focus distance is unknown, and of the calibrated distances ({} m) "
+                            "this one corrects the image's corners least (gain {:.3g}; up to {:.3g} for {:.4g} m)",
+                            chosen->distance, list_text(distances), chosen->corner_gain, largest->corner_gain,
+                            largest->distance);
+                    } else {
+                        vignetting_distance_basis = std::format(
+                            " for {:.4g} m: the focus distance is unknown, and the calibrations at {} m agree at the "
+                            "image's corners (gain {:.3g})",
+                            chosen->distance, list_text(distances), chosen->corner_gain);
+                    }
+                }
+            }
+            if (!chosen) {
+                refused = "Lensfun has no vignetting calibration close enough to this photograph";
+            }
+        }
+        if (!refused.empty()) {
+            decisions[2] = {LensCorrectionKind::Vignetting, LensCorrectionOutcome::NoCalibration, refused};
         } else {
             LensVignettingCalibration c;
             for (std::size_t i = 0; i < 3; ++i) {
-                c.terms[i] = static_cast<double>(res.Terms[i]);
+                c.terms[i] = static_cast<double>(chosen->res.Terms[i]);
             }
-            c.focal_mm = *focal;
+            c.focal_mm = f;
             c.f_number = *plan.query.f_number;
-            c.distance_m = distance;
+            c.distance_m = chosen->distance;
             c.calibrated_focal_mm = focals;
             c.calibrated_f_numbers = apertures;
+            c.calibrated_distances_m = distances;
             vignetting = c;
         }
     }
 
-    // 6. The model's frame and the geometry.
-    const image::Size stored = image::oriented_size(upright, image::inverse(orientation));
-    auto frame = LensfunFrame::create(stored, plan.crop_factor, static_cast<double>(lens->CropFactor),
-                                      static_cast<double>(lens->AspectRatio),
-                                      static_cast<double>(lens->CenterX), static_cast<double>(lens->CenterY));
-    if (!frame) {
-        close_open(LensCorrectionOutcome::NotApplicable,
-                   "the image is too small for a lens model: " + frame.error().message);
-        return plan;
-    }
+    // 7. The geometry.
     if (distortion || tca) {
         // Lensfun's automatic scale for these callbacks (distortion and/or TCA, no projection change).
+        const auto f = static_cast<float>(geometry_focal);
+        const auto distance = static_cast<float>(vignetting ? vignetting->distance_m : kLensDefaultFocusDistanceM);
         lfModifier modifier(lens, static_cast<float>(plan.crop_factor), stored.width, stored.height);
         const int wanted = (distortion ? LF_MODIFY_DISTORTION : 0) | (tca ? LF_MODIFY_TCA : 0);
-        const int got =
-            modifier.Initialize(lens, LF_PF_F32, f, static_cast<float>(plan.query.f_number.value_or(0.0)),
-                                static_cast<float>(distance), 1.0f, lens->Type, wanted, false);
+        const int got = modifier.Initialize(lens, LF_PF_F32, f, static_cast<float>(plan.query.f_number.value_or(0.0)),
+                                            distance, 1.0f, lens->Type, wanted, false);
         const double scale = static_cast<double>(modifier.GetAutoScale(false));
         if ((got & wanted) != wanted || !std::isfinite(scale) || !(scale > 0.0)) {
             return fail(
@@ -1235,7 +1402,7 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
             map.distortion.reset();
             if (tca) {
                 lfModifier tca_only(lens, static_cast<float>(plan.crop_factor), stored.width, stored.height);
-                (void)tca_only.Initialize(lens, LF_PF_F32, f, 0.0f, static_cast<float>(distance), 1.0f,
+                (void)tca_only.Initialize(lens, LF_PF_F32, static_cast<float>(tca->focal_mm), 0.0f, distance, 1.0f,
                                           lens->Type, LF_MODIFY_TCA, false);
                 map.scale = static_cast<double>(tca_only.GetAutoScale(false));
             }
@@ -1261,30 +1428,34 @@ Expected<LensCorrectionPlan> LensDatabase::Impl::plan_locked(
         }
     }
 
-    // 7. The decisions of what is applied.
-    const std::string source =
-        std::format("{} for the {}; {} {:.4g} mm{}", describe(*plan.profile),
-                    plan.automatic ? "exact match" : "chosen profile", focal_basis, *focal,
-                    plan.query.f_number ? std::format(", f/{:.3g}", *plan.query.f_number) : std::string{});
+    // 8. The decisions of what is applied.
+    const auto source = [&](double calibrated_focal) {
+        return std::format(
+            "{} for the {}; {} {}{}", describe(*plan.profile), plan.automatic ? "exact match" : "chosen profile",
+            focal_basis,
+            calibrated_focal == *focal
+                ? std::format("{:.4g} mm", *focal)
+                : std::format("{:.4g} mm (the prime's calibrated {:.4g} mm)", *focal, calibrated_focal),
+            plan.query.f_number ? std::format(", f/{:.3g}", *plan.query.f_number) : std::string{});
+    };
     if (open[0] && distortion) {
         decisions[0] = {
             LensCorrectionKind::Distortion, LensCorrectionOutcome::Applied,
-            std::format("{}: {} [{:.6g}, {:.6g}, {:.6g}], scale {:.6g} (Lensfun's {:.6g})", source,
+            std::format("{}: {} [{:.6g}, {:.6g}, {:.6g}], scale {:.6g} (Lensfun's {:.6g})", source(distortion->focal_mm),
                         to_string(distortion->model), distortion->terms[0], distortion->terms[1],
                         distortion->terms[2], plan.geometry->scale, plan.geometry->lensfun_scale)};
     }
     if (open[1] && tca) {
         decisions[1] = {LensCorrectionKind::LateralChromaticAberration, LensCorrectionOutcome::Applied,
-                        std::format("{}: {} [{:.7g}, {:.7g}, {:.7g}, {:.7g}, {:.7g}, {:.7g}]", source,
+                        std::format("{}: {} [{:.7g}, {:.7g}, {:.7g}, {:.7g}, {:.7g}, {:.7g}]", source(tca->focal_mm),
                                     to_string(tca->model), tca->terms[0], tca->terms[1], tca->terms[2],
                                     tca->terms[3], tca->terms[4], tca->terms[5])};
     }
     if (open[2] && vignetting) {
-        decisions[2] = {
-            LensCorrectionKind::Vignetting, LensCorrectionOutcome::Applied,
-            std::format("{}: pa [{:.6g}, {:.6g}, {:.6g}] for {:.4g} m{}", source, vignetting->terms[0],
-                        vignetting->terms[1], vignetting->terms[2], distance,
-                        plan.query.focus_distance_m ? "" : " (the focus distance is unknown: infinity)")};
+        decisions[2] = {LensCorrectionKind::Vignetting, LensCorrectionOutcome::Applied,
+                        std::format("{}: pa [{:.6g}, {:.6g}, {:.6g}]{}", source(vignetting->focal_mm),
+                                    vignetting->terms[0], vignetting->terms[1], vignetting->terms[2],
+                                    vignetting_distance_basis)};
     }
     return plan;
 }
@@ -1309,6 +1480,10 @@ Expected<LensCorrectionPlan> plan_lens_correction(const LensDatabase* database,
                                          plan.setting.vignetting};
     const std::array<bool, 3> carried = {plan.carried.distortion, plan.carried.lateral_chromatic_aberration,
                                          plan.carried.vignetting};
+    // An automatic setting applies no database profile to a file that carries corrections of its own
+    // (Withheld, or NoProfile without an exact match): a database would not change the result.
+    const bool database_would_apply =
+        !(plan.automatic && std::any_of(carried.begin(), carried.end(), [](bool b) { return b; }));
     for (std::size_t k = 0; k < 3; ++k) {
         LensCorrectionDecision& d = plan.decisions[k];
         if (!setting) {
@@ -1323,6 +1498,10 @@ Expected<LensCorrectionPlan> plan_lens_correction(const LensDatabase* database,
         } else {
             d.outcome = LensCorrectionOutcome::NoProfile;
             d.detail = "no lens database is available";
+            if (database_would_apply) {
+                plan.missing_dependency =
+                    "no lens database is available: the lens corrections the settings ask for are not applied";
+            }
         }
     }
     return plan;

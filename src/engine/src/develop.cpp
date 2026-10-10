@@ -616,12 +616,23 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     const bool lens_resamples = lens_plan.geometry.has_value();
     // The fused pass writes in place into stage one's buffer only when nothing is resampled.
     const bool in_place = reuse != nullptr && !mono && !lens_resamples;
+    // A non-consuming render with a stage-two cache corrects the lens once into an image the cache
+    // keeps (StageTwoCache::LensEntry: it depends on the stage-one image and the plan only), and later
+    // renders of the same image and plan read it instead of resampling again.
+    const std::uint64_t corrected_bytes = plane_bytes(size, one.pixels.channels(), options.limits);
+    StageTwoCache* const lens_cache = (reuse == nullptr && one.id != 0 && lens_plan.any_applied() &&
+                                       options.stage_two_cache && corrected_bytes <= options.stage_two_cache->max_bytes())
+                                          ? options.stage_two_cache.get()
+                                          : nullptr;
     {
         std::uint64_t bytes = stage_two_working_bytes(
             size, one.scale, local_tone_radius(one.full_size, one.scale), 3, &settings, options.limits,
             &mapping->frame(), lens_plan.geometry ? &*lens_plan.geometry : nullptr, one.full_size);
         if (!in_place) {
             bytes += plane_bytes(size, 3, options.limits);
+        }
+        if (lens_cache != nullptr) {
+            bytes += corrected_bytes;
         }
         if (auto budget = check_budget(bytes, options.memory_budget_bytes, "stage two"); !budget) {
             return Unexpected(std::move(budget.error()));
@@ -753,6 +764,35 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             return fail(ErrorCode::Internal, "the stage-two cache holds an image of another size", kWhereTwo);
         }
     }
+    // The lens-corrected image (StageTwoCache::LensEntry), unless the denoised image already holds the
+    // whole fused pass: from the cache, or made now and kept.
+    std::shared_ptr<const StageTwoCache::LensEntry> corrected;
+    bool corrected_reused = false;
+    if (lens_cache != nullptr && !cached) {
+        const StageTwoCache::LensKey lens_key{one.id, lens_plan.revision()};
+        corrected = lens_cache->find_lens(lens_key);
+        if (corrected) {
+            if (corrected->pixels.size() != size || corrected->pixels.channels() != one.pixels.channels()) {
+                return fail(ErrorCode::Internal, "the stage-two cache holds a lens-corrected image of another size",
+                            kWhereTwo);
+            }
+            corrected_reused = true;
+        } else {
+            const detail::LensRowSampler whole(lens_plan, one.pixels.const_view(), one.full_size);
+            auto made = detail::correct_whole_image(whole, size, one.pixels.channels(), options.limits, cancel,
+                                                    options.parallel, kWhereTwo);
+            if (!made) {
+                return Unexpected(std::move(made.error()));
+            }
+            try {
+                corrected = std::make_shared<const StageTwoCache::LensEntry>(
+                    StageTwoCache::LensEntry{lens_key, std::move(made->pixels), made->outside_samples});
+            } catch (const std::bad_alloc&) {
+                return fail(ErrorCode::OutOfMemory, "cannot keep the lens-corrected image", kWhereTwo);
+            }
+            lens_cache->insert_lens(corrected);
+        }
+    }
 
     ColorImage& image = result.display;
     if (in_place) {
@@ -781,12 +821,13 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         const image::ImageView<float> dst = image.pixels.view();
         const std::int32_t width = size.width;
         const detail::LensRowSampler sampler(lens_plan, src, one.full_size);
-        detail::ScratchPool scratch_pool(sampler.active() && !cached
-                                             ? static_cast<std::size_t>(width) * static_cast<std::size_t>(src.channels())
-                                             : 0);
+        // Rows are corrected here only without a kept denoised or lens-corrected image.
+        const bool sample_rows = sampler.active() && !cached && !corrected;
+        detail::ScratchPool scratch_pool(
+            sample_rows ? static_cast<std::size_t>(width) * static_cast<std::size_t>(src.channels()) : 0);
         std::vector<std::uint64_t> outside;
         try {
-            outside.assign(sampler.resamples() && !cached ? static_cast<std::size_t>(size.height) : 0, 0);
+            outside.assign(sampler.resamples() && sample_rows ? static_cast<std::size_t>(size.height) : 0, 0);
         } catch (const std::bad_alloc&) {
             return fail(ErrorCode::OutOfMemory, "cannot allocate per-row counters", kWhereTwo);
         }
@@ -798,18 +839,20 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
                 return;
             }
             const float* s = src.row(y);
-            float* corrected = nullptr;
-            if (sampler.active()) {
-                corrected = scratch_pool.acquire();
-                if (corrected == nullptr) {
+            float* scratch = nullptr;
+            if (corrected) {
+                s = corrected->pixels.row(y);  // the same values sampler.row() writes
+            } else if (sample_rows) {
+                scratch = scratch_pool.acquire();
+                if (scratch == nullptr) {
                     no_memory.store(true, std::memory_order_relaxed);
                     return;
                 }
-                const std::uint64_t n = sampler.row(y, corrected);
+                const std::uint64_t n = sampler.row(y, scratch);
                 if (!outside.empty()) {
                     outside[static_cast<std::size_t>(y)] = n;
                 }
-                s = corrected;
+                s = scratch;
             }
             if (mono) {
                 for (std::int32_t x = 0; x < width; ++x, o += 3) {
@@ -818,7 +861,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
                     o[1] = m10 * v;
                     o[2] = m20 * v;
                 }
-                scratch_pool.release(corrected);
+                scratch_pool.release(scratch);
                 return;
             }
             for (std::int32_t x = 0; x < width; ++x, s += 3, o += 3) {
@@ -829,7 +872,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
                 o[1] = m10 * r + m11 * g + m12 * b;
                 o[2] = m20 * r + m21 * g + m22 * b;
             }
-            scratch_pool.release(corrected);
+            scratch_pool.release(scratch);
         });
         if (!status) {
             return Unexpected(std::move(status.error()));
@@ -841,6 +884,10 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         lens.plan = lens_plan;
         lens.render_size = size;
         lens.resampled = sampler.resamples() && !cached;
+        lens.reused = corrected_reused;
+        if (corrected) {
+            lens.outside_samples = corrected->outside_samples;
+        }
         for (const std::uint64_t n : outside) {
             lens.outside_samples += n;
         }
@@ -889,6 +936,9 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             r.parameters.push_back(param("lensfun_scale", p.geometry->lensfun_scale));
             r.parameters.push_back(param("outside_samples",
                                          static_cast<std::int64_t>(report.lens_correction.outside_samples)));
+        }
+        if (p.any_applied()) {
+            r.parameters.push_back(param("reused", report.lens_correction.reused));
         }
         r.parameters.push_back(param("plan_seconds", lens_plan_seconds));
         report.operations.push_back(std::move(r));
@@ -1322,21 +1372,69 @@ std::shared_ptr<const StageTwoCache::Entry> StageTwoCache::find(const Key& key) 
 }
 
 void StageTwoCache::insert(std::shared_ptr<const Entry> entry) noexcept {
-    if (!entry || entry->pixels.byte_size() > max_bytes_) {
+    if (!entry) {
         return;
     }
+    const auto bytes = static_cast<std::uint64_t>(entry->pixels.byte_size());
+    std::shared_ptr<const Entry> replaced;  // released after the lock
+    {
+        const std::lock_guard lock(mutex_);
+        const std::uint64_t lens = lens_entry_ ? static_cast<std::uint64_t>(lens_entry_->pixels.byte_size()) : 0u;
+        if (bytes > max_bytes_ || lens > max_bytes_ - bytes) {
+            return;  // only beside the lens-corrected image, which serves every render
+        }
+        replaced = std::move(entry_);
+        entry_ = std::move(entry);
+    }
+}
+
+std::shared_ptr<const StageTwoCache::LensEntry> StageTwoCache::find_lens(const LensKey& key) {
     const std::lock_guard lock(mutex_);
-    entry_ = std::move(entry);
+    if (lens_entry_ && lens_entry_->key == key) {
+        ++lens_hits_;
+        return lens_entry_;
+    }
+    ++lens_misses_;
+    return nullptr;
+}
+
+void StageTwoCache::insert_lens(std::shared_ptr<const LensEntry> entry) noexcept {
+    if (!entry || static_cast<std::uint64_t>(entry->pixels.byte_size()) > max_bytes_) {
+        return;
+    }
+    std::shared_ptr<const Entry> dropped;  // both released after the lock
+    std::shared_ptr<const LensEntry> replaced;
+    {
+        const std::lock_guard lock(mutex_);
+        replaced = std::move(lens_entry_);
+        lens_entry_ = std::move(entry);
+        const auto lens = static_cast<std::uint64_t>(lens_entry_->pixels.byte_size());
+        if (entry_ && static_cast<std::uint64_t>(entry_->pixels.byte_size()) > max_bytes_ - lens) {
+            dropped = std::move(entry_);
+        }
+    }
 }
 
 void StageTwoCache::clear() noexcept {
-    const std::lock_guard lock(mutex_);
-    entry_.reset();
+    std::shared_ptr<const Entry> entry;  // released after the lock
+    std::shared_ptr<const LensEntry> lens;
+    {
+        const std::lock_guard lock(mutex_);
+        entry = std::move(entry_);
+        lens = std::move(lens_entry_);
+    }
 }
 
 StageTwoCache::Stats StageTwoCache::stats() const {
     const std::lock_guard lock(mutex_);
-    return Stats{entry_ ? static_cast<std::uint64_t>(entry_->pixels.byte_size()) : 0u, hits_, misses_};
+    Stats s;
+    s.bytes = (entry_ ? static_cast<std::uint64_t>(entry_->pixels.byte_size()) : 0u) +
+              (lens_entry_ ? static_cast<std::uint64_t>(lens_entry_->pixels.byte_size()) : 0u);
+    s.hits = hits_;
+    s.misses = misses_;
+    s.lens_hits = lens_hits_;
+    s.lens_misses = lens_misses_;
+    return s;
 }
 
 std::string_view to_string(StageOneKind kind) noexcept {

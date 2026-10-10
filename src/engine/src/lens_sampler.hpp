@@ -14,7 +14,10 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 
+#include <lucent/core/cancellation.hpp>
+#include <lucent/core/error.hpp>
 #include <lucent/engine/lens_correction.hpp>
 #include <lucent/image/geometry.hpp>
 #include <lucent/image/pixel_buffer.hpp>
@@ -54,5 +57,18 @@ private:
     double inverse_aspect2_ = 1.0;  // 1 / aspect_ratio_correction^2 (vignetting)
     std::array<double, 3> vignetting_terms_{};
 };
+
+// The whole corrected image of a sampler's image: a new buffer of `size` x `channels` (the sampler's
+// image's) whose rows are row()'s, and the number of source positions that lay outside the image.
+struct CorrectedImage {
+    image::ImageBuffer<float> pixels;
+    std::uint64_t outside_samples = 0;
+};
+
+// Errors (at `where`): LimitExceeded / OutOfMemory; Cancelled.
+[[nodiscard]] Expected<CorrectedImage> correct_whole_image(const LensRowSampler& sampler, image::Size size,
+                                                           std::int32_t channels, const image::AllocationLimits& limits,
+                                                           const core::CancellationToken& cancel, bool parallel,
+                                                           std::string_view where);
 
 }  // namespace lucent::engine::detail

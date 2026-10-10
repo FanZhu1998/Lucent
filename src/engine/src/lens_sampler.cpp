@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <format>
 #include <new>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "parallel_rows.hpp"
@@ -157,8 +159,11 @@ std::uint64_t LensRowSampler::row(std::int32_t y, float* out) const noexcept {
             }
             continue;
         }
+        // The distortion once for the three channels (normalized_sources(): the same arithmetic as
+        // normalized_source() per channel).
+        const std::array<image::PointD, 3> sources = map.normalized_sources(n);
         for (std::int32_t c = 0; c < 3; ++c) {
-            const image::PointD s = map.normalized_source(n, static_cast<std::uint32_t>(c));
+            const image::PointD s = sources[static_cast<std::size_t>(c)];
             const image::PointD b = to_buffer_.apply(s.x, s.y);
             if (!(b.x >= -0.5 && b.x <= max_x && b.y >= -0.5 && b.y <= max_y)) {
                 ++outside;
@@ -172,6 +177,35 @@ std::uint64_t LensRowSampler::row(std::int32_t y, float* out) const noexcept {
         }
     }
     return outside;
+}
+
+Expected<CorrectedImage> correct_whole_image(const LensRowSampler& sampler, image::Size size, std::int32_t channels,
+                                             const image::AllocationLimits& limits,
+                                             const core::CancellationToken& cancel, bool parallel,
+                                             std::string_view where) {
+    CorrectedImage result;
+    auto out = image::ImageBuffer<float>::create_uninitialized(size.width, size.height, channels, limits);
+    if (!out) {
+        return Unexpected(std::move(out.error()));
+    }
+    std::vector<std::uint64_t> outside;
+    try {
+        outside.assign(static_cast<std::size_t>(size.height), 0);
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate per-row counters", std::string(where));
+    }
+    const image::ImageView<float> dst = out->view();
+    auto status = for_each_row(size.height, parallel, cancel, where, [&](std::int32_t y) {
+        outside[static_cast<std::size_t>(y)] = sampler.row(y, dst.row(y));
+    });
+    if (!status) {
+        return Unexpected(std::move(status.error()));
+    }
+    for (const std::uint64_t n : outside) {
+        result.outside_samples += n;
+    }
+    result.pixels = std::move(*out);
+    return result;
 }
 
 }  // namespace lucent::engine::detail
@@ -199,29 +233,14 @@ Expected<LensCorrectionRecord> apply_lens_correction(const LensCorrectionPlan& p
     if (!sampler.active()) {
         return record;
     }
-    auto out = image::ImageBuffer<float>::create_uninitialized(pixels.width(), pixels.height(),
-                                                               pixels.channels(), limits);
-    if (!out) {
-        return Unexpected(std::move(out.error()));
+    auto corrected =
+        detail::correct_whole_image(sampler, pixels.size(), pixels.channels(), limits, cancel, parallel, kWhere);
+    if (!corrected) {
+        return Unexpected(std::move(corrected.error()));
     }
-    std::vector<std::uint64_t> outside;
-    try {
-        outside.assign(static_cast<std::size_t>(pixels.height()), 0);
-    } catch (const std::bad_alloc&) {
-        return fail(ErrorCode::OutOfMemory, "cannot allocate per-row counters", kWhere);
-    }
-    const image::ImageView<float> dst = out->view();
-    auto status = detail::for_each_row(pixels.height(), parallel, cancel, kWhere, [&](std::int32_t y) {
-        outside[static_cast<std::size_t>(y)] = sampler.row(y, dst.row(y));
-    });
-    if (!status) {
-        return Unexpected(std::move(status.error()));
-    }
-    for (const std::uint64_t n : outside) {
-        record.outside_samples += n;
-    }
+    record.outside_samples = corrected->outside_samples;
     record.resampled = sampler.resamples();
-    pixels = std::move(*out);
+    pixels = std::move(corrected->pixels);
     record.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     return record;
 }

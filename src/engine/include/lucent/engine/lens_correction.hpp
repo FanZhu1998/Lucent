@@ -19,7 +19,8 @@
 // 1. Matching (LensDatabase::match, kLensProfileMatchVersion 1). From the decoded metadata
 //    (lens_query()): camera make and model (as LibRaw reports them and normalised), lens make and
 //    model, the lens's focal range, the focal length, the f-number and the 35 mm equivalent focal
-//    length. The decoded-RAW contract 1.4 carries no lens identifier number and no focus distance.
+//    length, and the camera's record of a sensor crop. The decoded-RAW contract 1.5 carries no lens
+//    identifier number and no focus distance.
 //    * Camera: Lensfun's FindCamerasExt (every word of the file's name must occur in the database's)
 //      for the make and model as reported and as normalised; a camera is identified when one of its
 //      maker spellings and one of its model spellings equal the file's (case and runs of spaces
@@ -37,20 +38,35 @@
 //      Fuzzy when Lensfun returns candidates (strict or, failing those, loose search) but none is
 //      exact or several are; None otherwise (no database entry, no lens named). The reasons say
 //      which step decided. Automatic corrections use Exact matches only: "never a guessed profile".
+//    * Crop modes: a profile for the camera's whole sensor would correct a crop of it wrongly, so a
+//      match is not Exact when the image is a crop of the sensor: the camera records a sensor crop
+//      (raw::RawMetadata::sensor_crop, contract 1.5: Canon's APS-H and APS-C crop modes, which
+//      record no 35 mm equivalent focal length) or the file's 35 mm equivalent focal length gives
+//      another crop factor than the camera's (more than 6 %). A file with neither is taken to
+//      cover the whole sensor, and the reasons say so.
 // 2. Planning (plan_lens_correction, LensCorrectionPlan). Per correction, in this order of
 //    precedence: Disabled (the setting), CarriedByFile (the file's applied DNG opcodes already
 //    corrected it, carried_lens_corrections(); never applied twice), Withheld (automatic mode and
 //    the file carries some correction of its own: no third-party profile is mixed in
 //    automatically), NoProfile, NotApplicable (lateral CA of monochrome data), NoCalibration (the
 //    profile has none for it, or none that covers the photograph: the focal length within the
-//    calibrated focal lengths (1 % tolerance; any focal length for a prime), for vignetting also the
-//    f-number within the calibrated apertures (2 %), the image sensor no larger than the
-//    calibration's, a model Lucent implements), else Applied with the calibration Lensfun
-//    interpolates for the focal length (and f-number and focus distance: unknown in contract 1.4, so
-//    the calibration for 1000 m, Lensfun's "infinity" entries, is interpolated).
-//    The image's crop factor is the database camera's, unless the file's 35 mm equivalent focal
-//    length says otherwise by more than 6 % (a crop mode of the sensor, e.g. APS-C on a full-frame
-//    body): an automatic match is then not exact, and a named profile uses the file's value.
+//    calibrated focal lengths (1 % tolerance for a zoom; 5 % of a prime's calibrated focal length,
+//    so that a teleconverter's focal length is not corrected with the bare lens's calibration; any
+//    focal length for a prime when the file records none), for vignetting also the f-number within
+//    the calibrated apertures (2 %), the image sensor no larger than the calibration's, a model
+//    Lucent implements), else Applied with the calibration Lensfun interpolates for the focal length
+//    (a prime's: its calibrated focal length) and, for vignetting, the f-number and a focus
+//    distance. The decoded-RAW contract carries no focus distance: a profile whose vignetting is
+//    calibrated at one distance is interpolated for 1000 m (Lensfun's "infinity" entries), as
+//    Lensfun does without a distance; one calibrated at several distances, whose vignetting depends
+//    on it (macro and close-focusing lenses: up to 2.8x at the corners between the nearest and the
+//    farthest distance), with the calibrated distance whose gain at the image's corners is the
+//    smallest (the farthest unless a nearer one is more than 1 % smaller), so that the corners are
+//    never brightened more than the lens darkens them at any calibrated distance (an unknown
+//    distance can leave them under-corrected, never over-corrected).
+//    The image's crop factor is the database camera's; for a crop mode of the sensor (a named
+//    profile) the file's 35 mm equivalent focal length gives it, else the camera's times the
+//    recorded sensor crop's factor (Canon: 1.3 or 1.6), else it is unknown (NoProfile).
 // 3. Model (lens-correction operation version 1), in Lensfun's coordinates (lfModifier): the
 //    stored-orientation full-resolution image of stage one (W x H, after the DNG opcodes and before
 //    the camera orientation, so a lens centre offset keeps its sensor axes); pixel coordinates with
@@ -85,10 +101,13 @@
 //    the stage-3 image after the opcode lists' warps; the model's frame is the whole image, whose
 //    centre and size Lensfun's normalisation assumes, as for a WarpRectilinear's optical centre.
 //
-// Thread-safety: a LensDatabase is immutable after load() and may be shared; its lookups are
-// serialised internally (Lensfun's search writes scores into the database and switches LC_NUMERIC
-// to "C" while it parses names, which Lucent, running in the C locale, does not notice). Plans,
-// maps and records are plain values.
+// Thread-safety: a LensDatabase is immutable after load() and may be shared, and several may exist
+// in one process: every Lensfun call (loading, searching, planning and destroying a database) runs
+// under one process-wide lock, because Lensfun 0.3.4 keeps process-wide mutable state no instance
+// owns (lfLens counts the users of the lens-name regular expressions it compiles lazily and frees
+// them at zero; every load, search and destruction touches it), its search writes scores into the
+// database, and it switches LC_NUMERIC to "C" while it parses names (Lucent, running in the C
+// locale, does not notice). Plans, maps and records are plain values.
 
 #include <array>
 #include <cstdint>
@@ -120,10 +139,15 @@ inline constexpr std::uint32_t kLensfunDataFormatVersion = 1;
 inline constexpr std::size_t kMaxLensCandidates = 5;
 
 // Tolerances of the rules above.
-inline constexpr double kLensFocalTolerance = 0.01;     // focal length against the calibrated ones
-inline constexpr double kLensApertureTolerance = 0.02;  // f-number against the calibrated ones
-inline constexpr double kLensCropModeTolerance = 0.06;  // 35 mm equivalent against the camera's crop factor
-// The focus distance used when the file records none: Lensfun's "infinity" calibrations (metres).
+inline constexpr double kLensFocalTolerance = 0.01;       // focal length against the calibrated ones
+inline constexpr double kLensPrimeFocalTolerance = 0.05;  // a prime's: its calibrated focal length
+inline constexpr double kLensApertureTolerance = 0.02;    // f-number against the calibrated ones
+inline constexpr double kLensCropModeTolerance = 0.06;    // 35 mm equivalent against the camera's crop factor
+// Vignetting calibrated at several focus distances: a nearer distance replaces the farthest when it
+// corrects the image's corners less by more than this (relative gain).
+inline constexpr double kLensVignettingDistanceTolerance = 0.01;
+// The focus distance used when the file records none and the profile's vignetting is calibrated at
+// one distance: Lensfun's "infinity" calibrations (metres).
 inline constexpr double kLensDefaultFocusDistanceM = 1000.0;
 
 // ---- Database -----------------------------------------------------------------------------------
@@ -167,7 +191,12 @@ struct LensQuery {
     std::optional<double> focal_length_mm;  // raw::CaptureSettings
     std::optional<double> f_number;
     std::optional<double> focal_length_35mm_mm;  // raw::LensIdentity::focal_length_35mm_equivalent_mm
-    std::optional<double> focus_distance_m;      // not in the decoded-RAW contract 1.4: always empty
+    std::optional<double> focus_distance_m;      // not in the decoded-RAW contract 1.5: always empty
+    // The camera's record of a sensor crop (raw::RawMetadata::sensor_crop): the image is a crop of
+    // the sensor; its crop factor relative to the whole sensor when the file says it.
+    bool sensor_crop = false;
+    std::optional<double> sensor_crop_factor;
+    std::string sensor_crop_basis;
 
     friend bool operator==(const LensQuery&, const LensQuery&) = default;
 };
@@ -270,9 +299,10 @@ struct LensVignettingCalibration {
     std::array<double, 3> terms{};  // k1, k2, k3
     double focal_mm = 0.0;
     double f_number = 0.0;
-    double distance_m = 0.0;
+    double distance_m = 0.0;  // the focus distance it was interpolated for (section 2)
     std::vector<double> calibrated_focal_mm;
     std::vector<double> calibrated_f_numbers;
+    std::vector<double> calibrated_distances_m;
 
     friend bool operator==(const LensVignettingCalibration&, const LensVignettingCalibration&) = default;
 };
@@ -329,6 +359,8 @@ struct LensGeometryMap {
     // Lensfun's units; source_of() wraps it).
     [[nodiscard]] image::PointD normalized_source(image::PointD normalized_corrected,
                                                   std::uint32_t channel) const noexcept;
+    // normalized_source() of channels 0, 1 and 2 (the same values; the distortion evaluated once).
+    [[nodiscard]] std::array<image::PointD, 3> normalized_sources(image::PointD normalized_corrected) const noexcept;
     // Identifies the map (FNV-1a over every value).
     [[nodiscard]] std::uint64_t revision() const noexcept;
 
@@ -406,6 +438,15 @@ struct LensCorrectionPlan {
         LensCorrectionDecision{LensCorrectionKind::Vignetting, LensCorrectionOutcome::Disabled, {}}};
     std::optional<LensGeometryMap> geometry;             // distortion and/or lateral CA applied
     std::optional<LensVignettingCorrection> vignetting;  // vignetting applied
+    // Set when the settings ask for a correction (operation version 1, enabled, not carried by the
+    // file, not withheld from an automatic setting because the file carries corrections of its own)
+    // that cannot be planned for want of a dependency: no lens database was given, or the profile
+    // the settings name is not in the database (an automatic match that finds no profile is not a
+    // missing dependency: the photograph's lens has none). Such settings render without the
+    // correction, which changes the result of a recipe made with the dependency; blueprint section
+    // 8 asks that a replay report the missing dependency instead of changing its result silently,
+    // so callers report it (an export: a review note). Developer-facing English.
+    std::optional<std::string> missing_dependency;
 
     [[nodiscard]] const LensCorrectionDecision& decision(LensCorrectionKind kind) const noexcept;
     [[nodiscard]] bool applied(LensCorrectionKind kind) const noexcept;
@@ -471,6 +512,9 @@ struct LensCorrectionRecord {
     image::Size render_size;            // the stage-one image it was applied to
     bool resampled = false;             // distortion or lateral CA applied
     std::uint64_t outside_samples = 0;  // source positions outside the image (taps clamped to its edge)
+    // The corrected image came from DevelopOptions::stage_two_cache (made by an earlier render of the
+    // same stage-one image and plan; the pixels are the same).
+    bool reused = false;
     double seconds = 0.0;
 };
 

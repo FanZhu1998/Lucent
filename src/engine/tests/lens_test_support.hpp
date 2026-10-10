@@ -34,6 +34,8 @@ namespace lucent::engine::test_support {
 // - Lucent 18mm f/4 Wide: calibrated on the APS-C sensor (crop 1.5), a lens centre offset, poly3.
 // - Lucent 12mm f/2: 4:3 aspect ratio, crop factor 2.
 // - Test Compact fixed lens: the compact's, poly3 at 4.5 mm, vignetting for f/2.
+// - Lucent 100mm f/2.8 Macro: a prime whose vignetting at f/2.8 is calibrated at 0.3 m and 1000 m
+//   (its corners darken less at close focus), at 1000 m only for f/8.
 inline constexpr const char* kSyntheticLensDatabase = R"XML(<lensdatabase version="1">
     <mount>
         <name>Lucent Test Mount</name>
@@ -134,6 +136,18 @@ inline constexpr const char* kSyntheticLensDatabase = R"XML(<lensdatabase versio
         <calibration>
             <distortion model="ptlens" focal="12" a="0.021" b="-0.056" c="0.019"/>
             <vignetting model="pa" focal="12" aperture="2" distance="1000" k1="-0.55" k2="0.12" k3="-0.04"/>
+        </calibration>
+    </lens>
+    <lens>
+        <maker>Lucent</maker>
+        <model>Lucent 100mm f/2.8 Macro</model>
+        <mount>Lucent Test Mount</mount>
+        <cropfactor>1</cropfactor>
+        <calibration>
+            <distortion model="poly3" focal="100" k1="0.004"/>
+            <vignetting model="pa" focal="100" aperture="2.8" distance="0.3" k1="-0.21" k2="0.02" k3="0"/>
+            <vignetting model="pa" focal="100" aperture="2.8" distance="1000" k1="-0.52" k2="0.08" k3="-0.02"/>
+            <vignetting model="pa" focal="100" aperture="8" distance="1000" k1="-0.12" k2="0.01" k3="0"/>
         </calibration>
     </lens>
     <lens>
