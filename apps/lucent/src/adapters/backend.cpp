@@ -7,6 +7,7 @@
 #include <lucent/application/catalog_library.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
+#include <lucent/core/version.hpp>
 
 namespace lucent::ui::adapters {
 
@@ -281,6 +282,40 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             core::log_warn(kLog, "automatic settings are unavailable: {}", created.error().describe());
         }
 
+        // W12: "Check for updates" over the build's channel (or the options' test channel).
+        {
+            app::UpdateServiceOptions update = options.updates.value_or(app::UpdateServiceOptions{});
+            if (!options.updates) {
+                const app::BuildUpdateChannel& channel = app::build_update_channel();
+                if (channel.problem) {
+                    core::log_error(kLog, "the build's update channel is refused: {}", channel.problem->describe());
+                }
+                update.channel = channel.channel;
+                if (auto version = core::SemanticVersion::parse(core::build_info().version)) {
+                    update.current_version = *version;
+                }
+            }
+            if (update.download_directory.empty()) {
+                update.download_directory = options.update_directory;
+            }
+            if (update.log_directory.empty()) {
+                update.log_directory = options.log_directory;
+            }
+            const Backend* self = backend.get();  // the service is destroyed first (~Backend)
+            update.install_blocker = [self] { return self->update_blocker(); };
+            update.before_install = [self] { return self->back_up_before_update(); };
+            auto updates = app::UpdateService::create(std::move(update));
+            if (updates) {
+                backend->updates_ = std::move(*updates);
+                if (backend->updates_->configured()) {
+                    core::log_info(kLog, "update channel '{}': {}", backend->updates_->channel().name,
+                                   backend->updates_->channel().manifest_url);
+                }
+            } else {
+                core::log_warn(kLog, "updates are unavailable: {}", updates.error().describe());
+            }
+        }
+
         if (backend->library_->capabilities().source_maintenance) {
             app::MaintenanceServiceOptions maintenance = options.maintenance;
             maintenance.hashing.thumbnails = backend->thumbnails_;
@@ -305,10 +340,42 @@ void Backend::set_maintenance_sink(std::function<void(const app::MaintenanceEven
     relay_->sink = std::move(sink);
 }
 
+std::optional<Error> Backend::update_blocker() const {
+    if (auto_ && auto_->runs_in_progress() > 0) {
+        return Error{ErrorCode::AlreadyExists, "the automatic settings are running", "app.update.busy", 0};
+    }
+    if (batches_) {
+        auto unfinished = batches_->list_unfinished();
+        if (!unfinished) {
+            return Error{ErrorCode::AlreadyExists, "the batches cannot be read: " + unfinished.error().message,
+                         "app.update.busy", 0};
+        }
+        for (const app::BatchStatus& batch : *unfinished) {
+            if (batch.record.state == catalog::BatchState::Running) {
+                return Error{ErrorCode::AlreadyExists, "an export is running", "app.update.busy", 0};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+Status Backend::back_up_before_update() const {
+    if (!catalog_ || catalog_->is_read_only()) {
+        return ok();  // nothing this session could change; a read-only catalog is never written
+    }
+    auto backup = catalog_->create_backup(catalog::BackupKind::PreUpdate);
+    if (!backup) {
+        return Unexpected(std::move(backup.error()));
+    }
+    core::log_info(kLog, "pre-update backup of the catalog: {}", core::path_to_utf8_lossy(backup->path));
+    return ok();
+}
+
 Backend::~Backend() {
     // Explicit, although member order already implies it: the services before the executor they
     // use, the executor (joining every task) before the library, catalog and registry those tasks
-    // use.
+    // use. The update service first: its callbacks use the batch and Auto services and the catalog.
+    updates_.reset();
     maintenance_.reset();
     auto_.reset();  // cancels the runs in progress and waits for them (they use the executor)
     develop_.reset();

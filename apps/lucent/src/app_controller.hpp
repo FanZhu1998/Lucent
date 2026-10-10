@@ -40,6 +40,7 @@
 #include "models/edit_session.hpp"
 #include "models/export_job_model.hpp"
 #include "models/library_model.hpp"
+#include "models/update_model.hpp"
 #include "services/services.hpp"
 
 class QQmlEngine;
@@ -111,6 +112,8 @@ class AppController : public QObject {
     Q_PROPERTY(QString appVersion READ app_version CONSTANT FINAL)
     Q_PROPERTY(QVariantMap cameraSupport READ camera_support CONSTANT FINAL)
     Q_PROPERTY(QVariantList supportStates READ support_states CONSTANT FINAL)
+    // W12 (ADR 0022). Help > About's "Check for updates".
+    Q_PROPERTY(lucent::ui::UpdateModel* updates READ updates CONSTANT FINAL)
 
 public:
     enum View { Library = 0, Edit = 1, Exports = 2 };
@@ -233,6 +236,7 @@ public:
     [[nodiscard]] BatchListModel* batches() const noexcept { return batch_list_.get(); }
     [[nodiscard]] BatchSetupModel* batch_setup() const noexcept { return batch_setup_.get(); }
     [[nodiscard]] BatchReportModel* batch_report() const noexcept { return batch_report_.get(); }
+    [[nodiscard]] UpdateModel* updates() const noexcept { return updates_.get(); }
     [[nodiscard]] bool batches_available() const { return services_.batches->is_available(); }
     [[nodiscard]] int active_export_count() const;
     [[nodiscard]] int export_attention_count() const;
@@ -298,6 +302,8 @@ signals:
     void activeExportCountChanged();
     // The window should open the Export batch dialog (openBatchExport, openFolderBatchExport).
     void batchExportRequested();
+    // W12: an update's Setup is running; the application should exit cleanly now (main.cpp).
+    void quitRequested();
 
 private:
     bool import_urls(const QList<QUrl>& urls, bool include_subfolders);
@@ -329,6 +335,8 @@ private:
     std::unique_ptr<BatchListModel> batch_list_;
     std::unique_ptr<BatchSetupModel> batch_setup_;
     std::unique_ptr<BatchReportModel> batch_report_;
+    std::unique_ptr<UpdateService> fallback_updates_;  // when the services bring none
+    std::unique_ptr<UpdateModel> updates_;
 
     View view_ = Library;
     View previous_view_ = Library;

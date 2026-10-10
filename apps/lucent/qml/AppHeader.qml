@@ -234,7 +234,7 @@ Rectangle {
             onClicked: aboutDialog.open()
             Accessible.name: qsTr("About Lucent and its camera support")
             ToolTip.visible: hovered
-            ToolTip.text: qsTr("Lucent's version, its camera support database and what the support states mean")
+            ToolTip.text: qsTr("Lucent's version, its camera support database, what the support states mean, and updates")
             ToolTip.delay: 800
         }
     }

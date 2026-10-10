@@ -128,6 +128,11 @@ AppController::AppController(Services services, QObject* parent)
     batch_list_ = std::make_unique<BatchListModel>(*services_.batches);
     batch_setup_ = std::make_unique<BatchSetupModel>(*services_.batches);
     batch_report_ = std::make_unique<BatchReportModel>(*services_.batches);
+    if (!services_.updates) {
+        fallback_updates_ = std::make_unique<UnavailableUpdateService>(app_version());
+    }
+    updates_ = std::make_unique<UpdateModel>(services_.updates ? *services_.updates : *fallback_updates_);
+    connect(updates_.get(), &UpdateModel::quitRequested, this, &AppController::quitRequested);
     // Owned here, never by the QML engine's garbage collector.
     QQmlEngine::setObjectOwnership(library_model_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(export_model_.get(), QQmlEngine::CppOwnership);
@@ -137,6 +142,7 @@ AppController::AppController(Services services, QObject* parent)
     QQmlEngine::setObjectOwnership(batch_list_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(batch_setup_.get(), QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(batch_report_.get(), QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(updates_.get(), QQmlEngine::CppOwnership);
 
     url_opener_ = [](const QUrl& url) { return QDesktopServices::openUrl(url); };
 

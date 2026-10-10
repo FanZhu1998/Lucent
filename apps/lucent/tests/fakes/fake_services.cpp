@@ -135,6 +135,7 @@ Services create_fake_services(FakeTimings timings, bool batches) {
     services.exports = std::make_unique<FakeExportService>(catalog, timings);
     services.edits = std::make_unique<FakeEditService>(catalog, timings);
     services.batches = std::make_unique<FakeBatchService>(catalog, timings, batches);
+    services.updates = std::make_unique<FakeUpdateService>(timings);
     services.simulation_notice = tr_fake("Simulated services");
     return services;
 }

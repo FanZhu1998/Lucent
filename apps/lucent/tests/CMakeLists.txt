@@ -18,6 +18,7 @@ add_library(lucent_ui_fakes STATIC
     fakes/fake_library_service.cpp
     fakes/fake_services.cpp
     fakes/fake_services.hpp
+    fakes/fake_update_service.cpp
 )
 target_include_directories(lucent_ui_fakes PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 # The simulated edit service maps geometry and masks with the engine's own helpers (the adapters'),
@@ -50,11 +51,15 @@ add_executable(lucent_ui_tests
     test_main.cpp
     test_support.cpp
     test_support.hpp
+    update_tests.cpp
     volume_watcher_tests.cpp
+    # W12: the update adapter's tests serve a release from the application tests' loopback server.
+    ${CMAKE_SOURCE_DIR}/src/application/tests/loopback_http_server.cpp
 )
 target_include_directories(lucent_ui_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${CMAKE_SOURCE_DIR}/src/raw/tests")
+    "${CMAKE_SOURCE_DIR}/src/raw/tests"
+    "${CMAKE_SOURCE_DIR}/src/application/tests")
 target_compile_definitions(lucent_ui_tests PRIVATE
     LUCENT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     LUCENT_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/fixtures"
@@ -66,7 +71,8 @@ target_link_libraries(lucent_ui_tests PRIVATE
     lucent_ui_qmlplugin
     lucent_ui_fakes
     lucent_ui_adapters
-    Qt6::Test)
+    Qt6::Test
+    ws2_32)
 set_target_properties(lucent_ui_tests PROPERTIES FOLDER "tests")
 # The batch adapter tests run the real durable batches, which start lucent-worker.exe processes.
 add_dependencies(lucent_ui_tests lucent_ui_runtime lucent-worker)

@@ -34,6 +34,13 @@
 // executor's Background lane, over the recipe service; it is created after the executor and
 // destroyed before it (its destructor cancels the runs in progress and waits for them).
 //
+// W12 (ADR 0022): "Check for updates". The Backend creates the app::UpdateService over the channel
+// compiled into the build (app::build_update_channel(); not configured by default, and then it never
+// opens a connection), downloading into <cache>\updates. Installing waits while a batch runs or Auto
+// runs (update_blocker()), and takes a verified pre-update backup of a writable catalog before Setup
+// starts (the catalog's own pre-migration backup follows when the new version first opens it). It is
+// destroyed first: its callbacks use the batch and Auto services and the catalog.
+//
 // W7: with a writable persistent library the Backend also opens the durable BatchService
 // (batch_service.hpp, ADR 0012) after the recipe service; it reconciles the job journal of the
 // previous session, continues running batches with lucent-worker.exe processes, and the export
@@ -78,6 +85,7 @@
 #include <lucent/application/source_renderer.hpp>
 #include <lucent/application/task_executor.hpp>
 #include <lucent/application/thumbnail_cache.hpp>
+#include <lucent/application/update_service.hpp>
 #include <lucent/assets/asset_store.hpp>
 #include <lucent/assets/camera_support.hpp>
 #include <lucent/catalog/catalog.hpp>
@@ -119,6 +127,13 @@ struct BackendOptions {
     std::optional<assets::AssetLocations> asset_locations;
     // The per-user application data folder (core::AppDirectories::data); empty: unknown.
     std::filesystem::path user_data_directory;
+    // W12 (ADR 0022). Where installers are downloaded (<cache>\updates) and Setup writes its log
+    // (<cache>\logs); empty: the update service cannot download (it can still check).
+    std::filesystem::path update_directory;
+    std::filesystem::path log_directory;
+    // Replaces the build's channel and the service's seams (tests: a loopback channel and a test
+    // key). Its install_blocker and before_install are the Backend's.
+    std::optional<app::UpdateServiceOptions> updates;
 };
 
 // Output folders chosen for exports in this session. Imports do not scan into them when a scan
@@ -180,6 +195,13 @@ public:
     [[nodiscard]] app::DevelopPreviewService& develop() noexcept { return *develop_; }
     // W8. The editor's Auto (null when it could not be created).
     [[nodiscard]] app::AutoService* automatic() noexcept { return auto_.get(); }
+    // W12. "Check for updates" (null when it could not be created; see the file comment).
+    [[nodiscard]] app::UpdateService* updates() noexcept { return updates_.get(); }
+    // Why an update must not be installed now: a batch is running or Auto is running (ADR 0022:
+    // updates are applied between jobs); std::nullopt when nothing runs.
+    [[nodiscard]] std::optional<Error> update_blocker() const;
+    // A verified pre-update backup of the writable catalog (nothing without one).
+    [[nodiscard]] Status back_up_before_update() const;
     // W10. The session's camera support database (null when none could be activated) and how it
     // was found (refused candidates, the reason when none is active).
     [[nodiscard]] const app::CameraSupportRef& camera_support() const noexcept { return camera_support_; }
@@ -231,6 +253,7 @@ private:
     std::unique_ptr<app::ExportService> exports_;
     std::unique_ptr<app::DevelopPreviewService> develop_;
     std::unique_ptr<app::AutoService> auto_;
+    std::unique_ptr<app::UpdateService> updates_;
     std::shared_ptr<Relay> relay_ = std::make_shared<Relay>();
     std::unique_ptr<app::MaintenanceService> maintenance_;
     OutputFolders output_folders_;

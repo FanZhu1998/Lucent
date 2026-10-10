@@ -120,6 +120,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // W12 (ADR 0022): Setup of an update is running; leave so it can replace the program (the
+    // services stop, the catalog is closed and checkpointed as on any exit).
+    QObject::connect(&controller, &lucent::ui::AppController::quitRequested, &app,
+                     [] { QCoreApplication::exit(0); }, Qt::QueuedConnection);
     lucent::ui::DeveloperAutomation automation(command_line.options, controller, *window);
     QObject::connect(&automation, &lucent::ui::DeveloperAutomation::quitRequested, &app,
                      [](int exit_code) { QCoreApplication::exit(exit_code); });

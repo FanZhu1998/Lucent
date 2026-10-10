@@ -55,6 +55,9 @@ Expected<Services> create_services(const ServiceOptions& options) {
         backend.lucent_directories = {directories->root};
         // W10: per-user data packs would live in <data>\assets (refused until they can be signed).
         backend.user_data_directory = directories->data;
+        // W12: downloaded installers are disposable (the cache); Setup's log goes with Lucent's.
+        backend.update_directory = directories->cache / L"updates";
+        backend.log_directory = directories->logs;
     } else {
         core::log_error("ui.services", "Lucent's application folders are unavailable: {}",
                         created.error().describe());

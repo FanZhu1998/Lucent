@@ -12,6 +12,7 @@
 #include "services/export_service.hpp"
 #include "services/image_source.hpp"
 #include "services/library_service.hpp"
+#include "services/update_service.hpp"
 
 namespace lucent::ui {
 
@@ -25,6 +26,9 @@ struct Services {
     // W7: durable batch exports (BatchService::is_available() is false when the session cannot
     // keep them; exports then run in-process through `exports` only).
     std::unique_ptr<BatchService> batches;
+    // W12: "Check for updates" (ADR 0022). Optional: without it the shell offers no updates
+    // (UnavailableUpdateService: "not configured in this build").
+    std::unique_ptr<UpdateService> updates;
     // Short user-visible note shown in the window header when the services are simulated (for
     // example "Simulated services"); empty for the real services.
     QString simulation_notice;
