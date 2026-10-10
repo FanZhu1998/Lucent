@@ -38,6 +38,22 @@
        Setup with exit code 7 and nothing installed; 0 and 1638 must install (after re-checking the
        runtime); 3010 must install, ask for a restart (exit code 3010 through /RESTARTEXITCODE) and
        offer no launch. Each installation is removed again.
+    7. With -SignerThumbprint (a signed package, W12), checks after the first installation that
+       Setup, the installed Lucent.exe and lucent-worker.exe and the uninstaller (unins000.exe, which
+       Inno Setup signs inside Setup and which tools\package.ps1 therefore cannot check) carry an
+       Authenticode signature by that certificate that verifies offline (WinVerifyTrust, no
+       revocation check). -AllowUntrustedRoot accepts a test certificate's untrusted root.
+    8. With -PreviousInstaller (W12, ADR 0022: the update rehearsal), the first installation is the
+       previous version's Setup, and its Lucent.exe runs in step 2 (the fixture is imported into the
+       data root by that version); step 4 then upgrades it with -Installer while the previous Lucent
+       runs on that same data root, exactly as an update started from "Check for updates" replaces a
+       running Lucent; the signature checks of 7 apply to the upgraded files. After the upgrade the
+       new Lucent.exe runs on the previous version's data root: it must open the catalog (migrating
+       it, after a pre-migration backup, when its schema is older), find the imported photo and
+       exit with 0. -PreviousManifest checks the previous installation's files.
+
+    A signed uninstaller keeps its messages in unins000.msg (Inno Setup cannot add them to a signed
+    EXE): unins000.exe, .dat and .msg are Inno Setup's own files, not the package's.
 
     Writes result.json and logs into the work folder. Exit code 0 when every check passed.
 
@@ -57,12 +73,30 @@
     Also check Setup's handling of the runtime installer's outcomes (see DESCRIPTION).
 .PARAMETER SettleTimeoutMs
     Passed to Lucent.exe --settle-timeout (default 120000).
+.PARAMETER SignerThumbprint
+    SHA-1 thumbprint of the certificate that must have signed Setup, Lucent.exe, lucent-worker.exe
+    and the uninstaller (see DESCRIPTION, 7).
+.PARAMETER AllowUntrustedRoot
+    With -SignerThumbprint: accept signatures whose chain ends in a root this machine does not
+    trust (a test certificate, tools\package.ps1 with LUCENT_SIGN_TEST=1). The digest must match.
+.PARAMETER PreviousInstaller
+    The previous version's Setup: installed first and upgraded with -Installer (see DESCRIPTION, 8).
+.PARAMETER PreviousManifest
+    With -PreviousInstaller: the previous package's manifest, to check its installation's files.
 
 .EXAMPLE
     powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
         -Installer build\release\package\Lucent-Setup-0.1.0-x64.exe `
         -Manifest build\release\package\Lucent-Setup-0.1.0-x64.manifest.json `
         -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3 -RuntimeOutcomes
+
+.EXAMPLE
+    # The update rehearsal: the previous version's installation upgraded in place (W12, ADR 0022).
+    powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
+        -PreviousInstaller previous\Lucent-Setup-0.1.0-x64.exe -PreviousManifest previous\Lucent-Setup-0.1.0-x64.manifest.json `
+        -Installer build\release\package\Lucent-Setup-0.1.0-x64.exe `
+        -Manifest build\release\package\Lucent-Setup-0.1.0-x64.manifest.json `
+        -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3
 
 .NOTES
     Needs no developer tools, so it can run on a clean Windows machine or in Windows Sandbox.
@@ -76,7 +110,11 @@ param(
     [string]$WorkDir,
     [string]$Tasks = 'desktopicon,openwith',
     [switch]$RuntimeOutcomes,
-    [int]$SettleTimeoutMs = 120000
+    [int]$SettleTimeoutMs = 120000,
+    [string]$SignerThumbprint,
+    [switch]$AllowUntrustedRoot,
+    [string]$PreviousInstaller,
+    [string]$PreviousManifest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +129,18 @@ $fileExtsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExt
 
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $Fixture = (Resolve-Path -LiteralPath $Fixture).Path
+if ($PreviousInstaller) { $PreviousInstaller = (Resolve-Path -LiteralPath $PreviousInstaller).Path }
+elseif ($PreviousManifest) { throw '-PreviousManifest needs -PreviousInstaller.' }
+# The Setup installed first: the previous version's for the update rehearsal.
+$firstInstaller = if ($PreviousInstaller) { $PreviousInstaller } else { $Installer }
+if ($SignerThumbprint) {
+    $SignerThumbprint = ($SignerThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    if ($SignerThumbprint.Length -ne 40) { throw '-SignerThumbprint is not a certificate thumbprint (40 hexadecimal digits).' }
+}
+elseif ($AllowUntrustedRoot) { throw '-AllowUntrustedRoot needs -SignerThumbprint.' }
+# Inno Setup's own files in the installation folder: the uninstaller, its log and, when the
+# uninstaller is signed, its messages.
+$innoFilePattern = '^unins\d{3}\.(exe|dat|msg)$'
 if (-not $WorkDir) { $WorkDir = Join-Path $env:TEMP ('lucent-package-test-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 if (Test-Path -LiteralPath $WorkDir) { throw "$WorkDir already exists." }
 New-Item -ItemType Directory -Path $WorkDir | Out-Null
@@ -99,6 +149,7 @@ $appDir = Join-Path $WorkDir 'app'
 $dataRoot = Join-Path $WorkDir 'data'
 New-Item -ItemType Directory -Path $dataRoot | Out-Null
 $manifestData = if ($Manifest) { Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json } else { $null }
+$previousManifestData = if ($PreviousManifest) { Get-Content -LiteralPath $PreviousManifest -Raw | ConvertFrom-Json } else { $null }
 
 $checks = New-Object System.Collections.Generic.List[object]
 $notes = New-Object System.Collections.Generic.List[string]
@@ -129,7 +180,51 @@ public static class LucentTestAssoc {
         return hr == 0 ? text.ToString() : String.Format("0x{0:X8}", hr);
     }
 }
+public static class LucentTestTrust {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct FileInfo { public uint StructSize; public string FilePath; public IntPtr File; public IntPtr KnownSubject; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct TrustData {
+        public uint StructSize; public IntPtr PolicyCallbackData; public IntPtr SipClientData; public uint UiChoice;
+        public uint RevocationChecks; public uint UnionChoice; public IntPtr Info; public uint StateAction; public IntPtr StateData;
+        public IntPtr UrlReference; public uint ProviderFlags; public uint UiContext; public IntPtr SignatureSettings;
+    }
+    [DllImport("wintrust.dll", ExactSpelling = true)]
+    static extern int WinVerifyTrust(IntPtr window, [MarshalAs(UnmanagedType.LPStruct)] Guid action, ref TrustData data);
+    // WINTRUST_ACTION_GENERIC_VERIFY_V2 without user interface, revocation check or network
+    // retrieval: 0 when the signature verifies and chains to a trusted root, else the HRESULT
+    // (0x800B0109: the root is not trusted; 0x80096010: the digest does not match).
+    public static int Verify(string path) {
+        Guid action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+        FileInfo file = new FileInfo(); file.StructSize = (uint)Marshal.SizeOf(typeof(FileInfo)); file.FilePath = path;
+        IntPtr pointer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FileInfo)));
+        try {
+            Marshal.StructureToPtr(file, pointer, false);
+            TrustData data = new TrustData();
+            data.StructSize = (uint)Marshal.SizeOf(typeof(TrustData)); data.UiChoice = 2; data.RevocationChecks = 0;
+            data.UnionChoice = 1; data.Info = pointer; data.StateAction = 1; data.ProviderFlags = 0x10 | 0x1000;
+            int result = WinVerifyTrust(new IntPtr(-1), action, ref data);
+            data.StateAction = 2;
+            WinVerifyTrust(new IntPtr(-1), action, ref data);
+            return result;
+        }
+        finally { Marshal.DestroyStructure(pointer, typeof(FileInfo)); Marshal.FreeHGlobal(pointer); }
+    }
+}
 '@
+
+# -SignerThumbprint: an Authenticode signature by that certificate that verifies offline (a test
+# certificate's untrusted root accepted with -AllowUntrustedRoot).
+function Add-SignatureCheck([string]$Path, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Add-Check "$Label is signed by $SignerThumbprint" $false "$Path is missing"; return }
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    $signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint.ToUpperInvariant() } else { '(none)' }
+    $code = '0x{0:X8}' -f [LucentTestTrust]::Verify($Path)
+    $verifies = ($code -eq '0x00000000') -or ($AllowUntrustedRoot -and $code -eq '0x800B0109')
+    $trust = switch ($code) { '0x00000000' { 'trusted' } '0x800B0109' { 'untrusted root' } default { "WinVerifyTrust $code" } }
+    Add-Check "$Label is signed by $SignerThumbprint" ($signer -eq $SignerThumbprint -and $verifies) `
+        ("signer {0}, {1}, {2}" -f $signer, $trust, $(if ($signature.TimeStamperCertificate) { 'timestamped' } else { 'no timestamp' }))
+}
 
 # --- Preconditions and snapshot ------------------------------------------------------------------
 
@@ -198,10 +293,10 @@ if (-not $rawExtensions) { $notes.Add('No manifest with fileAssociations: the ef
 $fixtureExtension = [System.IO.Path]::GetExtension($Fixture).TrimStart('.').ToLowerInvariant()
 $userDataBefore = if (Test-Path -LiteralPath $userData) { (Get-Item -LiteralPath $userData).LastWriteTimeUtc } else { $null }
 
-function Invoke-Setup([string]$Directory, [string]$LogPath, [string[]]$Extra = @()) {
+function Invoke-Setup([string]$Directory, [string]$LogPath, [string[]]$Extra = @(), [string]$Setup = $Installer) {
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$Directory`"",
                    "/TASKS=`"$Tasks`"", "/LOG=`"$LogPath`"") + $Extra
-    $process = Start-Process -FilePath $Installer -ArgumentList $arguments -PassThru -Wait
+    $process = Start-Process -FilePath $Setup -ArgumentList $arguments -PassThru -Wait
     return $process.ExitCode
 }
 
@@ -238,8 +333,9 @@ function Invoke-Uninstall([string]$Directory, [string]$LogPath) {
 Write-Host "Work folder: $WorkDir"
 $installLog = Join-Path $WorkDir 'install.log'
 $installTimer = [System.Diagnostics.Stopwatch]::StartNew()
-$exitCode = Invoke-Setup -Directory $appDir -LogPath $installLog
-Add-Check 'Setup exit code 0' ($exitCode -eq 0) "exit code $exitCode, $([int]$installTimer.Elapsed.TotalSeconds) s"
+$exitCode = Invoke-Setup -Directory $appDir -LogPath $installLog -Setup $firstInstaller
+$firstLabel = if ($PreviousInstaller) { 'Previous version''s Setup' } else { 'Setup' }
+Add-Check "$firstLabel exit code 0" ($exitCode -eq 0) "exit code $exitCode, $([int]$installTimer.Elapsed.TotalSeconds) s"
 $exe = Join-Path $appDir 'Lucent.exe'
 Add-Check 'Lucent.exe installed into the chosen folder' (Test-Path -LiteralPath $exe) $exe
 # W7 (ADR 0012): exports and batches run in lucent-worker.exe, which Lucent.exe starts from its own folder.
@@ -251,28 +347,43 @@ Add-Check 'Runtime check logged' ($runtimeLine -ne '') $runtimeLine
 Add-Check 'Setup ran without elevation (non administrative install mode)' ($installText -match 'Administrative install mode: No|Non administrative install mode') ''
 Add-Check 'A fresh installation removes nothing (no previous installed-file list)' ($installText -notmatch 'Upgrade: removed') ''
 
-function Test-InstalledFiles([string]$Name) {
-    if (-not $manifestData) { return }
-    $expected = $manifestData.files
+function Test-InstalledFiles([string]$Name, $Data = $manifestData) {
+    if (-not $Data) { return }
+    $expected = $Data.files
     $mismatch = @()
     foreach ($file in $expected) {
         $path = Join-Path $appDir $file.path
         if (-not (Test-Path -LiteralPath $path)) { $mismatch += "missing $($file.path)"; continue }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { $mismatch += "changed $($file.path)" }
     }
-    $installed = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch '^unins\d{3}\.(exe|dat)$' })
+    $installed = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch $innoFilePattern })
     Add-Check $Name ($mismatch.Count -eq 0 -and $installed.Count -eq @($expected).Count) `
         ("{0} files expected, {1} installed{2}" -f @($expected).Count, $installed.Count, $(if ($mismatch) { '; ' + (($mismatch | Select-Object -First 5) -join '; ') } else { '' }))
 }
-Test-InstalledFiles 'Installed files match the package manifest (SHA-256)'
+if ($PreviousInstaller) {
+    Test-InstalledFiles 'Previous version''s installed files match its package manifest (SHA-256)' $previousManifestData
+}
+else {
+    Test-InstalledFiles 'Installed files match the package manifest (SHA-256)'
+}
 $listPath = Join-Path $appDir $fileListName
 $listed = if (Test-Path -LiteralPath $listPath) { @(Get-Content -LiteralPath $listPath | Where-Object { $_ -and -not $_.StartsWith(';') }) } else { @() }
-$present = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch '^unins\d{3}\.(exe|dat)$' } |
+$present = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch $innoFilePattern } |
     ForEach-Object { $_.FullName.Substring($appDir.Length + 1) })
 Add-Check "$fileListName lists exactly the installed files" ($listed.Count -gt 0 -and @(Compare-Object $listed $present).Count -eq 0) "$($listed.Count) listed, $($present.Count) installed"
 
 $registration = if (Test-Path -LiteralPath $uninstallKey) { Get-ItemProperty -LiteralPath $uninstallKey } else { $null }
 Add-Check 'Per-user uninstall registration (HKCU)' ([bool]$registration) $(if ($registration) { "$($registration.DisplayName) $($registration.DisplayVersion)" } else { '' })
+$previousVersion = if ($registration) { $registration.DisplayVersion } else { '' }
+
+function Add-SignatureChecks {
+    # The uninstaller is signed by Inno Setup inside Setup: only an installation shows it.
+    Add-SignatureCheck $Installer 'Setup'
+    Add-SignatureCheck $exe 'Installed Lucent.exe'
+    Add-SignatureCheck $workerExe 'Installed lucent-worker.exe'
+    Add-SignatureCheck (Join-Path $appDir 'unins000.exe') 'Installed uninstaller (unins000.exe)'
+}
+if ($SignerThumbprint -and -not $PreviousInstaller) { Add-SignatureChecks }
 
 $shell = New-Object -ComObject WScript.Shell
 foreach ($link in @(@{ Path = $startMenuLink; Name = 'Start Menu shortcut' }, @{ Path = $desktopLink; Name = 'Desktop shortcut' })) {
@@ -393,8 +504,10 @@ foreach ($relative in @($stale) + @($foreignFiles)) {
 [System.IO.File]::AppendAllText($listPath, (($stale -join "`r`n") + "`r`n"), (New-Object System.Text.ASCIIEncoding))
 
 # Lucent running from the installation folder: Restart Manager must close it before the upgrade
-# removes anything.
-$running = Start-Process -FilePath $exe -ArgumentList @('--data-root', "`"$(Join-Path $WorkDir 'data-upgrade')`"") -WorkingDirectory $WorkDir -PassThru `
+# removes anything. In the update rehearsal it is the previous version with its library open, as
+# when "Check for updates" starts Setup.
+$runningRoot = if ($PreviousInstaller) { $dataRoot } else { Join-Path $WorkDir 'data-upgrade' }
+$running = Start-Process -FilePath $exe -ArgumentList @('--data-root', "`"$runningRoot`"") -WorkingDirectory $WorkDir -PassThru `
     -RedirectStandardError (Join-Path $WorkDir 'running-stderr.log') -RedirectStandardOutput (Join-Path $WorkDir 'running-stdout.log')
 $deadline = (Get-Date).AddSeconds(60)
 while (-not $running.HasExited -and (Get-Date) -lt $deadline) {
@@ -430,6 +543,58 @@ foreach ($folder in 'qml\ObsoleteTest', 'qml\OtherApp', 'plugins\otherapp') {
     if ((Test-Path -LiteralPath $path) -and -not (Get-ChildItem -LiteralPath $path -Recurse -File)) { Remove-Item -LiteralPath $path -Recurse -Force }
 }
 Test-InstalledFiles 'Files after the upgrade match the package manifest (SHA-256)'
+
+if ($PreviousInstaller) {
+    # --- The update rehearsal: the new version on the previous version's library -----------------
+    $upgraded = if (Test-Path -LiteralPath $uninstallKey) { Get-ItemProperty -LiteralPath $uninstallKey } else { $null }
+    Add-Check 'The upgrade kept one per-user registration' ([bool]$upgraded) `
+        $(if ($upgraded) { "version $previousVersion -> $($upgraded.DisplayVersion), $($upgraded.InstallLocation)" } else { '' })
+    $listedAfter = if (Test-Path -LiteralPath $listPath) { @(Get-Content -LiteralPath $listPath | Where-Object { $_ -and -not $_.StartsWith(';') }) } else { @() }
+    $presentAfter = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch $innoFilePattern } |
+        ForEach-Object { $_.FullName.Substring($appDir.Length + 1) })
+    Add-Check "After the upgrade $fileListName lists exactly the installed files" ($listedAfter.Count -gt 0 -and @(Compare-Object $listedAfter $presentAfter).Count -eq 0) `
+        "$($listedAfter.Count) listed, $($presentAfter.Count) installed"
+    if ($SignerThumbprint) { Add-SignatureChecks }
+
+    $logFile = Join-Path $dataRoot 'cache\logs\lucent.log'
+    $logLinesBefore = if (Test-Path -LiteralPath $logFile) { @(Get-Content -LiteralPath $logFile).Count } else { 0 }
+    $afterScreenshot = Join-Path $WorkDir 'lucent-upgraded.png'
+    $afterStderr = Join-Path $WorkDir 'upgraded-stderr.log'
+    $saved = @{}
+    foreach ($name in 'PATH', 'QT_PLUGIN_PATH', 'QML_IMPORT_PATH', 'QML2_IMPORT_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH', 'QT_QPA_PLATFORM', 'QT_FORCE_STDERR_LOGGING', 'QT_QUICK_CONTROLS_STYLE') {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+    try {
+        $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+        $env:QT_FORCE_STDERR_LOGGING = '1'
+        $after = Start-Process -FilePath $exe -ArgumentList @('--data-root', "`"$dataRoot`"", '--open-first', '--screenshot', "`"$afterScreenshot`"",
+                                                             '--quit-after-screenshot', '--settle-timeout', "$SettleTimeoutMs") `
+            -WorkingDirectory $WorkDir -PassThru -NoNewWindow -RedirectStandardError $afterStderr -RedirectStandardOutput (Join-Path $WorkDir 'upgraded-stdout.log')
+    }
+    finally {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    }
+    $null = $after.Handle
+    $afterExited = $after.WaitForExit($SettleTimeoutMs + 60000)
+    if (-not $afterExited) { Stop-Process -Id $after.Id -Force -ErrorAction SilentlyContinue }
+    $afterErrors = if (Test-Path -LiteralPath $afterStderr) { @(Get-Content -LiteralPath $afterStderr) } else { @() }
+    Add-Check 'The upgraded Lucent.exe ran on the previous version''s library and exited with 0' ($afterExited -and $after.ExitCode -eq 0) `
+        $(if ($afterExited) { "exit code $($after.ExitCode)" } else { 'did not exit' })
+    $empty = @($afterErrors | Where-Object { $_ -match 'the library is empty' })
+    Add-Check 'The previous version''s photo is in the upgraded library (opened in Edit)' ($empty.Count -eq 0 -and (Test-Path -LiteralPath $afterScreenshot)) (($empty + @()) -join ' | ')
+    $afterProblems = @($afterErrors | Where-Object { $_ -match 'module ".*" is not installed|Cannot load library|Could not (find|load) the Qt platform plugin|failed to load|qrc:.*(Error|error)|QQmlApplicationEngine failed' })
+    Add-Check 'No Qt/QML loading errors after the upgrade' ($afterProblems.Count -eq 0) (($afterProblems | Select-Object -First 3) -join ' | ')
+    $newLog = if (Test-Path -LiteralPath $logFile) { @(Get-Content -LiteralPath $logFile | Select-Object -Skip $logLinesBefore) } else { @() }
+    $opened = @($newLog | Where-Object { $_ -match 'opened catalog .*\(schema v(\d+)' })
+    $unavailable = @($newLog | Where-Object { $_ -match 'is not fully available|Library not saved' })
+    $migrated = @($newLog | Where-Object { $_ -match 'migrated to schema v' })
+    $backups = @(Get-ChildItem -LiteralPath (Join-Path $dataRoot 'data\backups') -Filter '*.pre-migration.bak' -ErrorAction SilentlyContinue)
+    Add-Check 'The upgraded Lucent opened the previous version''s catalog for writing' ($opened.Count -gt 0 -and $unavailable.Count -eq 0) `
+        ((@($opened | Select-Object -First 1) + @($unavailable | Select-Object -First 1)) -join ' | ')
+    Add-Check 'A schema migration, if any, came after a verified pre-migration backup' ($migrated.Count -eq 0 -or $backups.Count -gt 0) `
+        ("{0} migration line(s), {1} pre-migration backup(s)" -f $migrated.Count, $backups.Count)
+}
 
 # --- 3. Uninstall --------------------------------------------------------------------------------
 
