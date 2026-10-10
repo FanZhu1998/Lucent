@@ -249,11 +249,14 @@ TEST(DevelopPipeline, RecordsEveryOperationInOrder) {
     StageOneImage one = interactive(textured_scene());
     auto defaults = render_stage_two(one, DevelopSettings{});
     ASSERT_TRUE(defaults);
+    // The lens correction comes first (fused into the first pass; no lens database here, so not
+    // applied).
     const std::vector<DevelopOperation> order = {
-        DevelopOperation::WhiteBalance,  DevelopOperation::CameraColor,      DevelopOperation::WorkingSpace,
-        DevelopOperation::Exposure,      DevelopOperation::ChromaDenoise,    DevelopOperation::LocalTone,
-        DevelopOperation::LocalAdjustments, DevelopOperation::Contrast,      DevelopOperation::ToneCurve,
-        DevelopOperation::Color,         DevelopOperation::BaseLook,         DevelopOperation::Geometry};
+        DevelopOperation::LensCorrection, DevelopOperation::WhiteBalance,  DevelopOperation::CameraColor,
+        DevelopOperation::WorkingSpace,   DevelopOperation::Exposure,      DevelopOperation::ChromaDenoise,
+        DevelopOperation::LocalTone,      DevelopOperation::LocalAdjustments, DevelopOperation::Contrast,
+        DevelopOperation::ToneCurve,      DevelopOperation::Color,         DevelopOperation::BaseLook,
+        DevelopOperation::Geometry};
     const DevelopReport& report = defaults->report;
     ASSERT_EQ(report.operations.size(), order.size());
     for (std::size_t i = 0; i < order.size(); ++i) {
@@ -261,10 +264,10 @@ TEST(DevelopPipeline, RecordsEveryOperationInOrder) {
         EXPECT_FALSE(report.operations[i].algorithm.empty());
         EXPECT_GE(report.operations[i].version, 1u);
     }
-    for (const std::size_t skipped : {3u, 4u, 5u, 6u, 7u, 8u, 9u, 11u}) {
+    for (const std::size_t skipped : {0u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 12u}) {
         EXPECT_FALSE(report.operations[skipped].applied) << to_string(order[skipped]);
     }
-    EXPECT_TRUE(report.operations[10].applied);
+    EXPECT_TRUE(report.operations[11].applied);
     EXPECT_EQ(report.pipeline_version, kDevelopPipelineVersion);
     EXPECT_EQ(report.settings, DevelopSettings{});
     EXPECT_EQ(report.color.path, CalibrationPath::DecoderMatrix);
@@ -283,7 +286,7 @@ TEST(DevelopPipeline, RecordsEveryOperationInOrder) {
     all.vibrance = 0.4;
     auto applied = render_stage_two(one, all);
     ASSERT_TRUE(applied);
-    for (const std::size_t i : {3u, 5u, 7u, 8u, 9u, 10u}) {
+    for (const std::size_t i : {4u, 6u, 8u, 9u, 10u, 11u}) {
         EXPECT_TRUE(applied->report.operations[i].applied) << to_string(order[i]);
     }
     ASSERT_TRUE(applied->report.local_tone.has_value());

@@ -86,9 +86,9 @@ struct Affine {
 };
 
 Affine output_to_upright_affine(const GeometryMapping& m) noexcept {
-    const image::PointD o = m.upright_from_output(image::PointD{0.0, 0.0});
-    const image::PointD x = m.upright_from_output(image::PointD{1.0, 0.0});
-    const image::PointD y = m.upright_from_output(image::PointD{0.0, 1.0});
+    const image::PointD o = m.corrected_from_output(image::PointD{0.0, 0.0});
+    const image::PointD x = m.corrected_from_output(image::PointD{1.0, 0.0});
+    const image::PointD y = m.corrected_from_output(image::PointD{0.0, 1.0});
     return Affine{o, image::PointD{x.x - o.x, x.y - o.y}, image::PointD{y.x - o.x, y.y - o.y}};
 }
 
@@ -172,16 +172,65 @@ Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometr
     return m;
 }
 
-bool GeometryMapping::identity() const noexcept {
+Expected<GeometryMapping> GeometryMapping::create(const GeometrySetting& geometry, image::Size upright_size,
+                                                  const image::PixelRect& frame, const LensGeometryMap& lens,
+                                                  image::Size full_size) {
+    if (full_size.empty()) {
+        return fail(ErrorCode::InvalidArgument, "a lens correction's mapping needs a non-empty full size", kWhere);
+    }
+    auto m = create(geometry, upright_size, frame);
+    if (!m) {
+        return m;
+    }
+    m->lens_ = lens;
+    m->full_ = full_size;
+    m->revision_ ^= lens.revision() + 0x9e3779b97f4a7c15ull + (m->revision_ << 6) + (m->revision_ >> 2);
+    return m;
+}
+
+bool GeometryMapping::affine_identity() const noexcept {
     return setting_.straighten_degrees == 0.0 && orientation_ == image::Orientation::Normal &&
            frame_ == image::PixelRect::from_size(upright_) && crop_ == image::PixelRect::from_size(upright_);
 }
 
+bool GeometryMapping::identity() const noexcept { return affine_identity() && !lens_.has_value(); }
+
 double GeometryMapping::pixels_per_unit_length() const noexcept { return static_cast<double>(long_edge(upright_)); }
 
-// With F = U (frame_ at the origin) every expression below is exactly version 1's: adding and
-// subtracting the frame's zero origin changes no bit.
+image::PointD GeometryMapping::corrected_from_upright(image::PointD p) const noexcept {
+    if (!lens_) {
+        return p;
+    }
+    const double fx = static_cast<double>(full_.width) / upright_.width;
+    const double fy = static_cast<double>(full_.height) / upright_.height;
+    const auto c = lens_->corrected_of(image::PointD{p.x * fx, p.y * fy});
+    if (!c) {
+        return p;  // beyond the model's monotone range: as without the correction
+    }
+    return image::PointD{c->x / fx, c->y / fy};
+}
+
+image::PointD GeometryMapping::upright_from_corrected(image::PointD p) const noexcept {
+    if (!lens_) {
+        return p;
+    }
+    const double fx = static_cast<double>(full_.width) / upright_.width;
+    const double fy = static_cast<double>(full_.height) / upright_.height;
+    const image::PointD s = lens_->source_of(image::PointD{p.x * fx, p.y * fy}, 1);
+    return image::PointD{s.x / fx, s.y / fy};
+}
+
 image::PointD GeometryMapping::output_from_upright(image::PointD p) const noexcept {
+    return output_from_corrected(corrected_from_upright(p));
+}
+
+image::PointD GeometryMapping::upright_from_output(image::PointD o) const noexcept {
+    return upright_from_corrected(corrected_from_output(o));
+}
+
+// With F = U' (frame_ at the origin) every expression below is exactly version 1's: adding and
+// subtracting the frame's zero origin changes no bit.
+image::PointD GeometryMapping::output_from_corrected(image::PointD p) const noexcept {
     const double hx = 0.5 * frame_.width;  // F's centre in S
     const double hy = 0.5 * frame_.height;
     const double dx = p.x - (frame_.x + hx);
@@ -191,7 +240,7 @@ image::PointD GeometryMapping::output_from_upright(image::PointD p) const noexce
     return image::map_to_oriented(q, crop_.size(), orientation_);
 }
 
-image::PointD GeometryMapping::upright_from_output(image::PointD o) const noexcept {
+image::PointD GeometryMapping::corrected_from_output(image::PointD o) const noexcept {
     const image::PointD q = image::map_from_oriented(o, crop_.size(), orientation_);
     const double hx = 0.5 * frame_.width;
     const double hy = 0.5 * frame_.height;
@@ -266,7 +315,7 @@ Expected<GeometryRecord> apply_geometry(ColorImage& image, const GeometryMapping
     record.input_size = image.pixels.size();
     record.output_size = mapping.output_size();
     record.resampled = mapping.resamples();
-    if (mapping.identity()) {
+    if (mapping.affine_identity()) {
         return record;
     }
     const image::Size out_size = mapping.output_size();

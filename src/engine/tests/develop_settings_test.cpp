@@ -260,7 +260,7 @@ BrushStroke stroke_with(std::size_t points) {
 
 TEST(DevelopSettingsV2, DefaultsHoldNoDenoiseNoMasksAndNoGeometry) {
     const DevelopSettings s;
-    EXPECT_EQ(kDevelopSettingsVersion, 2u);
+    EXPECT_EQ(kDevelopSettingsVersion, 3u);  // version 3 added the lens correction (lens_correction_test.cpp)
     EXPECT_EQ(kOldestDevelopSettingsVersion, 1u);
     EXPECT_TRUE(s.chroma_denoise.is_identity());
     EXPECT_EQ(s.chroma_denoise.radius, kDefaultChromaDenoiseRadius);
@@ -286,8 +286,10 @@ TEST(DevelopSettingsV2, Version1ValuesAreValidAndUpgradeWithoutTheNewMembers) {
     EXPECT_TRUE(upgraded->validate());
     DevelopSettings expected = v1;
     expected.version = kDevelopSettingsVersion;
-    // Version-1 settings rendered the whole visible area: they keep geometry version 1 (ADR 0017).
+    // Version-1 settings rendered the whole visible area: they keep geometry version 1 (ADR 0017),
+    // and corrected no lens: lens-correction operation version 0 (ADR 0023).
     expected.operations.geometry = kOldestGeometryOperationVersion;
+    expected.operations.lens_correction = kOldestLensCorrectionOperationVersion;
     EXPECT_EQ(*upgraded, expected);  // every version-1 field kept, the new ones at their defaults
     EXPECT_TRUE(upgraded->chroma_denoise.is_identity());
     EXPECT_TRUE(upgraded->local_adjustments.empty());
@@ -302,6 +304,7 @@ TEST(DevelopSettingsV2, Version1ValuesAreValidAndUpgradeWithoutTheNewMembers) {
     ASSERT_TRUE(plain_upgraded);
     DevelopSettings plain_expected;
     plain_expected.operations.geometry = 1;
+    plain_expected.operations.lens_correction = 0;
     EXPECT_EQ(*plain_upgraded, plain_expected);
     // The upgraded value is itself a valid version-1 value again when written back as version 1.
     DevelopSettings again = *plain_upgraded;
@@ -329,7 +332,7 @@ TEST(DevelopSettingsV2, Version1ValuesAreValidAndUpgradeWithoutTheNewMembers) {
         ts::expect_error(upgrade_develop_settings(b), ErrorCode::InvalidArgument, kWhere);
     }
     // Versions this build does not read.
-    for (const std::uint32_t version : {0u, 3u, 99u}) {
+    for (const std::uint32_t version : {0u, 4u, 99u}) {
         DevelopSettings other;
         other.version = version;
         ts::expect_error(upgrade_develop_settings(other), ErrorCode::VersionMismatch, kWhere);

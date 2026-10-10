@@ -28,6 +28,7 @@
 
 #include "develop_test_support.hpp"
 #include "dng_opcode_test_support.hpp"
+#include "lens_test_support.hpp"
 
 namespace lucent::engine {
 namespace {
@@ -258,6 +259,69 @@ TEST(GeometryVersions, W2RenderWithoutTheCameraAreaIsPinned) {
     EXPECT_TRUE(warned);
     for (const StageRecord& s : r->report.stages) {
         EXPECT_NE(s.stage, RenderStage::CameraArea);
+    }
+}
+
+// ---- Lens corrections (ADR 0023) -------------------------------------------------------------------
+
+// The renders pinned above were made before lens corrections existed. Settings made then (version 2
+// and version 1 values, and their version-3 conversions with lens-correction operation version 0)
+// still render exactly those bytes, also with a lens database whose profile matches the scene
+// exactly; the same settings made now (version 3, automatic) do correct the lens.
+TEST(GeometryVersions, PinnedRendersHoldWithALensDatabaseThatMatches) {
+    DevelopOptions options;
+    options.lens_database = ts::synthetic_lens_database();
+    ASSERT_TRUE(options.lens_database);
+    const auto lens_scene = [] {
+        raw::DecodedRaw d = pinned_scene();
+        ts::set_lens_identity(d.metadata, "Lucent", "Test Camera", "24-70mm F2.8 Test", 24.0f, 2.8f);
+        return d;
+    };
+    DevelopSettings v2 = pinned_settings();
+    v2.version = 2;
+    ASSERT_TRUE(v2.validate()) << v2.validate().error().describe();
+    auto v2_upgraded = upgrade_develop_settings(v2);
+    ASSERT_TRUE(v2_upgraded);
+    for (const DevelopSettings& s : {v2, *v2_upgraded}) {
+        {
+            StageOneImage one = stage_one(lens_scene());
+            auto r = render_stage_two(one, s, options);
+            ASSERT_TRUE(r) << r.error().describe();
+            EXPECT_EQ(r->report.lens_correction.plan.operation_version, 0u);
+            expect_hash("interactive_v1_straighten with a lens database", r->display.pixels, 0x59ae8a99415df989ull);
+        }
+        {
+            StageOneImage one = stage_one(lens_scene(), 40);
+            auto r = render_stage_two(one, s, options);
+            ASSERT_TRUE(r) << r.error().describe();
+            expect_hash("proxy_v1_straighten with a lens database", r->display.pixels, 0x5d5d9ae2c99f3224ull);
+        }
+        {
+            auto r = render_develop(lens_scene(), s, options);
+            ASSERT_TRUE(r) << r.error().describe();
+            expect_hash("export_v1_straighten with a lens database", r->display.pixels, 0x59ae8a99415df989ull);
+        }
+    }
+    {
+        DevelopSettings v1;
+        v1.version = 1;
+        v1.exposure_ev = 0.4;
+        v1.shadows = 0.3;
+        auto r = render_develop(lens_scene(), v1, options);
+        ASSERT_TRUE(r) << r.error().describe();
+        expect_hash("export_settings_v1 with a lens database", r->display.pixels, 0x55fbc92351f0bd19ull);
+        auto upgraded = upgrade_develop_settings(v1);
+        ASSERT_TRUE(upgraded);
+        auto u = render_develop(lens_scene(), *upgraded, options);
+        ASSERT_TRUE(u);
+        expect_hash("export_settings_v1_upgraded with a lens database", u->display.pixels, 0x55fbc92351f0bd19ull);
+    }
+    {
+        // Version 3 with the automatic correction: the exact match is applied.
+        auto r = render_develop(lens_scene(), pinned_settings(), options);
+        ASSERT_TRUE(r) << r.error().describe();
+        EXPECT_TRUE(r->report.lens_correction.plan.any_applied());
+        EXPECT_NE(pixel_hash(r->display.pixels), 0x59ae8a99415df989ull);
     }
 }
 

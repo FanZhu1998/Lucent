@@ -1,4 +1,4 @@
-// DevelopSettings v2 validation, the v1 -> v2 conversion and helpers (develop_settings.hpp).
+// DevelopSettings v3 validation, the v1 -> v2 -> v3 conversions and helpers (develop_settings.hpp).
 
 #include <algorithm>
 #include <array>
@@ -356,6 +356,39 @@ Status check_chroma_denoise(const ChromaDenoiseSetting& d) {
                        "the chroma-denoise radius (full-image pixels)");
 }
 
+// A version-1 or version-2 value holds none of version 3's members: the default lens correction,
+// and the lens-correction operation version is the default or 0 (what upgrade_develop_settings()
+// gives it): either way nothing is corrected.
+Status check_before_version_3(const DevelopSettings& s) {
+    if (!(s.lens_correction == LensCorrectionSetting{}) ||
+        (s.operations.lens_correction != kLensCorrectionOperationVersion &&
+         s.operations.lens_correction != kOldestLensCorrectionOperationVersion)) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("version-{} settings cannot hold a lens correction (a member of version 3)",
+                                s.version),
+                    kWhere);
+    }
+    return ok();
+}
+
+// A profile reference within its bounds (LensProfileId).
+Status check_lens_profile(const LensProfileId& id) {
+    const auto name_ok = [](const std::string& text) {
+        return !text.empty() && text.size() <= kMaxLensProfileNameBytes &&
+               std::none_of(text.begin(), text.end(), [](char c) {
+                   const auto u = static_cast<unsigned char>(c);
+                   return u < 0x20 || u == 0x7F;
+               });
+    };
+    if (!name_ok(id.maker) || !name_ok(id.model)) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("a lens profile needs a maker and a model of 1 to {} bytes without control characters",
+                                kMaxLensProfileNameBytes),
+                    kWhere);
+    }
+    return check_range(id.crop_factor, kMinLensCropFactor, kMaxLensCropFactor, "the lens profile's crop factor");
+}
+
 // A version-1 value holds none of version 2's members. Its geometry version is the default or 1
 // (what upgrade_develop_settings() gives it): either way it renders as geometry version 1.
 Status check_version_1(const DevelopSettings& s) {
@@ -541,7 +574,7 @@ std::uint64_t mask_shape_revision(const MaskShape& shape) noexcept {
 // ---- Settings ---------------------------------------------------------------------------------------
 
 Status DevelopSettings::validate() const {
-    if (version != kDevelopSettingsVersion && version != kOldestDevelopSettingsVersion) {
+    if (version < kOldestDevelopSettingsVersion || version > kDevelopSettingsVersion) {
         return fail(ErrorCode::VersionMismatch,
                     std::format("{} settings version {} cannot be read by this build (versions {} to {})",
                                 kDevelopSettingsSchema, version, kOldestDevelopSettingsVersion,
@@ -550,6 +583,11 @@ Status DevelopSettings::validate() const {
     }
     if (version == kOldestDevelopSettingsVersion) {
         if (auto status = check_version_1(*this); !status) {
+            return status;
+        }
+    }
+    if (version < kDevelopSettingsVersion) {
+        if (auto status = check_before_version_3(*this); !status) {
             return status;
         }
     }
@@ -575,6 +613,24 @@ Status DevelopSettings::validate() const {
             std::format("the geometry operation has version {}; this build implements versions {} to {}",
                         operations.geometry, kOldestGeometryOperationVersion, kGeometryOperationVersion),
             kWhere);
+    }
+    if (operations.lens_correction > kLensCorrectionOperationVersion) {
+        return fail(ErrorCode::VersionMismatch,
+                    std::format("the lens-correction operation has version {}; this build implements versions {} "
+                                "to {}",
+                                operations.lens_correction, kOldestLensCorrectionOperationVersion,
+                                kLensCorrectionOperationVersion),
+                    kWhere);
+    }
+    if (operations.lens_correction == kOldestLensCorrectionOperationVersion &&
+        !(lens_correction == LensCorrectionSetting{})) {
+        return fail(ErrorCode::InvalidArgument,
+                    "lens-correction operation version 0 corrects nothing; its setting must keep its default", kWhere);
+    }
+    if (lens_correction.profile) {
+        if (auto status = check_lens_profile(*lens_correction.profile); !status) {
+            return status;
+        }
     }
     if (base_look.id != kNeutralLookId) {
         return fail(ErrorCode::Unsupported, std::format("unknown base look '{}'", base_look.id), kWhere);
@@ -623,36 +679,63 @@ bool DevelopSettings::is_as_shot() const noexcept {
     const DevelopSettings defaults;
     const bool masks = std::any_of(local_adjustments.begin(), local_adjustments.end(),
                                    [](const LocalAdjustment& a) { return a.has_effect(); });
+    // Version 0 of the lens correction holds the default setting (validate()), so it counts as as shot
+    // through the same comparison as the automatic defaults.
     return white_balance == defaults.white_balance && exposure_ev == 0.0 && contrast == 0.0 && highlights == 0.0 &&
            shadows == 0.0 && tone_curve.is_identity() && saturation == 0.0 && vibrance == 0.0 &&
-           base_look == defaults.base_look && chroma_denoise.is_identity() && !masks && geometry.is_identity();
+           base_look == defaults.base_look && chroma_denoise.is_identity() && !masks && geometry.is_identity() &&
+           lens_correction == defaults.lens_correction;
 }
 
 Expected<DevelopSettings> upgrade_develop_settings(DevelopSettings settings) {
     if (settings.version == kDevelopSettingsVersion) {
         return settings;
     }
-    if (settings.version != kOldestDevelopSettingsVersion) {
+    if (settings.version < kOldestDevelopSettingsVersion || settings.version > kDevelopSettingsVersion) {
         return fail(ErrorCode::VersionMismatch,
                     std::format("{} settings version {} cannot be converted by this build (versions {} to {})",
                                 kDevelopSettingsSchema, settings.version, kOldestDevelopSettingsVersion,
                                 kDevelopSettingsVersion),
                     kWhere);
     }
-    if (auto status = check_version_1(settings); !status) {
+    if (settings.version == kOldestDevelopSettingsVersion) {
+        if (auto status = check_version_1(settings); !status) {
+            return Unexpected(std::move(status.error()));
+        }
+    }
+    if (auto status = check_before_version_3(settings); !status) {
         return Unexpected(std::move(status.error()));
     }
     // Version 1 -> 2: the new members keep their defaults (no denoising, no masks, no geometry),
     // denoising and masks get this build's versions (check_version_1 ensured both) and the geometry
     // version 1: version-1 settings rendered the whole visible area (ADR 0017).
+    if (settings.version == kOldestDevelopSettingsVersion) {
+        settings.operations.geometry = kOldestGeometryOperationVersion;
+    }
+    // Version 2 -> 3: lens-correction operation version 0 (none) with the default, unused setting:
+    // the settings were made before lens-profile corrections existed and keep rendering without them
+    // (ADR 0023).
     settings.version = kDevelopSettingsVersion;
-    settings.operations.geometry = kOldestGeometryOperationVersion;
+    settings.operations.lens_correction = kOldestLensCorrectionOperationVersion;
+    settings.lens_correction = LensCorrectionSetting{};
     return settings;
 }
 
 std::uint32_t geometry_operation_version(const DevelopSettings& settings) noexcept {
     return settings.version == kOldestDevelopSettingsVersion ? kOldestGeometryOperationVersion
                                                              : settings.operations.geometry;
+}
+
+std::uint32_t lens_correction_operation_version(const DevelopSettings& settings) noexcept {
+    return settings.version < kDevelopSettingsVersion ? kOldestLensCorrectionOperationVersion
+                                                      : settings.operations.lens_correction;
+}
+
+std::optional<LensCorrectionSetting> effective_lens_correction(const DevelopSettings& settings) {
+    if (lens_correction_operation_version(settings) == kOldestLensCorrectionOperationVersion) {
+        return std::nullopt;
+    }
+    return settings.lens_correction;
 }
 
 }  // namespace lucent::engine

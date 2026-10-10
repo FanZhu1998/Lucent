@@ -1,24 +1,35 @@
 #pragma once
 
-// DevelopSettings v2: the photographic settings of one developed image (blueprint section 5,
-// step 6 "Apply photographic operations", section 5 "Noise, masks, and geometry", and section 8
-// "Recipes, assets, and forward compatibility"). Shared contract "lucent.develop", version 2
-// (ADR 0010, ADR 0015): the engine owns this C++ type and its validation; JSON serialisation and
-// persistence belong to the recipe layer.
+// DevelopSettings v3: the photographic settings of one developed image (blueprint section 5,
+// step 4 "Correct optics in the appropriate sensor/color domain", step 6 "Apply photographic
+// operations", section 5 "Noise, masks, and geometry", and section 8 "Recipes, assets, and forward
+// compatibility"). Shared contract "lucent.develop", version 3 (ADR 0010, ADR 0015, ADR 0023): the
+// engine owns this C++ type and its validation; JSON serialisation and persistence belong to the
+// recipe layer.
 //
 // Every value is a plain number, enum or list, so the type can be copied, compared exactly
 // (operator==) and serialised without loss. Default-constructed settings are "as shot": the
 // camera's white balance, no adjustment, the identity tone curve, the "neutral" v1 base look, no
-// chroma denoising, no local adjustment and no geometry change.
+// chroma denoising, no local adjustment, no geometry change and automatic lens-profile corrections
+// (applied only for an exact profile match of a file that carries no lens correction of its own,
+// lens_correction.hpp).
 //
 // Versions. Version 2 adds chroma_denoise, local_adjustments and geometry (each with its own
-// operation version) to version 1's fields, whose meaning is unchanged. A version-1 value is still
-// a valid input: validate() accepts it when it holds none of version 2's members (they keep their
-// defaults), and it renders exactly as its conversion upgrade_develop_settings() does.
+// operation version) to version 1's fields, whose meaning is unchanged. Version 3 adds
+// lens_correction (lens-profile distortion, lateral chromatic aberration and vignetting corrections,
+// ADR 0023) with its operation version. An older value is still a valid input: validate() accepts a
+// version-1 or version-2 value when it holds none of the later versions' members (they keep their
+// defaults), and it renders exactly as its conversion upgrade_develop_settings() does. Settings made
+// before lens corrections existed convert to lens-correction operation version 0 ("none"), so every
+// version-1 and version-2 recipe keeps rendering as it did.
 //
 // Semantics (the operations are implemented in develop_operations.hpp, chroma_denoise.hpp,
 // local_adjustments.hpp and develop_geometry.hpp and run in this order by develop.hpp; each one
 // carries its own semantic version, recorded in `operations`):
+//   lens_correction  lens-profile corrections in linear camera RGB before camera colour
+//                  (LensCorrectionSetting; lens_correction.hpp): which corrections are enabled and
+//                  whether the profile is chosen automatically (an exact database match only) or
+//                  named; a correction the file already carries (DNG opcodes) is never applied again.
 //   white_balance  AsShot: the camera's as-shot multipliers.
 //                  Kelvin: correlated colour temperature in kelvin and tint in the DNG SDK's
 //                  units (dng_temperature: tint = -3000 x the signed distance along the
@@ -51,21 +62,26 @@
 //                  camera's image area (kGeometryOperationVersion).
 //   locks          controls the automatic optimiser (W8) must not change; stored, not used here.
 //
-// Coordinates (ADR 0015). Masks and the crop are resolution independent:
+// Coordinates (ADR 0015, ADR 0023). Masks and the crop are resolution independent:
 //   * The upright frame U is the image stage one produces (develop.hpp): after the DNG opcodes
-//     (warps, trims; ADR 0014) and the camera orientation, before any geometry setting. A
+//     (warps, trims; ADR 0014) and the camera orientation, before any lens-profile correction and
+//     any geometry setting. A
 //     position is normalised per axis: (x, y) = (column / width, row / height) in continuous
 //     pixel coordinates (image/geometry.hpp: pixel (i, j) covers [i, i + 1) x [j, j + 1)), so
 //     (0, 0) is the top-left corner and (1, 1) the bottom-right corner of the image, at any
 //     render scale. Lengths (brush and radial radii) are fractions of the image's long edge.
-//   * Mask shapes are defined in U, before straightening and cropping: changing the crop, the
-//     straighten angle or the quarter turns never moves a mask relative to the image content;
+//   * Mask shapes are defined in U, before the lens-profile correction, straightening and
+//     cropping: enabling or disabling a lens correction, changing the profile, the crop, the
+//     straighten angle or the quarter turns never moves a mask relative to the image content
+//     (stage two evaluates masks through the correction's point mapping, lens_correction.hpp);
 //     develop_geometry.hpp maps mask positions to output pixels (and back) for overlays.
 //   * The crop rectangle is normalised in the straightened frame S: the geometry's frame F (the
-//     whole of U for geometry version 1; the camera's image area inside U for version 2, when the
-//     file declares one) rotated about its centre on a canvas of its size; with no straightening
-//     S = F. Masks stay normalised in U in both versions, so a geometry version never moves a mask
-//     relative to the content (ADR 0017).
+//     whole of the lens-corrected canvas, which has U's size, for geometry version 1; the camera's
+//     image area, the same pixel rectangle of that canvas, for version 2 when the file declares
+//     one) rotated about its centre on a canvas of its size; with no straightening S = F. Masks
+//     stay normalised in U in both versions, so a geometry version never moves a mask relative to
+//     the content (ADR 0017). The crop is relative to the corrected frame: a lens correction moves
+//     the content under a fixed crop (as it moves the content under the camera's area).
 //
 // Thread-safety: a value type; concurrent reads are safe.
 
@@ -87,7 +103,7 @@ namespace lucent::engine {
 
 // Shared contract identifier and version of DevelopSettings.
 inline constexpr std::string_view kDevelopSettingsSchema = "lucent.develop";
-inline constexpr std::uint32_t kDevelopSettingsVersion = 2;
+inline constexpr std::uint32_t kDevelopSettingsVersion = 3;
 // The oldest version this build accepts (upgrade_develop_settings() converts it).
 inline constexpr std::uint32_t kOldestDevelopSettingsVersion = 1;
 
@@ -114,6 +130,16 @@ inline constexpr std::uint32_t kLocalAdjustmentsOperationVersion = 1;
 // versions (the whole upright image, see "Coordinates" above).
 inline constexpr std::uint32_t kGeometryOperationVersion = 2;
 inline constexpr std::uint32_t kOldestGeometryOperationVersion = 1;
+// Added by version 3 (ADR 0023). Lens-profile corrections (lens_correction.hpp):
+//   0: none. The settings were made before Lucent had lens-profile corrections (versions 1 and 2
+//      and their conversions): nothing is corrected, and the lens_correction member keeps its
+//      default and is not used. This is what keeps every older recipe rendering as it did.
+//   1: distortion, lateral chromatic aberration (per camera channel) and vignetting from a Lensfun
+//      profile (data format 1), in linear camera RGB before camera colour, resampled with the
+//      Catmull-Rom kernel; corrections the file already carries are never applied again.
+// New settings (and the as-shot defaults) use version 1.
+inline constexpr std::uint32_t kLensCorrectionOperationVersion = 1;
+inline constexpr std::uint32_t kOldestLensCorrectionOperationVersion = 0;
 
 // The base looks this build implements.
 inline constexpr std::string_view kNeutralLookId = "neutral";
@@ -428,6 +454,55 @@ struct GeometrySetting {
 [[nodiscard]] GeometrySetting rotated_counter_clockwise(GeometrySetting geometry) noexcept;
 [[nodiscard]] GeometrySetting flipped_horizontally(GeometrySetting geometry) noexcept;
 
+// ---- Lens-profile corrections (version 3) -----------------------------------------------------
+
+// Bounds of a profile reference (validate()).
+inline constexpr std::size_t kMaxLensProfileNameBytes = 256;
+inline constexpr double kMinLensCropFactor = 0.01;
+inline constexpr double kMaxLensCropFactor = 100.0;
+
+// A lens profile of the Lensfun database (lens_correction.hpp): the database identifies a lens
+// calibration by its maker, its model (each the database's default spelling) and the crop factor of
+// the camera it was calibrated with (Lensfun keeps separate calibrations of one lens for sensors of
+// different sizes; crop factors less than 0.01 apart name the same calibration, as Lensfun compares
+// them). Lensfun 0.3 has no other stable identifier. maker and model: 1 to kMaxLensProfileNameBytes
+// bytes without control characters; crop_factor: finite within [kMinLensCropFactor,
+// kMaxLensCropFactor].
+struct LensProfileId {
+    std::string maker;
+    std::string model;
+    double crop_factor = 1.0;
+
+    friend bool operator==(const LensProfileId&, const LensProfileId&) = default;
+};
+
+// Which lens-profile corrections a develop applies (lens-correction operation version 1):
+//   distortion, lateral_chromatic_aberration, vignetting
+//                  each correction is applied only when enabled here, when the profile holds a
+//                  calibration that covers the photograph (focal length, and aperture for
+//                  vignetting), and when the file does not already carry it (DNG opcodes,
+//                  dng_opcode_processing.hpp carried_lens_corrections()): a carried correction is
+//                  never applied a second time.
+//   profile        std::nullopt (the default): automatic. The profile is the database's exact match
+//                  for the file's camera and lens (lens_correction.hpp, LensMatchKind::Exact), and
+//                  the corrections are applied only when the file carries none of its own; a fuzzy
+//                  match or none leaves every correction off (never a guessed profile; blueprint
+//                  section 3: "An optional lens-profile miss can leave correction off").
+//                  A named profile: the photographer's choice, applied to this file (each enabled
+//                  correction the file does not carry), whatever the automatic match was.
+// The default is automatic with every correction enabled.
+struct LensCorrectionSetting {
+    bool distortion = true;
+    bool lateral_chromatic_aberration = true;
+    bool vignetting = true;
+    std::optional<LensProfileId> profile;
+
+    // True when at least one correction is enabled.
+    [[nodiscard]] bool any_enabled() const noexcept { return distortion || lateral_chromatic_aberration || vignetting; }
+
+    friend bool operator==(const LensCorrectionSetting&, const LensCorrectionSetting&) = default;
+};
+
 // ---- Revisions --------------------------------------------------------------------------------
 
 // Content hashes (64-bit FNV-1a over the operation version and the values, -0 hashed as 0):
@@ -472,6 +547,8 @@ struct DevelopOperationVersions {
     std::uint32_t chroma_denoise = kChromaDenoiseOperationVersion;
     std::uint32_t local_adjustments = kLocalAdjustmentsOperationVersion;
     std::uint32_t geometry = kGeometryOperationVersion;
+    // Version 3: kOldestLensCorrectionOperationVersion (0, none) or kLensCorrectionOperationVersion.
+    std::uint32_t lens_correction = kLensCorrectionOperationVersion;
 
     friend bool operator==(const DevelopOperationVersions&, const DevelopOperationVersions&) = default;
 };
@@ -495,27 +572,37 @@ struct DevelopSettings {
     ChromaDenoiseSetting chroma_denoise;
     std::vector<LocalAdjustment> local_adjustments;  // applied in this order
     GeometrySetting geometry;
+    // Version 3 (used when operations.lens_correction is 1; its default otherwise).
+    LensCorrectionSetting lens_correction;
 
     // Checks the whole value (Error::where "engine.develop.settings"):
     //   VersionMismatch  `version` is neither kDevelopSettingsVersion nor an older version this
-    //                    build reads (kOldestDevelopSettingsVersion), an operation version is not
-    //                    one this build implements (the geometry: kOldestGeometryOperationVersion
-    //                    to kGeometryOperationVersion; every other operation: its constant), or the
-    //                    base look's version is not implemented (newer or retired);
+    //                    build reads (kOldestDevelopSettingsVersion to it), an operation version is
+    //                    not one this build implements (the geometry: kOldestGeometryOperationVersion
+    //                    to kGeometryOperationVersion; the lens correction:
+    //                    kOldestLensCorrectionOperationVersion to kLensCorrectionOperationVersion;
+    //                    every other operation: its constant), or the base look's version is not
+    //                    implemented (newer or retired);
     //   Unsupported      an unknown base-look id;
     //   InvalidArgument  an unknown enum value (white-balance mode, lock, brush mode), a non-finite
     //                    number, a value outside its range (see the constants above), a tone curve
     //                    that is not monotone as ToneCurveSetting requires, a crop that is not
     //                    ordered or not inside [0, 1], a mask id that is 0 or repeated, a stroke
     //                    without points, more masks, strokes or points than the bounds allow, a
-    //                    linear gradient whose ends coincide, or a version-1 value holding a
-    //                    member of version 2 (anything but its default).
+    //                    linear gradient whose ends coincide, a version-1 value holding a member of
+    //                    version 2 or 3, or a version-2 value holding a member of version 3
+    //                    (anything but its default), lens-correction operation version 0 with a
+    //                    lens_correction other than its default, or a profile reference outside
+    //                    its bounds (LensProfileId).
     [[nodiscard]] Status validate() const;
 
     // True when every pixel-affecting value equals the default (locks, the recorded operation
     // versions, the chroma-denoise radius at strength 0 and local adjustments without effect are
     // ignored): the image renders "as shot". The geometry version is a recorded operation version:
-    // an identity geometry of version 1 (the whole visible area) counts as as shot too.
+    // an identity geometry of version 1 (the whole visible area) counts as as shot too. Likewise the
+    // lens-correction version: settings made before lens corrections existed (version 0, the
+    // default setting unused) count as as shot, as do the automatic defaults; a changed lens
+    // correction (a correction disabled, a named profile) is an edit.
     [[nodiscard]] bool is_as_shot() const noexcept;
 
     friend bool operator==(const DevelopSettings&, const DevelopSettings&) = default;
@@ -524,15 +611,28 @@ struct DevelopSettings {
 // Converts settings of an older version this build reads to kDevelopSettingsVersion:
 //   version 1 -> 2: no chroma denoising, no local adjustment, no geometry, this build's versions
 //   of chroma denoising and local adjustments, and geometry version 1 (version-1 settings were
-//   made before the camera's image area existed and rendered the whole visible area). The result
-//   renders exactly as the version-1 value does.
-// Current settings are returned unchanged. Errors (engine.develop.settings): VersionMismatch for
-// a version this build does not read (0, or newer); InvalidArgument for a version-1 value that
-// holds a member of version 2. The other fields are not checked (call validate()).
+//   made before the camera's image area existed and rendered the whole visible area);
+//   version 2 -> 3: lens-correction operation version 0 (none) with the default lens_correction
+//   (unused): version-2 settings were made before lens-profile corrections existed, so they keep
+//   rendering without them unless the photographer enables them (which makes the operation
+//   version 1).
+// Each result renders exactly as the older value does. Current settings are returned unchanged.
+// Errors (engine.develop.settings): VersionMismatch for a version this build does not read (0, or
+// newer); InvalidArgument for an older value that holds a member of a later version. The other
+// fields are not checked (call validate()).
 [[nodiscard]] Expected<DevelopSettings> upgrade_develop_settings(DevelopSettings settings);
 
 // The geometry operation version `settings` render with: 1 for version-1 settings (whatever their
 // unused operations.geometry holds), operations.geometry otherwise.
 [[nodiscard]] std::uint32_t geometry_operation_version(const DevelopSettings& settings) noexcept;
+
+// The lens-correction operation version `settings` render with: 0 (none) for version-1 and
+// version-2 settings (whatever their unused operations.lens_correction holds), the recorded
+// operations.lens_correction otherwise.
+[[nodiscard]] std::uint32_t lens_correction_operation_version(const DevelopSettings& settings) noexcept;
+
+// The lens correction `settings` render with: std::nullopt when their lens-correction operation
+// version is 0 (nothing is corrected), the lens_correction member otherwise.
+[[nodiscard]] std::optional<LensCorrectionSetting> effective_lens_correction(const DevelopSettings& settings);
 
 }  // namespace lucent::engine

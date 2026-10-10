@@ -10,6 +10,13 @@
 // H) pixels. Shapes are therefore rasterised from their definitions at every render scale
 // (never resampled from another scale), before the geometry operation: the crop, the straighten
 // angle and the quarter turns never move a mask relative to the image content.
+// After a lens-profile correction (lens_correction.hpp, ADR 0023) the image is the corrected canvas
+// U' of the same size: each of its pixels shows the content of U at the correction's green source
+// position, and the masks are evaluated there (LocalAdjustmentsParameters::lens): analytic shapes
+// at that point, brush rasters (made in U as without a correction, so the raster cache serves both)
+// bilinearly at it. Enabling, disabling or changing a correction therefore never moves a mask
+// relative to the content. Without a correction every pixel is evaluated at its own centre, as
+// before (bit-identical).
 //
 // Rasterisation (coverage m in [0, 1], evaluated at pixel centres (i + 0.5, j + 0.5), double
 // precision, deterministic):
@@ -79,6 +86,7 @@
 #include <lucent/engine/camera_color.hpp>
 #include <lucent/engine/develop_operations.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/lens_correction.hpp>
 #include <lucent/image/geometry.hpp>
 #include <lucent/image/pixel_buffer.hpp>
 
@@ -213,6 +221,11 @@ struct LocalAdjustmentsParameters {
     double white = 1.0;            // W (DevelopReport::white), finite and positive
     std::int32_t tone_radius = 1;  // highlights/shadows base layer: local_tone_radius() of the render
     double tone_epsilon = kLocalToneEpsilon;
+    // The image is the lens-corrected canvas U' of this geometric correction (null: the image is U),
+    // whose full-resolution upright size is `full_size` (the render is the whole image at its
+    // scale). Not owned; it must outlive the call.
+    const LensGeometryMap* lens = nullptr;
+    image::Size full_size;
 };
 
 struct LocalAdjustmentsRecord {
@@ -232,12 +245,18 @@ struct LocalAdjustmentsRecord {
 // extent, so many small brush masks stay small), the base layer's three planes over the tone
 // masks' supports (the whole image for an inverted one) expanded by 2 tone_radius (the whole image
 // without a radius), and the per-row counters. A raster the cache already holds is counted too.
+// With the lens correction's geometry `lens` (LocalAdjustmentsParameters::lens, its full-resolution
+// size `full_size`) the tone masks' supports are mapped into the corrected image as the render maps
+// them (the whole image when `full_size` is empty).
 [[nodiscard]] std::uint64_t local_adjustments_working_bytes(std::span<const LocalAdjustment> adjustments,
-                                                            image::Size size, std::int32_t tone_radius = 0) noexcept;
+                                                            image::Size size, std::int32_t tone_radius = 0,
+                                                            const LensGeometryMap* lens = nullptr,
+                                                            image::Size full_size = {}) noexcept;
 
 // Applies `adjustments` (valid, in order) to `image` (scene_linear_rec2020_d65(), 3 channels, the
-// upright render) in place, as the file comment defines. Brush rasters come from `cache` when it
-// holds them and are added to it (nullptr: no cache).
+// upright render, or its lens-corrected canvas with parameters.lens) in place, as the file comment
+// defines. Brush rasters come from `cache` when it holds them and are added to it (nullptr: no
+// cache).
 // Errors (engine.develop.masks): InvalidArgument for an empty image, another encoding or invalid
 // parameters or adjustments; Internal for a non-finite result; LimitExceeded / OutOfMemory;
 // Cancelled (the image must then be discarded).

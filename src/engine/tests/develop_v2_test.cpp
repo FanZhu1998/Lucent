@@ -98,16 +98,17 @@ TEST(DevelopPipelineV2, RecordsTheVersion2OperationsInOrder) {
     auto defaults = render_stage_two(one, DevelopSettings{});
     ASSERT_TRUE(defaults) << defaults.error().describe();
     const std::vector<DevelopOperation> order = {
-        DevelopOperation::WhiteBalance,  DevelopOperation::CameraColor, DevelopOperation::WorkingSpace,
-        DevelopOperation::Exposure,      DevelopOperation::ChromaDenoise, DevelopOperation::LocalTone,
-        DevelopOperation::LocalAdjustments, DevelopOperation::Contrast,  DevelopOperation::ToneCurve,
-        DevelopOperation::Color,         DevelopOperation::BaseLook,    DevelopOperation::Geometry};
+        DevelopOperation::LensCorrection, DevelopOperation::WhiteBalance,  DevelopOperation::CameraColor,
+        DevelopOperation::WorkingSpace,   DevelopOperation::Exposure,      DevelopOperation::ChromaDenoise,
+        DevelopOperation::LocalTone,      DevelopOperation::LocalAdjustments, DevelopOperation::Contrast,
+        DevelopOperation::ToneCurve,      DevelopOperation::Color,         DevelopOperation::BaseLook,
+        DevelopOperation::Geometry};
     const DevelopReport& report = defaults->report;
     ASSERT_EQ(report.operations.size(), order.size());
     for (std::size_t i = 0; i < order.size(); ++i) {
         EXPECT_EQ(report.operations[i].operation, order[i]) << i;
     }
-    for (const std::size_t skipped : {4u, 6u, 11u}) {
+    for (const std::size_t skipped : {0u, 5u, 7u, 12u}) {
         EXPECT_FALSE(report.operations[skipped].applied) << to_string(order[skipped]);
     }
     EXPECT_FALSE(report.chroma_denoise.has_value());
@@ -115,7 +116,7 @@ TEST(DevelopPipelineV2, RecordsTheVersion2OperationsInOrder) {
     EXPECT_FALSE(report.geometry.has_value());
     EXPECT_EQ(report.upright_size, one.pixels.size());
     EXPECT_EQ(report.output_size, one.pixels.size());
-    EXPECT_EQ(report.pipeline_version, 3u);
+    EXPECT_EQ(report.pipeline_version, 4u);
     EXPECT_EQ(to_string(DevelopOperation::ChromaDenoise), "chroma_denoise");
     EXPECT_EQ(to_string(DevelopOperation::LocalAdjustments), "local_adjustments");
     EXPECT_EQ(to_string(DevelopOperation::Geometry), "geometry");
@@ -126,7 +127,7 @@ TEST(DevelopPipelineV2, RecordsTheVersion2OperationsInOrder) {
     all.geometry.quarter_turns = 1;
     auto applied = render_stage_two(one, all);
     ASSERT_TRUE(applied) << applied.error().describe();
-    for (const std::size_t index : {4u, 6u, 11u}) {
+    for (const std::size_t index : {5u, 7u, 12u}) {
         EXPECT_TRUE(applied->report.operations[index].applied) << to_string(order[index]);
     }
     ASSERT_TRUE(applied->report.chroma_denoise.has_value());
@@ -513,7 +514,7 @@ TEST(DevelopPipelineV2, MonochromeDataSkipsChromaDenoising) {
     auto denoised = render_stage_two(one, s);
     auto plain = render_stage_two(one, DevelopSettings{});
     ASSERT_TRUE(denoised && plain);
-    EXPECT_FALSE(denoised->report.operations[4].applied);
+    EXPECT_FALSE(denoised->report.operations[5].applied);  // chroma denoising
     EXPECT_TRUE(ts::bit_identical(denoised->display.pixels, plain->display.pixels));
 }
 
