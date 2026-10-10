@@ -65,18 +65,23 @@
 //   | the worker broke the protocol, or answered     | Corrupt / workers.protocol.*       | Deterministic | ProtocolViolation |
 //   | with another output, recipe or source          |                                    |               |                |
 //   | the worker could not be started                | the start error (NotFound, VersionMismatch, Timeout, ...) | see start() | StartFailed |
-// The memory limit is recognised from the Job Object's JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT
-// notification or, because Windows does not guarantee delivery of those messages, from an
-// OutOfMemory or crash while the worker's peak commit was within 5 % of the limit. The group's
-// aggregate limit (worker_group.hpp) is recognised from the group's JOB_OBJECT_MSG_JOB_MEMORY_LIMIT
-// naming the worker's process or from an OutOfMemory or crash while the group's peak commit rose to
-// within 5 % of its limit during the job; it is transient when another worker of the group was alive
-// at any time during the job (the job may succeed alone: which worker an aggregate limit stops is
-// whichever allocates at the limit), deterministic like the worker's own limit when the worker was
-// the group's only process (the photo needs more than the whole aggregate). Its own limit takes
-// precedence. An OutOfMemory without any of these is the worker's own error (Transient: memory
-// pressure from elsewhere). After a memory-limit hit of either kind the worker is recycled even if
-// its job succeeded.
+// The evidence of a memory limit is weighed in this order (W12 closing review, COR-1 and COR-3):
+//   1. the worker's own Job Object notification (JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT): its own limit;
+//   2. the group's JOB_OBJECT_MSG_JOB_MEMORY_LIMIT naming the worker's process (worker_group.hpp):
+//      the aggregate limit, transient when another worker of the group was alive at any time during
+//      the job (the job may succeed alone: which worker an aggregate limit stops is whichever
+//      allocates at the limit), deterministic like the worker's own limit when the worker was the
+//      group's only process (the photo needs more than the whole aggregate);
+//   then, because Windows does not guarantee delivery of those messages, and only for an
+//   OutOfMemory or a worker that ended:
+//   3. the worker's peak commit above its own limit (Windows charges an allocation to the peak before
+//      it refuses it, so a refusal by the own limit always leaves the peak above it, and a refusal by
+//      the group's limit leaves it below whenever the own limit would have admitted the allocation);
+//   4. the group's peak commit rising to within 5 % of its limit during the job.
+// A notification classifies any failure the worker reports except a cancellation or a time-out (an
+// allocation failure can surface as Internal or as a library's error). An OutOfMemory without any of
+// these is the worker's own error (Transient: memory pressure from elsewhere). After a memory-limit
+// hit of either kind the worker is recycled even if its job succeeded.
 //
 // Thread-safety: start(), run_job(), ping() and shutdown() must not be called concurrently (one
 // thread drives a host; cancellation arrives through the token). info() may be called from any

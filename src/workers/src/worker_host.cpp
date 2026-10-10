@@ -480,35 +480,75 @@ struct WorkerHost::State {
         set_stopped();
     }
 
-    // The group's aggregate limit stopped the current worker during the job that started with
-    // `start` (see the file comment): the group's notification naming the worker or, with
-    // `failed_for_memory` (the job ended with an OutOfMemory, or the worker ended), the group's peak
-    // commit rising to within 5 % of the limit during the job. `shared`: another worker of the group
-    // was alive at some time during the job. Consumes the notification: call once per job.
-    struct GroupHit {
+    // What the group saw of the current worker during the job that started with `start` (see the
+    // file comment): `notified`, the group's JOB_OBJECT_MSG_JOB_MEMORY_LIMIT naming the worker's
+    // process (the group's limit refused one of its allocations); `near_limit`, the group's peak
+    // commit rising to within 5 % of the limit during the job (the fallback for a lost notification);
+    // `shared`, another worker of the group was alive at some time during the job. std::nullopt
+    // when the worker is not in a group. Consumes the notification: call once per job.
+    struct GroupEvidence {
+        bool notified = false;
+        bool near_limit = false;
         bool shared = false;
     };
-    [[nodiscard]] std::optional<GroupHit> group_limit(const std::optional<WorkerGroup::Snapshot>& start,
-                                                      bool failed_for_memory) {
+    [[nodiscard]] std::optional<GroupEvidence> group_evidence(const std::optional<WorkerGroup::Snapshot>& start) {
         if (!start || !options.group || !worker || !worker->grouped) {
             return std::nullopt;
         }
-        const bool notified = options.group->take_limit_hit(worker->pid);
+        GroupEvidence evidence;
+        evidence.notified = options.group->take_limit_hit(worker->pid);
         const WorkerGroup::Snapshot end = options.group->snapshot(worker->pid);
         const std::uint64_t limit = options.group->memory_limit_bytes();
-        const bool near_limit = end.peak_commit > start->peak_commit && end.peak_commit >= limit - limit / 20;
-        if (!notified && !(failed_for_memory && near_limit)) {
-            return std::nullopt;
-        }
-        GroupHit hit;
-        hit.shared = start->other_members > 0 || end.other_members > 0 || end.joined > start->joined;
-        return hit;
+        evidence.near_limit = end.peak_commit > start->peak_commit && end.peak_commit >= limit - limit / 20;
+        evidence.shared = start->other_members > 0 || end.other_members > 0 || end.joined > start->joined;
+        return evidence;
     }
 
-    [[nodiscard]] JobFailure group_failure(const GroupHit& hit, const std::string& what) const {
+    // The memory-limit failure of a job that failed as `what` describes, or std::nullopt when no
+    // limit is in evidence. In this order (COR-1, W12):
+    //   1. the worker's own Job Object notification: its own limit;
+    //   2. the group's notification naming the worker: its own limit sent none, so the group's limit
+    //      refused the allocation, classified by the worker's company (group_failure()) even when the
+    //      worker's own commit plus the refused allocation came close to its own limit;
+    //   then, only with `failed_for_memory` (an OutOfMemory, or the worker ended), the fallbacks for
+    //   notifications Windows did not deliver:
+    //   3. a peak commit above the worker's own limit: Windows charges an allocation to the peak
+    //      before it refuses it, so a refusal by the worker's own limit always leaves the peak above
+    //      it, and one by the group's limit leaves it below whenever the worker's own limit would
+    //      have admitted the allocation;
+    //   4. the group's peak commit rising to within 5 % of its limit during the job.
+    [[nodiscard]] std::optional<JobFailure> memory_failure(const std::optional<GroupEvidence>& group,
+                                                           bool failed_for_memory, const std::string& what) const {
+        if (worker && worker->memory_limit_hit && options.memory_limit_bytes != 0) {
+            return own_limit_failure(what);
+        }
+        if (group && group->notified) {
+            return group_failure(group->shared, what);
+        }
+        if (!failed_for_memory) {
+            return std::nullopt;
+        }
+        if (own_peak_above_limit()) {
+            return own_limit_failure(what);
+        }
+        if (group && group->near_limit) {
+            return group_failure(group->shared, what);
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] JobFailure own_limit_failure(const std::string& what) const {
+        JobFailure failure;
+        failure.error = memory_limit_error(what);
+        failure.failure_class = FailureClass::Deterministic;
+        failure.fault = WorkerFault::MemoryLimit;
+        return failure;
+    }
+
+    [[nodiscard]] JobFailure group_failure(bool shared, const std::string& what) const {
         JobFailure failure;
         const std::uint64_t limit_mib = options.group->memory_limit_bytes() >> 20;
-        if (hit.shared) {
+        if (shared) {
             // Which worker an aggregate limit stops is whichever allocates at it: alone, this job
             // may well fit.
             failure.error = Error{ErrorCode::OutOfMemory,
@@ -655,7 +695,7 @@ struct WorkerHost::State {
     // Classifies the end of a worker that went away during a job (`group`: the group-limit evidence,
     // asked for once the process ended).
     JobFailure lost(std::string_view job_id, std::optional<Error> protocol_error,
-                    const std::function<std::optional<GroupHit>()>& group) {
+                    const std::function<const std::optional<GroupEvidence>&()>& group) {
         JobFailure failure;
         if (protocol_error) {
             failure.error = std::move(*protocol_error);
@@ -666,18 +706,11 @@ struct WorkerHost::State {
         ::WaitForSingleObject(worker->process.get(), kTerminateWaitMs);
         worker->poll_port();
         failure.exit_code = worker->exit_code();
-        if (memory_limit_reached()) {
-            failure.error = memory_limit_error(
-                std::format("the worker ended ({}) running job '{}'", exit_text(failure.exit_code), job_id));
-            failure.failure_class = FailureClass::Deterministic;
-            failure.fault = WorkerFault::MemoryLimit;
-            return failure;
-        }
-        if (const std::optional<GroupHit> hit = group()) {
-            JobFailure grouped = group_failure(
-                *hit, std::format("the worker ended ({}) running job '{}'", exit_text(failure.exit_code), job_id));
-            grouped.exit_code = failure.exit_code;
-            return grouped;
+        if (std::optional<JobFailure> memory = memory_failure(
+                group(), true,
+                std::format("the worker ended ({}) running job '{}'", exit_text(failure.exit_code), job_id))) {
+            memory->exit_code = failure.exit_code;
+            return std::move(*memory);
         }
         if (failure.exit_code == static_cast<std::uint32_t>(WorkerExitCode::ProtocolViolation)) {
             failure.error = Error{ErrorCode::Corrupt,
@@ -698,16 +731,19 @@ struct WorkerHost::State {
         return failure;
     }
 
+    // The worker's own limit refused an allocation: its Job Object's notification or, because
+    // delivery of Job Object messages is not guaranteed, a peak commit above the limit (Windows
+    // charges an allocation to the peak before it refuses it, so a refused one leaves the peak above
+    // the limit; a peak below it, however close, means nothing was refused).
     [[nodiscard]] bool memory_limit_reached() const {
         if (options.memory_limit_bytes == 0 || !worker) {
             return false;
         }
-        if (worker->memory_limit_hit) {
-            return true;
-        }
-        // Delivery of Job Object messages is not guaranteed: a peak within 5 % of the limit counts.
-        const std::uint64_t peak = worker->peak_commit();
-        return peak >= options.memory_limit_bytes - options.memory_limit_bytes / 20;
+        return worker->memory_limit_hit || own_peak_above_limit();
+    }
+
+    [[nodiscard]] bool own_peak_above_limit() const {
+        return options.memory_limit_bytes != 0 && worker && worker->peak_commit() > options.memory_limit_bytes;
     }
 
     [[nodiscard]] Error memory_limit_error(std::string what) const {
@@ -791,14 +827,14 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
         group_start = options.group->snapshot(w.pid);
     }
     // The group-limit evidence, evaluated once (it consumes the group's notification).
-    std::optional<GroupHit> group_hit;
+    std::optional<GroupEvidence> group_seen;
     bool group_checked = false;
-    const auto check_group = [&](bool failed_for_memory) {
+    const auto group_once = [&]() -> const std::optional<GroupEvidence>& {
         if (!group_checked) {
             group_checked = true;
-            group_hit = group_limit(group_start, failed_for_memory);
+            group_seen = group_evidence(group_start);
         }
-        return group_hit;
+        return group_seen;
     };
     {
         std::lock_guard lock(info_mutex);
@@ -940,7 +976,7 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
         if (protocol_error) {
             w.terminate();
         }
-        outcome.failure = lost(request.job_id, std::move(protocol_error), [&] { return check_group(true); });
+        outcome.failure = lost(request.job_id, std::move(protocol_error), group_once);
     }
     w.poll_port();
     {
@@ -954,21 +990,26 @@ Outcome WorkerHost::State::run_request(const Request& request, const JobCallback
         info.peak_commit_bytes = std::max(info.peak_commit_bytes, outcome.metrics.peak_commit_bytes);
     }
 
-    // A worker that reported OutOfMemory at its limit is recycled like one that ended at it; at its
-    // group's limit, classified by its company.
+    // A job the worker failed while a limit refused one of its allocations is that limit's failure
+    // (memory_failure()): at its own limit like a worker that ended at it, at its group's limit
+    // classified by its company. An allocation failure can surface under another code than
+    // OutOfMemory (std::thread's std::system_error and other exceptions are Internal, a library's
+    // NULL result its caller's error), so a limit's notification classifies any failure but a
+    // cancellation or a time-out; the peak-commit fallbacks need an OutOfMemory (COR-3, W12).
+    // A worker's peak is its lifetime's, but a worker whose own limit refused an allocation is
+    // recycled after that job, so a peak above the limit is always this job's.
     if (outcome.failure && outcome.failure->fault == WorkerFault::None &&
-        outcome.failure->error.code == ErrorCode::OutOfMemory) {
-        if (memory_limit_reached()) {
-            outcome.failure->error = memory_limit_error(outcome.failure->error.describe());
-            outcome.failure->failure_class = FailureClass::Deterministic;
-            outcome.failure->fault = WorkerFault::MemoryLimit;
-        } else if (const std::optional<GroupHit> hit = check_group(true)) {
-            outcome.failure = group_failure(*hit, outcome.failure->error.describe());
+        outcome.failure->failure_class != FailureClass::Cancelled &&
+        outcome.failure->error.code != ErrorCode::Cancelled && outcome.failure->error.code != ErrorCode::Timeout) {
+        const bool failed_for_memory = outcome.failure->error.code == ErrorCode::OutOfMemory;
+        if (std::optional<JobFailure> memory =
+                memory_failure(group_once(), failed_for_memory, outcome.failure->error.describe())) {
+            outcome.failure = std::move(*memory);
         }
     }
-    // A group-limit notification about a job that ended otherwise still recycles the worker.
-    (void)check_group(false);
-    const bool recycle = memory_limit_reached() || group_hit.has_value() ||
+    // A limit's notification about a job that ended otherwise still recycles the worker.
+    const std::optional<GroupEvidence>& group_end = group_once();
+    const bool recycle = memory_limit_reached() || (group_end && group_end->notified) ||
                          (outcome.failure && outcome.failure->fault != WorkerFault::None);
     if (recycle) {
         if (outcome.failure && !outcome.failure->exit_code && worker->exited()) {

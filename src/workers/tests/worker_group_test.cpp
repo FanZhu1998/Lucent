@@ -6,7 +6,9 @@
 // gets past it fails with the runner's own error, never a memory one.
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
+#include <format>
 #include <future>
 #include <string>
 #include <thread>
@@ -130,6 +132,72 @@ TEST(WorkerGroup, TwoWorkersAboveTheAggregateLimitStopOneOfThemTransiently) {
     // Alone, the stopped job's allocation fits: the second host's new worker gets past it.
     const JobOutcome retried = second.run_job(job(dir, "second-again"));
     EXPECT_FALSE(is_memory_fault(retried)) << describe(retried);
+}
+
+// A holder keeps `held_bytes` in `group` while a second worker runs a job with `second_hooks`; both
+// with their own limit `own_limit`. Returns the second job's outcome (and checks the holder's).
+JobOutcome stopped_beside_a_holder(const rts::ScratchDir& dir, const std::shared_ptr<WorkerGroup>& group,
+                                   std::uint64_t held_bytes, std::vector<std::string> second_hooks,
+                                   std::uint64_t own_limit) {
+    WorkerHost holder(host_options(group, {std::format("allocate:{}", held_bytes), "hold-allocation:6000"}, own_limit));
+    WorkerHost second(host_options(group, std::move(second_hooks), own_limit));
+    EXPECT_TRUE(holder.start());
+    EXPECT_TRUE(second.start());
+    const std::uint64_t before = group->stats().peak_commit_bytes;
+    auto first = std::async(std::launch::async, [&] { return holder.run_job(job(dir, "holder")); });
+    const auto deadline = std::chrono::steady_clock::now() + 30s;
+    while (group->stats().peak_commit_bytes < before + held_bytes && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(20ms);
+    }
+    EXPECT_GE(group->stats().peak_commit_bytes, before + held_bytes);
+    JobOutcome outcome = second.run_job(job(dir, "second"));
+    const JobOutcome held = first.get();
+    EXPECT_FALSE(is_memory_fault(held)) << describe(held);
+    std::printf("  beside a holder of %llu MiB: %s; second's peak commit %llu MiB, group peak %llu MiB, "
+                "notifications %llu\n",
+                static_cast<unsigned long long>(held_bytes / kMiB), describe(outcome).c_str(),
+                static_cast<unsigned long long>(outcome.metrics.peak_commit_bytes / kMiB),
+                static_cast<unsigned long long>(group->stats().peak_commit_bytes / kMiB),
+                static_cast<unsigned long long>(group->stats().limit_notifications));
+    return outcome;
+}
+
+TEST(WorkerGroup, AStopBesideAnotherWorkerStaysTransientNearTheWorkersOwnLimit) {
+    // COR-1 (W12 review): the second worker's own commit plus its refused 980 MiB is within 5 % of
+    // its own limit (equal to the group's, as in production), which the own limit's old 5 % fallback
+    // took for its own failure (Deterministic: the photo failed for good although it fits alone).
+    rts::ScratchDir dir;
+    auto group = WorkerGroup::create(1024 * kMiB);
+    ASSERT_TRUE(group) << group.error().describe();
+    const JobOutcome outcome =
+        stopped_beside_a_holder(dir, *group, 100 * kMiB, {"allocate:1027604480"}, 1024 * kMiB);
+    ASSERT_TRUE(outcome.failure) << "the second worker's allocation should have failed";
+    EXPECT_EQ(outcome.failure->fault, WorkerFault::GroupMemoryLimit) << describe(outcome);
+    EXPECT_EQ(outcome.failure->failure_class, FailureClass::Transient);
+    EXPECT_EQ(outcome.failure->error.where, "workers.worker.group_memory_limit");
+    EXPECT_GE(outcome.metrics.peak_commit_bytes, 1024 * kMiB - 1024 * kMiB / 20)
+        << "the refused allocation is charged to the worker's peak";
+    EXPECT_LE(outcome.metrics.peak_commit_bytes, 1024 * kMiB);
+    // Alone, the same allocation fits.
+    WorkerHost alone(host_options(*group, {"allocate:1027604480"}, 1024 * kMiB));
+    const JobOutcome retried = alone.run_job(job(dir, "second-alone"));
+    EXPECT_FALSE(is_memory_fault(retried)) << describe(retried);
+}
+
+TEST(WorkerGroup, AnAllocationRefusedUnderAnotherErrorCodeIsStillTheGroupsStop) {
+    // COR-3 (W12 review): the group's notification names the worker whose job failed with Internal
+    // (as std::thread's std::system_error or a library's NULL surfaces): the stop is the group's,
+    // transient, not the job's own deterministic error.
+    rts::ScratchDir dir;
+    auto group = WorkerGroup::create(1024 * kMiB);
+    ASSERT_TRUE(group) << group.error().describe();
+    const JobOutcome outcome = stopped_beside_a_holder(
+        dir, *group, 600 * kMiB, {"allocate:629145600", "allocation-error-internal"}, 1024 * kMiB);
+    ASSERT_TRUE(outcome.failure);
+    EXPECT_EQ(outcome.failure->fault, WorkerFault::GroupMemoryLimit) << describe(outcome);
+    EXPECT_EQ(outcome.failure->failure_class, FailureClass::Transient);
+    EXPECT_NE(outcome.failure->error.message.find("the test allocation was refused"), std::string::npos)
+        << outcome.failure->error.message;
 }
 
 TEST(WorkerGroup, ASingleWorkerWithinTheAggregateLimitIsNotStopped) {

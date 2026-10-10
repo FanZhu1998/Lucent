@@ -24,6 +24,9 @@
 //   hold-allocation:<ms>   with allocate, the job keeps the allocation for <ms> before it frees it,
 //                          observing cancellation (two workers then hold memory at once: the
 //                          aggregate limit of a WorkerGroup, worker_group.hpp)
+//   allocation-error-internal  with allocate, a refused allocation fails the job with Internal
+//                          instead of OutOfMemory, as an allocation failure that surfaces under
+//                          another code does (std::thread's std::system_error, a library's NULL)
 //   render-delay:<ms>      every render progress step waits <ms>, observing cancellation (makes a
 //                          small render long enough to cancel mid-render); an analyze job waits
 //                          <ms> once before it starts
@@ -56,6 +59,7 @@ struct TestHooks {
     bool crash_job = false;
     std::uint64_t allocate_bytes = 0;
     std::uint32_t hold_allocation_ms = 0;
+    bool allocation_error_internal = false;
     std::uint32_t render_delay_ms = 0;
     std::optional<std::string> fake_commit;
     std::optional<std::pair<std::uint32_t, std::uint32_t>> protocol_range;
