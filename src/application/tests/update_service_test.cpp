@@ -4,11 +4,13 @@
 // temporary file, verified (size, SHA-256 and, when the channel names a publisher, Authenticode)
 // through a handle that excludes writers, renamed and held; failures leave nothing behind; the
 // installation waits while a batch or Auto runs, backs up first, and starts the real program it
-// verified.
+// verified. The download folder is this user's alone and never a link, and links above it are
+// resolved before anything is verified, so the program started is the one verified (SEC-01).
 
 #include <gtest/gtest.h>
 
 #include <windows.h>
+#include <aclapi.h>
 
 #include <algorithm>
 #include <atomic>
@@ -28,8 +30,10 @@
 #include <lucent/core/hash.hpp>
 #include <lucent/core/signature.hpp>
 
+#include "app_test_support.hpp"
 #include "loopback_http_server.hpp"
 #include "raw_test_support.hpp"
+#include "win32_paths.hpp"
 
 namespace lucent::app {
 namespace {
@@ -67,6 +71,70 @@ std::filesystem::path system_file(const wchar_t* name) {
     const UINT length = ::GetSystemDirectoryW(system, MAX_PATH);
     return std::filesystem::path(std::wstring(system, length)) / name;
 }
+
+std::filesystem::path resolved_path(const std::filesystem::path& path) {
+    Expected<std::filesystem::path> resolved = detail::canonical_path(path, "test.update");
+    EXPECT_TRUE(resolved) << (resolved ? std::string() : resolved.error().describe());
+    return resolved ? *resolved : path;
+}
+
+// Whether `path`'s DACL grants access only to this user, SYSTEM and Administrators (and, for a
+// `protected_folder`, inherits nothing).
+bool only_this_user(const std::filesystem::path& path, bool protected_folder = false) {
+    PACL dacl = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (::GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &dacl,
+                                nullptr, &descriptor) != ERROR_SUCCESS) {
+        return false;
+    }
+    HANDLE token = nullptr;
+    std::vector<std::byte> user(512);
+    DWORD size = 0;
+    const bool have_user = ::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token) &&
+                           ::GetTokenInformation(token, TokenUser, user.data(), static_cast<DWORD>(user.size()), &size);
+    if (token != nullptr) {
+        ::CloseHandle(token);
+    }
+    bool only = have_user && dacl != nullptr && dacl->AceCount > 0;
+    for (DWORD i = 0; only && i < dacl->AceCount; ++i) {
+        void* ace = nullptr;
+        if (!::GetAce(dacl, i, &ace) || static_cast<ACE_HEADER*>(ace)->AceType != ACCESS_ALLOWED_ACE_TYPE) {
+            only = false;
+            break;
+        }
+        const PSID sid = &static_cast<ACCESS_ALLOWED_ACE*>(ace)->SidStart;
+        only = ::EqualSid(sid, reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid) ||
+               ::IsWellKnownSid(sid, WinLocalSystemSid) || ::IsWellKnownSid(sid, WinBuiltinAdministratorsSid);
+    }
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    const bool protected_dacl = ::GetSecurityDescriptorControl(descriptor, &control, &revision) &&
+                                (control & SE_DACL_PROTECTED) != 0;
+    ::LocalFree(descriptor);
+    return only && (!protected_folder || protected_dacl);
+}
+
+// A junction removed when the test ends (before the scratch folder is deleted).
+class Junction {
+public:
+    Junction(std::filesystem::path link, const std::filesystem::path& target) : link_(std::move(link)) {
+        created_ = test_support::create_junction(link_, target);
+    }
+    ~Junction() { remove(); }
+    Junction(const Junction&) = delete;
+    Junction& operator=(const Junction&) = delete;
+    [[nodiscard]] bool created() const noexcept { return created_; }
+    void remove() {
+        if (created_) {
+            test_support::remove_junction(link_);
+            created_ = false;
+        }
+    }
+
+private:
+    std::filesystem::path link_;
+    bool created_ = false;
+};
 
 class UpdateServiceTest : public ::testing::Test {
 protected:
@@ -265,7 +333,12 @@ TEST_F(UpdateServiceTest, TheInstallerIsDownloadedVerifiedAndHeld) {
         updates->download(*check, {}, [&](const UpdateDownloadProgress& p) { progress.push_back(p); });
     ASSERT_TRUE(installer) << installer.error().describe();
     EXPECT_TRUE(installer->is_open());
-    EXPECT_EQ(installer->path(), folder / L"Lucent-Setup-0.2.0-x64.exe");
+    EXPECT_EQ(installer->path(), resolved_path(folder) / L"Lucent-Setup-0.2.0-x64.exe");
+    // The folder is this user's alone (with SYSTEM and Administrators), and so is what it holds,
+    // including a file that was there before.
+    EXPECT_TRUE(only_this_user(folder, true));
+    EXPECT_TRUE(only_this_user(installer->path()));
+    EXPECT_TRUE(only_this_user(folder / L"notes.txt"));
     EXPECT_EQ(installer->version().to_string(), "0.2.0");
     EXPECT_EQ(installer->size(), installer_bytes.size());
     EXPECT_EQ(installer->sha256(), digest_of(installer_bytes));
@@ -448,8 +521,80 @@ TEST_F(UpdateServiceTest, InstallingWaitsForRunningWorkBacksUpAndStartsSetup) {
     EXPECT_EQ(launched[0].second, L"\"" + path.native() + L"\" /LOG=\"" + log.native() + L"\"");
     EXPECT_EQ(launch->process_id, 4242u);
     EXPECT_EQ(launch->log, log);
-    // The handle is released once Setup started: the file can be deleted again.
+    // The service keeps the started installer held until it is destroyed (Lucent exits right after
+    // starting Setup): Setup reads the file again by name meanwhile.
+    EXPECT_FALSE(::DeleteFileW(path.c_str()));
+    updates.reset();
     EXPECT_TRUE(::DeleteFileW(path.c_str()));
+}
+
+TEST_F(UpdateServiceTest, AConfiguredChannelNeedsTheRunningVersion) {
+    UpdateServiceOptions o = options();
+    o.current_version.reset();
+    Expected<std::unique_ptr<UpdateService>> created = UpdateService::create(std::move(o));
+    ASSERT_FALSE(created);
+    EXPECT_EQ(created.error().code, ErrorCode::InvalidArgument);
+    EXPECT_EQ(created.error().where, "app.update.version");
+    // Without a channel the version is not needed.
+    UpdateServiceOptions unconfigured;
+    unconfigured.http = http;
+    EXPECT_TRUE(UpdateService::create(std::move(unconfigured)));
+}
+
+TEST_F(UpdateServiceTest, ADownloadFolderThatIsALinkIsRefused) {
+    // SEC-01: a junction as the download folder could be pointed elsewhere between the check and
+    // the launch; it is refused before anything is downloaded.
+    const std::filesystem::path elsewhere = dir.path() / L"elsewhere";
+    std::filesystem::create_directories(elsewhere);
+    std::filesystem::create_directories(dir.path() / L"cache");
+    Junction link(dir.path() / L"cache" / L"updates", elsewhere);
+    ASSERT_TRUE(link.created());
+    std::unique_ptr<UpdateService> updates = service(options());
+    ASSERT_NE(updates, nullptr);
+    publish(manifest_for("0.2.0", installer_bytes), installer_bytes);
+    Expected<UpdateCheck> check = updates->check({});
+    ASSERT_TRUE(check) << check.error().describe();
+    Expected<DownloadedInstaller> refused = updates->download(*check, {});
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, ErrorCode::PermissionDenied);
+    EXPECT_EQ(refused.error().where, "app.update.folder");
+    EXPECT_TRUE(files_in(elsewhere).empty());
+    EXPECT_EQ(server.request_count(kInstallerPath), 0u);
+}
+
+TEST_F(UpdateServiceTest, TheVerifiedFileIsStartedEvenWhenALinkAboveTheFolderChanges) {
+    // SEC-01, the reviewer's reproduction: the data folder is a junction; after the installer was
+    // verified, it is pointed at another folder holding another "installer" at the same relative
+    // path. The installer's path is the folder's final one (no link in it), so Setup is started from
+    // the verified file.
+    const std::filesystem::path real = dir.path() / L"real";
+    const std::filesystem::path other = dir.path() / L"other";
+    std::filesystem::create_directories(real);
+    std::filesystem::create_directories(other / L"cache" / L"updates");
+    std::ofstream(other / L"cache" / L"updates" / L"Lucent-Setup-0.2.0-x64.exe", std::ios::binary) << "not verified";
+    Junction data(dir.path() / L"data", real);
+    ASSERT_TRUE(data.created());
+    UpdateServiceOptions o = options();
+    o.download_directory = dir.path() / L"data" / L"cache" / L"updates";
+    std::unique_ptr<UpdateService> updates = service(std::move(o));
+    ASSERT_NE(updates, nullptr);
+    publish(manifest_for("0.2.0", installer_bytes), installer_bytes);
+    Expected<UpdateCheck> check = updates->check({});
+    ASSERT_TRUE(check) << check.error().describe();
+    Expected<DownloadedInstaller> installer = updates->download(*check, {});
+    ASSERT_TRUE(installer) << installer.error().describe();
+    const std::filesystem::path verified = resolved_path(real / L"cache" / L"updates") / L"Lucent-Setup-0.2.0-x64.exe";
+    EXPECT_EQ(installer->path(), verified);
+
+    data.remove();
+    Junction swapped(dir.path() / L"data", other);
+    ASSERT_TRUE(swapped.created());
+    ASSERT_EQ(read_file(dir.path() / L"data" / L"cache" / L"updates" / L"Lucent-Setup-0.2.0-x64.exe"), "not verified");
+    Expected<InstallerLaunch> launch = updates->install(std::move(*installer));
+    ASSERT_TRUE(launch) << launch.error().describe();
+    ASSERT_EQ(launched.size(), 1u);
+    EXPECT_EQ(launched[0].first, verified);
+    EXPECT_TRUE(read_file(launched[0].first) == installer_bytes);
 }
 
 TEST_F(UpdateServiceTest, AFailedBackupStopsTheInstallation) {
@@ -522,8 +667,15 @@ $key = [System.Security.Cryptography.CngKey]::Create([System.Security.Cryptograp
 try {
     $installer = Join-Path $Work 'Lucent-Setup-0.2.0-x64.exe'
     [System.IO.File]::WriteAllBytes($installer, [byte[]](0..255))
+    $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+    $package = Join-Path $Work 'Lucent-Setup-0.2.0-x64.manifest.json'
+    [System.IO.File]::WriteAllText($package, (ConvertTo-Json -Depth 6 -InputObject ([ordered]@{ schema = 4; product = 'Lucent'
+        version = '0.2.0'; architecture = 'x64'; signed = $false; signing = $null
+        installer = [ordered]@{ file = 'Lucent-Setup-0.2.0-x64.exe'; size = 256; sha256 = $sha256; signed = $false }
+        updateChannel = [ordered]@{ name = 'stable'; manifestUrl = 'https://updates.example.org/l/release-manifest.json'; keyIds = @(); publisherThumbprints = @() } })))
     $notes = "Notes with `"quotes`", a tab`tand a line`nbreak, caf" + [char]0xE9 + ' \ done.'
-    New-LucentReleaseManifest -Installer $installer -InstallerUrl 'https://updates.example.org/l/Lucent-Setup-0.2.0-x64.exe' `
+    New-LucentReleaseManifest -Installer $installer -PackageManifest $package -AllowUnsignedInstaller `
+        -InstallerUrl 'https://updates.example.org/l/Lucent-Setup-0.2.0-x64.exe' `
         -Channel stable -ReleaseNotes $notes -Published ([datetime]::new(2026, 10, 9, 12, 0, 0, [DateTimeKind]::Utc)) `
         -OutFile (Join-Path $Work 'release-manifest.json') | Out-Null
     Protect-LucentReleaseManifest -Manifest (Join-Path $Work 'release-manifest.json') -Key $key | Out-Null

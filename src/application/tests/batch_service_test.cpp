@@ -975,6 +975,34 @@ TEST_F(BatchFailureTest, TwoWorkersAboveTheAggregateLimitRetryTheStoppedPhotoAlo
     EXPECT_TRUE(ts::leftovers(out_).empty());
 }
 
+// COR-4 (W12 review): the stop is not the photo's failure, so its retry alone does not depend on the
+// transient retry budget its earlier failures may have used up (here, a budget of none at all).
+TEST_F(BatchFailureTest, AStoppedPhotoIsRetriedAloneWhateverItsRetryBudget) {
+    BatchServiceOptions options = ts::fast_batch_options();
+    options.max_workers = 2;
+    options.retry.max_transient_failures = 0;
+    options.memory.total_bytes = std::uint64_t{2} << 30;
+    options.memory.interactive_reserve_bytes = std::uint64_t{1} << 30;  // worker budget: 1 GiB
+    options.test.admit_before_calibration = true;
+    options.test.worker_hooks_by_start = {{"allocate:629145600", "hold-allocation:3000"},
+                                          {"allocate:629145600", "hold-allocation:3000"}};
+    open(options);
+    const std::vector<ItemId> ids = h().import(ts::write_dngs(dir_, L"in", 2));
+    const catalog::BatchId id = h().run(h().request(ids, out_));
+    const catalog::BatchRecord record = h().record(id);
+    EXPECT_EQ(record.counts.complete, 2u);
+    EXPECT_EQ(record.counts.failed, 0u);
+    EXPECT_EQ(h().batches().stats().aggregate_limit_hits, 1u);
+    EXPECT_EQ(h().batches().stats().exclusive_attempts, 1u);
+    std::uint32_t retried = 0;
+    for (const catalog::JobRecord& job : h().jobs(id)) {
+        EXPECT_EQ(job.stage, catalog::JobStage::Complete);
+        retried += job.attempts == 2 && job.transient_failures == 1 ? 1u : 0u;
+    }
+    EXPECT_EQ(retried, 1u);
+    EXPECT_EQ(count_with_extension(out_, L".jpg"), 2u);
+}
+
 // A single worker within the aggregate limit is not stopped by it.
 TEST_F(BatchFailureTest, AWorkerWithinTheAggregateLimitIsNotStopped) {
     BatchServiceOptions options = ts::fast_batch_options();

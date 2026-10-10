@@ -1,14 +1,19 @@
 #include "lucent/application/update_service.hpp"
 
 #include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
 
 #include <algorithm>
 #include <format>
+#include <memory>
+#include <mutex>
 #include <new>
 #include <random>
 #include <span>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -16,6 +21,8 @@
 #include <lucent/core/storage.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/win32_error.hpp>
+
+#include "win32_paths.hpp"
 
 namespace lucent::app {
 
@@ -28,6 +35,8 @@ constexpr std::string_view kWhereDownload = "app.update.download";
 constexpr std::string_view kWhereAuthenticode = "app.update.authenticode";
 constexpr std::string_view kWherePrepare = "app.update.prepare";
 constexpr std::string_view kWhereLaunch = "app.update.launch";
+constexpr std::string_view kWhereFolder = "app.update.folder";
+constexpr std::string_view kWhereVersion = "app.update.version";
 
 constexpr std::wstring_view kTemporaryPrefix = L"~lucent-update-";
 constexpr std::wstring_view kTemporarySuffix = L".partial";
@@ -68,6 +77,85 @@ private:
 Error file_error(std::string_view what, const std::filesystem::path& path, DWORD code) {
     return core::win32_error(code, std::string(kWhereDownload),
                              std::format("{} {}", what, core::path_to_utf8_lossy(path)));
+}
+
+Error folder_error(std::string_view what, const std::filesystem::path& path, DWORD code) {
+    return core::win32_error(code, std::string(kWhereFolder),
+                             std::format("{} {}", what, core::path_to_utf8_lossy(path)));
+}
+
+struct LocalFreeDeleter {
+    void operator()(void* memory) const noexcept { ::LocalFree(memory); }
+};
+template <class T>
+using LocalMemory = std::unique_ptr<std::remove_pointer_t<T>, LocalFreeDeleter>;
+
+// The SID of the calling process's user (TokenUser) or of its token's default owner of new objects
+// (TokenOwner: Administrators for an elevated administrator under some policies), copied.
+Expected<std::vector<std::byte>> token_sid(HANDLE token, TOKEN_INFORMATION_CLASS which) {
+    DWORD size = 0;
+    ::GetTokenInformation(token, which, nullptr, 0, &size);
+    if (size == 0) {
+        return Unexpected(
+            core::win32_error(::GetLastError(), std::string(kWhereFolder), "cannot read the process token"));
+    }
+    std::vector<std::byte> information(size);
+    if (!::GetTokenInformation(token, which, information.data(), size, &size)) {
+        return Unexpected(
+            core::win32_error(::GetLastError(), std::string(kWhereFolder), "cannot read the process token"));
+    }
+    const PSID sid = which == TokenUser ? reinterpret_cast<TOKEN_USER*>(information.data())->User.Sid
+                                        : reinterpret_cast<TOKEN_OWNER*>(information.data())->Owner;
+    const DWORD length = ::GetLengthSid(sid);
+    std::vector<std::byte> copy(length);
+    if (!::CopySid(length, copy.data(), sid)) {
+        return Unexpected(core::win32_error(::GetLastError(), std::string(kWhereFolder), "cannot copy a SID"));
+    }
+    return copy;
+}
+
+struct ProcessIdentity {
+    std::vector<std::byte> user;
+    std::vector<std::byte> default_owner;
+};
+
+Expected<ProcessIdentity> process_identity() {
+    HANDLE raw = nullptr;
+    if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &raw)) {
+        return Unexpected(
+            core::win32_error(::GetLastError(), std::string(kWhereFolder), "cannot open the process token"));
+    }
+    const FileHandle token(raw);  // closes the token handle
+    Expected<std::vector<std::byte>> user = token_sid(raw, TokenUser);
+    if (!user) {
+        return Unexpected(std::move(user.error()));
+    }
+    Expected<std::vector<std::byte>> owner = token_sid(raw, TokenOwner);
+    if (!owner) {
+        return Unexpected(std::move(owner.error()));
+    }
+    return ProcessIdentity{std::move(*user), std::move(*owner)};
+}
+
+// True when `handle` (READ_CONTROL) is owned by this user, its token's default owner,
+// Administrators or SYSTEM: by nobody another standard user could be.
+Expected<bool> owned_by_us(HANDLE handle, const ProcessIdentity& identity, const std::filesystem::path& path) {
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    const DWORD code =
+        ::GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, &owner, nullptr, nullptr, nullptr, &raw);
+    if (code != ERROR_SUCCESS) {
+        return Unexpected(folder_error("cannot read the owner of", path, code));
+    }
+    const LocalMemory<PSECURITY_DESCRIPTOR> descriptor(raw);
+    if (owner == nullptr || !::IsValidSid(owner)) {
+        return false;
+    }
+    std::vector<std::byte> user = identity.user;
+    std::vector<std::byte> default_owner = identity.default_owner;
+    return ::EqualSid(owner, user.data()) != FALSE || ::EqualSid(owner, default_owner.data()) != FALSE ||
+           ::IsWellKnownSid(owner, WinBuiltinAdministratorsSid) != FALSE ||
+           ::IsWellKnownSid(owner, WinLocalSystemSid) != FALSE;
 }
 
 std::wstring installer_file_name(const core::SemanticVersion& version) {
@@ -121,6 +209,123 @@ Expected<FileHandle> open_held(const std::filesystem::path& path) {
         return Unexpected(file_error("cannot open", path, ::GetLastError()));
     }
     return file;
+}
+
+// The download folder, prepared to download, verify and launch installers in (SEC-01, W12): created
+// when missing and opened without following a link, so a folder that is itself a junction or a
+// symbolic link is refused; owned by this user (owned_by_us()), so one another user created
+// beforehand is refused; given a protected DACL (full control for this user, SYSTEM and
+// Administrators only, inherited by everything in it), so no other user can add, replace, rename or
+// delete anything in it; and resolved to its final path (every link above it resolved), the path
+// every later step uses. Errors: PermissionDenied ("app.update.folder") for a link, a folder of
+// another user or one whose permissions cannot be set (a volume without them: FAT, exFAT); the
+// errors of creating and opening it.
+struct DownloadFolder {
+    FileHandle handle;           // held while the download is prepared (no FILE_SHARE_DELETE)
+    std::filesystem::path path;  // its final path
+    ProcessIdentity identity;
+};
+
+Expected<DownloadFolder> prepare_download_folder(const std::filesystem::path& folder) {
+    if (Status created = core::create_directory_tree(folder); !created) {
+        return Unexpected(std::move(created.error()));
+    }
+    DownloadFolder out;
+    out.handle = FileHandle(::CreateFileW(folder.c_str(), READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES,
+                                          FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                          FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (!out.handle) {
+        return Unexpected(folder_error("cannot open the update folder", folder, ::GetLastError()));
+    }
+    BY_HANDLE_FILE_INFORMATION information{};
+    if (!::GetFileInformationByHandle(out.handle.get(), &information)) {
+        return Unexpected(folder_error("cannot inspect the update folder", folder, ::GetLastError()));
+    }
+    if ((information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return fail(ErrorCode::PermissionDenied,
+                    std::format("the update folder {} is a link (a junction or symbolic link), not a folder; "
+                                "installers are downloaded only into a real folder",
+                                core::path_to_utf8_lossy(folder)),
+                    std::string(kWhereFolder));
+    }
+    Expected<ProcessIdentity> identity = process_identity();
+    if (!identity) {
+        return Unexpected(std::move(identity.error()));
+    }
+    Expected<bool> ours = owned_by_us(out.handle.get(), *identity, folder);
+    if (!ours) {
+        return Unexpected(std::move(ours.error()));
+    }
+    if (!*ours) {
+        return fail(ErrorCode::PermissionDenied,
+                    std::format("the update folder {} belongs to another user; installers are downloaded only into "
+                                "a folder of this user",
+                                core::path_to_utf8_lossy(folder)),
+                    std::string(kWhereFolder));
+    }
+    LPWSTR user_text = nullptr;
+    if (!::ConvertSidToStringSidW(identity->user.data(), &user_text)) {
+        return Unexpected(folder_error("cannot name this user for", folder, ::GetLastError()));
+    }
+    const LocalMemory<LPWSTR> user_name(user_text);
+    const std::wstring sddl =
+        std::format(L"D:P(A;OICI;FA;;;{})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", std::wstring_view(user_text));
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &raw, nullptr)) {
+        return Unexpected(folder_error("cannot build the permissions of", folder, ::GetLastError()));
+    }
+    const LocalMemory<PSECURITY_DESCRIPTOR> descriptor(raw);
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    PACL dacl = nullptr;
+    if (!::GetSecurityDescriptorDacl(raw, &present, &dacl, &defaulted) || !present) {
+        return Unexpected(folder_error("cannot build the permissions of", folder, ::GetLastError()));
+    }
+    // Also replaces the inherited entries of what the folder already holds.
+    if (const DWORD code = ::SetSecurityInfo(out.handle.get(), SE_FILE_OBJECT,
+                                             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr,
+                                             nullptr, dacl, nullptr);
+        code != ERROR_SUCCESS) {
+        Error error = folder_error("cannot restrict the permissions of the update folder", folder, code);
+        error.code = ErrorCode::PermissionDenied;
+        return Unexpected(std::move(error));
+    }
+    Expected<std::filesystem::path> resolved = detail::final_path_of(out.handle.get(), folder, kWhereFolder);
+    if (!resolved) {
+        return Unexpected(std::move(resolved.error()));
+    }
+    out.path = std::move(*resolved);
+    out.identity = std::move(*identity);
+    return out;
+}
+
+// Checks that the file held through `file` is the one named `expected` in the prepared folder: its
+// final path is `expected` (no link led elsewhere), it has no other name (one link) and it is ours
+// (owned_by_us()). PermissionDenied ("app.update.folder") otherwise.
+Status check_held_location(HANDLE file, const std::filesystem::path& expected, const ProcessIdentity& identity) {
+    BY_HANDLE_FILE_INFORMATION information{};
+    if (!::GetFileInformationByHandle(file, &information)) {
+        return Unexpected(folder_error("cannot inspect", expected, ::GetLastError()));
+    }
+    Expected<std::filesystem::path> resolved = detail::final_path_of(file, expected, kWhereFolder);
+    if (!resolved) {
+        return Unexpected(std::move(resolved.error()));
+    }
+    Expected<bool> ours = owned_by_us(file, identity, expected);
+    if (!ours) {
+        return Unexpected(std::move(ours.error()));
+    }
+    if (!detail::same_path_text(*resolved, expected) || information.nNumberOfLinks != 1 ||
+        (information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0 || !*ours) {
+        return fail(ErrorCode::PermissionDenied,
+                    std::format("the downloaded installer is not this user's own file at {} (found at {}, {} "
+                                "name(s){})",
+                                core::path_to_utf8_lossy(expected), core::path_to_utf8_lossy(*resolved),
+                                information.nNumberOfLinks, *ours ? "" : ", owned by another user"),
+                    std::string(kWhereFolder));
+    }
+    return ok();
 }
 
 // Deletes a download that failed its checks (after its handle was closed).
@@ -195,6 +400,10 @@ void DownloadedInstaller::release() noexcept {
 struct UpdateService::Impl {
     UpdateServiceOptions options;
     WindowsVersion windows;
+    // Installers whose Setup was started: held until the service is destroyed (Lucent exits right
+    // after), so the file Setup's loader and Setup read again by name stays the verified one.
+    std::mutex launched_mutex;
+    std::vector<DownloadedInstaller> launched;
 
     // Checks the held file against the release and, when the channel names publishers, its signature.
     // `file` must have been opened with open_held().
@@ -237,11 +446,11 @@ struct UpdateService::Impl {
         return ok();
     }
 
-    // Removes earlier downloads from the folder: temporary files, and installers of other releases
+    // Removes earlier downloads from `folder`: temporary files, and installers of other releases
     // (`keep` is left for the caller to check). Failures are logged, not returned.
-    void remove_earlier_downloads(const std::filesystem::path& keep) const {
+    void remove_earlier_downloads(const std::filesystem::path& folder, const std::filesystem::path& keep) const {
         std::error_code error;
-        for (const auto& entry : std::filesystem::directory_iterator(options.download_directory, error)) {
+        for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
             const std::wstring name = entry.path().filename().native();
             const bool temporary = name.starts_with(kTemporaryPrefix) && name.ends_with(kTemporarySuffix);
             const bool installer = name.starts_with(kInstallerPrefix) && name.ends_with(L".exe");
@@ -259,6 +468,13 @@ struct UpdateService::Impl {
 
 Expected<std::unique_ptr<UpdateService>> UpdateService::create(UpdateServiceOptions options) {
     try {
+        if (options.channel.configured() && !options.current_version) {
+            // Without its own version a build would take every release of its channel, older ones
+            // too, for an update (SEC-05, W12).
+            return fail(ErrorCode::InvalidArgument,
+                        "the running version is unknown, so the channel's releases cannot be compared with it",
+                        std::string(kWhereVersion));
+        }
         auto impl = std::make_unique<Impl>();
         impl->windows = options.windows ? *options.windows : running_windows_version();
         if (!options.launcher) {
@@ -289,7 +505,7 @@ const UpdateChannel& UpdateService::channel() const noexcept {
     return impl_->options.channel;
 }
 
-const core::SemanticVersion& UpdateService::current_version() const noexcept {
+const std::optional<core::SemanticVersion>& UpdateService::current_version() const noexcept {
     return impl_->options.current_version;
 }
 
@@ -324,9 +540,9 @@ Expected<UpdateCheck> UpdateService::check(core::CancellationToken cancel) const
         return Unexpected(std::move(error));
     }
     UpdateCheck check;
-    check.current = options.current_version;
+    check.current = *options.current_version;  // create() requires it of a configured channel
     check.windows = impl_->windows;
-    if (verified->manifest.version <= options.current_version) {
+    if (verified->manifest.version <= check.current) {
         check.availability = UpdateAvailability::UpToDate;
     } else if (impl_->windows < verified->manifest.minimum_os) {
         check.availability = UpdateAvailability::NeedsNewerWindows;
@@ -336,7 +552,7 @@ Expected<UpdateCheck> UpdateService::check(core::CancellationToken cancel) const
     check.release = std::move(*verified);
     core::log_info(kLog, "channel '{}' offers Lucent {} (published {}, signed by key {}); this is {}: {}",
                    options.channel.name, check.release.manifest.version.to_string(), check.release.manifest.published,
-                   check.release.key_id.substr(0, 16), options.current_version.to_string(), to_string(check.availability));
+                   check.release.key_id.substr(0, 16), check.current.to_string(), to_string(check.availability));
     return check;
 }
 
@@ -355,11 +571,13 @@ Expected<DownloadedInstaller> UpdateService::download(
     }
     try {
         const ReleaseManifest& release = check.release.manifest;
-        if (Status created = core::create_directory_tree(options.download_directory); !created) {
-            return Unexpected(std::move(created.error()));
+        Expected<DownloadFolder> folder = prepare_download_folder(options.download_directory);
+        if (!folder) {
+            core::log_warn(kLog, "the update folder cannot be used: {}", folder.error().describe());
+            return Unexpected(std::move(folder.error()));
         }
-        const std::filesystem::path final_path = options.download_directory / installer_file_name(release.version);
-        impl_->remove_earlier_downloads(final_path);
+        const std::filesystem::path final_path = folder->path / installer_file_name(release.version);
+        impl_->remove_earlier_downloads(folder->path, final_path);
 
         DownloadedInstaller installer;
         installer.version_ = release.version;
@@ -371,7 +589,10 @@ Expected<DownloadedInstaller> UpdateService::download(
         if (std::filesystem::exists(final_path, exists_error)) {
             Expected<FileHandle> held = open_held(final_path);
             if (held) {
-                Status verified = impl_->verify_held(held->get(), final_path, release, cancel, installer.authenticode_);
+                Status verified = check_held_location(held->get(), final_path, folder->identity);
+                if (verified) {
+                    verified = impl_->verify_held(held->get(), final_path, release, cancel, installer.authenticode_);
+                }
                 if (verified) {
                     core::log_info(kLog, "reusing the verified download {}", core::path_to_utf8_lossy(final_path));
                     if (progress) {
@@ -394,7 +615,7 @@ Expected<DownloadedInstaller> UpdateService::download(
         }
 
         const std::filesystem::path temporary =
-            options.download_directory / (std::wstring(kTemporaryPrefix) + random_suffix() + std::wstring(kTemporarySuffix));
+            folder->path / (std::wstring(kTemporaryPrefix) + random_suffix() + std::wstring(kTemporarySuffix));
         {
             FileHandle out(::CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
                                          FILE_ATTRIBUTE_NORMAL, nullptr));
@@ -440,7 +661,8 @@ Expected<DownloadedInstaller> UpdateService::download(
         }
 
         // The complete download gets its final name, then is verified through a handle that excludes
-        // writers, renamers and deleters: what is checked is what is launched.
+        // writers, renamers and deleters, at the final path of a folder only this user can change: the
+        // file that is checked is the one install() launches.
         if (!::MoveFileExW(temporary.c_str(), final_path.c_str(), MOVEFILE_WRITE_THROUGH)) {
             const DWORD code = ::GetLastError();
             std::error_code ignored;
@@ -452,8 +674,11 @@ Expected<DownloadedInstaller> UpdateService::download(
             remove_refused(final_path);
             return Unexpected(std::move(held.error()));
         }
-        if (Status verified = impl_->verify_held(held->get(), final_path, release, cancel, installer.authenticode_);
-            !verified) {
+        Status verified = check_held_location(held->get(), final_path, folder->identity);
+        if (verified) {
+            verified = impl_->verify_held(held->get(), final_path, release, cancel, installer.authenticode_);
+        }
+        if (!verified) {
             held->reset();
             remove_refused(final_path);
             core::log_warn(kLog, "the downloaded installer was refused: {}", verified.error().describe());
@@ -489,6 +714,18 @@ Expected<InstallerLaunch> UpdateService::install(DownloadedInstaller installer) 
         core::log_info(kLog, "installation postponed: {}", blocker->describe());
         return Unexpected(std::move(*blocker));
     }
+    // The held file is still at the path that will be started: a final path (no link in it) whose
+    // folders cannot be renamed while the file is held open.
+    Expected<std::filesystem::path> resolved = detail::final_path_of(installer.handle_, installer.path_, kWhereLaunch);
+    if (!resolved) {
+        return Unexpected(std::move(resolved.error()));
+    }
+    if (!detail::same_path_text(*resolved, installer.path_)) {
+        return fail(ErrorCode::PermissionDenied,
+                    std::format("the verified installer is at {}, not at {} where it would be started",
+                                core::path_to_utf8_lossy(*resolved), core::path_to_utf8_lossy(installer.path_)),
+                    std::string(kWhereLaunch));
+    }
     // Once more, through the held handle, right before it is used.
     Expected<std::pair<std::uint64_t, core::Digest256>> hashed =
         hash_handle(static_cast<HANDLE>(installer.handle_), core::CancellationToken{}, installer.path_);
@@ -519,14 +756,18 @@ Expected<InstallerLaunch> UpdateService::install(DownloadedInstaller installer) 
         }
     }
     Expected<std::uint32_t> started = options.launcher(installer.path_, command_line);
-    installer.release();
     if (!started) {
+        installer.release();
         core::log_error(kLog, "Setup could not be started: {}", started.error().describe());
         return Unexpected(std::move(started.error()));
     }
     launch.process_id = *started;
     core::log_info(kLog, "started Setup for Lucent {} (process {}): {}", installer.version_.to_string(),
                    launch.process_id, core::path_to_utf8_lossy(installer.path_));
+    {
+        std::lock_guard lock(impl_->launched_mutex);
+        impl_->launched.push_back(std::move(installer));
+    }
     return launch;
 }
 

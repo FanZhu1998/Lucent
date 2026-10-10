@@ -104,6 +104,29 @@ Expected<UpdateChannel> make_update_channel(std::string_view name, std::string_v
     return channel;
 }
 
+std::string describe_update_channel(const UpdateChannel& channel) {
+    if (!channel.configured()) {
+        return "update channel: none (this build never checks for updates)";
+    }
+    std::string keys;
+    for (const core::EcdsaP256PublicKey& key : channel.keys) {
+        keys += (keys.empty() ? "" : ",") + core::key_id(key);
+    }
+    std::string publishers;
+    for (const std::string& thumbprint : channel.publisher_thumbprints) {
+        publishers += (publishers.empty() ? "" : ",") + thumbprint;
+    }
+    return std::format("update channel '{}' ({}): keys {}; publishers {}", channel.name, channel.manifest_url, keys,
+                       publishers.empty() ? "none" : publishers);
+}
+
+std::string describe_update_channel(const BuildUpdateChannel& build) {
+    if (build.problem) {
+        return "update channel refused: " + build.problem->describe();
+    }
+    return describe_update_channel(build.channel);
+}
+
 const BuildUpdateChannel& build_update_channel() {
     static const BuildUpdateChannel channel = [] {
         const detail::UpdateChannelText& text = detail::configured_update_channel();

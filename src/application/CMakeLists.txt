@@ -120,7 +120,8 @@ lucent_add_library(application
         Lucent::workers
     PRIVATE_DEPS
         nlohmann_json::nlohmann_json
-        winhttp  # the update channel's downloads
+        winhttp   # the update channel's downloads
+        advapi32  # the update folder's owner and permissions (SetSecurityInfo)
 )
 
 # ---------------------------------------------------------------------------------------------
@@ -174,7 +175,21 @@ if(LUCENT_UPDATE_CHANNEL OR LUCENT_UPDATE_MANIFEST_URL OR LUCENT_UPDATE_PUBLIC_K
                                 "SHA-256 thumbprint")
         endif()
     endforeach()
+    # Shown in full at every configure (W12 review SEC-02): whoever holds one of these keys, or (with
+    # no publisher thumbprint) signs any installer, controls the updates of everyone this build reaches.
     message(STATUS "Update channel '${LUCENT_UPDATE_CHANNEL}': ${LUCENT_UPDATE_MANIFEST_URL}")
+    foreach(_lucent_key IN LISTS LUCENT_UPDATE_PUBLIC_KEYS)
+        string(STRIP "${_lucent_key}" _lucent_key)
+        if(_lucent_key)
+            message(STATUS "  pinned release-manifest key: ${_lucent_key}")
+        endif()
+    endforeach()
+    if(LUCENT_UPDATE_PUBLISHER_THUMBPRINTS)
+        message(STATUS "  installer publishers (Authenticode): ${LUCENT_UPDATE_PUBLISHER_THUMBPRINTS}")
+    else()
+        message(STATUS "  installer publishers: none named, so the installer's Authenticode signature is not "
+                       "checked (a release channel names them; installer/update-channels.json)")
+    endif()
 else()
     message(STATUS "Update channel: not configured (Lucent never opens a network connection)")
 endif()

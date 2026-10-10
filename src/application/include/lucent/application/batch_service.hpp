@@ -64,7 +64,9 @@
 //   * Failures: deterministic ones (unsupported or corrupt input, a refused recipe, a changed or
 //     missing source) fail the job at once with an actionable reason; transient ones (a worker crash
 //     or hang, a timeout, I/O, memory pressure) are retried with exponential back-off up to
-//     BatchRetryPolicy::max_transient_failures, then fail. Destination problems (disk full, the
+//     BatchRetryPolicy::max_transient_failures, then fail; a job the workers' aggregate memory limit
+//     stopped beside another worker is always retried once, alone, whatever that budget (ADR 0012,
+//     decisions 19 and 22). Destination problems (disk full, the
 //     folder or its drive gone, no permission) give the job back without counting a failure and
 //     pause the batch with a BatchAttention, so the remaining jobs wait instead of all failing;
 //     resume() after fixing it continues. The output folder itself is never created after

@@ -59,4 +59,13 @@ struct BuildUpdateChannel {
 // The channel compiled into this build.
 [[nodiscard]] const BuildUpdateChannel& build_update_channel();
 
+// One line naming a channel, for Lucent's log and the packaging smoke run, which reads it from
+// Lucent.exe's developer automation (W12 review SEC-02; installer/scripts/LucentPackaging.psm1,
+// ConvertFrom-UpdateChannelLogLine): "update channel '<name>' (<manifest URL>): keys <key id>,...;
+// publishers <thumbprint>,..." ("publishers none" without thumbprints; key ids as core::key_id()),
+// or "update channel: none (this build never checks for updates)". For a BuildUpdateChannel whose
+// configuration was refused: "update channel refused: <reason>".
+[[nodiscard]] std::string describe_update_channel(const UpdateChannel& channel);
+[[nodiscard]] std::string describe_update_channel(const BuildUpdateChannel& build);
+
 }  // namespace lucent::app

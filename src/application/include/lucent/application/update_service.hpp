@@ -18,28 +18,38 @@
 //            compares: a release not newer than this build is UpToDate (an older one is never
 //            offered: no downgrades); a newer one is Available, or NeedsNewerWindows when this
 //            Windows is older than its minimum_os.
-// download(): fetches the installer of an Available release into the download folder (the per-user
-//            cache, <cache>\updates) under a temporary name ("~lucent-update-<random>.partial", opened
-//            exclusively), streaming at most the manifest's size, renames the complete file to
-//            "Lucent-Setup-<version>-x64.exe" and opens it for reading with writers, renamers and
-//            deleters excluded (FILE_SHARE_READ only; the handle itself can only read, so Setup and
-//            the loader open the file normally), and through that handle checks
+// download(): prepares the download folder (Lucent.exe: the user's own cache,
+//            %LOCALAPPDATA%\Lucent\cache\updates, wherever the library is; SEC-01): created when
+//            missing; refused when it is a link (a junction or symbolic link) or belongs to another
+//            user ("app.update.folder", PermissionDenied); given a protected DACL that lets only this
+//            user, SYSTEM and Administrators change anything in it; and resolved to its final path,
+//            which every later step uses (no link left in it). It then fetches the installer of an
+//            Available release into that folder under a temporary name
+//            ("~lucent-update-<random>.partial", opened exclusively), streaming at most the
+//            manifest's size, renames the complete file to "Lucent-Setup-<version>-x64.exe" and
+//            opens it for reading with writers, renamers and deleters excluded (FILE_SHARE_READ
+//            only; the handle itself can only read, so Setup and the loader open the file normally),
+//            and through that handle checks
+//              * that it is this user's own file at that final path, with no other name
+//                ("app.update.folder", PermissionDenied);
 //              * the size and SHA-256 the signed manifest names ("app.update.download", Corrupt);
 //              * when the channel names publisher thumbprints, an Authenticode signature that
 //                verifies and chains to a trusted root (core::check_authenticode: no revocation
 //                check, no network) by one of those certificates ("app.update.authenticode",
 //                PermissionDenied);
-//            The returned DownloadedInstaller keeps that handle: nobody can change, replace or delete
-//            the file until it is launched or dropped. A failed check deletes the file. Earlier
-//            downloads in the folder
-//            are deleted first, except a complete one of the same release, which is checked the
-//            same way and reused instead of being fetched again.
+//            The returned DownloadedInstaller keeps that handle: nobody can change, replace, rename or
+//            delete the file, or rename a folder above it, until it is dropped. A failed check deletes
+//            the file. Earlier downloads in the folder are deleted first, except a complete one of the
+//            same release, which is checked the same way and reused instead of being fetched again.
 // install(): only between jobs: refuses while install_blocker() names a reason (a batch or Auto
-//            running: "app.update.busy"); checks the held file's size and SHA-256 once more; runs
+//            running: "app.update.busy"); checks that the held file is still at its path
+//            ("app.update.launch", PermissionDenied) and its size and SHA-256 once more; runs
 //            before_install (Lucent.exe: a verified pre-update backup of the catalog, "retain
 //            migration recovery information"), whose error stops it ("app.update.prepare"); then
 //            starts Setup ("<installer>" /LOG="<log folder>\setup-<version>.log": the graphical
-//            wizard, which upgrades the installation in place, ADR 0009) and returns. The caller
+//            wizard, which upgrades the installation in place, ADR 0009) from that path and returns,
+//            keeping the handle until the service is destroyed (Setup's loader and Setup read the
+//            file again by name while Lucent exits). The caller
 //            then exits cleanly (Lucent.exe quits; Setup's Restart Manager closes a Lucent that is
 //            still running). The installer itself migrates nothing: the new Lucent migrates the
 //            catalog when it first opens it, after its own pre-migration backup (ADR 0008).
@@ -103,6 +113,7 @@ public:
     ~DownloadedInstaller();
 
     [[nodiscard]] bool is_open() const noexcept { return handle_ != nullptr; }
+    // The file's final path (every link of the download folder resolved): what install() starts.
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
     [[nodiscard]] const core::SemanticVersion& version() const noexcept { return version_; }
     [[nodiscard]] std::uint64_t size() const noexcept { return size_; }
@@ -133,10 +144,12 @@ using InstallerLauncher =
     std::function<Expected<std::uint32_t>(const std::filesystem::path& installer, const std::wstring& command_line)>;
 
 struct UpdateServiceOptions {
-    UpdateChannel channel;                  // not configured: nothing is ever fetched
-    core::SemanticVersion current_version;  // this build (core::build_info().version)
+    UpdateChannel channel;  // not configured: nothing is ever fetched
+    // This build (core::build_info().version); required with a configured channel (SEC-05).
+    std::optional<core::SemanticVersion> current_version;
     std::optional<WindowsVersion> windows;  // this machine; default running_windows_version()
-    // Where installers are downloaded (created when missing; Lucent.exe: <cache>\updates).
+    // Where installers are downloaded (created when missing and protected, see download();
+    // Lucent.exe: %LOCALAPPDATA%\Lucent\cache\updates, also with --data-root).
     std::filesystem::path download_directory;
     // Where Setup writes its log (/LOG); empty: no log (Lucent.exe: <cache>\logs).
     std::filesystem::path log_directory;
@@ -152,7 +165,9 @@ struct UpdateServiceOptions {
 
 class UpdateService {
 public:
-    // Errors: the HTTP client's creation (only for a configured channel without options.http).
+    // Errors: InvalidArgument ("app.update.version") for a configured channel without
+    // current_version; the HTTP client's creation (only for a configured channel without
+    // options.http).
     [[nodiscard]] static Expected<std::unique_ptr<UpdateService>> create(UpdateServiceOptions options);
     ~UpdateService();
     UpdateService(const UpdateService&) = delete;
@@ -160,7 +175,7 @@ public:
 
     [[nodiscard]] bool configured() const noexcept;
     [[nodiscard]] const UpdateChannel& channel() const noexcept;
-    [[nodiscard]] const core::SemanticVersion& current_version() const noexcept;
+    [[nodiscard]] const std::optional<core::SemanticVersion>& current_version() const noexcept;
 
     [[nodiscard]] Expected<UpdateCheck> check(core::CancellationToken cancel) const;
 
@@ -173,7 +188,8 @@ public:
     // The reason an installation must wait now (UpdateServiceOptions::install_blocker), if any.
     [[nodiscard]] std::optional<Error> install_blocker() const;
 
-    // See the file comment. The installer's handle is released whatever the outcome.
+    // See the file comment. On success the service keeps the installer's handle until it is
+    // destroyed; otherwise the handle is released.
     [[nodiscard]] Expected<InstallerLaunch> install(DownloadedInstaller installer) const;
 
     struct Impl;  // implementation detail

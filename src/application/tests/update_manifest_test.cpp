@@ -251,6 +251,30 @@ TEST(UpdateChannel, PartialOrMalformedConfigurationsAreRefused) {
     }
 }
 
+TEST(UpdateChannel, TheDescriptionNamesWhatPackagingChecks) {
+    // The line the packaging smoke run reads (installer\scripts\LucentPackaging.psm1,
+    // ConvertFrom-UpdateChannelLogLine; W12 review SEC-02).
+    EXPECT_EQ(describe_update_channel(UpdateChannel{}), "update channel: none (this build never checks for updates)");
+    Expected<core::EcdsaP256KeyPair> key = core::EcdsaP256KeyPair::generate();
+    ASSERT_TRUE(key);
+    const std::string url = "https://updates.example.org/lucent/stable/release-manifest.json";
+    Expected<UpdateChannel> unsigned_channel = make_update_channel("stable", url, core::to_hex(key->public_key()), "");
+    ASSERT_TRUE(unsigned_channel);
+    EXPECT_EQ(describe_update_channel(*unsigned_channel),
+              "update channel 'stable' (" + url + "): keys " + core::key_id(key->public_key()) + "; publishers none");
+    Expected<UpdateChannel> pinned = make_update_channel("stable", url, core::to_hex(key->public_key()),
+                                                         "ABCDEF0123456789ABCDEF0123456789ABCDEF01;" + std::string(64, 'b'));
+    ASSERT_TRUE(pinned);
+    EXPECT_EQ(describe_update_channel(*pinned), "update channel 'stable' (" + url + "): keys " +
+                                                    core::key_id(key->public_key()) +
+                                                    "; publishers abcdef0123456789abcdef0123456789abcdef01," +
+                                                    std::string(64, 'b'));
+    BuildUpdateChannel refused;
+    refused.problem = Error{ErrorCode::InvalidArgument, "a key is not a P-256 point", "app.update.channel", 0};
+    EXPECT_EQ(describe_update_channel(refused).rfind("update channel refused: ", 0), 0u);
+    EXPECT_EQ(describe_update_channel(build_update_channel()).rfind("update channel", 0), 0u);
+}
+
 TEST(UpdateChannel, ThisBuildHasAValidConfiguration) {
     // The default build has none; a configured build must have passed both CMake's and these checks.
     const BuildUpdateChannel& build = build_update_channel();

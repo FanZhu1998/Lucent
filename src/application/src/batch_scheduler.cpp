@@ -1110,8 +1110,17 @@ void Attempt::fail_job(catalog::FailureClass failure_class, Error error, bool re
     failure.error = error;
     failure.skip = skip;
     const BatchRetryPolicy& retry = context_.policy.retry;
+    // A job the workers' aggregate limit stopped beside another worker (worker_failed() marked it
+    // exclusive) is always retried once, alone, even when earlier transient failures used up its
+    // retry budget: the stop was not its own failure, and alone it may well fit (COR-4, W12; ADR
+    // 0012, decision 19). The mark is consumed by that attempt, so a second stop is budgeted again.
+    bool exclusive_retry = false;
+    if (failure_class == catalog::FailureClass::Transient && retry_allowed) {
+        std::lock_guard lock(s_.mutex);
+        exclusive_retry = s_.exclusive_jobs.contains(job_.id.value);
+    }
     if (failure_class == catalog::FailureClass::Transient && retry_allowed &&
-        job_.transient_failures < retry.max_transient_failures) {
+        (job_.transient_failures < retry.max_transient_failures || exclusive_retry)) {
         const std::uint32_t shift = std::min<std::uint32_t>(job_.transient_failures, 20);
         const auto delay = std::min<std::chrono::milliseconds>(retry.max_backoff, retry.initial_backoff * (1LL << shift));
         failure.retry_at = s_.now() + std::chrono::duration_cast<catalog::Timestamp::duration>(delay);
