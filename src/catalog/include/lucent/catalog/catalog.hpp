@@ -129,9 +129,10 @@ enum class BackupKind : std::uint8_t {
     Manual = 1,        // Catalog::create_backup()
     PreMigration = 2,  // taken by open() before migrating an older catalog
     PreRestore = 3,    // taken by restore() before replacing the catalog
+    PreUpdate = 4,     // create_backup(PreUpdate): taken before Lucent hands over to an installer (W12)
 };
 
-// "manual", "pre-migration", "pre-restore" (also the token in backup file names).
+// "manual", "pre-migration", "pre-restore", "pre-update" (also the token in backup file names).
 [[nodiscard]] std::string_view to_string(BackupKind kind) noexcept;
 
 struct OpenOptions {
@@ -625,6 +626,11 @@ public:
     // "<catalog file name>.<UTC yyyymmddThhmmssfffZ>.v<schema>.manual.bak", then deletes the oldest
     // manual backups beyond backups_to_keep.
     [[nodiscard]] Expected<BackupInfo> create_backup() const;
+
+    // The same for `kind` Manual or PreUpdate (".pre-update.bak": the copy an update keeps of the
+    // catalog as the outgoing version left it, ADR 0022), each kind pruned on its own.
+    // InvalidArgument for the kinds open() and restore() take themselves.
+    [[nodiscard]] Expected<BackupInfo> create_backup(BackupKind kind) const;
 
     // Backups of this catalog in backup_directory(), newest first (files whose names follow the
     // pattern above; anything else in the folder is ignored).

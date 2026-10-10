@@ -17,9 +17,16 @@
 # qualification/ holds the camera qualification tests (W10, ADR 0016; label "qualification").
 #
 # bench/ holds the tests of the performance harness in tools/bench (W12, ADR 0021; label "bench").
+#
+# installer/ holds the self-tests of the update channel's release tooling (W12, ADR 0022; label
+# "installer").
 
 add_subdirectory(bench)
 add_subdirectory(qualification)
+# catalog_fixtures/ holds the generator of the committed catalog fixtures of every schema version
+# (W12, ADR 0022), a tool the fixtures' tests do not need.
+add_subdirectory(catalog_fixtures)
+add_subdirectory(installer)
 
 if(NOT TARGET lucent_probe_report)
     message(STATUS "lucent_integration_tests skipped: it needs lucent-probe's report library (LUCENT_BUILD_TOOLS=ON)")

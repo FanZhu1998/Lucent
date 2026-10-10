@@ -1,0 +1,97 @@
+{
+  "fixtures": [
+    {
+      "file": "v1.catalog",
+      "introduced_by_commit": "b2951f7",
+      "min_reader_version": 1,
+      "rows": {
+        "imports": 4,
+        "items": 10,
+        "sources": 9
+      },
+      "schema_version": 1,
+      "sha256": "239895c663eb6d336f62cf0ac24d6933ebbd21bdd3d324a60c094d2c1945a5f6",
+      "size": 57344,
+      "written_by": "W4 (catalog and import)"
+    },
+    {
+      "file": "v2.catalog",
+      "introduced_by_commit": "0491d19",
+      "min_reader_version": 2,
+      "rows": {
+        "imports": 4,
+        "items": 10,
+        "recipe_revisions": 8,
+        "sources": 9
+      },
+      "schema_version": 2,
+      "sha256": "d050b0fb0d2a4aa816a9f2a0a4b0751ea1fd6fcd561ef159bafb27d0ee244add",
+      "size": 81920,
+      "written_by": "W6 (recipes and editor)"
+    },
+    {
+      "file": "v3.catalog",
+      "introduced_by_commit": "6711a6a",
+      "min_reader_version": 2,
+      "rows": {
+        "batches": 4,
+        "imports": 4,
+        "items": 10,
+        "job_events": 26,
+        "jobs": 9,
+        "publication_journal": 17,
+        "receipts": 3,
+        "recipe_revisions": 8,
+        "sources": 9
+      },
+      "schema_version": 3,
+      "sha256": "6ae1306fd43b7477d9e0872058045f35f548cfd1b3e10683b3f21b396923f653",
+      "size": 176128,
+      "written_by": "W7 (durable batch)"
+    },
+    {
+      "file": "v4.catalog",
+      "introduced_by_commit": "93f72ca",
+      "min_reader_version": 2,
+      "rows": {
+        "batches": 5,
+        "imports": 4,
+        "items": 10,
+        "job_events": 33,
+        "jobs": 10,
+        "publication_journal": 22,
+        "receipts": 4,
+        "recipe_revisions": 8,
+        "sources": 9
+      },
+      "schema_version": 4,
+      "sha256": "e18a03571cf82b8d73e8fb48983351cb8001946b275616027f71d8547eba175e",
+      "size": 188416,
+      "written_by": "W7 closing review"
+    },
+    {
+      "file": "v5.catalog",
+      "introduced_by_commit": "7df00b8",
+      "min_reader_version": 2,
+      "rows": {
+        "auto_analyses": 3,
+        "batches": 7,
+        "imports": 4,
+        "items": 10,
+        "job_events": 41,
+        "jobs": 12,
+        "publication_journal": 27,
+        "receipts": 5,
+        "recipe_revisions": 13,
+        "sources": 9
+      },
+      "schema_version": 5,
+      "sha256": "909774425c4857aa0058af6b6b022a8049cbf9773529aaf57148dfd0abe29e17",
+      "size": 286720,
+      "written_by": "W8 to W12 (automatic settings to release hardening)"
+    }
+  ],
+  "generator": "tests/catalog_fixtures/generate_catalog_fixtures.cpp",
+  "schema": "lucent.catalog-fixtures",
+  "version": 1
+}
