@@ -166,7 +166,9 @@ function Read-LucentPackageInfo {
         throw "$path is missing: configure the build with the release preset first (tools\build.ps1 -Preset release)."
     }
     $info = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($info.schema -ne 5) { throw "$path has schema $($info.schema); this script understands schema 5. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    if ($info.schema -ne 6) { throw "$path has schema $($info.schema); this script understands schema 6. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    # The update channel compiled into Lucent.exe (schema 6, W12 review SEC-02; Get-LucentUpdateChannelRecord).
+    if ($info.PSObject.Properties.Name -notcontains 'updateChannel' -or $null -eq $info.updateChannel) { throw "$path has no updateChannel; reconfigure the build tree." }
     # The build machine's folders that no shipped file may name (schema 5, W12; Get-BuilderPathRules).
     foreach ($field in 'userProfile', 'vcpkgRoot', 'vcpkgBuildtreesDir', 'vcpkgPackagesDir', 'vcpkgDownloadsDir') {
         if ($info.PSObject.Properties.Name -notcontains $field) { throw "$path has no $field; reconfigure the build tree." }
@@ -801,6 +803,9 @@ function Invoke-SmokeRun {
     if ($timedOut) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue; $process.WaitForExit() }
     $stderr = if (Test-Path -LiteralPath $stderrPath) { @(Get-Content -LiteralPath $stderrPath) } else { @() }
     $problems = @($stderr | Where-Object { $_ -match 'module ".*" is not installed|Cannot load library|Could not (find|load) the Qt platform plugin|failed to load|qrc:.*(Error|error)|QQmlApplicationEngine failed|Unsupported image format|is not a type|ReferenceError|TypeError|camera support database unavailable' })
+    # W12 review SEC-02: the update channel compiled into the staged Lucent.exe, which its developer
+    # automation reports at start-up ("lucent: update channel ..."; app::describe_update_channel()).
+    $channel = ConvertFrom-UpdateChannelLogLine -Lines $stderr
     # W10 (ADR 0018): the installed camera support database must be found and verified in the folder.
     $supportLines = @($stderr | Where-Object { $_ -match 'camera support database \S+ \(qualified' })
     $changed = @(Compare-Object -ReferenceObject $before -DifferenceObject (Get-FolderSnapshot -Root $StageDir) | ForEach-Object { $_.InputObject })
@@ -814,8 +819,172 @@ function Invoke-SmokeRun {
         $errors.Add("$Executable used a camera support database outside the folder: $($supportLines[0])")
     }
     foreach ($line in $changed) { $errors.Add("The run changed the installation folder: $line") }
+    if (-not $timedOut -and -not $channel.Found) { $errors.Add("$Executable did not report its update channel (see $stderrPath)") }
     return [pscustomobject]@{ Errors = $errors; ExitCode = $(if ($timedOut) { $null } else { $process.ExitCode }); Screenshot = $screenshot; Log = $stderrPath
-                              CameraSupport = $(if ($supportLines.Count -gt 0) { $supportLines[0] } else { $null }) }
+                              CameraSupport = $(if ($supportLines.Count -gt 0) { $supportLines[0] } else { $null })
+                              UpdateChannelReported = $channel.Found; UpdateChannel = $channel.Channel }
+}
+
+# --- The update channel (W12 review SEC-02; ADR 0022) ---------------------------------------------
+#
+# A channel record: [pscustomobject]@{ name; manifestUrl; keyIds; publisherThumbprints } (key ids:
+# SHA-256 of each pinned public key's 65-byte point, as Lucent logs them; ids and thumbprints in
+# lowercase, sorted), or $null for a build that checks no channel.
+
+function Get-UpdateKeyId {
+    <#
+    .SYNOPSIS
+        The key id of an ECDSA P-256 public key (130 hex digits, "04..."): SHA-256 of its 65 bytes.
+    #>
+    param([Parameter(Mandatory)][string]$PublicKey)
+    $hex = $PublicKey.Trim().ToLowerInvariant()
+    if ($hex -notmatch '^04[0-9a-f]{128}$') { throw "'$PublicKey' is not an uncompressed P-256 public key (130 hex digits starting with 04)." }
+    $point = New-Object byte[] 65
+    for ($i = 0; $i -lt 65; $i++) { $point[$i] = [Convert]::ToByte($hex.Substring(2 * $i, 2), 16) }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return -join ($sha.ComputeHash($point) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
+}
+
+function New-UpdateChannelRecord {
+    param([string]$Name, [string]$ManifestUrl, [string[]]$KeyIds, [string[]]$PublisherThumbprints)
+    return [pscustomobject]@{
+        name = $Name; manifestUrl = $ManifestUrl
+        keyIds = @(@($KeyIds | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() }) | Sort-Object -Unique)
+        publisherThumbprints = @(@($PublisherThumbprints | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() }) | Sort-Object -Unique) }
+}
+
+function Get-LucentUpdateChannelRecord {
+    <#
+    .SYNOPSIS
+        The update channel a build tree compiled into Lucent.exe (Read-LucentPackageInfo's
+        updateChannel, from the LUCENT_UPDATE_* cache variables), as a channel record or $null.
+    #>
+    param([Parameter(Mandatory)]$Info)
+    $channel = $Info.updateChannel
+    if (-not $channel.manifestUrl) { return $null }
+    return New-UpdateChannelRecord -Name $channel.name -ManifestUrl $channel.manifestUrl `
+        -KeyIds @(@($channel.publicKeys) | Where-Object { $_ } | ForEach-Object { Get-UpdateKeyId $_ }) `
+        -PublisherThumbprints @($channel.publisherThumbprints)
+}
+
+function ConvertFrom-UpdateChannelLogLine {
+    <#
+    .SYNOPSIS
+        The update channel Lucent.exe reported at start-up (its developer automation's line on stderr,
+        app::describe_update_channel() in src\application): "update channel '<name>' (<URL>): keys
+        <id>,<id>; publishers <thumbprint>,... | none", or "update channel: none". Found = $false
+        when no such line was written, also for "update channel refused: <reason>" (a compiled
+        configuration Lucent refuses).
+    #>
+    param([string[]]$Lines)
+    foreach ($line in @($Lines)) {
+        if ($line -match "update channel '([a-z0-9-]+)' \((\S+)\): keys ([0-9a-f,]*); publishers ([0-9a-f,]+|none)") {
+            $keys = @($Matches[3].Split(',') | Where-Object { $_ })
+            $publishers = @()
+            if ($Matches[4] -ne 'none') { $publishers = @($Matches[4].Split(',') | Where-Object { $_ }) }
+            return [pscustomobject]@{ Found = $true; Channel = (New-UpdateChannelRecord -Name $Matches[1] -ManifestUrl $Matches[2] -KeyIds $keys -PublisherThumbprints $publishers) }
+        }
+        if ($line -match 'update channel: none') { return [pscustomobject]@{ Found = $true; Channel = $null } }
+    }
+    return [pscustomobject]@{ Found = $false; Channel = $null }
+}
+
+function Format-UpdateChannel {
+    param($Channel)
+    if ($null -eq $Channel) { return 'none (this build never checks for updates)' }
+    $publishers = if (@($Channel.publisherThumbprints).Count -gt 0) { @($Channel.publisherThumbprints) -join ', ' } else { 'none named (Authenticode not checked)' }
+    return "'$($Channel.name)' $($Channel.manifestUrl); release-manifest keys $(@($Channel.keyIds) -join ', '); installer publishers $publishers"
+}
+
+function Compare-UpdateChannel {
+    <#
+    .SYNOPSIS
+        The differences between two channel records (none when they are the same channel: name, URL,
+        key ids and publisher thumbprints). Callers wrap it in @(): no difference is no output.
+    #>
+    param($Expected, $Actual)
+    $differences = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Expected -or $null -eq $Actual) {
+        if (($null -eq $Expected) -ne ($null -eq $Actual)) { $differences.Add("expected $(Format-UpdateChannel $Expected), found $(Format-UpdateChannel $Actual)") }
+        return $differences
+    }
+    if ($Expected.name -cne $Actual.name) { $differences.Add("name '$($Actual.name)' instead of '$($Expected.name)'") }
+    if ($Expected.manifestUrl -cne $Actual.manifestUrl) { $differences.Add("manifest URL $($Actual.manifestUrl) instead of $($Expected.manifestUrl)") }
+    if ((@($Expected.keyIds) -join ',') -cne (@($Actual.keyIds) -join ',')) { $differences.Add("release-manifest keys $(@($Actual.keyIds) -join ', ') instead of $(@($Expected.keyIds) -join ', ')") }
+    if ((@($Expected.publisherThumbprints) -join ',') -cne (@($Actual.publisherThumbprints) -join ',')) {
+        $differences.Add("installer publishers $(@($Actual.publisherThumbprints) -join ', ') instead of $(@($Expected.publisherThumbprints) -join ', ')")
+    }
+    return $differences
+}
+
+function Read-ExpectedUpdateChannels {
+    <#
+    .SYNOPSIS
+        installer\update-channels.json ("lucent.update-channels" version 1): the channels a release
+        build may check, each with its manifest URL, release-manifest key ids and the publisher
+        certificates its installers are signed with (at least one).
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    if ($document.schema -ne 'lucent.update-channels' -or $document.version -ne 1) { throw "$Path is not a lucent.update-channels version 1 document." }
+    $channels = @()
+    foreach ($entry in @($document.channels)) {
+        if (-not $entry) { continue }
+        if ($entry.name -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { throw "$Path names an invalid channel '$($entry.name)'." }
+        if ($entry.manifestUrl -notmatch '^https://') { throw "$Path gives channel '$($entry.name)' a manifest URL that is not https." }
+        foreach ($id in @($entry.keyIds)) { if ($id -cnotmatch '^[0-9a-f]{64}$') { throw "$Path gives channel '$($entry.name)' an invalid key id '$id'." } }
+        foreach ($thumbprint in @($entry.publisherThumbprints)) {
+            if ($thumbprint -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw "$Path gives channel '$($entry.name)' an invalid thumbprint '$thumbprint'." }
+        }
+        $channels += New-UpdateChannelRecord -Name $entry.name -ManifestUrl $entry.manifestUrl -KeyIds @($entry.keyIds) -PublisherThumbprints @($entry.publisherThumbprints)
+    }
+    return $channels
+}
+
+function Test-LucentUpdateChannelPolicy {
+    <#
+    .SYNOPSIS
+        Whether a package may be built with the update channel its Lucent.exe checks (W12 review
+        SEC-02). -Declared is tools\package.ps1's -UpdateChannel: 'none', a channel name, or empty.
+        A Setup (not -StageOnly) must declare it. 'none' needs a build without a channel; a name needs
+        the build to check exactly that entry of the expected channels, which must name at least one
+        publisher certificate (otherwise the installer's Authenticode signature would not be checked
+        and whoever holds the manifest key controls every update). Returns Errors and Warnings.
+    #>
+    param($Compiled, [string]$Declared, [object[]]$Expected = @(), [switch]$StageOnly)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $warnings = New-Object System.Collections.Generic.List[string]
+    if (-not $Declared) {
+        if (-not $StageOnly) {
+            $errors.Add('Pass -UpdateChannel <name> (an entry of installer\update-channels.json) or -UpdateChannel none: a Setup declares which update channel its Lucent.exe checks.')
+        }
+        elseif ($null -ne $Compiled -and -not @($Expected | Where-Object { @(Compare-UpdateChannel -Expected $_ -Actual $Compiled).Count -eq 0 })) {
+            $warnings.Add("This build checks the update channel $(Format-UpdateChannel $Compiled), which installer\update-channels.json does not list: not for release.")
+        }
+    }
+    elseif ($Declared -eq 'none') {
+        if ($null -ne $Compiled) {
+            $errors.Add("-UpdateChannel none, but this build checks $(Format-UpdateChannel $Compiled). Reconfigure with empty LUCENT_UPDATE_* (tools\build.ps1 -Fresh without them set).")
+        }
+    }
+    else {
+        $entry = @($Expected | Where-Object { $_.name -ceq $Declared })
+        if ($null -eq $Compiled) {
+            $errors.Add("-UpdateChannel $Declared, but this build checks no channel: configure it with the LUCENT_UPDATE_* values of that channel (docs\development\setup.md).")
+        }
+        elseif ($entry.Count -ne 1) {
+            $errors.Add("installer\update-channels.json lists no channel '$Declared'.")
+        }
+        else {
+            if (@($entry[0].publisherThumbprints).Count -eq 0) {
+                $errors.Add("The channel '$Declared' names no publisher certificate in installer\update-channels.json: a release channel must, so that clients check the installer's Authenticode signature.")
+            }
+            foreach ($difference in (Compare-UpdateChannel -Expected $entry[0] -Actual $Compiled)) {
+                $errors.Add("This build's update channel differs from installer\update-channels.json's '$Declared': $difference.")
+            }
+        }
+    }
+    return [pscustomobject]@{ Errors = $errors; Warnings = $warnings }
 }
 
 # --- Static libraries linked into the executable -------------------------------------------------
@@ -2240,4 +2409,6 @@ Export-ModuleMember -Function Read-LucentPackageInfo, Get-PeHeader, Get-PeDepend
     New-LicenseBundle, New-PackageSbom, Write-InstalledFileList, Test-InstalledFileList, Find-InnoSetupCompiler, Get-FileInventory,
     Write-TextFile, Write-JsonFile, Get-Sha256, Get-Sha1, Get-RelativePathText, Invoke-NativeCommand,
     Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit, Write-BuilderPathReport,
-    Get-CodeSigningCertificate, Test-AuthenticodeFile
+    Get-CodeSigningCertificate, Test-AuthenticodeFile, Get-UpdateKeyId, Get-LucentUpdateChannelRecord,
+    ConvertFrom-UpdateChannelLogLine, Format-UpdateChannel, Compare-UpdateChannel, Read-ExpectedUpdateChannels,
+    Test-LucentUpdateChannelPolicy

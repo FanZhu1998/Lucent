@@ -43,6 +43,8 @@
 //   --data-root <folder>       Use <folder> instead of %LOCALAPPDATA%\Lucent for the catalog
 //                              (<folder>\data) and the caches (<folder>\cache): screenshots and
 //                              smoke tests without touching the user's library. Created if needed.
+//                              Downloaded updates stay in %LOCALAPPDATA%\Lucent\cache\updates
+//                              (service_factory.cpp: a folder only this user can change).
 //   --set <control>=<value>    With --open-first (W6): once the photo's first frame is shown, make
 //                              this edit (one revision each, in order, each waiting for its final
 //                              frame). <control> is a slider key (exposure, contrast, highlights,

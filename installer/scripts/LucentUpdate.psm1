@@ -28,11 +28,22 @@
       Import-Module .\installer\scripts\LucentUpdate.psm1
       New-LucentUpdateSigningKey -Name 'Lucent release 2026'          # once; prints PublicKey, KeyId
       New-LucentReleaseManifest -Installer build\release\package\Lucent-Setup-0.2.0-x64.exe `
+          -PackageManifest build\release\package\Lucent-Setup-0.2.0-x64.manifest.json `
           -InstallerUrl https://updates.example.org/lucent/Lucent-Setup-0.2.0-x64.exe -Channel stable `
           -ReleaseNotesFile notes.txt -OutFile release-manifest.json
       Protect-LucentReleaseManifest -Manifest release-manifest.json -KeyName 'Lucent release 2026'
       Test-LucentReleaseManifest -Manifest release-manifest.json -PublicKey <130 hex digits> `
           -Installer build\release\package\Lucent-Setup-0.2.0-x64.exe
+
+    New-LucentReleaseManifest publishes only what tools\package.ps1 built and recorded for release
+    (W12 review SEC-03, SEC-04): the Setup its package manifest names (size and SHA-256), with that
+    manifest's version, which must also be the version in Setup's file name and its ProductVersion;
+    signed for release (not a test signature, timestamped, Authenticode-valid by the recorded
+    certificate, which the channel's Lucent.exe pins as a publisher); and whose own Lucent.exe
+    checks the channel it is published on. Rehearsals and tests
+    pass -AllowUnsignedInstaller, which skips only the signature and ProductVersion checks.
+    Test-LucentReleaseManifest is at least as strict as Lucent's reader (SEC-06): every member, type
+    and bound, and the canonical text New-LucentReleaseManifest writes, byte for byte.
 
     Publish the installer first, then the manifest's signature, then the manifest (a client that
     fetches between the last two sees a signature that does not match yet, and checks again later).
@@ -158,21 +169,78 @@ function Test-HttpUrl([string]$Url) {
     return $true
 }
 
+# The manifest's text in Lucent's canonical form: members in order, no whitespace (Lucent's
+# write_release_manifest()). $Size is an integer, the rest strings.
+function ConvertTo-ReleaseManifestText {
+    param([string]$Channel, [string]$Version, [string]$Published, [string]$MinimumOs, [string]$InstallerUrl,
+          [int64]$Size, [string]$Sha256, [string]$ReleaseNotes)
+    return '{"schema":' + (ConvertTo-JsonText $script:ManifestSchema) + ',"schema_version":1,"product":"Lucent"' +
+           ',"channel":' + (ConvertTo-JsonText $Channel) + ',"version":' + (ConvertTo-JsonText $Version) +
+           ',"published":' + (ConvertTo-JsonText $Published) + ',"architecture":"x64"' +
+           ',"minimum_os":' + (ConvertTo-JsonText $MinimumOs) +
+           ',"installer":{"url":' + (ConvertTo-JsonText $InstallerUrl) + ',"size":' + $Size +
+           ',"sha256":' + (ConvertTo-JsonText $Sha256) + '},"release_notes":' + (ConvertTo-JsonText $ReleaseNotes) + '}'
+}
+
+# "YYYY-MM-DDTHH:MM:SSZ" with plausible fields, as Lucent's is_utc_timestamp().
+function Test-UtcTimestamp([string]$Text) {
+    if ($Text -cnotmatch '^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$') { return $false }
+    $month = [int]$Matches[2]; $day = [int]$Matches[3]; $hour = [int]$Matches[4]; $minute = [int]$Matches[5]; $second = [int]$Matches[6]
+    return $month -ge 1 -and $month -le 12 -and $day -ge 1 -and $day -le 31 -and $hour -le 23 -and $minute -le 59 -and $second -le 60
+}
+
+$script:MinimumOsPattern = '^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$'
+
+function Test-JsonInteger($Value) {
+    return $Value -is [int] -or $Value -is [long] -or $Value -is [int64] -or $Value -is [int32]
+}
+
+function Read-PackageManifest {
+    <#
+    .SYNOPSIS
+        Reads tools\package.ps1's package manifest (Lucent-Setup-<version>-x64.manifest.json) and
+        checks that it names the installer: its file name, size and SHA-256.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$InstallerPath)
+    $package = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $Path).Path, $script:Utf8) | ConvertFrom-Json
+    $names = @($package.PSObject.Properties.Name)
+    if ($package.product -ne 'Lucent' -or $package.architecture -ne 'x64' -or $names -notcontains 'schema' -or [int]$package.schema -lt 4) {
+        throw "$Path is not a package manifest of Lucent x64 (schema 4 or later) written by tools\package.ps1."
+    }
+    if ($null -eq $package.installer) { throw "$Path names no installer (a -StageOnly package is not a release)." }
+    $item = Get-Item -LiteralPath $InstallerPath
+    $sha256 = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($package.installer.file -ne $item.Name -or [int64]$package.installer.size -ne $item.Length -or ([string]$package.installer.sha256).ToLowerInvariant() -ne $sha256) {
+        throw "$Path names $($package.installer.file) ($($package.installer.size) bytes, $($package.installer.sha256)), not $($item.Name) ($($item.Length) bytes, $sha256)."
+    }
+    return $package
+}
+
 function New-LucentReleaseManifest {
     <#
     .SYNOPSIS
         Writes the release manifest of a packaged installer (lucent.release-manifest, version 1), in
         Lucent's canonical form.
+    .PARAMETER PackageManifest
+        The package manifest tools\package.ps1 wrote beside the installer
+        (Lucent-Setup-<version>-x64.manifest.json): it must name this installer (size, SHA-256), and
+        gives the release's version, signing and update channel.
     .PARAMETER Version
-        The release's version; default: the version in the installer's name (Lucent-Setup-<version>-x64.exe).
+        The release's version; default: the package manifest's. Must equal it, the version in the
+        installer's name (Lucent-Setup-<version>-x64.exe) and, unless -AllowUnsignedInstaller, the
+        installer's ProductVersion.
     .PARAMETER InstallerUrl
         Where the installer will be published: an https URL (Lucent downloads over https only).
     .PARAMETER AllowHttp
         Tests only: accept an http URL (Lucent's tests serve loopback http).
+    .PARAMETER AllowUnsignedInstaller
+        Tests and rehearsals only: accept an installer that is unsigned or test-signed, or carries no
+        ProductVersion. Never for a release.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Installer,
+        [Parameter(Mandatory)][string]$PackageManifest,
         [Parameter(Mandatory)][string]$InstallerUrl,
         [Parameter(Mandatory)][string]$Channel,
         [Parameter(Mandatory)][string]$OutFile,
@@ -181,14 +249,48 @@ function New-LucentReleaseManifest {
         [string]$ReleaseNotesFile,
         [string]$MinimumOs = '10.0.17763',
         [datetime]$Published = [datetime]::UtcNow,
-        [switch]$AllowHttp
+        [switch]$AllowHttp,
+        [switch]$AllowUnsignedInstaller
     )
     $installerPath = (Resolve-Path -LiteralPath $Installer).Path
-    if (-not $Version) {
-        if ([System.IO.Path]::GetFileName($installerPath) -notmatch '^Lucent-Setup-(.+)-x64\.exe$') { throw 'Pass -Version: the installer is not named Lucent-Setup-<version>-x64.exe.' }
-        $Version = $Matches[1]
+    $package = Read-PackageManifest -Path $PackageManifest -InstallerPath $installerPath
+    # One version everywhere (SEC-04): the package's, the file name's, -Version and Setup's own.
+    if (-not $Version) { $Version = [string]$package.version }
+    if ($Version -cne [string]$package.version) { throw "-Version $Version differs from the package manifest's version $($package.version)." }
+    if ([System.IO.Path]::GetFileName($installerPath) -notmatch '^Lucent-Setup-(.+)-x64\.exe$' -or $Matches[1] -cne $Version) {
+        throw "The installer's name $([System.IO.Path]::GetFileName($installerPath)) is not Lucent-Setup-$Version-x64.exe."
     }
     if ($Version -notmatch $script:SemVer) { throw "'$Version' is not a semantic version (SemVer 2.0.0)." }
+    # The release's own Lucent.exe must keep checking this channel (SEC-02).
+    $names = @($package.PSObject.Properties.Name)
+    $compiled = if ($names -contains 'updateChannel') { $package.updateChannel } else { $null }
+    if ($null -eq $compiled -or $compiled.name -cne $Channel) {
+        $what = if ($null -eq $compiled) { 'checks no update channel' } else { "checks the channel '$($compiled.name)'" }
+        throw "The installer's Lucent.exe $what, so it cannot be published on '$Channel': its users would lose this channel's updates."
+    }
+    if (-not $AllowUnsignedInstaller) {
+        # Only a release signature is published (SEC-03): never unsigned, test-signed or untimestamped.
+        $signing = $package.signing
+        if (-not $package.signed -or $null -eq $signing -or $signing.test -or -not $signing.timestamped) {
+            throw 'The package is not signed for release (unsigned, a test signature, or no timestamp): see tools\package.ps1 and docs\development\setup.md.'
+        }
+        $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+        if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or
+            $signature.SignerCertificate.Thumbprint -ne [string]$signing.certificateSha1 -or $null -eq $signature.TimeStamperCertificate) {
+            throw "The installer's Authenticode signature is $($signature.Status), not a timestamped release signature by $($signing.certificateSha1)."
+        }
+        # The signer must be one the channel's builds check (its publisher thumbprints), or the clients
+        # of this channel refuse the installer.
+        $pinned = @(@($compiled.publisherThumbprints) | ForEach-Object { ([string]$_).ToLowerInvariant() })
+        $signerSha1 = $signature.SignerCertificate.Thumbprint.ToLowerInvariant()
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $signerSha256 = ConvertTo-HexString $sha.ComputeHash($signature.SignerCertificate.RawData) } finally { $sha.Dispose() }
+        if ($pinned.Count -eq 0 -or ($pinned -notcontains $signerSha1 -and $pinned -notcontains $signerSha256)) {
+            throw "The installer is signed by $signerSha1, which is not among the publisher certificates the channel's Lucent.exe checks ($($pinned -join ', ')); a release channel names its publishers (installer\update-channels.json)."
+        }
+        $productVersion = (Get-Item -LiteralPath $installerPath).VersionInfo.ProductVersion
+        if ([string]$productVersion -cne $Version) { throw "The installer's ProductVersion is '$productVersion', not $Version." }
+    }
     if (-not (Test-ChannelName $Channel)) { throw "'$Channel' is not a channel name ([a-z0-9] words joined by '-', at most 32 characters)." }
     if (-not (Test-HttpUrl $InstallerUrl) -or (-not $AllowHttp -and -not $InstallerUrl.StartsWith('https://'))) {
         throw "'$InstallerUrl' is not an https URL of printable ASCII characters (at most 2048)."
@@ -202,13 +304,8 @@ function New-LucentReleaseManifest {
     $sha256 = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $publishedText = $Published.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture)
 
-    # Members in Lucent's canonical order, no whitespace (write_release_manifest).
-    $text = '{"schema":' + (ConvertTo-JsonText $script:ManifestSchema) + ',"schema_version":1,"product":"Lucent"' +
-            ',"channel":' + (ConvertTo-JsonText $Channel) + ',"version":' + (ConvertTo-JsonText $Version) +
-            ',"published":' + (ConvertTo-JsonText $publishedText) + ',"architecture":"x64"' +
-            ',"minimum_os":' + (ConvertTo-JsonText $MinimumOs) +
-            ',"installer":{"url":' + (ConvertTo-JsonText $InstallerUrl) + ',"size":' + $size +
-            ',"sha256":' + (ConvertTo-JsonText $sha256) + '},"release_notes":' + (ConvertTo-JsonText $ReleaseNotes) + '}'
+    $text = ConvertTo-ReleaseManifestText -Channel $Channel -Version $Version -Published $publishedText -MinimumOs $MinimumOs `
+        -InstallerUrl $InstallerUrl -Size $size -Sha256 $sha256 -ReleaseNotes $ReleaseNotes
     $out = [System.IO.Path]::GetFullPath($OutFile)
     [System.IO.File]::WriteAllBytes($out, $script:Utf8.GetBytes($text))
     return [pscustomobject]@{ Manifest = $out; Version = $Version; Channel = $Channel; Size = $size; Sha256 = $sha256 }
@@ -257,9 +354,12 @@ function Protect-LucentReleaseManifest {
 function Test-LucentReleaseManifest {
     <#
     .SYNOPSIS
-        Verifies a release as Lucent will: the signature over the manifest's exact bytes with one of the
-        pinned public keys, then the manifest's members, and optionally the installer's size and SHA-256.
-        Returns the manifest's facts; throws on any failure.
+        Verifies a release at least as strictly as Lucent will (SEC-06): the signature document, the
+        signature over the manifest's exact bytes with one of the pinned public keys, then every
+        member of the manifest, its type and its bounds as Lucent's reader checks them, and that the
+        manifest is the canonical text New-LucentReleaseManifest writes (no unknown, repeated or
+        reordered member, no other number or escape form); optionally the installer's size and
+        SHA-256. Returns the manifest's facts; throws on any failure.
     #>
     [CmdletBinding()]
     param(
@@ -273,11 +373,23 @@ function Test-LucentReleaseManifest {
     $signaturePath = if ($Signature) { (Resolve-Path -LiteralPath $Signature).Path } else { $manifestPath + '.sig' }
     $bytes = [System.IO.File]::ReadAllBytes($manifestPath)
     if ($bytes.Length -gt 65536) { throw 'The manifest has more than 64 KiB.' }
-    $envelope = [System.IO.File]::ReadAllText($signaturePath, $script:Utf8) | ConvertFrom-Json
-    if ($envelope.schema -ne $script:SignatureSchema -or $envelope.schema_version -ne 1 -or $envelope.algorithm -ne $script:Algorithm) {
+    $signatureText = [System.IO.File]::ReadAllText($signaturePath, $script:Utf8)
+    if ($script:Utf8.GetByteCount($signatureText) -gt 4096) { throw 'The signature file has more than 4 KiB.' }
+    $envelope = $signatureText | ConvertFrom-Json
+    if ($envelope.schema -cne $script:SignatureSchema -or -not (Test-JsonInteger $envelope.schema_version) -or $envelope.schema_version -ne 1 -or
+        $envelope.algorithm -cne $script:Algorithm) {
         throw 'The signature file is not a lucent.release-signature version 1 (ecdsa-p256-sha256).'
     }
-    $signatureBytes = [Convert]::FromBase64String($envelope.signature)
+    if ($envelope.key_id -isnot [string] -or $envelope.key_id -cnotmatch '^[0-9a-f]{64}$' -or $envelope.signature -isnot [string]) {
+        throw 'The signature file has no key id of 64 lowercase hex digits or no signature text.'
+    }
+    try { $signatureBytes = [Convert]::FromBase64String($envelope.signature) } catch { throw 'The signature is not base64.' }
+    if ($signatureBytes.Length -ne 64 -or [Convert]::ToBase64String($signatureBytes) -cne $envelope.signature) {
+        throw 'The signature is not the canonical base64 of 64 bytes (r || s).'
+    }
+    $canonicalEnvelope = '{"schema":"' + $script:SignatureSchema + '","schema_version":1,"algorithm":"' + $script:Algorithm +
+                         '","key_id":"' + $envelope.key_id + '","signature":"' + $envelope.signature + '"}'
+    if ($signatureText -cne $canonicalEnvelope) { throw 'The signature file is not in the canonical form Protect-LucentReleaseManifest writes.' }
     $verified = $false
     foreach ($hex in $PublicKey) {
         $hex = $hex.Trim().ToLowerInvariant()
@@ -296,16 +408,48 @@ function Test-LucentReleaseManifest {
         break
     }
     if (-not $verified) { throw 'The manifest is not signed by any of the given keys (or was changed after signing).' }
-    $data = $script:Utf8.GetString($bytes) | ConvertFrom-Json
-    if ($data.schema -ne $script:ManifestSchema -or $data.schema_version -ne 1 -or $data.product -ne 'Lucent' -or $data.architecture -ne 'x64') {
+    $manifestText = $script:Utf8.GetString($bytes)
+    try { $data = $manifestText | ConvertFrom-Json } catch { throw "The manifest is not valid JSON: $($_.Exception.Message)" }
+    $members = @($data.PSObject.Properties.Name)
+    foreach ($name in @('schema', 'schema_version', 'product', 'channel', 'version', 'published', 'architecture', 'minimum_os', 'installer', 'release_notes')) {
+        if ($members -cnotcontains $name) { throw "The manifest has no member '$name'." }
+    }
+    if ($data.schema -cne $script:ManifestSchema -or -not (Test-JsonInteger $data.schema_version) -or $data.schema_version -ne 1 -or
+        $data.product -cne 'Lucent' -or $data.architecture -cne 'x64') {
         throw 'The manifest is not a lucent.release-manifest version 1 for Lucent x64.'
     }
-    if (-not (Test-ChannelName $data.channel)) { throw "Invalid channel '$($data.channel)'." }
-    if ($data.version -notmatch $script:SemVer) { throw "Invalid version '$($data.version)'." }
-    if (-not (Test-HttpUrl $data.installer.url) -or (-not $AllowHttp -and -not $data.installer.url.StartsWith('https://'))) {
-        throw "The installer URL '$($data.installer.url)' is not https."
+    foreach ($name in @('channel', 'version', 'published', 'minimum_os', 'release_notes')) {
+        if ($data.$name -isnot [string]) { throw "The manifest's $name is not a string." }
     }
-    if ($data.installer.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid installer SHA-256.' }
+    if (-not (Test-ChannelName $data.channel)) { throw "Invalid channel '$($data.channel)'." }
+    if ($data.version -cnotmatch $script:SemVer) { throw "Invalid version '$($data.version)'." }
+    if (-not (Test-UtcTimestamp $data.published)) { throw "The publication time '$($data.published)' is not YYYY-MM-DDTHH:MM:SSZ." }
+    if ($data.minimum_os -cnotmatch $script:MinimumOsPattern) { throw "The minimum Windows version '$($data.minimum_os)' is not major.minor.build." }
+    if ($script:Utf8.GetByteCount($data.release_notes) -gt 16384) { throw 'The release notes have more than 16 KiB.' }
+    $entry = $data.installer  # ($installer is the -Installer parameter: a string)
+    if ($null -eq $entry -or $entry -is [string] -or $entry -is [System.ValueType] -or $entry -is [System.Array]) {
+        throw "The manifest's installer is not an object."
+    }
+    $installerMembers = @($entry.PSObject.Properties.Name)
+    foreach ($name in @('url', 'size', 'sha256')) {
+        if ($installerMembers -cnotcontains $name) { throw "The manifest's installer has no member '$name'." }
+    }
+    if ($entry.url -isnot [string] -or -not (Test-HttpUrl $entry.url) -or (-not $AllowHttp -and -not $entry.url.StartsWith('https://'))) {
+        throw "The installer URL '$($entry.url)' is not https."
+    }
+    if (-not (Test-JsonInteger $entry.size) -or [int64]$entry.size -lt 1 -or [int64]$entry.size -gt 2GB) {
+        throw "The installer size '$($entry.size)' is not a whole number of bytes from 1 to 2 GiB."
+    }
+    if ($entry.sha256 -isnot [string] -or $entry.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid installer SHA-256.' }
+    # Anything else (an unknown or repeated member, another order, whitespace, another escape or number
+    # form) is not what New-LucentReleaseManifest writes.
+    $canonical = ConvertTo-ReleaseManifestText -Channel $data.channel -Version $data.version -Published $data.published `
+        -MinimumOs $data.minimum_os -InstallerUrl $entry.url -Size ([int64]$entry.size) -Sha256 $entry.sha256 `
+        -ReleaseNotes $data.release_notes
+    if ($manifestText -cne $canonical) {
+        throw 'The manifest is not in the canonical form New-LucentReleaseManifest writes (an unknown, repeated or reordered member, whitespace, or another escape or number form).'
+    }
+    $data = [pscustomobject]@{ version = $data.version; channel = $data.channel; installer = $entry }
     if ($Installer) {
         $installerPath = (Resolve-Path -LiteralPath $Installer).Path
         $size = (Get-Item -LiteralPath $installerPath).Length

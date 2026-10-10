@@ -1,0 +1,6 @@
+{
+  "schema": "lucent.update-channels",
+  "version": 1,
+  "description": "The update channels a release build of Lucent may check (W12 review SEC-02; ADR 0022; docs/development/setup.md, 'An update channel and signing for a release'). tools/package.ps1 -UpdateChannel <name> builds a Setup only when the Lucent.exe it stages checks exactly the entry of that name: its release-manifest URL, the key ids of the pinned release-manifest keys (SHA-256 of each 65-byte public key, as New-LucentUpdateSigningKey prints them) and the thumbprints of the certificates its installers are Authenticode-signed with (at least one: SHA-1 or SHA-256, lowercase). -UpdateChannel none builds a Setup that checks no channel. No production channel exists yet: add one here, in a reviewed commit, when the publisher's key and certificate exist.",
+  "channels": []
+}

@@ -563,8 +563,38 @@ function(lucent_install_application target)
         endif()
     endforeach()
 
+    # The update channel compiled into Lucent.exe (src/application/CMakeLists.txt, ADR 0022): recorded
+    # for tools/package.ps1, which checks it against the staged Lucent.exe's own report and the
+    # expected channels of installer/update-channels.json, and records it in the package manifest
+    # (schema 6, W12 review SEC-02). The values were validated where they are defined.
+    set(LUCENT_PACKAGE_UPDATE_KEYS_JSON "")
+    foreach(key IN LISTS LUCENT_UPDATE_PUBLIC_KEYS)
+        string(STRIP "${key}" key)
+        string(TOLOWER "${key}" key)
+        if(key)
+            if(LUCENT_PACKAGE_UPDATE_KEYS_JSON)
+                string(APPEND LUCENT_PACKAGE_UPDATE_KEYS_JSON ", ")
+            endif()
+            string(APPEND LUCENT_PACKAGE_UPDATE_KEYS_JSON "\"${key}\"")
+        endif()
+    endforeach()
+    set(LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON "")
+    foreach(thumbprint IN LISTS LUCENT_UPDATE_PUBLISHER_THUMBPRINTS)
+        string(STRIP "${thumbprint}" thumbprint)
+        string(TOLOWER "${thumbprint}" thumbprint)
+        if(thumbprint)
+            if(LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON)
+                string(APPEND LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON ", ")
+            endif()
+            string(APPEND LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON "\"${thumbprint}\"")
+        endif()
+    endforeach()
+    if(LUCENT_UPDATE_CHANNEL MATCHES "[\"\\\\]" OR LUCENT_UPDATE_MANIFEST_URL MATCHES "[\"\\\\]")
+        message(FATAL_ERROR "lucent_install_application: unexpected character in the update channel")
+    endif()
+
     file(CONFIGURE OUTPUT "${packaging_dir}/lucent-package.json.in" CONTENT [[{
-  "schema": 5,
+  "schema": 6,
   "name": "Lucent",
   "version": "@CMAKE_PROJECT_VERSION@",
   "versionMajor": @CMAKE_PROJECT_VERSION_MAJOR@,
@@ -599,7 +629,10 @@ function(lucent_install_application target)
   "qmlSourceDir": "@ARG_QML_SOURCE_DIR@",
   "requiredPlugins": [@LUCENT_PACKAGE_REQUIRED_PLUGINS_JSON@],
   "requiredQmlModules": [@LUCENT_PACKAGE_REQUIRED_QML_JSON@],
-  "assets": [@LUCENT_PACKAGE_ASSETS_JSON@]
+  "assets": [@LUCENT_PACKAGE_ASSETS_JSON@],
+  "updateChannel": {"name": "@LUCENT_UPDATE_CHANNEL@", "manifestUrl": "@LUCENT_UPDATE_MANIFEST_URL@",
+                    "publicKeys": [@LUCENT_PACKAGE_UPDATE_KEYS_JSON@],
+                    "publisherThumbprints": [@LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON@]}
 }
 ]] @ONLY)
     file(GENERATE

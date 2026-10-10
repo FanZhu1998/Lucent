@@ -32,6 +32,11 @@ struct UpdateChannelInfo {
     QString server;           // the host the manifest comes from ("updates.example.org")
     QString current_version;  // this build ("0.1.0")
     bool checks_publisher = false;  // the installer's Authenticode signature is checked too
+    // Not user-facing: the channel compiled into this Lucent.exe as one line (app::
+    // describe_update_channel(): "update channel 'stable' (<URL>): keys ...; publishers ...",
+    // "update channel: none (...)" or "update channel refused: ..."), which the developer automation
+    // reports for the packaging smoke run (W12 review SEC-02). Empty: unknown.
+    QString description;
 };
 
 enum class UpdateAvailability : quint8 {

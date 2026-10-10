@@ -848,6 +848,11 @@ void DeveloperAutomation::start() {
         report(QStringLiteral("camera support database unavailable: %1")
                    .arg(support.problem.isEmpty() ? QStringLiteral("none configured") : support.problem));
     }
+    // W12 review SEC-02: the update channel compiled into this Lucent.exe, which the packaging smoke
+    // run must find and compare with the build tree's record (tools\package.ps1).
+    const QString channel = controller_.update_service().channel().description;
+    report(channel.isEmpty() ? QStringLiteral("update channel unknown: this session has no update service")
+                             : channel);
     for (const QString& note : support.notes) {
         report(QStringLiteral("camera support note: %1").arg(note));
     }

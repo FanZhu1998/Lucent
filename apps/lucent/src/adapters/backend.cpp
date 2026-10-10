@@ -293,6 +293,10 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
                 update.channel = channel.channel;
                 if (auto version = core::SemanticVersion::parse(core::build_info().version)) {
                     update.current_version = *version;
+                } else {
+                    // UpdateService::create() refuses a channel without it (SEC-05).
+                    core::log_error(kLog, "this build's version '{}' is not a semantic version: {}",
+                                    core::build_info().version, version.error().describe());
                 }
             }
             if (update.download_directory.empty()) {
@@ -307,10 +311,8 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             auto updates = app::UpdateService::create(std::move(update));
             if (updates) {
                 backend->updates_ = std::move(*updates);
-                if (backend->updates_->configured()) {
-                    core::log_info(kLog, "update channel '{}': {}", backend->updates_->channel().name,
-                                   backend->updates_->channel().manifest_url);
-                }
+                // The channel this Lucent.exe checks: name, URL, the ids of the pinned keys, publishers.
+                core::log_info(kLog, "{}", app::describe_update_channel(backend->updates_->channel()));
             } else {
                 core::log_warn(kLog, "updates are unavailable: {}", updates.error().describe());
             }

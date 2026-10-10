@@ -237,6 +237,10 @@ public:
     [[nodiscard]] BatchSetupModel* batch_setup() const noexcept { return batch_setup_.get(); }
     [[nodiscard]] BatchReportModel* batch_report() const noexcept { return batch_report_.get(); }
     [[nodiscard]] UpdateModel* updates() const noexcept { return updates_.get(); }
+    // The service behind updates() (the developer automation reports its channel).
+    [[nodiscard]] UpdateService& update_service() const noexcept {
+        return services_.updates ? *services_.updates : *fallback_updates_;
+    }
     [[nodiscard]] bool batches_available() const { return services_.batches->is_available(); }
     [[nodiscard]] int active_export_count() const;
     [[nodiscard]] int export_attention_count() const;

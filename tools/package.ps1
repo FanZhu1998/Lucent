@@ -20,7 +20,8 @@
        its listed size and SHA-256, with nothing unlisted beside them. Then it starts the staged
        Lucent.exe with a Windows-only PATH (smoke run): Qt loads plugins and QML modules by name,
        which no import table shows, and Lucent must report the camera support database of the
-       folder as active. Any error stops the packaging.
+       folder as active and the update channel it checks, which must be the one the build tree
+       recorded (W12 review SEC-02; see -UpdateChannel). Any error stops the packaging.
     4. Signs Lucent.exe and lucent-worker.exe when signing is configured (see NOTES; off by default),
        and verifies each signature: the configured certificate's thumbprint, an offline
        WinVerifyTrust result, the timestamp.
@@ -38,8 +39,15 @@
        (builder-paths.txt). Setup and the package manifest are scanned the same way.
     7. Compiles installer\lucent.iss with Inno Setup 6 (unless -StageOnly; Setup and the uninstaller
        are signed when signing is configured, and Setup's signature is verified) and writes the
-       package manifest (version, git commit, signing, every file with its SHA-256, the installer's
-       size and SHA-256, or no installer with -StageOnly).
+       package manifest (version, git commit, signing, the update channel, every file with its
+       SHA-256, the installer's size and SHA-256, or no installer with -StageOnly).
+
+    The update channel (W12 review SEC-02; ADR 0022): the channel compiled into Lucent.exe (the
+    LUCENT_UPDATE_* values of the build's first configure) is printed, checked against what the
+    staged Lucent.exe reports and recorded in the package manifest. A Setup must declare it with
+    -UpdateChannel: 'none' for a build that checks no channel, or the name of an entry of
+    installer\update-channels.json, which the build must match exactly (manifest URL, release-
+    manifest key ids, publisher certificate thumbprints; the entry must name at least one).
 
     Outputs go to <BuildDir>\package unless -OutputDir is given:
       stage\                                  the installation folder that Setup installs
@@ -73,11 +81,17 @@
 .PARAMETER SpdxValidator
     Path of pyspdxtools.exe (spdx-tools) to validate the SBOM. Default: LUCENT_PYSPDXTOOLS, then
     pyspdxtools on PATH; without one, only the built-in structural check runs.
+.PARAMETER UpdateChannel
+    The update channel the package's Lucent.exe must check: 'none', or the name of an entry of
+    installer\update-channels.json (-UpdateChannels). Required unless -StageOnly.
+.PARAMETER UpdateChannels
+    The expected update channels (default installer\update-channels.json); a rehearsal of a test
+    channel names its own file.
 
 .EXAMPLE
-    powershell -NoProfile -File tools\package.ps1
+    powershell -NoProfile -File tools\package.ps1 -UpdateChannel none
 .EXAMPLE
-    powershell -NoProfile -File tools\package.ps1 -Fresh -RunTests -Jobs 2
+    powershell -NoProfile -File tools\package.ps1 -Fresh -RunTests -Jobs 2 -UpdateChannel stable
 .EXAMPLE
     powershell -NoProfile -File tools\package.ps1 -SkipBuild -StageOnly
 
@@ -90,11 +104,14 @@
       LUCENT_SIGN_TIMESTAMP_URL  RFC 3161 timestamp server of the certificate's issuer (required)
       LUCENT_SIGNTOOL            optional path of signtool.exe (default: signtool.exe on PATH, which
                                  the Visual Studio environment provides)
-      LUCENT_SIGN_TEST=1         a test signature (a self-signed certificate, for rehearsing the
-                                 signing path): the one verification failure accepted is the
+      LUCENT_SIGN_TEST=1         a test signature (a self-signed certificate only, for rehearsing
+                                 the signing path): the one verification failure accepted is the
                                  untrusted root, LUCENT_SIGN_TIMESTAMP_URL may be empty (no
-                                 timestamp: the signature then expires with the certificate), and
-                                 the manifest records signing.test = true. Never for distribution.
+                                 timestamp: the signature then expires with the certificate), the
+                                 outputs are named Lucent-Setup-<version>-x64-TEST-SIGNED.* and the
+                                 manifest records signing.test = true. Never for distribution:
+                                 New-LucentReleaseManifest (installer\scripts\LucentUpdate.psm1)
+                                 refuses such a package (W12 review SEC-03).
     Every signature made is verified: signed by that thumbprint, verifying offline with
     WinVerifyTrust (digest and chain, no revocation check), timestamped when a timestamp server is
     set. The uninstaller is signed by Inno Setup inside Setup; installer\tests\Test-InstalledPackage.ps1
@@ -114,7 +131,9 @@ param(
     [string]$OutputDir,
     [string]$Iscc,
     [string]$VCRedist,
-    [string]$SpdxValidator
+    [string]$SpdxValidator,
+    [string]$UpdateChannel,
+    [string]$UpdateChannels
 )
 
 $ErrorActionPreference = 'Stop'
@@ -133,6 +152,11 @@ function Resolve-RepoPath([string]$Path) {
 }
 
 if ($SkipBuild -and ($Fresh -or $RunTests)) { throw '-SkipBuild cannot be combined with -Fresh or -RunTests.' }
+# Checked again against the build below; a Setup must say which update channel it checks (SEC-02).
+if (-not $StageOnly -and -not $UpdateChannel) {
+    throw 'Pass -UpdateChannel <name> (an entry of installer\update-channels.json) or -UpdateChannel none: a Setup declares which update channel its Lucent.exe checks.'
+}
+if ($UpdateChannel -and $UpdateChannel -ne 'none' -and $UpdateChannel -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { throw "-UpdateChannel '$UpdateChannel' is not a channel name or 'none'." }
 $buildPath = Resolve-RepoPath $BuildDir
 if (-not $OutputDir) { $OutputDir = Join-Path $buildPath 'package' }
 $OutputDir = Resolve-RepoPath $OutputDir
@@ -152,6 +176,10 @@ if ($env:LUCENT_SIGN_CERT_SHA1) {
     }
     if (-not $testSigning -and $certificate.SelfSigned) {
         throw "The certificate $($certificate.Thumbprint) ($($certificate.Subject)) is self-signed: a test certificate. Release signatures need a certificate from a code-signing authority; set LUCENT_SIGN_TEST=1 to rehearse signing with it."
+    }
+    # A test signature accepts an untrusted root; only for a certificate that is its own root (SEC-03).
+    if ($testSigning -and -not $certificate.SelfSigned) {
+        throw "LUCENT_SIGN_TEST=1 rehearses signing with a self-signed test certificate only; $($certificate.Thumbprint) ($($certificate.Subject)) was issued by $($certificate.Issuer). Sign without LUCENT_SIGN_TEST with a certificate from a code-signing authority."
     }
     $signing = [pscustomobject]@{ Certificate = $certificate; Test = $testSigning; TimestampUrl = $timestampUrl; SignTool = $null; Arguments = @() }
     Write-Host ("Signing with {0} ({1}, valid until {2:yyyy-MM-dd}){3}" -f $certificate.Thumbprint, $certificate.Subject, $certificate.NotAfter,
@@ -178,6 +206,20 @@ Set-StrictMode -Version 3.0
 
 $info = Read-LucentPackageInfo -BuildDir $buildPath
 if ($info.buildType -ne 'Release') { throw "$buildPath is a $($info.buildType) build; package the release preset." }
+
+# The update channel compiled into Lucent.exe (W12 review SEC-02): shown, checked against the declared
+# and expected channels here, against the staged Lucent.exe's own report after the smoke run, and
+# recorded in the package manifest.
+$channelsPath = if ($UpdateChannels) { Resolve-RepoPath $UpdateChannels } else { Join-Path $installerDir 'update-channels.json' }
+$expectedChannels = @(Read-ExpectedUpdateChannels -Path $channelsPath)
+$compiledChannel = Get-LucentUpdateChannelRecord -Info $info
+Write-Host ("Update channel of this build: {0}" -f (Format-UpdateChannel $compiledChannel)) -ForegroundColor Yellow
+$channelPolicy = Test-LucentUpdateChannelPolicy -Compiled $compiledChannel -Declared $UpdateChannel -Expected $expectedChannels -StageOnly:$StageOnly
+foreach ($warning in $channelPolicy.Warnings) { Write-Warning $warning }
+if ($channelPolicy.Errors.Count -gt 0) {
+    foreach ($problem in $channelPolicy.Errors) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
+    throw "The package's update channel is not the declared one ($channelsPath)."
+}
 if (-not $info.runtimeDeployed) { throw "$buildPath was configured with LUCENT_INSTALL_RUNTIME=OFF; reconfigure with it ON." }
 $policy = Get-Content -LiteralPath (Join-Path $installerDir 'license-policy.json') -Raw | ConvertFrom-Json
 $vcpkgConfiguration = Get-Content -LiteralPath (Join-Path $repoRoot 'vcpkg-configuration.json') -Raw | ConvertFrom-Json
@@ -193,12 +235,20 @@ if (-not $StageOnly) {
 }
 
 # Never leave an earlier run's installer, checksum, manifest or SBOM copy next to this run's layout.
-$baseName = "Lucent-Setup-$($info.version)-x64"
+# A test-signed package says so in its file names (SEC-03).
+$releaseBaseName = "Lucent-Setup-$($info.version)-x64"
+$baseName = $releaseBaseName
+if ($signing -and $signing.Test) { $baseName = "$releaseBaseName-TEST-SIGNED" }
 $installerPath = Join-Path $OutputDir "$baseName.exe"
 $manifestPath = Join-Path $OutputDir "$baseName.manifest.json"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-foreach ($stale in @($installerPath, "$installerPath.sha256", $manifestPath, (Join-Path $OutputDir "$baseName.spdx.json"),
-                     (Join-Path $OutputDir 'lucent-associations.iss'), (Join-Path $OutputDir 'builder-paths.txt'), (Join-Path $OutputDir 'builder-paths.json'))) {
+foreach ($name in @($releaseBaseName, "$releaseBaseName-TEST-SIGNED")) {
+    foreach ($stale in @((Join-Path $OutputDir "$name.exe"), (Join-Path $OutputDir "$name.exe.sha256"), (Join-Path $OutputDir "$name.manifest.json"),
+                         (Join-Path $OutputDir "$name.spdx.json"))) {
+        if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
+    }
+}
+foreach ($stale in @((Join-Path $OutputDir 'lucent-associations.iss'), (Join-Path $OutputDir 'builder-paths.txt'), (Join-Path $OutputDir 'builder-paths.json'))) {
     if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
 }
 
@@ -249,6 +299,11 @@ if ($smoke.Errors.Count -gt 0) {
 }
 Write-Host "    Exit code 0, screenshot $($smoke.Screenshot), no Qt or QML loading errors"
 Write-Host "    $($smoke.CameraSupport)"
+$reportedChannel = @(Compare-UpdateChannel -Expected $compiledChannel -Actual $smoke.UpdateChannel)
+if ($reportedChannel.Count -gt 0) {
+    throw "The staged $($info.executable) checks another update channel than the build tree records ($($reportedChannel -join '; ')); rebuild without -SkipBuild."
+}
+Write-Host "    Update channel reported by $($info.executable): $(Format-UpdateChannel $smoke.UpdateChannel)"
 
 $fileIndex = Get-VcpkgFileIndex -InstalledDir ($info.vcpkgInstalledDir.Replace('/', '\')) -Triplet $info.vcpkgTriplet
 $staticLibraries = @(Get-StaticVcpkgLibraries -Info $info -FileIndex $fileIndex)
@@ -445,7 +500,7 @@ function ConvertTo-PublishedPath([string]$Path) {
 $msvc = if ($info.dumpbin -match '/MSVC/([0-9.]+)/') { $Matches[1] } else { 'unknown' }
 $files = Get-FileInventory -Root $stage
 $manifest = [ordered]@{
-    schema = 3
+    schema = 4
     product = 'Lucent'
     version = $info.version
     architecture = 'x64'
@@ -461,6 +516,10 @@ $manifest = [ordered]@{
         digest = 'sha256'; timestampUrl = $(if ($signing.TimestampUrl) { $signing.TimestampUrl } else { $null }); timestamped = [bool]$signing.TimestampUrl
         uninstaller = 'signed by Inno Setup inside Setup (SignedUninstaller); installer\tests\Test-InstalledPackage.ps1 -SignerThumbprint verifies it after installing'
         signatures = $signatures.ToArray() } } else { $null })
+    # The channel the package's Lucent.exe checks (null: none) and what -UpdateChannel declared (SEC-02).
+    updateChannel = $(if ($compiledChannel) { [ordered]@{ name = $compiledChannel.name; manifestUrl = $compiledChannel.manifestUrl
+        keyIds = @($compiledChannel.keyIds); publisherThumbprints = @($compiledChannel.publisherThumbprints) } } else { $null })
+    updateChannelDeclared = $(if ($UpdateChannel) { $UpdateChannel } else { $null })
     vcRedistributable = [ordered]@{ file = 'vc_redist.x64.exe'; version = $vc.Version; sha256 = $vc.Sha256 }
     toolchain = [ordered]@{
         msvc = $msvc; qt = $info.qtVersion; vcpkgTriplet = $info.vcpkgTriplet
@@ -515,5 +574,6 @@ if ($signing) {
     Write-Host ("    Signatures: {0} by {1}{2}" -f (($signatures | ForEach-Object { $_.file }) -join ', '), $signing.Certificate.Thumbprint,
         $(if ($signing.Test) { ' - TEST SIGNATURE (untrusted root accepted), not for distribution' } else { '' }))
 }
+Write-Host ("    Update channel: {0}{1}" -f (Format-UpdateChannel $compiledChannel), $(if ($UpdateChannel) { " (declared: $UpdateChannel)" } else { ' (not declared: -StageOnly)' }))
 Write-Host ("    Manifest:  {0}" -f $manifestPath)
 Write-Host '    Not for public distribution yet: how the LGPL libraries'' corresponding source is provided is decided in W12 (ADR 0009).'

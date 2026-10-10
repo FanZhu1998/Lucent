@@ -109,12 +109,27 @@ AppUpdateService::~AppUpdateService() {
 UpdateChannelInfo AppUpdateService::channel() const {
     UpdateChannelInfo info;
     const app::UpdateService* updates = backend_->updates();
+    // The compiled channel, also when it was refused or no service could be made of it (SEC-02).
+    const app::BuildUpdateChannel& build = app::build_update_channel();
+    if (build.problem) {
+        info.description = QString::fromStdString(app::describe_update_channel(build));
+    } else if (updates == nullptr) {
+        info.description = build.channel.configured()
+                               ? QStringLiteral("update channel refused: the update service could not be created "
+                                                "(see lucent.log)")
+                               : QString::fromStdString(app::describe_update_channel(build.channel));
+    } else {
+        info.description = QString::fromStdString(app::describe_update_channel(updates->channel()));
+    }
     if (updates == nullptr) {
         info.current_version = QString::fromUtf8(core::build_info().version.data(),
                                                  static_cast<qsizetype>(core::build_info().version.size()));
         return info;
     }
-    info.current_version = QString::fromStdString(updates->current_version().to_string());
+    const std::string_view built = core::build_info().version;
+    info.current_version = updates->current_version()
+                               ? QString::fromStdString(updates->current_version()->to_string())
+                               : QString::fromUtf8(built.data(), static_cast<qsizetype>(built.size()));
     if (updates->configured()) {
         info.configured = true;
         info.channel = QString::fromStdString(updates->channel().name);
