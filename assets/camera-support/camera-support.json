@@ -1,10 +1,10 @@
 {
  "schema": "lucent.camera-support",
- "schema_version": 2,
+ "schema_version": 3,
  "qualification": {
-  "generated": "2026-10-09T14:30:02Z",
-  "date": "2026-10-09",
-  "tool": "lucent-qualify 0.1.0 (909b2b08b7d4)",
+  "generated": "2026-10-10T23:41:14Z",
+  "date": "2026-10-10",
+  "tool": "lucent-qualify 0.1.0 (6ca00170a99f)",
   "report": "docs/qualification/qualification-report.json",
   "basis": {
    "decoder": "LibRaw 0.22.2-Release",
@@ -12,18 +12,19 @@
     "jpeg",
     "zlib"
    ],
-   "decoded_raw_contract": "1.4",
+   "decoded_raw_contract": "1.5",
    "mode_key": 1,
    "check_suite": 3,
    "state_rules": 2,
    "render_pipeline": 3,
-   "develop_pipeline": 3,
+   "develop_pipeline": 4,
    "dng_opcode_processing": 1,
    "geometry_operation": 2,
    "image_area_placement": 1,
    "develop_engine": [
-    3,
+    4,
     2,
+    1,
     1,
     1,
     1,
@@ -36,7 +37,8 @@
     1
    ],
    "neutral_look": 1,
-   "export": 1
+   "export": 1,
+   "lens_database": "lens-database (manifest 6cb390f086af4392c18b9a2e1b857ddb0d917deb116d9c5be7c29e7577c60b86)"
   },
   "summary": {
    "modes": 40,
