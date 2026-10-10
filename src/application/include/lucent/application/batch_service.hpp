@@ -46,7 +46,13 @@
 //     system's available memory exceeds the next estimate by free_memory_margin_bytes. Each worker
 //     process has a Job Object commit limit of the worker budget, and the engine refuses a render
 //     whose own estimate exceeds it: a photo too large for the budget fails with LimitExceeded (an
-//     insufficient-memory result), it is never exported at a reduced size.
+//     insufficient-memory result), it is never exported at a reduced size. Every worker process is
+//     also nested in one parent Job Object whose job memory limit is the worker budget
+//     (workers/worker_group.hpp; ADR 0012, amendment "aggregate worker memory limit"): when workers
+//     together reach it (their estimates were too low), the one whose allocation was refused stops
+//     with a transient failure (WorkerFault::GroupMemoryLimit) and its job is retried with no other
+//     worker running (idle workers are released first). The stopped attempt is journaled as
+//     abandoned and its temporary file removed, as after any other worker failure.
 //   * While interactive_busy() is true (the editor is waiting for a render) no new job is admitted;
 //     running jobs continue. Worker processes run below normal priority.
 //   * Leases: a claimed job carries a catalog lease renewed every lease_renewal while its worker's
@@ -58,7 +64,9 @@
 //   * Failures: deterministic ones (unsupported or corrupt input, a refused recipe, a changed or
 //     missing source) fail the job at once with an actionable reason; transient ones (a worker crash
 //     or hang, a timeout, I/O, memory pressure) are retried with exponential back-off up to
-//     BatchRetryPolicy::max_transient_failures, then fail. Destination problems (disk full, the
+//     BatchRetryPolicy::max_transient_failures, then fail; a job the workers' aggregate memory limit
+//     stopped beside another worker is always retried once, alone, whatever that budget (ADR 0012,
+//     decisions 19 and 22). Destination problems (disk full, the
 //     folder or its drive gone, no permission) give the job back without counting a failure and
 //     pause the batch with a BatchAttention, so the remaining jobs wait instead of all failing;
 //     resume() after fixing it continues. The output folder itself is never created after
@@ -561,9 +569,10 @@ struct BatchMemoryOptions {
     // fixture's JPEG export was 731 MiB of peak commit.
     double default_bytes_per_pixel = 24.0;
     // The same for attempts that run an automatic analysis (automatic batches): the full-resolution
-    // final check holds stage one, the image context, the baseline's features and one stage two
-    // (app::estimate_automatic_memory: about 60-70 bytes per pixel).
-    double default_auto_bytes_per_pixel = 72.0;
+    // final check holds the analysis' stage one, its saturation classes and one stage two, and
+    // measures by bands (app::estimate_automatic_memory: about 37 bytes per pixel since W12, 60-70
+    // before; the R5's analysis attempt peaks at about 24 measured).
+    double default_auto_bytes_per_pixel = 40.0;
     // Margin of measured estimates (1.15: 15 % above the largest measured job).
     double measured_margin = 1.15;
     // A further worker is admitted only while the system's available physical memory exceeds its
@@ -594,6 +603,9 @@ struct BatchTestHooks {
     // Replaces the free-space query of destination folders (bytes available; std::nullopt:
     // unknown).
     std::function<std::optional<std::uint64_t>(const std::filesystem::path& directory)> free_space;
+    // A further worker is admitted before any job was measured (its estimates still have to fit),
+    // so tests can run two workers at once from the first jobs.
+    bool admit_before_calibration = false;
 };
 
 struct BatchServiceOptions {
@@ -661,6 +673,15 @@ struct BatchSchedulerStats {
     std::uint64_t deferred_for_memory = 0;       // admissions postponed by the budget
     std::uint64_t deferred_for_interactive = 0;  // ... by interactive work
     std::vector<std::uint32_t> worker_pids;      // running worker processes
+    // The hard aggregate limit of the workers' commit together (the worker budget, enforced by a
+    // workers::WorkerGroup); 0 when it could not be set up (per-process limits only).
+    std::uint64_t aggregate_limit_bytes = 0;
+    // The workers' largest total commit (the group's Job Object accounting; it includes the charge
+    // of an allocation the limit refused).
+    std::uint64_t peak_aggregate_commit_bytes = 0;
+    std::uint64_t aggregate_limit_hits = 0;   // attempts the limit stopped beside other workers
+    std::uint64_t exclusive_attempts = 0;     // attempts then admitted alone
+    std::uint64_t idle_workers_released = 0;  // idle workers shut down to make room under the limit
 };
 
 // ---------------------------------------------------------------------------------------------

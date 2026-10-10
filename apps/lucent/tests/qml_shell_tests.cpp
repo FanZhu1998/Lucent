@@ -37,7 +37,9 @@ class QmlShellTest : public ::testing::Test {
 protected:
     void SetUp() override {
         ASSERT_TRUE(folder.isValid());
-        controller = std::make_unique<AppController>(fakes::create_fake_services(fakes::FakeTimings::immediate()));
+        Services services = fakes::create_fake_services(fakes::FakeTimings::immediate());
+        updates = dynamic_cast<fakes::FakeUpdateService*>(services.updates.get());
+        controller = std::make_unique<AppController>(std::move(services));
         controller->set_url_opener([this](const QUrl& url) {
             opened.push_back(url);
             return true;
@@ -110,6 +112,7 @@ protected:
     std::unique_ptr<QQmlApplicationEngine> engine;
     QQuickWindow* window = nullptr;
     std::vector<QUrl> opened;
+    fakes::FakeUpdateService* updates = nullptr;  // owned by the controller's services
 };
 
 TEST_F(QmlShellTest, LoadsTheWindowViewsAndModelsWithoutWarnings) {
@@ -465,6 +468,57 @@ TEST_F(QmlShellTest, AboutShowsTheCameraSupportDatabaseAndWhatTheStatesMean) {
     const QString meaning = child("supportMeaning")->property("text").toString();
     EXPECT_TRUE(meaning.startsWith(QStringLiteral("What this means: "))) << meaning.toStdString();
     EXPECT_TRUE(meaning.contains(controller->current()->support_meaning()));
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// W12 (ADR 0022): Help > About's "Check for updates": nothing is checked until the photographer asks;
+// the release is offered with its notes (plain text), downloaded and verified, and installed only
+// between jobs, after which the application is asked to quit.
+TEST_F(QmlShellTest, AboutChecksForUpdatesOnlyWhenAskedAndInstallsBetweenJobs) {
+    ASSERT_NE(updates, nullptr);
+    auto* dialog = child("aboutDialog");
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("aboutButton"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    const QString channel = child("updateChannel")->property("text").toString();
+    EXPECT_TRUE(channel.contains(QStringLiteral("when you ask, and only then"))) << channel.toStdString();
+    EXPECT_EQ(updates->checks(), 0);
+    auto* check = child("updateCheckButton");
+    ASSERT_NE(check, nullptr);
+    EXPECT_TRUE(check->property("visible").toBool());
+    EXPECT_TRUE(check->property("enabled").toBool());
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(check, "clicked"));
+    UpdateModel* model = controller->updates();
+    ASSERT_TRUE(QTest::qWaitFor([model] { return model->state() == UpdateModel::Available; }, kWaitMs));
+    EXPECT_EQ(updates->checks(), 1);
+    auto* download = child("updateDownloadButton");
+    ASSERT_NE(download, nullptr);
+    EXPECT_TRUE(download->property("visible").toBool());
+    EXPECT_TRUE(download->property("text").toString().contains(QStringLiteral("9.9.0")));
+    EXPECT_TRUE(child("updateNotes")->property("visible").toBool());
+    EXPECT_TRUE(child("updateStatus")->property("text").toString().contains(QStringLiteral("9.9.0")));
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(download, "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([model] { return model->state() == UpdateModel::Ready; }, kWaitMs));
+    auto* install = child("updateInstallButton");
+    ASSERT_NE(install, nullptr);
+    EXPECT_TRUE(install->property("visible").toBool());
+    EXPECT_TRUE(install->property("enabled").toBool());
+
+    // An export is running: Install waits and the panel says why.
+    updates->script().blocker = QStringLiteral("Lucent installs updates between jobs.");
+    model->refresh();
+    EXPECT_FALSE(install->property("enabled").toBool());
+    EXPECT_TRUE(child("updateStatus")->property("text").toString().contains(updates->script().blocker));
+
+    updates->script().blocker.clear();
+    model->refresh();
+    ASSERT_TRUE(install->property("enabled").toBool());
+    QSignalSpy quit(controller.get(), &AppController::quitRequested);
+    ASSERT_TRUE(QMetaObject::invokeMethod(install, "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([&quit] { return quit.count() == 1; }, kWaitMs));
+    EXPECT_EQ(updates->installs(), 1);
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

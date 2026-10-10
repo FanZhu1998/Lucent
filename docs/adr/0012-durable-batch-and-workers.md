@@ -1,6 +1,6 @@
 # ADR 0012: Durable batch export: worker processes, memory-budgeted scheduling, journaled publication and recovery
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09: "Amendment: aggregate worker memory limit (W12)" below, with its closing review)
 - **Date:** 2026-10-04 (revised the same day by the closing review, phase 4: recovery that waits for
   an unreachable destination, interruptions bounded on their own, lease renewal during verification,
   a replaced output folder, lost receipts, report emission, single-export priority and the status
@@ -68,8 +68,10 @@ instead of reopening it by name" and sweeping `~lucent-*.tmp` files belong to W7
    sandbox: the worker runs as the user with the user's rights. Each worker process gets a Job Object
    commit limit equal to the worker budget (decision 4) and the engine's refusal threshold
    (`JobRequest::memory_budget_bytes`) is the same value, so a photo too large for the budget fails
-   with LimitExceeded up front (an insufficient-memory result) and is never exported smaller. The
-   engine inside a worker still sizes its own thread pool from the core count: with two workers the
+   with LimitExceeded up front (an insufficient-memory result) and is never exported smaller. (Since
+   W12 every worker's Job Object also nests in one group Job Object whose limit is the worker budget
+   for all workers together: decision 17.) The engine inside a worker still sizes its own thread
+   pool from the core count: with two workers the
    pools can oversubscribe the CPU; worker processes run below normal priority so the interface and
    interactive previews keep the CPU. A per-job thread limit needs a protocol field (requested from
    the workers owner).
@@ -377,7 +379,9 @@ time), 2026-10-04, `lucent_batch_fixture_tests` and `lucent_batch_tests`:
   against 5.95 GiB on the 11.9 GB machine) before either limit stops it. A nested parent Job Object
   with `JOB_OBJECT_LIMIT_JOB_MEMORY` would make the aggregate a hard limit but turns one job's
   overrun into the other job's failure; this is measured on real 45 MP corpora and decided with the
-  release performance report (W12, from the W7 closing review, DUR-8).
+  release performance report (W12, from the W7 closing review, DUR-8). (Corrected by the W12
+  amendment below: the worker budget is now a hard aggregate limit, and a job stopped by it beside
+  another worker is retried alone instead of failing.)
 - A recovery that waits for an unreachable output folder keeps the interrupted job leased: the batch
   is not finished (and its report not written) until the folder is back or the user chooses Use
   this folder.
@@ -412,3 +416,140 @@ time), 2026-10-04, `lucent_batch_fixture_tests` and `lucent_batch_tests`:
   verification, names and receipts; a batch of one costs about 0.1 s of worker start.
 - **Storing the frozen settings document in each job.** The catalog keeps immutable revisions; the
   job stores the revision and its hash, and the as-shot document is a pure function of the build.
+
+## Amendment: aggregate worker memory limit (W12, 2026-10-09)
+
+### Context
+
+The W7 closing review (DUR-8) left the aggregate budget to admission: every worker's own Job Object
+limit is the whole worker budget, so two workers whose real commit exceeds their estimates can
+together reach twice the budget before either limit stops them, and the blueprint asks for "an
+aggregate memory budget". The open question was how to make the sum a hard limit without letting
+one job's overrun fail another job.
+
+### Decision
+
+17. **One group Job Object over all workers** (`workers::WorkerGroup`, `worker_group.hpp`). The
+    service creates a group whose Job Object has `JOB_OBJECT_LIMIT_JOB_MEMORY` = the worker budget
+    (4.45 GiB on the 11.9 GB machine) and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; every `WorkerHost`
+    of the service (`WorkerHostOptions::group`) assigns each worker it starts, still suspended, to
+    the group's Job Object first and then to the worker's own Job Object, which therefore nests
+    inside it (nested Job Objects, Windows 8 and later). Each worker keeps its per-process limit
+    (the worker budget, decision 2) and the engine's refusal threshold: a photo that needs more
+    than the budget still fails up front with LimitExceeded. Every allocation that would take the
+    workers' total commit beyond the budget fails inside the worker that makes it. A worker that
+    cannot join the group (an environment whose own Job Object refuses nesting) runs with its own
+    limit only (`WorkerInfo::grouped` false, logged once); a group that cannot be created leaves
+    the service with per-process limits (`BatchSchedulerStats::aggregate_limit_bytes` 0).
+18. **Classification: transient beside others, deterministic alone** (`worker_host.hpp`, "Failures
+    and classes"). Which worker the limit stops is whichever allocates while the group is at its
+    limit, not necessarily the one that overran its estimate. The host recognises a group-limit
+    stop from the group's `JOB_OBJECT_MSG_JOB_MEMORY_LIMIT` naming its process (delivered in every
+    test run) or, because delivery is not guaranteed, from an OutOfMemory or a crash while the
+    group's peak commit rose to within 5 % of the limit during the job. When another worker of the
+    group was alive at any time during the job, the failure is Transient,
+    `WorkerFault::GroupMemoryLimit` (8, appended), OutOfMemory at
+    "workers.worker.group_memory_limit": alone the photo may well fit. When the worker was the
+    group's only process, the photo needs more than the whole budget: Deterministic,
+    `WorkerFault::MemoryLimit`, LimitExceeded at "workers.worker.memory_limit", as for its own
+    limit. The worker's own limit takes precedence; either kind recycles the worker (the order of
+    the evidence was corrected by the closing review: decision 21). The failure
+    takes the ordinary path of decision 5: the temporary output is removed, the attempt's
+    publication is closed (Abandoned), the failure is recorded under the lease and the job is
+    requeued with its back-off, so the journal never holds a half-published attempt.
+19. **The stopped job's retry runs alone; idle workers make room.** A Transient group-limit failure
+    marks its job exclusive (in memory, consumed by its next attempt;
+    `BatchSchedulerStats::aggregate_limit_hits`): that attempt is admitted only when no other
+    attempt runs, and reserves the whole worker budget while it runs, so nothing is admitted beside
+    it (`exclusive_attempts`). An idle worker keeps a few MiB to a few hundred MiB of commit between
+    jobs (`WorkerInfo::idle_commit_bytes`, measured after each job), which counts against the
+    group's limit: admission now counts other slots' idle workers too, and when they are what stands
+    between a job and the budget (always, for an exclusive attempt) the coordinator asks their slot
+    threads to shut them down and admits the job once they are gone (`idle_workers_released`; a slot
+    thread owns its host, so the release is a request it serves while idle). A free slot whose
+    worker is running is preferred, so idle workers are reused rather than released when they can
+    be. If the exclusive attempt is stopped again while alone, the photo needs more than the budget
+    and fails deterministically (18); should it be stopped beside a worker again, the transient
+    retry budget (decision 5) bounds the retries (the stop's own retry no longer depends on that
+    budget: decision 22).
+20. **Test hooks and seams.** The worker test hook `hold-allocation:<ms>` keeps the allocation of
+    `allocate:<bytes>` for a while (cancellable), so two workers hold memory at once;
+    `BatchTestHooks::admit_before_calibration` admits a second worker before any job was measured.
+
+### Measurements
+
+Development machine (Ryzen 5 5500U, 11.9 GB, idle), 2026-10-09, `dev` build of this amendment.
+
+| What | Result |
+|---|---|
+| Two real workers holding 600 MiB each in a 1 GiB group (`WorkerGroup.TwoWorkersAboveTheAggregateLimitStopOneOfThemTransiently`) | the second to allocate is stopped (notification delivered; Transient, GroupMemoryLimit; output removed; worker recycled); the holder's job is untouched (604 MiB peak commit); the stopped job, run again alone, gets past its allocation |
+| One worker allocating 600 MiB in a 1 GiB group | not stopped; group peak 604 MiB; idle commit after the job 3 MiB |
+| One worker alone allocating 700 MiB in a 512 MiB group (its own limit 2 GiB) | Deterministic, MemoryLimit, LimitExceeded ("alone exceeded the workers' aggregate memory limit") |
+| A batch of two synthetic photos, two workers each holding 600 MiB under a 1 GiB worker budget (`BatchFailureTest.TwoWorkersAboveTheAggregateLimitRetryTheStoppedPhotoAlone`) | one attempt stopped (one transient failure, its publication Abandoned), retried alone (one exclusive attempt); both photos exported once with one receipt each, nothing left in the folder; 6.4 s |
+| 5 smoke fixtures exported to JPEG, two workers (`BatchFixtures.SmokeFixturesExportThroughWorkers`) | the workers together peak at 1040 MiB of the 4559 MiB limit (largest worker 757 MiB); never stopped; 12.6 s |
+| 5 smoke fixtures, automatic batch, two workers (`SmokeFixturesAutomaticBatch`) | together 1407 MiB of 4559 MiB (largest worker 1187 MiB, the R5's analysis; 2619 MiB before W12's final check by bands, ADR 0013); never stopped; 26.2 s |
+| Canon EOS R5 to 16-bit Display P3 TIFF | worker peak commit 775 MiB |
+
+### Consequences
+
+- The blueprint's aggregate budget is a limit Windows enforces, not only an admission rule: the
+  workers together never commit more than the worker budget, and within one session a photo whose
+  real commit exceeds its estimate costs at most one retry, alone, never another photo's failure
+  (decisions 21 and 22). After a restart its exclusivity is gone (it lives in memory), so each
+  restart can cost one more stop and one more retry alone.
+- Windows charges an allocation before it refuses it at the limit, so the Job Object peaks
+  (`WorkerGroupStats::peak_commit_bytes`, `BatchSchedulerStats::peak_aggregate_commit_bytes`, a
+  worker's `JobMetrics::peak_commit_bytes`) include a refused allocation's charge: after a stop the
+  group's peak exceeds the limit by the refused allocation (1208 MiB in a 1 GiB group) although
+  the processes never held it. Without a stop they are the real peaks (the fixture rows above).
+- An exclusive retry waits for the running attempts to finish and costs a worker start for each
+  released idle worker (about 0.1 s each).
+- Exclusivity lives in memory: after a restart, a job stopped by the group limit is admitted
+  normally; if it is stopped beside another worker again, it is marked and retried alone again
+  (decision 22). Persisting the mark needs a catalog schema version and is deferred.
+- Without notifications, the group's 5 % heuristic can attribute an OutOfMemory or a crash to the
+  group's limit when the job failed near it for another reason (retried alone, then judged alone);
+  the worker's own limit is no longer inferred from a peak within 5 % of it (decision 21).
+
+### Closing review (W12 part 1, 2026-10-09)
+
+The review found that a stop by the group's limit beside another worker was taken for the photo's
+own permanent failure when the worker's own commit plus the refused allocation reached 95 % of its
+own limit (COR-1): in production a worker's own limit equals the group's, the own-limit fallback
+(a peak within 5 % of it) was consulted before the group's notification, and Windows charges a
+refused allocation to the worker's peak. Reproduced with a 1024 MiB group: a holder of 100 MiB,
+then 980 MiB in a second worker gave "the worker exceeded its memory limit" (Deterministic), its
+peak 984 MiB, the group's notification delivered; alone the allocation fits. Also: a refused
+allocation that surfaced under another code than OutOfMemory (std::thread's std::system_error and
+other exceptions are Internal; a library's NULL its caller's error) kept the job's own
+deterministic class although the group's notification named the worker (COR-3); and a stopped job
+whose earlier transient failures had used up the retry budget failed for good instead of getting
+its retry alone (COR-4).
+
+21. **The evidence of a memory limit, in order** (`worker_host.cpp`, `memory_failure()`): the
+    worker's own Job Object notification (its own limit); the group's notification naming the worker
+    (the group's limit, classified by company as decision 18 says, whatever the worker's peak); then,
+    only for an OutOfMemory or a worker that ended (notifications are not guaranteed), a peak commit
+    above the worker's own limit (a refusal by its own limit always leaves the charged peak above it,
+    one by the group's below it whenever the worker's own limit would have admitted the
+    allocation), then the group's peak rising to within 5 % of its limit. A notification classifies
+    any failure the worker reports except a cancellation or a time-out; the peak fallbacks need an
+    OutOfMemory. Regression tests: `WorkerGroup.AStopBesideAnotherWorkerStaysTransientNearTheWorkersOwnLimit`
+    (the review's 100 MiB + 980 MiB case: GroupMemoryLimit, Transient; the second worker's peak 984
+    MiB; alone the allocation passes) and
+    `WorkerGroup.AnAllocationRefusedUnderAnotherErrorCodeIsStillTheGroupsStop` (the worker test hook
+    `allocation-error-internal` reports the refused allocation as Internal: GroupMemoryLimit,
+    Transient).
+22. **A stopped photo always gets its retry alone** (`batch_scheduler.cpp`, `Attempt::fail_job()`):
+    a job marked exclusive by a group-limit stop is requeued even when its transient failures have
+    used up `BatchRetryPolicy::max_transient_failures`; the mark is consumed by that attempt, so a
+    later failure is budgeted again. Regression test:
+    `BatchFailureTest.AStoppedPhotoIsRetriedAloneWhateverItsRetryBudget` (a budget of 0: both photos
+    exported, the stopped one in two attempts).
+
+Deferred (COR-3, part 2): the group's lost-notification fallback compares the group's peak, which
+only grows over the service's life and includes refused charges, so after one refusal a later stop
+by a smaller allocation without a notification is no longer recognised and keeps the worker's own
+class (an OutOfMemory is Transient anyway). Per-job evidence (the members' commit at the failure, or
+the Job Object's limit-violation information) is left for later work; notifications were delivered
+in every run measured.

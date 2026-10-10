@@ -155,9 +155,19 @@ TEST(BatchFixtures, SmokeFixturesExportThroughWorkers) {
                 static_cast<double>(stats.total_budget_bytes) / (1 << 30), stats.peak_active_workers,
                 stats.bytes_per_pixel, static_cast<double>(stats.peak_worker_commit_bytes) / 1048576.0,
                 static_cast<unsigned long long>(stats.worker_starts));
+    // The workers' hard aggregate limit (ADR 0012): never reached by these photos, so the group's
+    // peak is the real largest total commit of the workers together.
+    std::printf("  workers together: peak commit %.0f MB of an aggregate limit of %.0f MB\n",
+                static_cast<double>(stats.peak_aggregate_commit_bytes) / 1048576.0,
+                static_cast<double>(stats.aggregate_limit_bytes) / 1048576.0);
+    EXPECT_EQ(stats.aggregate_limit_bytes, stats.worker_budget_bytes);
+    EXPECT_EQ(stats.aggregate_limit_hits, 0u);
+    EXPECT_LE(stats.peak_aggregate_commit_bytes, stats.aggregate_limit_bytes);
+    EXPECT_GE(stats.peak_aggregate_commit_bytes, stats.peak_worker_commit_bytes / 2);
     print_receipts(h, id);
     RecordProperty("batch_seconds_x10", static_cast<int>(seconds * 10));
     RecordProperty("peak_worker_commit_mb", static_cast<int>(stats.peak_worker_commit_bytes >> 20));
+    RecordProperty("peak_aggregate_commit_mb", static_cast<int>(stats.peak_aggregate_commit_bytes >> 20));
     RecordProperty("peak_active_workers", static_cast<int>(stats.peak_active_workers));
     auto report = h.batches().report(id);
     ASSERT_TRUE(report);
@@ -206,9 +216,14 @@ TEST(BatchFixtures, SmokeFixturesAutomaticBatch) {
     }
     const BatchSchedulerStats stats = h.batches().stats();
     std::printf("  %zu smoke fixtures, automatic settings, JPEG: %.1f s for the batch; peak worker commit %.0f MB; "
-                "at most %u workers; %llu worker starts\n",
+                "at most %u workers; %llu worker starts; workers together: peak commit %.0f MB of %.0f MB\n",
                 files.size(), seconds, static_cast<double>(stats.peak_worker_commit_bytes) / 1048576.0,
-                stats.peak_active_workers, static_cast<unsigned long long>(stats.worker_starts));
+                stats.peak_active_workers, static_cast<unsigned long long>(stats.worker_starts),
+                static_cast<double>(stats.peak_aggregate_commit_bytes) / 1048576.0,
+                static_cast<double>(stats.aggregate_limit_bytes) / 1048576.0);
+    EXPECT_EQ(stats.aggregate_limit_hits, 0u);
+    EXPECT_LE(stats.peak_aggregate_commit_bytes, stats.aggregate_limit_bytes);
+    RecordProperty("peak_aggregate_commit_mb", static_cast<int>(stats.peak_aggregate_commit_bytes >> 20));
     auto report = h.batches().report(id);
     ASSERT_TRUE(report);
     for (const ReportEntry& entry : report->entries) {

@@ -182,6 +182,57 @@ TEST(CommandLine, ParsesTheAutomaticSettingsAutomation) {
     EXPECT_EQ(parse({"--automatic", "auto"}).action, CommandLine::Action::Error);  // needs --export-batch
 }
 
+// W12: the measurement hooks of the performance baseline (docs/performance).
+TEST(CommandLine, ParsesTheMeasurementHooks) {
+    const DeveloperOptions defaults = parse({}).options;
+    EXPECT_FALSE(defaults.resume_batch);
+    EXPECT_FALSE(defaults.cancel_batch_after.has_value());
+    EXPECT_FALSE(defaults.pause_batch_after.has_value());
+    EXPECT_EQ(defaults.resume_after_ms, 5000);
+    EXPECT_FALSE(defaults.cancel_auto_after_ms.has_value());
+
+    const CommandLine batch = parse({"--export-batch", "in", "--to", "out", "--cancel-batch-after", "3",
+                                     "--pause-batch-after", "1", "--resume-after", "250", "--quit-when-done",
+                                     "--measure"});
+    ASSERT_EQ(batch.action, CommandLine::Action::Run) << batch.message.toStdString();
+    EXPECT_EQ(batch.options.cancel_batch_after, 3);
+    EXPECT_EQ(batch.options.pause_batch_after, 1);
+    EXPECT_EQ(batch.options.resume_after_ms, 250);
+    EXPECT_FALSE(batch.options.resume_batch);
+
+    // --resume-batch follows the library's unfinished batch: no folder, no output settings.
+    const CommandLine resume = parse({"--resume-batch", "--quit-when-done", "--cancel-batch-after", "0",
+                                      "--screenshot-running", "run.png", "--data-root", "root"});
+    ASSERT_EQ(resume.action, CommandLine::Action::Run) << resume.message.toStdString();
+    EXPECT_TRUE(resume.options.resume_batch);
+    EXPECT_TRUE(resume.options.quit_when_done);
+    EXPECT_EQ(resume.options.cancel_batch_after, 0);
+    EXPECT_TRUE(resume.options.batch_folder.isEmpty());
+
+    const CommandLine automatic = parse({"--open-first", "--auto", "--cancel-auto-after", "1500"});
+    ASSERT_EQ(automatic.action, CommandLine::Action::Run) << automatic.message.toStdString();
+    EXPECT_EQ(automatic.options.cancel_auto_after_ms, 1500);
+
+    for (const QStringList& invalid : {
+             QStringList{"--resume-batch", "--export-batch", "in", "--to", "out"},  // one or the other
+             QStringList{"--cancel-batch-after", "2"},                              // no batch to cancel
+             QStringList{"--pause-batch-after", "2"},
+             QStringList{"--quit-when-done"},
+             QStringList{"--resume-batch", "--to", "out"},  // output settings belong to --export-batch
+             QStringList{"--resume-batch", "--automatic", "auto"},
+             QStringList{"--export-batch", "in", "--to", "out", "--cancel-batch-after", "-1"},
+             QStringList{"--export-batch", "in", "--to", "out", "--cancel-batch-after", "many"},
+             QStringList{"--export-batch", "in", "--to", "out", "--resume-after", "100"},  // needs a pause
+             QStringList{"--export-batch", "in", "--to", "out", "--pause-batch-after", "1", "--resume-after",
+                         "700000"},
+             QStringList{"--export-batch", "in", "--to", "out", "--show-batch-dialog", "--cancel-batch-after", "1"},
+             QStringList{"--open-first", "--cancel-auto-after", "100"},  // needs --auto
+             QStringList{"--open-first", "--auto", "--cancel-auto-after", "-5"},
+         }) {
+        EXPECT_EQ(parse(invalid).action, CommandLine::Action::Error) << invalid.join(' ').toStdString();
+    }
+}
+
 TEST(CommandLine, ParsesTheGeometryAndMaskAutomation) {
     const CommandLine command_line =
         parse({"--open-first", "--turn", "CW", "--turn", "flip", "--straighten", "-2.5", "--crop", "0.1,0.2,0.7,0.6",

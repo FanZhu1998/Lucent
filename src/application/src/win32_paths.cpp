@@ -102,10 +102,14 @@ Expected<std::filesystem::path> canonical_path(const std::filesystem::path& path
         const DWORD code = ::GetLastError();
         return Unexpected(core::win32_error(code, std::string(where), "cannot open " + quoted(path)));
     }
+    return final_path_of(handle.get(), path, where);
+}
+
+Expected<std::filesystem::path> final_path_of(void* handle, const std::filesystem::path& path, std::string_view where) {
     std::wstring buffer(MAX_PATH, L'\0');
     DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
     for (int attempt = 0; attempt < 4; ++attempt) {
-        const DWORD length = ::GetFinalPathNameByHandleW(handle.get(), buffer.data(),
+        const DWORD length = ::GetFinalPathNameByHandleW(static_cast<HANDLE>(handle), buffer.data(),
                                                          static_cast<DWORD>(buffer.size()), flags);
         if (length == 0) {
             const DWORD code = ::GetLastError();

@@ -22,9 +22,13 @@
 //  * CreateProcess with CREATE_NO_WINDOW and CREATE_SUSPENDED (lucent-worker.exe is a GUI-subsystem
 //    program, so no console window ever flashes), below-normal priority by default, working
 //    directory = the executable's folder;
-//  * assigned to its own Job Object before it runs: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (the worker
-//    dies with this process, whatever ends it), JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION (no
-//    error dialog), JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 1, and with memory_limit_bytes set,
+//  * with a WorkerGroup (WorkerHostOptions::group, worker_group.hpp), assigned to the group's Job
+//    Object first: its aggregate commit limit then covers the worker together with the group's
+//    other workers (a worker that cannot join runs without it: WorkerInfo::grouped is false);
+//  * assigned to its own Job Object before it runs (nested inside the group's, if any):
+//    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (the worker dies with this process, whatever ends it),
+//    JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION (no error dialog),
+//    JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 1, and with memory_limit_bytes set,
 //    JOB_OBJECT_LIMIT_PROCESS_MEMORY (a commit limit: allocations beyond it fail inside the worker);
 //    an I/O completion port receives the job's memory-limit notifications;
 //  * the handshake (protocol.hpp): versions negotiated, identical builds required. A mismatch is
@@ -54,14 +58,30 @@
 //   | cancelled; it did not stop within cancel_grace | Cancelled / workers.job.cancelled  | Cancelled     | CancelTimeout  |
 //   | the worker hit memory_limit_bytes (it reported | LimitExceeded /                    | Deterministic | MemoryLimit    |
 //   | OutOfMemory or ended)                          | workers.worker.memory_limit        |               |                |
+//   | the group's aggregate limit stopped it while   | OutOfMemory /                      | Transient     | GroupMemoryLimit |
+//   | another worker of the group was alive          | workers.worker.group_memory_limit  |               |                |
+//   | the group's aggregate limit stopped it alone   | LimitExceeded /                    | Deterministic | MemoryLimit    |
+//   |                                                | workers.worker.memory_limit        |               |                |
 //   | the worker broke the protocol, or answered     | Corrupt / workers.protocol.*       | Deterministic | ProtocolViolation |
 //   | with another output, recipe or source          |                                    |               |                |
 //   | the worker could not be started                | the start error (NotFound, VersionMismatch, Timeout, ...) | see start() | StartFailed |
-// The memory limit is recognised from the Job Object's JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT
-// notification or, because Windows does not guarantee delivery of those messages, from an
-// OutOfMemory or crash while the worker's peak commit was within 5 % of the limit. An OutOfMemory
-// without either is the worker's own error (Transient: memory pressure from elsewhere). After a
-// memory-limit hit the worker is recycled even if its job succeeded.
+// The evidence of a memory limit is weighed in this order (W12 closing review, COR-1 and COR-3):
+//   1. the worker's own Job Object notification (JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT): its own limit;
+//   2. the group's JOB_OBJECT_MSG_JOB_MEMORY_LIMIT naming the worker's process (worker_group.hpp):
+//      the aggregate limit, transient when another worker of the group was alive at any time during
+//      the job (the job may succeed alone: which worker an aggregate limit stops is whichever
+//      allocates at the limit), deterministic like the worker's own limit when the worker was the
+//      group's only process (the photo needs more than the whole aggregate);
+//   then, because Windows does not guarantee delivery of those messages, and only for an
+//   OutOfMemory or a worker that ended:
+//   3. the worker's peak commit above its own limit (Windows charges an allocation to the peak before
+//      it refuses it, so a refusal by the own limit always leaves the peak above it, and a refusal by
+//      the group's limit leaves it below whenever the own limit would have admitted the allocation);
+//   4. the group's peak commit rising to within 5 % of its limit during the job.
+// A notification classifies any failure the worker reports except a cancellation or a time-out (an
+// allocation failure can surface as Internal or as a library's error). An OutOfMemory without any of
+// these is the worker's own error (Transient: memory pressure from elsewhere). After a memory-limit
+// hit of either kind the worker is recycled even if its job succeeded.
 //
 // Thread-safety: start(), run_job(), ping() and shutdown() must not be called concurrently (one
 // thread drives a host; cancellation arrives through the token). info() may be called from any
@@ -80,6 +100,7 @@
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/workers/protocol.hpp>
+#include <lucent/workers/worker_group.hpp>
 
 namespace lucent::workers {
 
@@ -92,6 +113,9 @@ struct WorkerHostOptions {
     // memory budget; setting JobRequest::memory_budget_bytes to at most this limit makes the
     // engine refuse an oversized render up front (LimitExceeded) instead of failing an allocation.
     std::uint64_t memory_limit_bytes = 0;
+    // The group whose aggregate commit limit also covers this host's workers (worker_group.hpp);
+    // null: none. Hosts of one scheduler share one group.
+    std::shared_ptr<WorkerGroup> group;
     std::chrono::milliseconds handshake_timeout{15'000};
     std::chrono::milliseconds heartbeat_interval{500};  // sent to the worker in host_hello
     std::chrono::milliseconds heartbeat_timeout{15'000};
@@ -119,8 +143,9 @@ enum class WorkerFault : std::uint8_t {
     Unresponsive = 3,       // no heartbeat within heartbeat_timeout; terminated
     TimedOut = 4,           // the job's timeout passed and it did not stop after cancel; terminated
     CancelTimeout = 5,      // cancelled and did not stop within cancel_grace; terminated
-    MemoryLimit = 6,        // it reached memory_limit_bytes; recycled
+    MemoryLimit = 6,        // it reached memory_limit_bytes (or alone, its group's limit); recycled
     ProtocolViolation = 7,  // it sent something the protocol forbids; terminated
+    GroupMemoryLimit = 8,   // its group's aggregate limit stopped it beside other workers; recycled
 };
 
 [[nodiscard]] std::string_view to_string(WorkerFault fault) noexcept;  // "none", "crashed", ...
@@ -181,6 +206,10 @@ struct WorkerInfo {
     double last_start_seconds = 0.0;         // spawn + handshake of the newest process
     std::uint64_t jobs = 0;                  // jobs dispatched
     std::uint64_t peak_commit_bytes = 0;     // Job Object accounting of the newest process
+    bool grouped = false;                    // the running worker is a member of options.group
+    // The running worker's commit after its last job (what it holds while idle, which counts
+    // against its group's limit); 0 when no worker runs.
+    std::uint64_t idle_commit_bytes = 0;
 };
 
 class WorkerHost {

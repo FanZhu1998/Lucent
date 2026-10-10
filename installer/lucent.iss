@@ -12,7 +12,10 @@
 ;   VCRuntimeDlls               comma-separated runtime DLLs Lucent imports (from the audit)
 ;   AssociationsInclude         generated file with the "Open with Lucent" registry entries
 ;   LucentSign                  optional: sign Setup and the uninstaller with the "lucent" sign tool,
-;                               which package.ps1 defines with ISCC /S when signing is configured
+;                               which package.ps1 defines with ISCC /S when signing is configured.
+;                               Inno Setup signs the uninstaller inside Setup; a signed uninstaller
+;                               keeps its messages in unins000.msg beside unins000.exe, which
+;                               installer\tests\Test-InstalledPackage.ps1 -SignerThumbprint checks
 ;
 ; Policies (ADR 0009):
 ; - Per user, no elevation: PrivilegesRequired=lowest installs into %LOCALAPPDATA%\Programs\Lucent.

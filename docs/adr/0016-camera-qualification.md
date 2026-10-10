@@ -2,8 +2,9 @@
 
 - **Status:** Accepted (phase 1 of W10: the harness, the expectations and the table; amended by
   ADR 0017 for the camera's image area (check suite 2), on 2026-10-08 by ADR 0018 for the
-  camera support database: see "Amendment: support data (ADR 0018)" below, and by the closing
-  review of W10: see "Amendment: closing review")
+  camera support database: see "Amendment: support data (ADR 0018)" below, by the closing
+  review of W10: see "Amendment: closing review", and on 2026-10-09 by ADR 0020 for the camera
+  correctness gate: see "Amendment: W12 camera correctness gate (ADR 0020)")
 - **Date:** 2026-10-05
 - **Workflow:** W10 (Multi-brand qualification), phase 1 of 3
 
@@ -289,3 +290,30 @@ cached fixture of any tier, in `lucent_qualification_fixture_tests`).
   only for files with those facts (ADR 0018 amendment).
 - Run of the review fixes over all 34 fixtures: every outcome equal to its expectation, the same
   states as before (Verified 14, Compatible, unverified 11, Limited 6, Unsupported 3).
+
+## Amendment: W12 camera correctness gate (ADR 0020), 2026-10-09
+
+[ADR 0020](0020-camera-correctness-gate.md) answers the two gaps the closing review deferred:
+
+- **Colour against an independent reference (QUA-03).** Check suite 3 adds `colour_reference`
+  (decision 3's table gains a row): for a fixture whose photograph shows a colour chart
+  (`fixtures/qualification/charts.json`: the 5D Mark IV RAW and S-RAW with a Datacolor
+  SpyderCHECKR, the X-T4 pair with an X-Rite ColorChecker Classic Mini), the develop path's as-shot
+  scene-linear patch colours, balanced on the chart's own grey, must lie within CIEDE2000 mean 4.5,
+  90th percentile 7.5 and maximum 12.5 of the manufacturer's published values; evidence
+  "independent". Every other fixture's `colour_reference` is `not_applicable`. Measured: mean 2.84 to
+  2.99, within 0.01 of LibRaw's own rendering measured with independent code
+  (`research/tools/chart_reference.py`).
+- **State rules 2** (decision 5): evidence "independent" counts as strong; the rules are unchanged,
+  so a chart fixture needs `colour_reference` to pass for Verified, and every other mode keeps its
+  like-for-like (LibRaw) or gross-error colour evidence. Each fixture result and support-table row
+  records `colour_evidence` and the support table shows it per mode; the decision not to require
+  chart evidence for every Verified mode, and its reasons, are in ADR 0020.
+- **`black_white`** (decision 3) evaluates the camera's image area when the file declares one (padding
+  columns outside a DNG DefaultCrop are not image data).
+- **Rotated fixtures (QUA-07).** Six CC0 files with EXIF orientation 6 or 8 cover every image-area
+  source (decoder inset crop twice, DNG DefaultCrop twice, the DNG default whole image with mandatory
+  opcodes, and an unknown area); their expectations pin the upright placement derived from the
+  files' own tags. Expectations give sizes in upright pixels (`expectations.hpp`).
+- The corpus has 40 fixtures; the committed report, support table and camera support database are
+  regenerated from a clean build of this change.

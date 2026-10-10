@@ -37,9 +37,28 @@ struct ImageDataExtent {
     std::vector<std::string> warnings;
 };
 
+// Where IFD 0 declares the raw image data (find_image_data_overruns()).
+enum class RawDataRule : std::uint8_t {
+    // The strip and tile tables of every IFD (TIFF, DNG, ORF).
+    Strips,
+    // Panasonic RW2 and Leica RWL. When IFD 0 carries RawDataOffset (tag 0x0118) as a LONG, LibRaw
+    // reads the raw data there, not at StripOffsets (its tag handling lets 0x0118 replace the strip
+    // offset, and older files store the placeholder 4294967295 there with StripByteCounts 0;
+    // ADR 0005, amendment "Panasonic raw data"). The raw data must then start inside the file and
+    // hold StripByteCounts bytes when that is not 0; otherwise, for the fixed-rate Panasonic
+    // encodings (RawFormat, tag 0x002D, absent or 1 to 7), at least 16 bytes per 14 pixels of the
+    // sensor area (SensorWidth 0x0002 x SensorHeight 0x0003: the classic encoding packs 14 pixels
+    // into 16 bytes, the later fixed-rate ones fewer pixels into 16 bytes); for any other encoding
+    // (8: a variable-rate compression) only its start is checked. IFD 0's strip table is not
+    // compared with the file then. Without a LONG RawDataOffset the strip tables are checked as for
+    // any TIFF, which is also what LibRaw reads.
+    Panasonic,
+};
+
 // Scans the IFD 0 chain and the SubIFD trees of `source` (Exif IFDs carry no image data) for
 // StripOffsets/StripByteCounts and TileOffsets/TileByteCounts that reach past the end of the
-// source. `accepted` selects whether ORF/RW2 signatures are read (TiffSignatures).
+// source. `accepted` selects whether ORF/RW2 signatures are read (TiffSignatures); `rule` where IFD
+// 0's raw data is declared (RawDataRule).
 //
 // An IFD that cannot be read counts as an overrun when it, or its plausibly sized entry table,
 // does not fit in the source (the usual shape of a truncated copy); this includes IFD 0. An IFD
@@ -57,6 +76,6 @@ struct ImageDataExtent {
 // IFD is scanned once, so loops terminate.
 [[nodiscard]] Expected<ImageDataExtent> find_image_data_overruns(
     RandomAccessSource& source, const TiffInspectLimits& limits = {},
-    TiffSignatures accepted = TiffSignatures::Standard);
+    TiffSignatures accepted = TiffSignatures::Standard, RawDataRule rule = RawDataRule::Strips);
 
 }  // namespace lucent::raw::detail

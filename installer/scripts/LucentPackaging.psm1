@@ -19,6 +19,14 @@
     - New-PackageSbom             aggregates vcpkg's per-port SPDX documents and Qt's SBOMs into one
                                   SPDX 2.3 SBOM, and checks it structurally.
     - Write-InstalledFileList     writes Lucent-files.txt, the list the next Setup's upgrade uses.
+    - Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit
+                                  scan every shipped file (and the installer, and the package
+                                  manifest) for the build machine's folders: the user profile, the
+                                  repository, the build tree and the vcpkg folders (W12).
+    - Get-CodeSigningCertificate, Test-AuthenticodeFile
+                                  check the signing certificate before signing and every signature
+                                  after it (signer thumbprint, offline WinVerifyTrust result,
+                                  timestamp) (W12).
     - Find-InnoSetupCompiler      locates ISCC.exe.
     - Get-FileInventory           lists files with size and SHA-256 for the package manifest.
 
@@ -158,7 +166,13 @@ function Read-LucentPackageInfo {
         throw "$path is missing: configure the build with the release preset first (tools\build.ps1 -Preset release)."
     }
     $info = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($info.schema -ne 4) { throw "$path has schema $($info.schema); this script understands schema 4. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    if ($info.schema -ne 6) { throw "$path has schema $($info.schema); this script understands schema 6. Reconfigure the build tree (tools\build.ps1 -Preset release)." }
+    # The update channel compiled into Lucent.exe (schema 6, W12 review SEC-02; Get-LucentUpdateChannelRecord).
+    if ($info.PSObject.Properties.Name -notcontains 'updateChannel' -or $null -eq $info.updateChannel) { throw "$path has no updateChannel; reconfigure the build tree." }
+    # The build machine's folders that no shipped file may name (schema 5, W12; Get-BuilderPathRules).
+    foreach ($field in 'userProfile', 'vcpkgRoot', 'vcpkgBuildtreesDir', 'vcpkgPackagesDir', 'vcpkgDownloadsDir') {
+        if ($info.PSObject.Properties.Name -notcontains $field) { throw "$path has no $field; reconfigure the build tree." }
+    }
     # The bundled data assets (schema 4, ADR 0018): each with the SHA-256 the build pinned for its
     # manifest, its folder in the source tree and the files it installs.
     foreach ($asset in @($info.assets)) {
@@ -481,7 +495,8 @@ function Invoke-LayoutAudit {
         - DLLs that Qt loads by name at run time: the required Qt plugins (Info.requiredPlugins), and
           the QML modules Lucent uses with their plugin DLLs (Test-QmlLayout).
         - qt.conf exists and holds only relative paths; no .conf/.ini file names a build-tree path.
-          (Binaries are not scanned: the vcpkg-built DLLs carry their builder's PDB paths.)
+          Every byte of every shipped file is scanned for the build machine's folders later, once
+          the licences and the SBOM exist (Invoke-BuilderPathAudit, W12).
     #>
     param(
         [Parameter(Mandatory)][string]$StageDir,
@@ -788,6 +803,9 @@ function Invoke-SmokeRun {
     if ($timedOut) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue; $process.WaitForExit() }
     $stderr = if (Test-Path -LiteralPath $stderrPath) { @(Get-Content -LiteralPath $stderrPath) } else { @() }
     $problems = @($stderr | Where-Object { $_ -match 'module ".*" is not installed|Cannot load library|Could not (find|load) the Qt platform plugin|failed to load|qrc:.*(Error|error)|QQmlApplicationEngine failed|Unsupported image format|is not a type|ReferenceError|TypeError|camera support database unavailable' })
+    # W12 review SEC-02: the update channel compiled into the staged Lucent.exe, which its developer
+    # automation reports at start-up ("lucent: update channel ..."; app::describe_update_channel()).
+    $channel = ConvertFrom-UpdateChannelLogLine -Lines $stderr
     # W10 (ADR 0018): the installed camera support database must be found and verified in the folder.
     $supportLines = @($stderr | Where-Object { $_ -match 'camera support database \S+ \(qualified' })
     $changed = @(Compare-Object -ReferenceObject $before -DifferenceObject (Get-FolderSnapshot -Root $StageDir) | ForEach-Object { $_.InputObject })
@@ -801,8 +819,172 @@ function Invoke-SmokeRun {
         $errors.Add("$Executable used a camera support database outside the folder: $($supportLines[0])")
     }
     foreach ($line in $changed) { $errors.Add("The run changed the installation folder: $line") }
+    if (-not $timedOut -and -not $channel.Found) { $errors.Add("$Executable did not report its update channel (see $stderrPath)") }
     return [pscustomobject]@{ Errors = $errors; ExitCode = $(if ($timedOut) { $null } else { $process.ExitCode }); Screenshot = $screenshot; Log = $stderrPath
-                              CameraSupport = $(if ($supportLines.Count -gt 0) { $supportLines[0] } else { $null }) }
+                              CameraSupport = $(if ($supportLines.Count -gt 0) { $supportLines[0] } else { $null })
+                              UpdateChannelReported = $channel.Found; UpdateChannel = $channel.Channel }
+}
+
+# --- The update channel (W12 review SEC-02; ADR 0022) ---------------------------------------------
+#
+# A channel record: [pscustomobject]@{ name; manifestUrl; keyIds; publisherThumbprints } (key ids:
+# SHA-256 of each pinned public key's 65-byte point, as Lucent logs them; ids and thumbprints in
+# lowercase, sorted), or $null for a build that checks no channel.
+
+function Get-UpdateKeyId {
+    <#
+    .SYNOPSIS
+        The key id of an ECDSA P-256 public key (130 hex digits, "04..."): SHA-256 of its 65 bytes.
+    #>
+    param([Parameter(Mandatory)][string]$PublicKey)
+    $hex = $PublicKey.Trim().ToLowerInvariant()
+    if ($hex -notmatch '^04[0-9a-f]{128}$') { throw "'$PublicKey' is not an uncompressed P-256 public key (130 hex digits starting with 04)." }
+    $point = New-Object byte[] 65
+    for ($i = 0; $i -lt 65; $i++) { $point[$i] = [Convert]::ToByte($hex.Substring(2 * $i, 2), 16) }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return -join ($sha.ComputeHash($point) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
+}
+
+function New-UpdateChannelRecord {
+    param([string]$Name, [string]$ManifestUrl, [string[]]$KeyIds, [string[]]$PublisherThumbprints)
+    return [pscustomobject]@{
+        name = $Name; manifestUrl = $ManifestUrl
+        keyIds = @(@($KeyIds | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() }) | Sort-Object -Unique)
+        publisherThumbprints = @(@($PublisherThumbprints | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() }) | Sort-Object -Unique) }
+}
+
+function Get-LucentUpdateChannelRecord {
+    <#
+    .SYNOPSIS
+        The update channel a build tree compiled into Lucent.exe (Read-LucentPackageInfo's
+        updateChannel, from the LUCENT_UPDATE_* cache variables), as a channel record or $null.
+    #>
+    param([Parameter(Mandatory)]$Info)
+    $channel = $Info.updateChannel
+    if (-not $channel.manifestUrl) { return $null }
+    return New-UpdateChannelRecord -Name $channel.name -ManifestUrl $channel.manifestUrl `
+        -KeyIds @(@($channel.publicKeys) | Where-Object { $_ } | ForEach-Object { Get-UpdateKeyId $_ }) `
+        -PublisherThumbprints @($channel.publisherThumbprints)
+}
+
+function ConvertFrom-UpdateChannelLogLine {
+    <#
+    .SYNOPSIS
+        The update channel Lucent.exe reported at start-up (its developer automation's line on stderr,
+        app::describe_update_channel() in src\application): "update channel '<name>' (<URL>): keys
+        <id>,<id>; publishers <thumbprint>,... | none", or "update channel: none". Found = $false
+        when no such line was written, also for "update channel refused: <reason>" (a compiled
+        configuration Lucent refuses).
+    #>
+    param([string[]]$Lines)
+    foreach ($line in @($Lines)) {
+        if ($line -match "update channel '([a-z0-9-]+)' \((\S+)\): keys ([0-9a-f,]*); publishers ([0-9a-f,]+|none)") {
+            $keys = @($Matches[3].Split(',') | Where-Object { $_ })
+            $publishers = @()
+            if ($Matches[4] -ne 'none') { $publishers = @($Matches[4].Split(',') | Where-Object { $_ }) }
+            return [pscustomobject]@{ Found = $true; Channel = (New-UpdateChannelRecord -Name $Matches[1] -ManifestUrl $Matches[2] -KeyIds $keys -PublisherThumbprints $publishers) }
+        }
+        if ($line -match 'update channel: none') { return [pscustomobject]@{ Found = $true; Channel = $null } }
+    }
+    return [pscustomobject]@{ Found = $false; Channel = $null }
+}
+
+function Format-UpdateChannel {
+    param($Channel)
+    if ($null -eq $Channel) { return 'none (this build never checks for updates)' }
+    $publishers = if (@($Channel.publisherThumbprints).Count -gt 0) { @($Channel.publisherThumbprints) -join ', ' } else { 'none named (Authenticode not checked)' }
+    return "'$($Channel.name)' $($Channel.manifestUrl); release-manifest keys $(@($Channel.keyIds) -join ', '); installer publishers $publishers"
+}
+
+function Compare-UpdateChannel {
+    <#
+    .SYNOPSIS
+        The differences between two channel records (none when they are the same channel: name, URL,
+        key ids and publisher thumbprints). Callers wrap it in @(): no difference is no output.
+    #>
+    param($Expected, $Actual)
+    $differences = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Expected -or $null -eq $Actual) {
+        if (($null -eq $Expected) -ne ($null -eq $Actual)) { $differences.Add("expected $(Format-UpdateChannel $Expected), found $(Format-UpdateChannel $Actual)") }
+        return $differences
+    }
+    if ($Expected.name -cne $Actual.name) { $differences.Add("name '$($Actual.name)' instead of '$($Expected.name)'") }
+    if ($Expected.manifestUrl -cne $Actual.manifestUrl) { $differences.Add("manifest URL $($Actual.manifestUrl) instead of $($Expected.manifestUrl)") }
+    if ((@($Expected.keyIds) -join ',') -cne (@($Actual.keyIds) -join ',')) { $differences.Add("release-manifest keys $(@($Actual.keyIds) -join ', ') instead of $(@($Expected.keyIds) -join ', ')") }
+    if ((@($Expected.publisherThumbprints) -join ',') -cne (@($Actual.publisherThumbprints) -join ',')) {
+        $differences.Add("installer publishers $(@($Actual.publisherThumbprints) -join ', ') instead of $(@($Expected.publisherThumbprints) -join ', ')")
+    }
+    return $differences
+}
+
+function Read-ExpectedUpdateChannels {
+    <#
+    .SYNOPSIS
+        installer\update-channels.json ("lucent.update-channels" version 1): the channels a release
+        build may check, each with its manifest URL, release-manifest key ids and the publisher
+        certificates its installers are signed with (at least one).
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    if ($document.schema -ne 'lucent.update-channels' -or $document.version -ne 1) { throw "$Path is not a lucent.update-channels version 1 document." }
+    $channels = @()
+    foreach ($entry in @($document.channels)) {
+        if (-not $entry) { continue }
+        if ($entry.name -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { throw "$Path names an invalid channel '$($entry.name)'." }
+        if ($entry.manifestUrl -notmatch '^https://') { throw "$Path gives channel '$($entry.name)' a manifest URL that is not https." }
+        foreach ($id in @($entry.keyIds)) { if ($id -cnotmatch '^[0-9a-f]{64}$') { throw "$Path gives channel '$($entry.name)' an invalid key id '$id'." } }
+        foreach ($thumbprint in @($entry.publisherThumbprints)) {
+            if ($thumbprint -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw "$Path gives channel '$($entry.name)' an invalid thumbprint '$thumbprint'." }
+        }
+        $channels += New-UpdateChannelRecord -Name $entry.name -ManifestUrl $entry.manifestUrl -KeyIds @($entry.keyIds) -PublisherThumbprints @($entry.publisherThumbprints)
+    }
+    return $channels
+}
+
+function Test-LucentUpdateChannelPolicy {
+    <#
+    .SYNOPSIS
+        Whether a package may be built with the update channel its Lucent.exe checks (W12 review
+        SEC-02). -Declared is tools\package.ps1's -UpdateChannel: 'none', a channel name, or empty.
+        A Setup (not -StageOnly) must declare it. 'none' needs a build without a channel; a name needs
+        the build to check exactly that entry of the expected channels, which must name at least one
+        publisher certificate (otherwise the installer's Authenticode signature would not be checked
+        and whoever holds the manifest key controls every update). Returns Errors and Warnings.
+    #>
+    param($Compiled, [string]$Declared, [object[]]$Expected = @(), [switch]$StageOnly)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $warnings = New-Object System.Collections.Generic.List[string]
+    if (-not $Declared) {
+        if (-not $StageOnly) {
+            $errors.Add('Pass -UpdateChannel <name> (an entry of installer\update-channels.json) or -UpdateChannel none: a Setup declares which update channel its Lucent.exe checks.')
+        }
+        elseif ($null -ne $Compiled -and -not @($Expected | Where-Object { @(Compare-UpdateChannel -Expected $_ -Actual $Compiled).Count -eq 0 })) {
+            $warnings.Add("This build checks the update channel $(Format-UpdateChannel $Compiled), which installer\update-channels.json does not list: not for release.")
+        }
+    }
+    elseif ($Declared -eq 'none') {
+        if ($null -ne $Compiled) {
+            $errors.Add("-UpdateChannel none, but this build checks $(Format-UpdateChannel $Compiled). Reconfigure with empty LUCENT_UPDATE_* (tools\build.ps1 -Fresh without them set).")
+        }
+    }
+    else {
+        $entry = @($Expected | Where-Object { $_.name -ceq $Declared })
+        if ($null -eq $Compiled) {
+            $errors.Add("-UpdateChannel $Declared, but this build checks no channel: configure it with the LUCENT_UPDATE_* values of that channel (docs\development\setup.md).")
+        }
+        elseif ($entry.Count -ne 1) {
+            $errors.Add("installer\update-channels.json lists no channel '$Declared'.")
+        }
+        else {
+            if (@($entry[0].publisherThumbprints).Count -eq 0) {
+                $errors.Add("The channel '$Declared' names no publisher certificate in installer\update-channels.json: a release channel must, so that clients check the installer's Authenticode signature.")
+            }
+            foreach ($difference in (Compare-UpdateChannel -Expected $entry[0] -Actual $Compiled)) {
+                $errors.Add("This build's update channel differs from installer\update-channels.json's '$Declared': $difference.")
+            }
+        }
+    }
+    return [pscustomobject]@{ Errors = $errors; Warnings = $warnings }
 }
 
 # --- Static libraries linked into the executable -------------------------------------------------
@@ -1666,6 +1848,453 @@ function New-PackageSbom {
     return [pscustomobject]@{ Packages = $packages.Count; Files = $files.Count; Relationships = $relationships.Count; DroppedRecipeFiles = $droppedRecipeFiles }
 }
 
+# --- Builder paths (W12) -------------------------------------------------------------------------
+
+# One character per byte: regular expressions over this view of a file's bytes find text in any
+# encoding, and a match's index is its byte offset.
+$script:Latin1 = [System.Text.Encoding]::GetEncoding(28591)
+
+function Get-BuilderPathRules {
+    <#
+    .SYNOPSIS
+        The folders of the build machine that no shipped file may name, most specific first: the
+        vcpkg installed tree, the build tree, the source tree and the repository, the vcpkg
+        buildtrees, packages and downloads folders, the vcpkg root, and the user profile; from the
+        build's packaging facts (configure time) and this process's environment, with their 8.3
+        short forms where those differ.
+    .DESCRIPTION
+        A folder on a drive matches with its drive letter (C:\x, or /c/x); the user profile also
+        without it (\Users\<name>). New-BuilderPathScanner adds a rule for any user's profile
+        folder (X:\Users\<name>\), which also catches binaries a binary cache brought from another
+        machine.
+    .OUTPUTS
+        Objects with Name, Path (full, no trailing separator) and DriveOptional.
+    #>
+    param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)][string]$RepoRoot)
+    $candidates = @(
+        [pscustomobject]@{ Name = 'vcpkg installed tree'; Path = $Info.vcpkgInstalledDir; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'build tree'; Path = $Info.binaryDir; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'source tree'; Path = $Info.sourceDir; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'repository'; Path = $RepoRoot; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg buildtrees folder'; Path = $Info.vcpkgBuildtreesDir; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg buildtrees folder'; Path = $env:LUCENT_VCPKG_BUILDTREES; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg packages folder'; Path = $Info.vcpkgPackagesDir; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg downloads folder'; Path = $Info.vcpkgDownloadsDir; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg downloads folder'; Path = $env:VCPKG_DOWNLOADS; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg root'; Path = $Info.vcpkgRoot; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'vcpkg root'; Path = $env:VCPKG_ROOT; DriveOptional = $false },
+        [pscustomobject]@{ Name = 'user profile'; Path = $Info.userProfile; DriveOptional = $true },
+        [pscustomobject]@{ Name = 'user profile'; Path = $env:USERPROFILE; DriveOptional = $true })
+    $fileSystem = $null
+    try { $fileSystem = New-Object -ComObject Scripting.FileSystemObject } catch { $fileSystem = $null }
+    $rules = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        $path = [string]$candidate.Path
+        if (-not $path) { continue }
+        $path = $path.Replace('/', '\')
+        if (-not [System.IO.Path]::IsPathRooted($path)) { continue }
+        try { $path = [System.IO.Path]::GetFullPath($path).TrimEnd('\') } catch { continue }
+        if ($path.Length -le 3) { continue }   # a drive root would match every path on the drive
+        $forms = @($path)
+        if ($fileSystem -and (Test-Path -LiteralPath $path -PathType Container)) {
+            try {
+                $short = [string]$fileSystem.GetFolder($path).ShortPath
+                if ($short -and $short -ine $path) { $forms += $short.TrimEnd('\') }
+            }
+            catch { }
+        }
+        foreach ($form in $forms) {
+            $key = $form.ToLowerInvariant()
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            # Without its drive letter only a folder at least two levels deep (\Users\<name>).
+            $optional = $candidate.DriveOptional -and (@($form.Substring(2).Split('\') | Where-Object { $_ }).Count -ge 2)
+            $rules.Add([pscustomobject]@{ Name = $candidate.Name; Path = $form; DriveOptional = $optional })
+        }
+    }
+    # Most specific first: a match is reported under the longest folder it names.
+    return @($rules | Sort-Object -Property @{ Expression = { $_.Path.Length }; Descending = $true }, Name)
+}
+
+function ConvertTo-BuilderPathPattern {
+    # Regular expression (over the Latin1 view of a file) for $Path in the encoding $Encoding (UTF-8,
+    # ANSI or UTF-16LE): separators match / or \, repeated (\\ in JSON and C strings); ASCII letters
+    # match either case; other characters their encoded bytes. $null when the ANSI code page cannot
+    # represent the path. A match starts at the separator after the drive, which the pattern checks
+    # behind it (X:, also \\?\X:, or the MSYS form /x): every match then starts with \ or /, so the
+    # regular expression engine skips straight to those bytes (Find-BuilderPathsInBytes reports the
+    # offset of the drive letter).
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][bool]$DriveOptional, [Parameter(Mandatory)][string]$Encoding)
+    $wide = ($Encoding -eq 'UTF-16LE')
+    $codec = switch ($Encoding) {
+        'UTF-8' { New-Object System.Text.UTF8Encoding($false) }
+        'ANSI' { [System.Text.Encoding]::Default }
+        default { [System.Text.Encoding]::Unicode } }
+    if ($Encoding -eq 'ANSI' -and $codec.GetString($codec.GetBytes($Path)) -cne $Path) { return $null }
+    $nul = if ($wide) { '\x00' } else { '' }
+    $separator = "(?:[\\/]$nul)+"
+    $builder = New-Object System.Text.StringBuilder
+    $rest = $Path
+    if ($Path -match '^([A-Za-z]):') {
+        $rest = $Path.Substring(2)
+        if (-not $DriveOptional) {
+            $letter = "[$($Matches[1].ToLowerInvariant())$($Matches[1].ToUpperInvariant())]"
+            [void]$builder.Append("(?<=$letter$($nul):$nul|[\\/]$nul$letter$nul)")
+        }
+    }
+    foreach ($segment in ($rest -split '[\\/]+' | Where-Object { $_ })) {
+        [void]$builder.Append($separator)
+        foreach ($char in $segment.ToCharArray()) {
+            if (($char -ge 'a' -and $char -le 'z') -or ($char -ge 'A' -and $char -le 'Z')) {
+                [void]$builder.Append("[$([char]::ToLowerInvariant($char))$([char]::ToUpperInvariant($char))]$nul")
+            }
+            else {
+                foreach ($byte in $codec.GetBytes([string]$char)) { [void]$builder.Append(('\x{0:X2}' -f $byte)) }
+            }
+        }
+    }
+    return $builder.ToString()
+}
+
+function New-BuilderPathScanner {
+    <#
+    .SYNOPSIS
+        Compiles the rules of Get-BuilderPathRules, in UTF-8, the ANSI code page (when it encodes a
+        path differently) and UTF-16LE, plus a rule for any user's profile folder
+        (X:\Users\<name>\, except Public, Default and All Users), into one regular expression.
+    #>
+    param([Parameter(Mandatory)][object[]]$Rules)
+    $alternatives = New-Object System.Collections.Generic.List[string]
+    $groups = New-Object System.Collections.Generic.List[object]
+    foreach ($rule in $Rules) {
+        $patterns = @{}
+        foreach ($encoding in 'UTF-8', 'ANSI', 'UTF-16LE') {
+            $pattern = ConvertTo-BuilderPathPattern -Path $rule.Path -DriveOptional $rule.DriveOptional -Encoding $encoding
+            if (-not $pattern -or $patterns.ContainsKey($pattern)) { continue }
+            $patterns[$pattern] = $true
+            $group = "g$($groups.Count)"
+            $alternatives.Add("(?<$group>$pattern)")
+            $label = if ($encoding -eq 'UTF-8' -and $rule.Path -match '^[\x20-\x7E]+$') { '8-bit' } else { $encoding }
+            $groups.Add([pscustomobject]@{ Group = $group; Rule = $rule.Name; Folder = $rule.Path; Encoding = $label })
+        }
+    }
+    foreach ($wide in $false, $true) {
+        $nul = if ($wide) { '\x00' } else { '' }
+        $word = {
+            param([string]$Text)
+            (($Text.ToCharArray() | ForEach-Object {
+                if ($_ -match '[A-Za-z]') { "[$([char]::ToLowerInvariant($_))$([char]::ToUpperInvariant($_))]$nul" } else { "$_$nul" } }) -join '')
+        }
+        $separator = "(?:[\\/]$nul)+"
+        $end = "(?:[\\/ `"]$nul|\x00$nul|$)"
+        $excluded = '(?!(?:' + ((& $word 'Public'), (& $word 'Default'), (& $word 'All Users') -join '|') + ")$end)"
+        $pattern = "(?<=[A-Za-z]$($nul):$nul|[\\/]$nul[A-Za-z]$nul)$separator$(& $word 'Users')$separator$excluded" +
+                   "(?:[^\\/\x00-\x1F:*?`"<>|]$nul){1,64}[\\/]$nul"
+        $group = "g$($groups.Count)"
+        $alternatives.Add("(?<$group>$pattern)")
+        $groups.Add([pscustomobject]@{ Group = $group; Rule = 'user profile folder (any user)'; Folder = 'X:\Users\<name>'
+                                       Encoding = $(if ($wide) { 'UTF-16LE' } else { '8-bit' }) })
+    }
+    $options = [System.Text.RegularExpressions.RegexOptions]::CultureInvariant -bor [System.Text.RegularExpressions.RegexOptions]::Compiled
+    return [pscustomobject]@{
+        Regex = New-Object System.Text.RegularExpressions.Regex(($alternatives -join '|'), $options)
+        Groups = $groups.ToArray()
+        Rules = $Rules }
+}
+
+function Get-PeDebugRanges {
+    # File ranges of a PE file's debug directory entries (type 2: CodeView, the PDB path), to say
+    # where a match lies. Empty for anything that is not a well-formed PE file. ($Bytes is untyped: a
+    # [byte[]] parameter makes PowerShell enumerate the whole array to bind it, about 90 ms per MB.)
+    param($Bytes)
+    $ranges = New-Object System.Collections.Generic.List[object]
+    try {
+        if ($Bytes.Length -lt 0x40 -or $Bytes[0] -ne 0x4D -or $Bytes[1] -ne 0x5A) { return @() }
+        $pe = [BitConverter]::ToInt32($Bytes, 0x3C)
+        if ($pe -lt 0 -or $pe + 0x18 -gt $Bytes.Length -or [BitConverter]::ToUInt32($Bytes, $pe) -ne 0x4550) { return @() }
+        $sectionCount = [BitConverter]::ToUInt16($Bytes, $pe + 6)
+        $optional = $pe + 0x18
+        $directories = if ([BitConverter]::ToUInt16($Bytes, $optional) -eq 0x20B) { $optional + 112 } else { $optional + 96 }
+        $debugRva = [BitConverter]::ToUInt32($Bytes, $directories + 6 * 8)
+        $debugSize = [BitConverter]::ToUInt32($Bytes, $directories + 6 * 8 + 4)
+        if ($debugRva -eq 0) { return @() }
+        $sections = $optional + [BitConverter]::ToUInt16($Bytes, $pe + 20)
+        $debugOffset = -1
+        for ($i = 0; $i -lt $sectionCount; $i++) {
+            $section = $sections + 40 * $i
+            $virtualAddress = [BitConverter]::ToUInt32($Bytes, $section + 12)
+            $span = [Math]::Max([BitConverter]::ToUInt32($Bytes, $section + 8), [BitConverter]::ToUInt32($Bytes, $section + 16))
+            if ($debugRva -ge $virtualAddress -and $debugRva -lt $virtualAddress + $span) {
+                $debugOffset = [BitConverter]::ToUInt32($Bytes, $section + 20) + ($debugRva - $virtualAddress)
+            }
+        }
+        if ($debugOffset -lt 0) { return @() }
+        for ($entry = 0; $entry -lt [int][Math]::Floor($debugSize / 28); $entry++) {
+            $at = $debugOffset + 28 * $entry
+            $type = [BitConverter]::ToUInt32($Bytes, $at + 12)
+            $size = [BitConverter]::ToUInt32($Bytes, $at + 16)
+            $pointer = [BitConverter]::ToUInt32($Bytes, $at + 24)
+            $description = if ($type -eq 2) { 'PE debug directory (CodeView: the PDB path)' } else { "PE debug directory (type $type)" }
+            $ranges.Add([pscustomobject]@{ Start = [int64]$pointer; End = [int64]$pointer + $size; Description = $description })
+        }
+    }
+    catch { return @() }
+    return $ranges.ToArray()
+}
+
+function Get-PrintableContext {
+    # The printable text around a match (ASCII; UTF-16LE when $Wide), at most 100 characters on
+    # each side.
+    param([Parameter(Mandatory)][string]$Text, [int]$Index, [int]$Length, [bool]$Wide)
+    $step = if ($Wide) { 2 } else { 1 }
+    $start = $Index
+    $limit = 100 * $step
+    while ($start - $step -ge 0 -and $Index - $start -lt $limit) {
+        $char = [int]$Text[$start - $step]
+        if ($char -lt 0x20 -or $char -gt 0x7E -or ($Wide -and [int]$Text[$start - 1] -ne 0)) { break }
+        $start -= $step
+    }
+    $end = $Index + $Length
+    while ($end + $step - 1 -lt $Text.Length -and $end - ($Index + $Length) -lt $limit) {
+        $char = [int]$Text[$end]
+        if ($char -lt 0x20 -or $char -gt 0x7E -or ($Wide -and [int]$Text[$end + 1] -ne 0)) { break }
+        $end += $step
+    }
+    $context = $Text.Substring($start, $end - $start)
+    if ($Wide) { $context = $context.Replace([string][char]0, '') }
+    return $context
+}
+
+function Find-BuilderPathsInBytes {
+    # The builder-path matches in one file's (or text's) bytes (a byte[], untyped as in
+    # Get-PeDebugRanges); $Name is how reports name it.
+    param([Parameter(Mandatory)]$Scanner, $Bytes, [Parameter(Mandatory)][string]$Name)
+    $hits = New-Object System.Collections.Generic.List[object]
+    if ($Bytes.Length -eq 0) { return @() }
+    $text = $script:Latin1.GetString($Bytes)
+    $debugRanges = $null
+    foreach ($match in $Scanner.Regex.Matches($text)) {
+        $group = $null
+        foreach ($candidate in $Scanner.Groups) {
+            if ($match.Groups[$candidate.Group].Success) { $group = $candidate; break }
+        }
+        # Matches start at the separator after the drive: report the offset of the drive (X: or /x).
+        $wide = ($group.Encoding -eq 'UTF-16LE')
+        $unit = if ($wide) { 2 } else { 1 }
+        $start = $match.Index
+        if ($start -ge 2 * $unit) {
+            $first = [string]$text[$start - 2 * $unit]
+            $second = [string]$text[$start - $unit]
+            if (($first -match '^[A-Za-z]$' -and $second -eq ':') -or ($first -match '^[\\/]$' -and $second -match '^[A-Za-z]$')) { $start -= 2 * $unit }
+        }
+        if ($null -eq $debugRanges) { $debugRanges = @(Get-PeDebugRanges -Bytes $Bytes) }
+        $location = 'file data'
+        foreach ($range in $debugRanges) { if ($start -ge $range.Start -and $start -lt $range.End) { $location = $range.Description } }
+        $hits.Add([pscustomobject]@{
+            File = $Name; Offset = [int64]$start; Encoding = $group.Encoding; Rule = $group.Rule; Folder = $group.Folder
+            Location = $location; Context = (Get-PrintableContext -Text $text -Index $start -Length ($match.Index + $match.Length - $start) -Wide $wide) })
+    }
+    return $hits.ToArray()
+}
+
+function Invoke-BuilderPathAudit {
+    <#
+    .SYNOPSIS
+        Scans every byte of every file below -Root (or the single file -Path, or the text -Text as
+        UTF-8) for the build machine's folders (New-BuilderPathScanner), whatever the file type:
+        the PDB paths in PE debug directories, __FILE__ strings, licence texts, the SBOM, QML type
+        information. Returns a report; each hit becomes an error naming the file and the byte offset.
+    #>
+    param([Parameter(Mandatory)]$Scanner, [string]$Root, [string]$Path, [string]$Text, [string]$Name, [string]$Label = 'Scan')
+    $hits = New-Object System.Collections.Generic.List[object]
+    $files = 0
+    $bytes = [int64]0
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    if ($Root) {
+        # -Force: hidden and system files are scanned too.
+        foreach ($file in (Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName)) {
+            $content = [System.IO.File]::ReadAllBytes($file.FullName)
+            foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $content -Name (Get-RelativePathText -Root $Root -Path $file.FullName))) { $hits.Add($hit) }
+            $files++
+            $bytes += $content.Length
+        }
+    }
+    if ($Path) {
+        $content = [System.IO.File]::ReadAllBytes($Path)
+        foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $content -Name $(if ($Name) { $Name } else { Split-Path -Leaf $Path }))) { $hits.Add($hit) }
+        $files++
+        $bytes += $content.Length
+    }
+    if ($PSBoundParameters.ContainsKey('Text')) {
+        $content = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
+        foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $content -Name $(if ($Name) { $Name } else { 'text' }))) { $hits.Add($hit) }
+        $files++
+        $bytes += $content.Length
+    }
+    $errors = New-Object System.Collections.Generic.List[string]
+    foreach ($hit in $hits) {
+        $errors.Add(('{0} at offset 0x{1:X8} ({2}, {3}) names the {4} {5}: {6}' -f $hit.File, $hit.Offset, $hit.Encoding, $hit.Location, $hit.Rule, $hit.Folder, $hit.Context))
+    }
+    return [pscustomobject]@{
+        Label = $Label; Files = $files; Bytes = $bytes; Seconds = [Math]::Round($timer.Elapsed.TotalSeconds, 1)
+        Hits = $hits.ToArray(); Errors = $errors.ToArray(); HitFiles = @($hits | ForEach-Object File | Sort-Object -Unique) }
+}
+
+function Write-BuilderPathReport {
+    # builder-paths.txt and .json: the folders searched, what was scanned and every hit. Local build
+    # outputs (they name the folders); never shipped.
+    param([Parameter(Mandatory)][object[]]$Reports, [Parameter(Mandatory)]$Scanner, [Parameter(Mandatory)][string]$TextPath, [Parameter(Mandatory)][string]$JsonPath)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('Lucent package audit: folders of the build machine in shipped files')
+    $lines.Add('Folders searched (8-bit, ANSI and UTF-16LE text, either separator, any letter case):')
+    foreach ($rule in $Scanner.Rules) { $lines.Add(('  {0,-26} {1}{2}' -f $rule.Name, $rule.Path, $(if ($rule.DriveOptional) { ' (also without the drive letter)' } else { '' }))) }
+    $lines.Add('  user profile folder (any user): X:\Users\<name>\ except Public, Default and All Users')
+    $lines.Add('')
+    foreach ($report in $Reports) {
+        $lines.Add(('{0}: {1} file(s), {2:N0} bytes, {3} s; {4} hit(s) in {5} file(s)' -f $report.Label, $report.Files, $report.Bytes, $report.Seconds, @($report.Hits).Count, @($report.HitFiles).Count))
+        foreach ($problem in $report.Errors) { $lines.Add("  $problem") }
+    }
+    Write-TextFile -Path $TextPath -Text (($lines -join "`n") + "`n")
+    Write-JsonFile -Path $JsonPath -Value ([ordered]@{
+        folders = @($Scanner.Rules | ForEach-Object { [ordered]@{ name = $_.Name; path = $_.Path; driveOptional = $_.DriveOptional } })
+        scans = @($Reports | ForEach-Object { [ordered]@{
+            label = $_.Label; files = $_.Files; bytes = $_.Bytes; seconds = $_.Seconds
+            hits = @($_.Hits | ForEach-Object { [ordered]@{ file = $_.File; offset = $_.Offset; encoding = $_.Encoding; location = $_.Location; rule = $_.Rule; folder = $_.Folder; context = $_.Context } }) } }) })
+}
+
+# --- Authenticode (W12) --------------------------------------------------------------------------
+
+function Get-CodeSigningCertificate {
+    <#
+    .SYNOPSIS
+        The certificate LUCENT_SIGN_CERT_SHA1 names, checked before anything is signed: in the
+        current user's personal store (Cert:\CurrentUser\My, where signtool /sha1 looks), with its
+        private key, valid now, and usable for code signing (the Code Signing extended key usage, or
+        no usage restriction). The thumbprint may be pasted from the certificate dialog: spaces and
+        invisible characters are dropped.
+    #>
+    param([Parameter(Mandatory)][string]$Thumbprint)
+    $normalized = ($Thumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    if ($normalized.Length -ne 40) { throw "LUCENT_SIGN_CERT_SHA1 '$Thumbprint' is not a certificate thumbprint (40 hexadecimal digits)." }
+    $storePath = "Cert:\CurrentUser\My\$normalized"
+    if (-not (Test-Path -LiteralPath $storePath)) { throw "No certificate with the thumbprint $normalized is in the current user's personal store (Cert:\CurrentUser\My)." }
+    $certificate = Get-Item -LiteralPath $storePath
+    if (-not $certificate.HasPrivateKey) { throw "The certificate $normalized ($($certificate.Subject)) has no private key in this store." }
+    $now = Get-Date
+    if ($certificate.NotBefore -gt $now -or $certificate.NotAfter -lt $now) {
+        throw "The certificate $normalized ($($certificate.Subject)) is valid from $($certificate.NotBefore) to $($certificate.NotAfter), not now."
+    }
+    $usages = @($certificate.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } |
+        ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })
+    $usageExtension = @($certificate.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] }).Count -gt 0
+    if ($usageExtension -and $usages -notcontains '1.3.6.1.5.5.7.3.3') {
+        throw "The certificate $normalized ($($certificate.Subject)) is not a code-signing certificate (no Code Signing extended key usage)."
+    }
+    return [pscustomobject]@{
+        Thumbprint = $normalized; Subject = $certificate.Subject; Issuer = $certificate.Issuer
+        NotBefore = $certificate.NotBefore; NotAfter = $certificate.NotAfter; SelfSigned = ($certificate.Subject -eq $certificate.Issuer) }
+}
+
+function Initialize-AuthenticodeType {
+    if ('LucentPackaging.Authenticode' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace LucentPackaging {
+    public static class Authenticode {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct FileInfo {
+            public uint StructSize;
+            public string FilePath;
+            public IntPtr File;
+            public IntPtr KnownSubject;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TrustData {
+            public uint StructSize;
+            public IntPtr PolicyCallbackData;
+            public IntPtr SipClientData;
+            public uint UiChoice;
+            public uint RevocationChecks;
+            public uint UnionChoice;
+            public IntPtr Info;
+            public uint StateAction;
+            public IntPtr StateData;
+            public IntPtr UrlReference;
+            public uint ProviderFlags;
+            public uint UiContext;
+            public IntPtr SignatureSettings;
+        }
+        [DllImport("wintrust.dll", ExactSpelling = true)]
+        private static extern int WinVerifyTrust(IntPtr window, [MarshalAs(UnmanagedType.LPStruct)] Guid action, ref TrustData data);
+        // WinVerifyTrust with WINTRUST_ACTION_GENERIC_VERIFY_V2, no user interface, no revocation
+        // check and no network retrieval: 0 when the signature verifies and chains to a trusted
+        // root offline, otherwise the HRESULT (0x800B0109 CERT_E_UNTRUSTEDROOT, 0x80096010
+        // TRUST_E_BAD_DIGEST, 0x800B0100 TRUST_E_NOSIGNATURE, ...).
+        public static int Verify(string path) {
+            Guid action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+            FileInfo file = new FileInfo();
+            file.StructSize = (uint)Marshal.SizeOf(typeof(FileInfo));
+            file.FilePath = path;
+            IntPtr filePointer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FileInfo)));
+            try {
+                Marshal.StructureToPtr(file, filePointer, false);
+                TrustData data = new TrustData();
+                data.StructSize = (uint)Marshal.SizeOf(typeof(TrustData));
+                data.UiChoice = 2;                  // WTD_UI_NONE
+                data.RevocationChecks = 0;          // WTD_REVOKE_NONE
+                data.UnionChoice = 1;               // WTD_CHOICE_FILE
+                data.Info = filePointer;
+                data.StateAction = 1;               // WTD_STATEACTION_VERIFY
+                data.ProviderFlags = 0x10 | 0x1000; // WTD_REVOCATION_CHECK_NONE | WTD_CACHE_ONLY_URL_RETRIEVAL
+                int result = WinVerifyTrust(new IntPtr(-1), action, ref data);
+                data.StateAction = 2;               // WTD_STATEACTION_CLOSE
+                WinVerifyTrust(new IntPtr(-1), action, ref data);
+                return result;
+            }
+            finally {
+                Marshal.DestroyStructure(filePointer, typeof(FileInfo));
+                Marshal.FreeHGlobal(filePointer);
+            }
+        }
+    }
+}
+'@
+}
+
+function Test-AuthenticodeFile {
+    <#
+    .SYNOPSIS
+        Checks the Authenticode signature of a file: present, by the certificate with -Thumbprint,
+        verifying offline (WinVerifyTrust: digest and chain, no revocation check, no network). With
+        -AllowUntrustedRoot (a test certificate, LUCENT_SIGN_TEST) the one accepted failure is
+        CERT_E_UNTRUSTEDROOT, the chain ending in a root that this machine does not trust; the
+        digest must still match. With -RequireTimestamp the signature must carry a timestamp.
+    .OUTPUTS
+        Path, Signer, TrustResult (hex), Trust ('trusted', 'untrusted root', or the failure),
+        Timestamped, Accepted, Problem.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Thumbprint,
+          [switch]$AllowUntrustedRoot, [switch]$RequireTimestamp)
+    Initialize-AuthenticodeType
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    $signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint.ToUpperInvariant() } else { $null }
+    $code = [LucentPackaging.Authenticode]::Verify([System.IO.Path]::GetFullPath($Path))
+    $hex = '0x{0:X8}' -f $code
+    $trust = switch ($hex) { '0x00000000' { 'trusted' } '0x800B0109' { 'untrusted root' } '0x800B0100' { 'not signed' } '0x80096010' { 'digest mismatch' } default { "WinVerifyTrust $hex" } }
+    $timestamped = [bool]$signature.TimeStamperCertificate
+    $problem = $null
+    if (-not $signer) { $problem = $(if ($hex -eq '0x800B0100') { 'is not signed' } else { "has no readable signature ($trust)" }) }
+    elseif ($signer -ne $Thumbprint.ToUpperInvariant()) { $problem = "is signed by $signer, not by $Thumbprint" }
+    elseif ($hex -eq '0x800B0109' -and -not $AllowUntrustedRoot) { $problem = 'has a signature that chains to a root this machine does not trust (a test certificate needs LUCENT_SIGN_TEST=1)' }
+    elseif ($hex -ne '0x00000000' -and $hex -ne '0x800B0109') { $problem = "has a signature that does not verify ($trust)" }
+    elseif ($RequireTimestamp -and -not $timestamped) { $problem = 'has a signature without a timestamp' }
+    return [pscustomobject]@{
+        Path = $Path; Signer = $signer; TrustResult = $hex; Trust = $trust; Timestamped = $timestamped
+        Accepted = ($null -eq $problem); Problem = $problem }
+}
+
 # --- Inno Setup ----------------------------------------------------------------------------------
 
 function Test-InnoSetupCompiler {
@@ -1778,4 +2407,8 @@ function Get-FileInventory {
 Export-ModuleMember -Function Read-LucentPackageInfo, Get-PeHeader, Get-PeDependencies, Get-VcpkgFileIndex,
     Get-StagedFileOrigins, Invoke-LayoutAudit, Write-AuditReport, Invoke-SmokeRun, Get-StaticVcpkgLibraries, Get-LucentExecutablesText,
     New-LicenseBundle, New-PackageSbom, Write-InstalledFileList, Test-InstalledFileList, Find-InnoSetupCompiler, Get-FileInventory,
-    Write-TextFile, Write-JsonFile, Get-Sha256, Get-Sha1, Get-RelativePathText, Invoke-NativeCommand
+    Write-TextFile, Write-JsonFile, Get-Sha256, Get-Sha1, Get-RelativePathText, Invoke-NativeCommand,
+    Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit, Write-BuilderPathReport,
+    Get-CodeSigningCertificate, Test-AuthenticodeFile, Get-UpdateKeyId, Get-LucentUpdateChannelRecord,
+    ConvertFrom-UpdateChannelLogLine, Format-UpdateChannel, Compare-UpdateChannel, Read-ExpectedUpdateChannels,
+    Test-LucentUpdateChannelPolicy

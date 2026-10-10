@@ -134,6 +134,8 @@ public:
     [[nodiscard]] std::optional<AutoTaskStatus> status(std::uint64_t ticket) const;
     // Blocks until the run finished (or `timeout` passed: std::nullopt) and returns its result.
     [[nodiscard]] std::optional<AutoTaskResult> wait(std::uint64_t ticket, std::chrono::milliseconds timeout) const;
+    // Runs queued or in progress (not finished). An update waits while any runs (ADR 0022).
+    [[nodiscard]] std::size_t runs_in_progress() const;
 
     [[nodiscard]] Subscription subscribe(AutoObserver observer);
 

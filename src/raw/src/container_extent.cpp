@@ -229,8 +229,11 @@ Expected<ImageDataExtent> find_container_overruns(RandomAccessSource& source, Co
         case ContainerFormat::Tiff:
         case ContainerFormat::Dng:
         case ContainerFormat::Orf:
-        case ContainerFormat::Rw2:
             return find_image_data_overruns(source, limits, TiffSignatures::WithVendorRaw);
+        case ContainerFormat::Rw2:
+            // The raw data of IFD 0 is where LibRaw reads it: RawDataOffset, not the strips that
+            // older Panasonic and Leica files leave as a placeholder (tiff_extent.hpp).
+            return find_image_data_overruns(source, limits, TiffSignatures::WithVendorRaw, RawDataRule::Panasonic);
         case ContainerFormat::Cr3:
             return bmff_overruns(source);
         case ContainerFormat::Raf:

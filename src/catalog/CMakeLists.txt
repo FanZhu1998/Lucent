@@ -39,6 +39,12 @@ lucent_add_library(catalog
 # ---------------------------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------------------------
+# The committed fixtures of every historical schema version (tests/data/migration, W12, ADR 0022) are
+# migrated by migration_fixture_test.cpp; tests/catalog_fixtures generates them.
+if(LUCENT_BUILD_TESTS)
+    find_package(nlohmann_json CONFIG REQUIRED)
+endif()
+
 # White-box tests see src/ for the private SQLite wrapper (which does not include sqlite3.h), the
 # migration list seam (detail::CatalogAccess) and the backup naming helpers.
 
@@ -49,6 +55,7 @@ lucent_add_test(lucent_catalog_tests
         tests/schema_test.cpp
         tests/migration_v2_test.cpp
         tests/migration_v3_test.cpp
+        tests/migration_fixture_test.cpp
         tests/jobs_test.cpp
         tests/auto_jobs_test.cpp
         tests/repository_test.cpp
@@ -58,6 +65,7 @@ lucent_add_test(lucent_catalog_tests
         tests/performance_test.cpp
     DEPS
         Lucent::catalog
+        nlohmann_json::nlohmann_json  # the fixtures' manifest (data/migration/fixtures.json)
     LABELS
         catalog unit
 )

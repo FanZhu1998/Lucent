@@ -37,6 +37,7 @@
 #include <lucent/raw/tiff_inspector.hpp>
 
 #include "color_difference.hpp"
+#include "colour_reference.hpp"
 #include "export_metadata.hpp"
 #include "probe_report.hpp"
 #include "readback.hpp"
@@ -340,6 +341,10 @@ std::vector<EdgeBand> edge_bands(const engine::ColorImage& image) {
 // ---- Raw-data checks ----------------------------------------------------------------------------
 
 struct RawLevelStats {
+    // The raw-frame pixels evaluated: the camera's image area within the visible area when the file
+    // declares one (check suite 3), otherwise the visible area.
+    image::PixelRect evaluated;
+    bool camera_area = false;
     std::uint64_t samples = 0;
     std::uint64_t above_white = 0;
     std::uint64_t far_below_black = 0;  // more than 2 % of the range below the site's black level
@@ -351,6 +356,27 @@ struct RawLevelStats {
     std::array<std::uint64_t, 4> phase_count{};
 };
 
+// The whole raw-frame pixels of the camera's image area (ADR 0017) inside the visible area, or the
+// visible area when the file declares no area (or it does not overlap the visible area).
+image::PixelRect evaluated_area(const raw::RawMetadata& m, bool& camera_area) {
+    const image::PixelRect& v = m.geometry.visible_area;
+    camera_area = false;
+    if (!m.image_area.rect) {
+        return v;
+    }
+    const raw::AreaRect& a = *m.image_area.rect;
+    const auto x0 = std::max<std::int64_t>(v.x, static_cast<std::int64_t>(std::ceil(a.x)));
+    const auto y0 = std::max<std::int64_t>(v.y, static_cast<std::int64_t>(std::ceil(a.y)));
+    const auto x1 = std::min<std::int64_t>(v.right(), static_cast<std::int64_t>(std::floor(a.x + a.width)));
+    const auto y1 = std::min<std::int64_t>(v.bottom(), static_cast<std::int64_t>(std::floor(a.y + a.height)));
+    if (x1 <= x0 || y1 <= y0) {
+        return v;
+    }
+    camera_area = true;
+    return image::PixelRect{static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0),
+                            static_cast<std::int32_t>(x1 - x0), static_cast<std::int32_t>(y1 - y0)};
+}
+
 RawLevelStats raw_level_stats(const raw::DecodedRaw& decoded) {
     RawLevelStats s;
     const raw::RawMetadata& m = decoded.metadata;
@@ -361,14 +387,20 @@ RawLevelStats raw_level_stats(const raw::DecodedRaw& decoded) {
         return s;
     }
     const image::PixelRect area = m.geometry.visible_area;
+    // Black and white levels are judged on the image data: border pixels outside the camera's
+    // declared area may be padding or dark columns (the bq Aquaris U Plus DNG's last eight columns,
+    // outside its DefaultCrop, read about 5 against a black level of 64). The green-site phase stays
+    // relative to the visible origin.
+    s.evaluated = evaluated_area(m, s.camera_area);
+    const image::PixelRect& e = s.evaluated;
     const std::int32_t channels = buffer->channels();
     const double range = levels.white - s.max_black;
     const bool mosaic = m.representation.kind == raw::RawRepresentation::Mosaic;
     const image::CfaPattern& cfa = m.representation.cfa;
     std::array<double, 4> phase_sum{};
-    for (std::int32_t vy = 0; vy < area.height; ++vy) {
+    for (std::int32_t vy = e.y - area.y; vy < e.y - area.y + e.height; ++vy) {
         const std::uint16_t* row = buffer->row(area.y + vy);
-        for (std::int32_t vx = 0; vx < area.width; ++vx) {
+        for (std::int32_t vx = e.x - area.x; vx < e.x - area.x + e.width; ++vx) {
             for (std::int32_t c = 0; c < channels; ++c) {
                 const double v = row[static_cast<std::ptrdiff_t>(area.x + vx) * channels + c];
                 std::size_t channel = static_cast<std::size_t>(c);
@@ -568,6 +600,84 @@ ExportOutcome export_and_read_back(const engine::ColorImage& display, const std:
     return out;
 }
 
+// ---- Colour reference (ADR 0020) ---------------------------------------------------------------------
+
+OrderedJson statistics_json(const ChartStatistics& s) {
+    return {{"mean", s.mean}, {"p90", s.p90}, {"max", s.max}};
+}
+
+OrderedJson lab_json(const std::array<double, 3>& lab) {
+    return {lab[0], lab[1], lab[2]};
+}
+
+void colour_reference_check(CheckResult& c, const ChartDefinitions& charts, const ChartFixture& chart,
+                            const raw::DecoderRegistry& registry, const std::filesystem::path& file) {
+    const ChartReference* reference = charts.reference(chart.reference);
+    c.details["reference"] = {{"id", chart.reference},
+                              {"chart", reference->chart},
+                              {"publisher", reference->publisher},
+                              {"url", reference->url},
+                              {"retrieved", reference->retrieved},
+                              {"illuminant", "D50"},
+                              {"observer", "CIE 1931 2 degree"}};
+    c.details["normalisation_patch"] = chart.normalisation_patch;
+    c.details["limits"] = {{"chart_balanced_mean", kColourReferenceMeanLimit},
+                           {"chart_balanced_p90", kColourReferenceP90Limit},
+                           {"chart_balanced_max", kColourReferenceMaxLimit},
+                           {"clipped_fraction", kColourReferenceClippedFraction}};
+    auto measured = measure_chart(registry, file, chart);
+    if (!measured) {
+        set_check(c, CheckStatus::Fail, Evidence::Independent,
+                  "the chart could not be measured on the develop path: " + describe(measured.error()));
+        return;
+    }
+    const ChartEvaluation e = evaluate_chart(charts, chart, measured->samples, rec2020_to_xyz(), image::kD65White);
+    c.details["develop_path"] = {
+        {"calibration_path", measured->calibration_path},
+        {"frame", {measured->frame.x, measured->frame.y, measured->frame.width, measured->frame.height}},
+        {"gain", measured->gain},
+        {"clip_level", measured->clip_level}};
+    c.details["normalisation_scale"] = e.normalisation_scale;
+    c.details["as_shot"] = statistics_json(e.as_shot);
+    c.details["chart_balanced"] = statistics_json(e.balanced);
+    OrderedJson excluded = OrderedJson::object();
+    for (const auto& [patch, fraction] : e.excluded) {
+        excluded[patch] = fraction;
+    }
+    c.details["excluded_clipped"] = std::move(excluded);
+    OrderedJson patches = OrderedJson::array();
+    for (const ChartPatchResult& p : e.patches) {
+        const auto sample = std::find_if(measured->samples.begin(), measured->samples.end(),
+                                         [&](const ChartSample& s) { return s.patch == p.patch; });
+        patches.push_back({{"patch", p.patch},
+                           {"reference_lab", lab_json(p.reference_lab)},
+                           {"as_shot_lab", lab_json(p.as_shot_lab)},
+                           {"as_shot_delta_e", p.as_shot_delta_e},
+                           {"chart_balanced_lab", lab_json(p.balanced_lab)},
+                           {"chart_balanced_delta_e", p.balanced_delta_e},
+                           {"clipped_fraction",
+                            sample == measured->samples.end() ? 0.0 : sample->clipped_fraction()}});
+    }
+    c.details["patches"] = std::move(patches);
+    OrderedJson alternates = OrderedJson::object();
+    for (const auto& [id, stats] : e.alternates) {
+        alternates[id] = {{"as_shot", statistics_json(stats.first)}, {"chart_balanced", statistics_json(stats.second)}};
+    }
+    c.details["alternate_references"] = std::move(alternates);
+    if (chart.independent) {
+        // The same chart measured on a rendering without Lucent's code (research/tools/chart_reference.py).
+        c.details["independent_rendering"] = {{"renderer", chart.independent->renderer},
+                                              {"measured", chart.independent->measured},
+                                              {"as_shot", statistics_json(chart.independent->as_shot)},
+                                              {"chart_balanced", statistics_json(chart.independent->chart_balanced)}};
+    }
+    if (!e.measurable) {
+        set_check(c, CheckStatus::NotRun, Evidence::None, e.summary());
+    } else {
+        set_check(c, e.passes ? CheckStatus::Pass : CheckStatus::Fail, Evidence::Independent, e.summary());
+    }
+}
+
 }  // namespace
 
 // ---- Names ----------------------------------------------------------------------------------------
@@ -594,8 +704,14 @@ std::string_view to_string(Evidence evidence) noexcept {
             return "weak";
         case Evidence::None:
             return "none";
+        case Evidence::Independent:
+            return "independent";
     }
     return "unknown";
+}
+
+bool at_least_strong(Evidence evidence) noexcept {
+    return evidence == Evidence::Strong || evidence == Evidence::Independent;
 }
 
 std::string_view to_string(SupportState state) noexcept {
@@ -646,6 +762,9 @@ std::filesystem::path CorpusPaths::expectations() const {
 }
 std::filesystem::path CorpusPaths::families() const {
     return root / "fixtures" / "qualification" / "families.json";
+}
+std::filesystem::path CorpusPaths::charts() const {
+    return root / "fixtures" / "qualification" / "charts.json";
 }
 std::filesystem::path CorpusPaths::render_reference() const {
     return root / "tests" / "integration" / "data" / "render_reference.json";
@@ -704,6 +823,13 @@ Expected<QualifyCorpus> QualifyCorpus::load(const CorpusPaths& paths, bool requi
         }
         corpus.expectations = std::move(*expectations);
     }
+    if (std::filesystem::exists(paths.charts())) {
+        auto charts = load_charts(paths.charts());
+        if (!charts) {
+            return Unexpected(std::move(charts.error()));
+        }
+        corpus.charts = std::move(*charts);
+    }
     auto reference = read_json_file(paths.render_reference());
     if (!reference) {
         return Unexpected(std::move(reference.error()));
@@ -754,6 +880,12 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         corpus.expectations ? corpus.expectations->find(fixture.id) : nullptr;
     for (const std::string_view id : check_ids()) {
         check_of(result, id);  // fixes the order; every check starts as not_run
+    }
+    // colour_reference applies to fixtures that show a colour chart (ADR 0020), whether or not they decode.
+    const ChartFixture* chart = corpus.charts ? corpus.charts->find(fixture.id) : nullptr;
+    if (chart == nullptr) {
+        set_check(check_of(result, kCheckColourReference), CheckStatus::NotApplicable, Evidence::None,
+                  "no colour chart in this fixture (fixtures/qualification/charts.json)");
     }
     const auto finish = [&]() {
         result.measurements.total_seconds = seconds_since(started);
@@ -1126,6 +1258,8 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
             const double plateau_limit = std::max<double>(64.0, 1e-6 * static_cast<double>(s.samples));
             c.details["white"] = white;
             c.details["max_black_level"] = s.max_black;
+            c.details["evaluated"] = s.camera_area ? "camera image area" : "visible area";
+            c.details["evaluated_rect"] = {s.evaluated.x, s.evaluated.y, s.evaluated.width, s.evaluated.height};
             c.details["samples"] = s.samples;
             c.details["samples_above_white"] = s.above_white;
             c.details["max_sample"] = s.max_sample;
@@ -1269,6 +1403,15 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         }
         timed(c, t0);
     }  // W2 images released
+
+    // ---- colour_reference (the develop path against a chart's published values; ADR 0020) ----------
+    if (chart != nullptr) {
+        CheckResult& c = check_of(result, kCheckColourReference);
+        const Clock::time_point t0 = Clock::now();
+        colour_reference_check(c, *corpus.charts, *chart, *registry, file);
+        result.measurements.phase_seconds["colour_reference"] = seconds_since(t0);
+        timed(c, t0);
+    }  // stage one and two released
 
     // ---- Develop render 1: dimensions, orientation, corrections, export ------------------------------
     std::string display_hash;
@@ -1704,6 +1847,25 @@ void decide_state(FixtureResult& result, const FixtureExpectation* expectation) 
     result.evidence_gaps.clear();
     result.expected_state =
         expectation ? std::optional<std::string>(expectation->expected_state) : std::nullopt;
+    {
+        // ADR 0020: what the fixture's colour rests on.
+        const CheckResult* reference = result.check(kCheckColourReference);
+        const CheckResult* colour = result.check(kCheckColour);
+        if (reference != nullptr && reference->status == CheckStatus::Pass &&
+            reference->evidence == Evidence::Independent) {
+            result.colour_evidence = "independent_chart";
+        } else if (colour != nullptr && colour->status == CheckStatus::Pass && colour->evidence == Evidence::Strong &&
+                   colour->details.value("calibration_path", std::string()) ==
+                       engine::to_string(engine::CalibrationPath::MonochromeNeutral)) {
+            result.colour_evidence = "monochrome";
+        } else if (colour != nullptr && colour->status == CheckStatus::Pass && colour->evidence == Evidence::Strong) {
+            result.colour_evidence = "decoder_calibration_agreement";
+        } else if (colour != nullptr && colour->status == CheckStatus::Pass) {
+            result.colour_evidence = "gross_errors_only";
+        } else {
+            result.colour_evidence = "none";
+        }
+    }
     const CheckResult* integrity = result.check(kCheckFixtureIntegrity);
     if (!result.harness_error.empty() || integrity == nullptr || integrity->status != CheckStatus::Pass) {
         result.state = SupportState::NotQualified;
@@ -1728,7 +1890,7 @@ void decide_state(FixtureResult& result, const FixtureExpectation* expectation) 
         fact_gap(expectation->representation_fact, "representation / CFA");
     }
     for (const CheckResult& c : result.checks) {
-        if (c.status == CheckStatus::Pass && c.evidence != Evidence::Strong) {
+        if (c.status == CheckStatus::Pass && !at_least_strong(c.evidence)) {
             result.evidence_gaps.push_back(c.id + ": evidence " + std::string(to_string(c.evidence)) + " (" +
                                            c.summary + ")");
         } else if (c.status == CheckStatus::NotRun && result.decoded) {
@@ -1830,6 +1992,7 @@ OrderedJson FixtureResult::to_json() const {
     j["camera_area"] = camera_area;
     j["proposed_state"] = to_string(state);
     j["expected_state"] = expected_state ? OrderedJson(*expected_state) : OrderedJson(nullptr);
+    j["colour_evidence"] = colour_evidence;
     j["state_reasons"] = state_reasons;
     j["evidence_gaps"] = evidence_gaps;
     j["expectation_mismatches"] = expectation_mismatches;

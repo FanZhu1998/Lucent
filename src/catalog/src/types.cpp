@@ -103,6 +103,8 @@ std::string_view to_string(BackupKind kind) noexcept {
             return "pre-migration";
         case BackupKind::PreRestore:
             return "pre-restore";
+        case BackupKind::PreUpdate:
+            return "pre-update";
     }
     return "invalid";
 }
@@ -271,8 +273,8 @@ std::optional<RevisionOrigin> parse_revision_origin(std::string_view text) noexc
 }
 
 std::optional<BackupKind> parse_backup_kind(std::string_view text) noexcept {
-    static constexpr BackupKind kValues[] = {BackupKind::Manual, BackupKind::PreMigration,
-                                             BackupKind::PreRestore};
+    static constexpr BackupKind kValues[] = {BackupKind::Manual, BackupKind::PreMigration, BackupKind::PreRestore,
+                                             BackupKind::PreUpdate};
     return parse_with(text, kValues);
 }
 

@@ -35,6 +35,7 @@ add_library(lucent_ui_services STATIC
     src/services/library_service.hpp
     src/services/service_types.hpp
     src/services/services.hpp
+    src/services/update_service.hpp
 )
 target_include_directories(lucent_ui_services PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(lucent_ui_services
@@ -55,6 +56,8 @@ add_library(lucent_ui_adapters STATIC
     src/adapters/app_image_source.hpp
     src/adapters/app_library_service.cpp
     src/adapters/app_library_service.hpp
+    src/adapters/app_update_service.cpp
+    src/adapters/app_update_service.hpp
     src/adapters/application_services.cpp
     src/adapters/application_services.hpp
     src/adapters/backend.cpp
@@ -114,6 +117,7 @@ set(_lucent_qml_files
     qml/Theme.qml
     qml/ThumbnailCard.qml
     qml/ToneCurveEditor.qml
+    qml/UpdatePanel.qml
     qml/ZoomableImage.qml
 )
 
@@ -171,6 +175,8 @@ qt_add_qml_module(lucent_ui
         src/models/mask_editor.hpp
         src/models/presentation.cpp
         src/models/presentation.hpp
+        src/models/update_model.cpp
+        src/models/update_model.hpp
         src/shell.cpp
         src/shell.hpp
         src/volume_watcher.cpp

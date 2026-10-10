@@ -1,0 +1,2 @@
+# Catalog fixtures are binary SQLite files: never convert line endings or diff them as text.
+*.catalog binary

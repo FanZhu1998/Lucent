@@ -1,6 +1,6 @@
 # ADR 0002: Build system and dependency management
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09: "Amendment: no build-machine paths in the binaries" below)
 - **Date:** 2026-09-24
 - **Workflow:** W0 (toolchain), recorded in W1
 
@@ -131,3 +131,108 @@ Facts established while setting up the toolchain (W0, verified 2026-09-24):
   is not the supported path and the presets do not target it.
 - **Visual Studio (MSBuild) generator.** A multi-configuration generator is slower for incremental
   builds and does not produce `compile_commands.json` for tooling. Rejected in favour of Ninja.
+
+## Amendment: no build-machine paths in the binaries (W12, 2026-10-09)
+
+### Context
+
+ADR 0009 found that the DLLs vcpkg builds carry the builder's paths and left the fix to W12. A scan
+of the installation folder of the W12 performance baseline (`build\w12-perf\package\stage`, 308
+files, 66 MB; ADR 0009, decision 12 describes the scan) found 65 places in 63 files, all naming the
+vcpkg buildtrees folder below the builder's user profile (`C:\Users\<user>\dev\vb\...`):
+
+- 63 in the CodeView record of the PE debug directory of every DLL vcpkg built (every Qt module,
+  plugin and QML plugin; zlib, bzip2, Brotli, double-conversion, FreeType, HarfBuzz, libjpeg-turbo,
+  Little CMS, libpng, md4c, PCRE2, LibRaw, SQLite, libtiff): the full path of the DLL's PDB, because
+  vcpkg's toolchain (`scripts/toolchains/windows.cmake`) links release binaries with `/DEBUG`;
+- 2 `__FILE__` strings: libtiff's `tif_dir.c` puts `__FILE__` into error messages, and Qt Quick's
+  `qquickdesignersupport.cpp` into debug output. Neither goes away with `NDEBUG`.
+
+`Lucent.exe` and `lucent-worker.exe` named nothing: the release preset links without `/DEBUG`, and
+Lucent's code uses neither `__FILE__` nor `std::source_location` (tests get the source folder as the
+string macro `LUCENT_SOURCE_DIR`, which no shipped program uses).
+
+What MSVC offers (19.44.35207, Visual Studio 2022 17.14; checked 2026-10-09 against the compiler
+and linker references and by compiling test programs):
+
+- `/PDBALTPATH:%_PDB%`, a documented linker option, writes only the PDB's file name into the debug
+  directory. The linker expands `%_PDB%` itself. Without `/DEBUG` it is accepted silently and does
+  nothing.
+- MSVC documents no option that maps or trims source paths. `/FC` only decides whether a source
+  named by a relative path appears in full; CMake names every source by its full path anyway.
+- Two undocumented compiler options exist. `/d1trimfile:<prefix>` removes the prefix from
+  `__FILE__`, `__builtin_FILE()` and `std::source_location::file_name()`, in sources and headers,
+  in C and C++, ignoring letter case and the separator style; several may be given, and the first
+  that matches is used; diagnostics, `/showIncludes` (which Ninja reads for dependencies), the
+  `#line` directives of `/P` and the debug information keep the full paths, and the option causes
+  no warning. `/pathmap:<from>=<to>` is ignored with warning D9007 unless
+  `/experimental:deterministic` is also given, which implies `/Brepro` and warns about
+  `__DATE__` and `__TIME__`, a risk for ports built with `/WX`.
+- `%_PDB%` reaches the linker unchanged through CMake, Ninja and `cmd.exe /C` (which expands only
+  defined variables, and nothing defines `_PDB`), and through meson, whose machine files are read
+  without interpolation (`mesonbuild/machinefile.py`).
+- vcpkg installs each port's PDBs with `vcpkg_copy_pdbs`, which asks `dumpbin /PDBPATH` where a
+  DLL's PDB is: with only a file name recorded, dumpbin finds nothing, every port's log warns
+  "Could not find a matching pdb file", and no PDB is installed (the previous build installed 250,
+  2.0 GB: every Qt module, plugin and tool, and the other ports' DLLs). `dumpbin /PDBPATH` also
+  searches `_NT_SYMBOL_PATH`, and reports a PDB only when it matches the binary.
+
+### Decision
+
+11. **No build-machine path in a shipped binary.** The triplet (`cmake/triplets/x64-windows-lucent.cmake`)
+    sets `VCPKG_LINKER_FLAGS` to `/PDBALTPATH:%_PDB%`, and `VCPKG_C_FLAGS` and `VCPKG_CXX_FLAGS` to
+    `/d1trimfile:<folder>/` for the buildtrees folder, the installed tree and the vcpkg root, taken
+    from the variables `scripts/ports.cmake` defines before it includes the triplet (when vcpkg only
+    reads triplet settings they are absent, and so are the options; a folder containing a space is
+    skipped, because the flags are one space-separated string). Lucent's own release builds get the
+    same two options (`cmake/LucentCompilerOptions.cmake`: Release only, C and C++ only, for the
+    vcpkg installed tree, the build tree and the source tree, most specific first), project-wide
+    rather than through `Lucent::compiler_options`, because the helper targets Qt generates for
+    `Lucent.exe` (QML cache and resource object libraries) do not link it. Developer builds
+    (RelWithDebInfo) keep full paths for debuggers and test failure messages.
+
+    The PDBs stay installed for developers (the consequence "vcpkg installs PDBs, so symbols are
+    available" above): the triplet's documented `VCPKG_POST_PORTFILE_INCLUDES` adds
+    `cmake/triplets/post-portfile/install-pdbs.cmake` after every portfile. It puts the folders of
+    the port's release build tree that hold PDBs on `_NT_SYMBOL_PATH`, asks `dumpbin /PDBPATH` for
+    every DLL and EXE of the package, and copies the matching PDB it names beside the binary. The
+    portfiles' own `vcpkg_copy_pdbs` warnings remain in the logs and are expected.
+
+    An undocumented option is used because no documented one exists, and only behind a check that
+    does not trust it: the packaging audit (ADR 0009, decision 12) scans every shipped byte for the
+    build machine's folders and fails on any hit, so a compiler that stopped honouring
+    `/d1trimfile` would stop the packaging, never ship a path. `/pathmap` with
+    `/experimental:deterministic` was not chosen: it changes more than paths.
+
+    Changing the triplet changes the ABI hash of every port: all 31 packages were rebuilt once
+    from source, in 1.2 hours on the reference machine with `VCPKG_MAX_CONCURRENCY=6`
+    (qtdeclarative 38 minutes, qtbase 16, HarfBuzz 3.2, every other port under 2.5), during the
+    first configure of a `dev` build tree; later build trees restore the packages from the binary
+    cache.
+
+    Result (2026-10-09): of the 274 DLLs and EXEs vcpkg installed, only Qt's build tool
+    `tools\Qt6\bin\syncqt.exe` still names its PDB's full path (qtbase builds it in its configure
+    step, outside the toolchain's linker flags; it is never shipped); `tiff.dll` now says
+    `tiff\src\v4.7.2-910d586e47.clean\libtiff\tif_dir.c`, and the installed tree holds 259 PDBs
+    (2.0 GB): the 250 of the previous build, none lost, and those of Little CMS, md4c and the Brotli
+    and bzip2 tools, which `vcpkg_copy_pdbs` had missed. The package's scan is in ADR 0009's
+    amendment.
+
+### Consequences
+
+- `__FILE__` in the ports' code is now relative to the buildtrees folder
+  (`tiff/src/v4.7.2-910d586e47.clean/libtiff/tif_dir.c`), and each DLL names only its PDB's file
+  name. Debuggers find a port's PDB next to its DLL (vcpkg installs them side by side) or through a
+  symbol path. The PDBs themselves still hold full paths; they are never shipped (ADR 0009).
+- Every binary cache entry from before the change is unused, and the first configure on a machine
+  rebuilds Qt from source.
+- vcpkg hashes the bytes of the triplet file and of its post-portfile step, line endings
+  included. On the reference machine (`core.autocrlf=true`, `text=auto`) checkouts write them with
+  CRLF, and the rebuilt cache is keyed by that form; an editor or tool that saves either with LF
+  endings changes every ABI hash and rebuilds every port (observed during this change: the
+  rebuild was restarted with the CRLF files). Pinning `cmake/triplets/**` to one line ending in
+  `.gitattributes` would remove the trap.
+- The vcpkg folders must not contain spaces (vcpkg advises against them anyway); the audit would
+  catch the paths that a skipped folder leaves.
+- Revisit when MSVC documents a source-path mapping, when vcpkg's toolchain adds these options
+  itself, or with clang-cl (`/pathmap` without `/experimental:deterministic`).

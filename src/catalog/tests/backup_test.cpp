@@ -154,6 +154,34 @@ TEST_F(CatalogBackup, RetentionKeepsTheNewestOfEachKind) {
     EXPECT_EQ((*listed)[2].path, premigration);
 }
 
+// W12 (ADR 0022): the backup an update takes before Setup starts is named and pruned as its own kind;
+// open() and restore() keep their kinds to themselves.
+TEST_F(CatalogBackup, PreUpdateBackupsAreTheirOwnKind) {
+    Expected<BackupInfo> manual = catalog_->create_backup();
+    LUCENT_ASSERT_OK(manual);
+    std::vector<std::filesystem::path> updates;
+    for (int i = 0; i < 7; ++i) {
+        Expected<BackupInfo> backup = catalog_->create_backup(BackupKind::PreUpdate);
+        LUCENT_ASSERT_OK(backup);
+        EXPECT_EQ(backup->kind, BackupKind::PreUpdate);
+        EXPECT_TRUE(backup->path.filename().native().ends_with(L".pre-update.bak")) << backup->path.string();
+        EXPECT_EQ(count_in(backup->path), 30u);
+        updates.push_back(backup->path);
+    }
+    Expected<std::vector<BackupInfo>> listed = catalog_->list_backups();
+    LUCENT_ASSERT_OK(listed);
+    ASSERT_EQ(listed->size(), 6u) << "five pre-update backups and the manual one";
+    EXPECT_EQ(listed->front().path, updates.back());
+    EXPECT_FALSE(std::filesystem::exists(updates[0]));
+    EXPECT_FALSE(std::filesystem::exists(updates[1]));
+    EXPECT_TRUE(std::filesystem::exists(manual->path)) << "pruning one kind never touches another";
+    for (const BackupKind other : {BackupKind::PreMigration, BackupKind::PreRestore}) {
+        Expected<BackupInfo> refused = catalog_->create_backup(other);
+        ASSERT_FALSE(refused);
+        EXPECT_EQ(refused.error().code, ErrorCode::InvalidArgument);
+    }
+}
+
 // An online backup taken while a writer commits batches captures exactly one committed state.
 TEST_F(CatalogBackup, BackupDuringWritesIsAConsistentSnapshot) {
     constexpr std::uint64_t kBatch = 10;

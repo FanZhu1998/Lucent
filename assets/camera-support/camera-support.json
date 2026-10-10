@@ -2,9 +2,9 @@
  "schema": "lucent.camera-support",
  "schema_version": 2,
  "qualification": {
-  "generated": "2026-10-09T03:52:04Z",
+  "generated": "2026-10-09T14:30:02Z",
   "date": "2026-10-09",
-  "tool": "lucent-qualify 0.1.0 (01614287ccad)",
+  "tool": "lucent-qualify 0.1.0 (909b2b08b7d4)",
   "report": "docs/qualification/qualification-report.json",
   "basis": {
    "decoder": "LibRaw 0.22.2-Release",
@@ -14,8 +14,8 @@
    ],
    "decoded_raw_contract": "1.4",
    "mode_key": 1,
-   "check_suite": 2,
-   "state_rules": 1,
+   "check_suite": 3,
+   "state_rules": 2,
    "render_pipeline": 3,
    "develop_pipeline": 3,
    "dng_opcode_processing": 1,
@@ -39,10 +39,10 @@
    "export": 1
   },
   "summary": {
-   "modes": 34,
-   "verified": 14,
-   "compatible_unverified": 11,
-   "limited": 6,
+   "modes": 40,
+   "verified": 16,
+   "compatible_unverified": 14,
+   "limited": 7,
    "unsupported": 3
   }
  },
@@ -69,6 +69,45 @@
   }
  ],
  "entries": [
+  {
+   "match": "mk1|bq|aquaris-u-plus|dng|uncompressed|4640x3480|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
+   "qualified_key": "mk1|bq|aquaris-u-plus|dng|uncompressed|4640x3480|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 4624x3464",
+   "dng_opcodes": [
+    "list2:GainMap optional",
+    "list2:GainMap optional",
+    "list2:GainMap optional",
+    "list2:GainMap optional"
+   ],
+   "state": "compatible_unverified",
+   "camera": "bq Aquaris U Plus (smartphone)",
+   "mode": "DNG 1.4 (Android camera), uncompressed 16-bit samples with 10-bit data, OpcodeList2 GainMap, portrait",
+   "family": "other",
+   "limitations": [],
+   "evidence": "13 of 14 checks strong; weak: colour",
+   "evidence_gaps": [
+    "colour: evidence weak (region CIEDE2000 mean 0.0975 (limit 0.142), max 0.187 (limit 0.283), luminance ratio 0.999; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only)"
+   ],
+   "fixtures": [
+    "bq-aquaris-u-plus-dng"
+   ]
+  },
+  {
+   "match": "mk1|canon|eos-350d|tiff|lossless-jpeg|3474x2314|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "qualified_key": "mk1|canon|eos-350d|tiff|lossless-jpeg|3474x2314|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 3456x2303",
+   "dng_opcodes": [],
+   "state": "verified",
+   "camera": "Canon EOS 350D (EOS Digital Rebel XT, EOS Kiss Digital N)",
+   "mode": "CR2 RAW (lossless JPEG), 12-bit, portrait",
+   "family": "canon",
+   "limitations": [],
+   "evidence": "13 of 13 checks strong",
+   "evidence_gaps": [],
+   "fixtures": [
+    "canon-eos-350d-cr2"
+   ]
+  },
   {
    "match": "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|canon|eos-5d-mark-iii|dng|lossless-jpeg|3960x2640|16bit|linear-rgb|uint16|single-view|primary:0/1",
@@ -97,7 +136,7 @@
    "mode": "CR2 S-RAW (YCbCr, lossless JPEG), 3360x2240",
    "family": "canon",
    "limitations": [],
-   "evidence": "13 of 13 checks strong",
+   "evidence": "14 of 14 checks strong; independent: colour_reference",
    "evidence_gaps": [],
    "fixtures": [
     "canon-eos-5d-mark-iv-cr2-sraw"
@@ -113,7 +152,7 @@
    "mode": "CR2 RAW (lossless JPEG), 14-bit",
    "family": "canon",
    "limitations": [],
-   "evidence": "13 of 13 checks strong",
+   "evidence": "14 of 14 checks strong; independent: colour_reference",
    "evidence_gaps": [],
    "fixtures": [
     "canon-eos-5d-mark-iv-cr2-raw"
@@ -308,7 +347,7 @@
      "detail": "demosaic route xtrans_baseline is baseline quality (expect softness and colour artefacts on fine detail)"
     }
    ],
-   "evidence": "12 of 13 checks strong; weak: mode_key",
+   "evidence": "13 of 14 checks strong; independent: colour_reference; weak: mode_key",
    "evidence_gaps": [
     "compression mode not independently verified (the compression mode comes from the decoder (RAF compressed-data header) and the archive's label)",
     "mode_key: evidence weak (derived key equals the expectation)"
@@ -332,7 +371,7 @@
      "detail": "demosaic route xtrans_baseline is baseline quality (expect softness and colour artefacts on fine detail)"
     }
    ],
-   "evidence": "12 of 13 checks strong; weak: mode_key",
+   "evidence": "13 of 14 checks strong; independent: colour_reference; weak: mode_key",
    "evidence_gaps": [
     "compression mode not independently verified (the compression mode comes from the decoder (RAF compressed-data header) and the archive's label)",
     "mode_key: evidence weak (derived key equals the expectation)"
@@ -514,6 +553,22 @@
    ]
   },
   {
+   "match": "mk1|olympus|xz-10|orf|uncompressed|3984x2990|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "qualified_key": "mk1|olympus|xz-10|orf|uncompressed|3984x2990|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "decoder_inset_crop 3968x2976",
+   "dng_opcodes": [],
+   "state": "verified",
+   "camera": "Olympus XZ-10",
+   "mode": "ORF 12-bit uncompressed, portrait",
+   "family": "other",
+   "limitations": [],
+   "evidence": "13 of 13 checks strong",
+   "evidence_gaps": [],
+   "fixtures": [
+    "olympus-xz-10-orf"
+   ]
+  },
+  {
    "match": "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "qualified_key": "mk1|om-system|om-1|orf|olympus-orf-lossless-compressed|5220x3912|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
    "image_area": "decoder_inset_crop 5184x3888",
@@ -530,6 +585,29 @@
    ],
    "fixtures": [
     "om-system-om-1-orf"
+   ]
+  },
+  {
+   "match": "mk1|oneplus|one-a0001|dng|uncompressed|4208x3120|10bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "qualified_key": "mk1|oneplus|one-a0001|dng|uncompressed|4208x3120|10bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_whole_image 4208x3120",
+   "dng_opcodes": [
+    "list2:GainMap",
+    "list2:GainMap",
+    "list2:GainMap",
+    "list2:GainMap"
+   ],
+   "state": "compatible_unverified",
+   "camera": "OnePlus One (smartphone, A0001)",
+   "mode": "DNG 1.3 (Android camera), uncompressed 10-bit, no DefaultCrop, mandatory OpcodeList2 GainMap, portrait",
+   "family": "other",
+   "limitations": [],
+   "evidence": "13 of 14 checks strong; weak: colour",
+   "evidence_gaps": [
+    "colour: evidence weak (region CIEDE2000 mean 0.161 (limit 0.221), max 0.358 (limit 0.497), luminance ratio 1; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only)"
+   ],
+   "fixtures": [
+    "oneplus-one-dng"
    ]
   },
   {
@@ -589,6 +667,45 @@
    ],
    "fixtures": [
     "pentax-k-3-mark-iii-pef"
+   ]
+  },
+  {
+   "match": "mk1|ricoh|gxr-s10|dng|uncompressed|3672x2748|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "qualified_key": "mk1|ricoh|gxr-s10|dng|uncompressed|3672x2748|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "dng_default_crop 3648x2736",
+   "dng_opcodes": [],
+   "state": "compatible_unverified",
+   "camera": "Ricoh GXR with the RICOH S10 24-72mm F2.5-4.4 VC camera unit",
+   "mode": "DNG 1.0 (in camera), uncompressed 12-bit, portrait",
+   "family": "other",
+   "limitations": [],
+   "evidence": "12 of 13 checks strong; weak: colour",
+   "evidence_gaps": [
+    "colour: evidence weak (region CIEDE2000 mean 0.602 (limit 0.773), max 0.9 (limit 1.18), luminance ratio 0.993; not like for like (Lucent applies the DNG camera profile, the reference LibRaw's D65 matrix): gross errors only)"
+   ],
+   "fixtures": [
+    "ricoh-gxr-s10-dng"
+   ]
+  },
+  {
+   "match": "mk1|sony|dslr-a450|tiff|sony-arw-compressed-lossy|4608x3072|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "qualified_key": "mk1|sony|dslr-a450|tiff|sony-arw-compressed-lossy|4608x3072|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+   "image_area": "unknown",
+   "dng_opcodes": [],
+   "state": "limited",
+   "camera": "Sony Alpha DSLR-A450",
+   "mode": "ARW 2.1 compressed, portrait",
+   "family": "sony",
+   "limitations": [
+    {
+     "code": "default_crop_not_applied",
+     "detail": "the camera's image area is 3056x4592; Lucent renders 3072x4608, the decoder's visible area: the file declares no image area the decoder reads (the decoder's crop declaration is incomplete (raw_inset_crops[0] 4592 x 3056 at left not recorded, top not recorded))"
+    }
+   ],
+   "evidence": "13 of 13 checks strong",
+   "evidence_gaps": [],
+   "fixtures": [
+    "sony-dslr-a450-arw"
    ]
   },
   {

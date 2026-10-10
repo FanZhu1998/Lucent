@@ -1,0 +1,700 @@
+{
+ "schema": "lucent.qualification-charts",
+ "schema_version": 1,
+ "reviewed": "2026-10-09",
+ "description": "Colour charts in corpus fixtures and their published reference values, for the qualification check colour_reference (ADR 0020). Reference values are the manufacturer's published CIE L*a*b* (D50, CIE 1931 2 degree observer), cited with URL and retrieval date. Sample boxes are [x, y, width, height] in the fixture's camera-area frame: the upright image Lucent's develop render outputs (geometry version 2, ADR 0017); frame.origin is that frame's top-left corner in the decoder's whole upright visible area, which other renderers (rawpy) output. Boxes are the central half (per side) of each patch, located with research/tools/chart_reference.py locate and reviewed on its overlay.",
+ "references": {
+  "datacolor-spydercheckr-2014": {
+   "chart": "Datacolor SpyderCHECKR (SCK100), 48 patches in two 4 x 6 grids, columns A-H, rows 1-6",
+   "publisher": "Datacolor",
+   "title": "SpyderCHECKR Color Data (patch, name, L*a*b*, sRGB and Adobe RGB values)",
+   "url": "http://spyder.datacolor.com/wp-content/uploads/2014/08/SpyderCheckr-Color-Data.pdf",
+   "archived_url": "https://web.archive.org/web/20160818221537/http://spyder.datacolor.com/wp-content/uploads/2014/08/SpyderCheckr-Color-Data.pdf",
+   "retrieved": "2026-10-09",
+   "document_sha256": "253c84ce3d37922668ae593a5040d7475f438213e958c2340793fb2ea7754751",
+   "illuminant": "D50",
+   "observer": "CIE 1931 2 degree",
+   "basis": "The original URL now redirects to Datacolor's home page; the document was retrieved from the Internet Archive's capture of 2016-08-18 (a one-page image of the chart and a table). It gives L*a*b* without naming the illuminant. D50 is established from the document itself: converting its L*a*b* with a D50 white (Bradford to D65) to 8-bit sRGB reproduces its own sRGB column with a mean absolute difference of 0.77 codes (largest 4.3) over 47 patches (2G's sRGB cell is not legible in the scan), against 1.83 (largest 25.0) with a D65 white (2026-10-09). Datacolor's user guide (https://www.datacolor.com/spyder/wp-content/uploads/2023/07/Spyder-Checkrs-User-Guide-FINAL-EN-1.pdf, retrieved 2026-10-09) names the 48-patch target 'Spyder Checkr (SCK100)' and states no values.",
+   "quote": "Patch | Name | Lab L* a* b* | sRGB R G B | Adobe RGB R G B; 1A Low Sat. Red 61.35 34.81 18.38 210 121 117 189 121 117",
+   "patches": {
+    "1A": {
+     "name": "Low Sat. Red",
+     "lab": [61.35, 34.81, 18.38]
+    },
+    "2A": {
+     "name": "Low Sat. Yellow",
+     "lab": [75.5, 5.84, 50.42]
+    },
+    "3A": {
+     "name": "Low Sat. Green",
+     "lab": [66.82, -25.1, 23.47]
+    },
+    "4A": {
+     "name": "Low Sat. Cyan",
+     "lab": [60.53, -22.6, -20.4]
+    },
+    "5A": {
+     "name": "Low Sat. Blue",
+     "lab": [59.66, -2.03, -28.46]
+    },
+    "6A": {
+     "name": "Low Sat. Magenta",
+     "lab": [59.15, 30.83, -5.72]
+    },
+    "1B": {
+     "name": "10% Red Tint",
+     "lab": [82.68, 5.03, 3.02]
+    },
+    "2B": {
+     "name": "10% Green Tint",
+     "lab": [82.25, -2.42, 3.78]
+    },
+    "3B": {
+     "name": "10% Blue Tint",
+     "lab": [82.29, 2.2, -2.04]
+    },
+    "4B": {
+     "name": "90% Red Tone",
+     "lab": [24.89, 4.43, 0.78]
+    },
+    "5B": {
+     "name": "90% Green Tone",
+     "lab": [25.16, -3.88, 2.13]
+    },
+    "6B": {
+     "name": "90% Blue Tone",
+     "lab": [26.13, 2.61, -5.03]
+    },
+    "1C": {
+     "name": "Lightest Skin",
+     "lab": [85.42, 9.41, 14.49]
+    },
+    "2C": {
+     "name": "Lighter Skin",
+     "lab": [74.28, 9.05, 27.21]
+    },
+    "3C": {
+     "name": "Moderate Skin",
+     "lab": [64.57, 12.39, 37.24]
+    },
+    "4C": {
+     "name": "Medium Skin",
+     "lab": [44.49, 17.23, 26.24]
+    },
+    "5C": {
+     "name": "Deep Skin",
+     "lab": [25.29, 7.95, 8.87]
+    },
+    "6C": {
+     "name": "95% Gray",
+     "lab": [22.67, 2.11, -1.1]
+    },
+    "1D": {
+     "name": "5% Gray",
+     "lab": [92.72, 1.89, 2.76]
+    },
+    "2D": {
+     "name": "10% gray",
+     "lab": [88.85, 1.59, 2.27]
+    },
+    "3D": {
+     "name": "30% Gray",
+     "lab": [73.42, 0.99, 1.89]
+    },
+    "4D": {
+     "name": "50% Gray",
+     "lab": [57.15, 0.57, 1.19]
+    },
+    "5D": {
+     "name": "70% Gray",
+     "lab": [41.57, 0.24, 1.45]
+    },
+    "6D": {
+     "name": "90% Gray",
+     "lab": [25.65, 1.24, 0.05]
+    },
+    "1E": {
+     "name": "Card White",
+     "lab": [96.04, 2.16, 2.6]
+    },
+    "2E": {
+     "name": "20% Gray",
+     "lab": [80.44, 1.17, 2.05]
+    },
+    "3E": {
+     "name": "40% Gray",
+     "lab": [65.52, 0.69, 1.86]
+    },
+    "4E": {
+     "name": "60% Gray",
+     "lab": [49.62, 0.58, 1.56]
+    },
+    "5E": {
+     "name": "80% Gray",
+     "lab": [33.55, 0.35, 1.4]
+    },
+    "6E": {
+     "name": "Card Black",
+     "lab": [16.91, 1.43, -0.81]
+    },
+    "1F": {
+     "name": "Primary Cyan",
+     "lab": [47.12, -32.5, -28.75]
+    },
+    "2F": {
+     "name": "Primary Magenta",
+     "lab": [50.49, 53.45, -13.55]
+    },
+    "3F": {
+     "name": "Primary Yellow",
+     "lab": [83.61, 3.36, 87.02]
+    },
+    "4F": {
+     "name": "Primary Red",
+     "lab": [41.05, 60.75, 31.17]
+    },
+    "5F": {
+     "name": "Primary Green",
+     "lab": [54.14, -40.8, 34.75]
+    },
+    "6F": {
+     "name": "Primary Blue",
+     "lab": [24.75, 13.78, -49.48]
+    },
+    "1G": {
+     "name": "Primary Orange",
+     "lab": [60.94, 38.21, 61.31]
+    },
+    "2G": {
+     "name": "Blueprint",
+     "lab": [37.8, 7.3, -43.04]
+    },
+    "3G": {
+     "name": "Pink",
+     "lab": [49.81, 48.5, 15.76]
+    },
+    "4G": {
+     "name": "Violet",
+     "lab": [28.88, 19.36, -24.48]
+    },
+    "5G": {
+     "name": "Apple Green",
+     "lab": [72.45, -23.6, 60.47]
+    },
+    "6G": {
+     "name": "Sunflower",
+     "lab": [71.65, 23.74, 72.28]
+    },
+    "1H": {
+     "name": "Aqua",
+     "lab": [70.19, -31.9, 1.98]
+    },
+    "2H": {
+     "name": "Lavender",
+     "lab": [54.38, 8.84, -25.71]
+    },
+    "3H": {
+     "name": "Evergreen",
+     "lab": [42.03, -15.8, 22.93]
+    },
+    "4H": {
+     "name": "Steel Blue",
+     "lab": [48.82, -5.11, -23.08]
+    },
+    "5H": {
+     "name": "Classic Light Skin",
+     "lab": [65.1, 18.14, 18.68]
+    },
+    "6H": {
+     "name": "Classic Dark Skin",
+     "lab": [36.13, 14.15, 15.78]
+    }
+   }
+  },
+  "xrite-colorchecker24-after-2014": {
+   "chart": "X-Rite ColorChecker Classic, 24 patches (also the ColorChecker Classic Mini, MSCCMN-RET), editions produced after November 2014",
+   "publisher": "X-Rite",
+   "title": "New color specifications for ColorChecker SG and Classic Charts: Reference Data for ColorChecker Classic after November 2014 (ColorChecker24_After_Nov2014.txt, CGATS)",
+   "url": "https://www.xrite.com/service-support/new_color_specifications_for_colorchecker_sg_and_classic_charts",
+   "data_url": "http://www.xrite.com/-/media/XRite/Files/Literature/Misc/C/ColorChecker24_After_Nov2014.zip",
+   "retrieved": "2026-10-09",
+   "document_sha256": "2d110e3e8c33cb46fad920817efcf3efa504c2a9eb9cf60c9079b9c111557d29",
+   "illuminant": "D50",
+   "observer": "CIE 1931 2 degree",
+   "basis": "X-Rite: 'Charts editions, which are manufactured after November 2014 have been and will be produced with the new colorants ... the new chart editions require the use of new colorimetric reference data'. The CGATS file (ORIGINATOR \"ColorChecker24 - November2014 edition and newer\", measured 4/28/2015 with an i1Pro 2, MeasurementCondition=M0) gives Lab_L, Lab_a, Lab_b with decimal commas for samples A1-F4 (letters are the six columns, digits the four rows of the landscape chart: A1 dark skin ... F4 black) and does not name the illuminant; D50 and the 2 degree observer are the ICC/ISO 13655 convention of i1Profiler reference data, as colour-science also records this dataset. The Mini carries the Classic's colours: X-Rite: 'At just 1/8th the size of the ColorChecker Classic Standard' (https://www.xrite.com/categories/calibration-profiling/colorchecker-classic-family/colorchecker-classic-mini, model MSCCMN-RET); Calibrite, which replaced it: 'A standard 24-patch ColorChecker Classic target in a handy credit card size' (https://calibrite.com/us/product/colorchecker-classic-mini/), both retrieved 2026-10-09.",
+   "quote": "ORIGINATOR \"ColorChecker24 - November2014 edition and newer\" ... A1 37,54 14,37 14,92",
+   "patches": {
+    "A1": {
+     "name": "dark skin",
+     "lab": [37.54, 14.37, 14.92]
+    },
+    "A2": {
+     "name": "orange",
+     "lab": [62.73, 35.83, 56.5]
+    },
+    "A3": {
+     "name": "blue",
+     "lab": [28.37, 15.42, -49.8]
+    },
+    "A4": {
+     "name": "white 9.5 (.05 D)",
+     "lab": [95.19, -1.03, 2.93]
+    },
+    "B1": {
+     "name": "light skin",
+     "lab": [64.66, 19.27, 17.5]
+    },
+    "B2": {
+     "name": "purplish blue",
+     "lab": [39.43, 10.75, -45.17]
+    },
+    "B3": {
+     "name": "green",
+     "lab": [54.38, -39.72, 32.27]
+    },
+    "B4": {
+     "name": "neutral 8 (.23 D)",
+     "lab": [81.29, -0.57, 0.44]
+    },
+    "C1": {
+     "name": "blue sky",
+     "lab": [49.32, -3.82, -22.54]
+    },
+    "C2": {
+     "name": "moderate red",
+     "lab": [50.57, 48.64, 16.67]
+    },
+    "C3": {
+     "name": "red",
+     "lab": [42.43, 51.05, 28.62]
+    },
+    "C4": {
+     "name": "neutral 6.5 (.44 D)",
+     "lab": [66.89, -0.75, -0.06]
+    },
+    "D1": {
+     "name": "foliage",
+     "lab": [43.46, -12.74, 22.72]
+    },
+    "D2": {
+     "name": "purple",
+     "lab": [30.1, 22.54, -20.87]
+    },
+    "D3": {
+     "name": "yellow",
+     "lab": [81.8, 2.67, 80.41]
+    },
+    "D4": {
+     "name": "neutral 5 (.70 D)",
+     "lab": [50.76, -0.13, 0.14]
+    },
+    "E1": {
+     "name": "blue flower",
+     "lab": [54.94, 9.61, -24.79]
+    },
+    "E2": {
+     "name": "yellow green",
+     "lab": [71.77, -24.13, 58.19]
+    },
+    "E3": {
+     "name": "magenta",
+     "lab": [50.63, 51.28, -14.12]
+    },
+    "E4": {
+     "name": "neutral 3.5 (1.05 D)",
+     "lab": [35.63, -0.46, -0.48]
+    },
+    "F1": {
+     "name": "bluish green",
+     "lab": [70.48, -32.26, -0.37]
+    },
+    "F2": {
+     "name": "orange yellow",
+     "lab": [71.51, 18.24, 67.37]
+    },
+    "F3": {
+     "name": "cyan",
+     "lab": [49.57, -29.71, -28.32]
+    },
+    "F4": {
+     "name": "black 2 (1.5 D)",
+     "lab": [20.64, 0.07, -0.46]
+    }
+   }
+  },
+  "xrite-colorchecker24-before-2014": {
+   "chart": "X-Rite ColorChecker Classic, 24 patches, editions produced before November 2014",
+   "publisher": "X-Rite",
+   "title": "Reference Data for ColorChecker Classic before November 2014 (ColorChecker24_Before_Nov2014.txt, CGATS)",
+   "url": "https://www.xrite.com/service-support/new_color_specifications_for_colorchecker_sg_and_classic_charts",
+   "data_url": "http://www.xrite.com/-/media/XRite/Files/Literature/Misc/C/ColorChecker24_Before_Nov2014.zip",
+   "retrieved": "2026-10-09",
+   "illuminant": "D50",
+   "observer": "CIE 1931 2 degree",
+   "basis": "Used only as a sensitivity check for charts whose production date cannot be read from the photograph.",
+   "quote": "ORIGINATOR \"ColorChecker24 - Before November2014 edition\" ... A1 37.986 13.555 14.059",
+   "patches": {
+    "A1": {
+     "name": "dark skin",
+     "lab": [37.986, 13.555, 14.059]
+    },
+    "A2": {
+     "name": "orange",
+     "lab": [62.661, 36.067, 57.096]
+    },
+    "A3": {
+     "name": "blue",
+     "lab": [28.778, 14.179, -50.297]
+    },
+    "A4": {
+     "name": "white 9.5 (.05 D)",
+     "lab": [96.539, -0.425, 1.186]
+    },
+    "B1": {
+     "name": "light skin",
+     "lab": [65.711, 18.13, 17.81]
+    },
+    "B2": {
+     "name": "purplish blue",
+     "lab": [40.02, 10.41, -45.964]
+    },
+    "B3": {
+     "name": "green",
+     "lab": [55.261, -38.342, 31.37]
+    },
+    "B4": {
+     "name": "neutral 8 (.23 D)",
+     "lab": [81.257, -0.638, -0.335]
+    },
+    "C1": {
+     "name": "blue sky",
+     "lab": [49.927, -4.88, -21.905]
+    },
+    "C2": {
+     "name": "moderate red",
+     "lab": [51.124, 48.239, 16.248]
+    },
+    "C3": {
+     "name": "red",
+     "lab": [42.101, 53.378, 28.19]
+    },
+    "C4": {
+     "name": "neutral 6.5 (.44 D)",
+     "lab": [66.766, -0.734, -0.504]
+    },
+    "D1": {
+     "name": "foliage",
+     "lab": [43.139, -13.095, 21.905]
+    },
+    "D2": {
+     "name": "purple",
+     "lab": [30.325, 22.976, -21.587]
+    },
+    "D3": {
+     "name": "yellow",
+     "lab": [81.733, 4.039, 79.819]
+    },
+    "D4": {
+     "name": "neutral 5 (.70 D)",
+     "lab": [50.867, -0.153, -0.27]
+    },
+    "E1": {
+     "name": "blue flower",
+     "lab": [55.112, 8.844, -25.399]
+    },
+    "E2": {
+     "name": "yellow green",
+     "lab": [72.532, -23.709, 57.255]
+    },
+    "E3": {
+     "name": "magenta",
+     "lab": [51.935, 49.986, -14.574]
+    },
+    "E4": {
+     "name": "neutral 3.5 (1.05 D)",
+     "lab": [35.656, -0.421, -1.231]
+    },
+    "F1": {
+     "name": "bluish green",
+     "lab": [70.719, -33.397, -0.199]
+    },
+    "F2": {
+     "name": "orange yellow",
+     "lab": [71.941, 19.363, 67.857]
+    },
+    "F3": {
+     "name": "cyan",
+     "lab": [51.038, -28.631, -28.638]
+    },
+    "F4": {
+     "name": "black 2 (1.5 D)",
+     "lab": [20.461, -0.079, -0.973]
+    }
+   }
+  }
+ },
+ "fixtures": [
+  {
+   "id": "canon-eos-5d-mark-iv-cr2-raw",
+   "reference": "datacolor-spydercheckr-2014",
+   "chart_identification": "'SpyderCHECKR' and 'datacolor' printed on the target, 48 patches in two 4 x 6 grids labelled A-D and E-H, 1-6, and the FadeCheckr patch (Datacolor's SCK100); reviewed on Lucent's preview and LibRaw's rendering, 2026-10-09",
+   "scene": "The open SpyderCHECKR stands upright in direct sun on a snow-covered wall, sky and snow around it.",
+   "frame": {
+    "size": [6720, 4480],
+    "origin": [12, 12]
+   },
+   "normalisation_patch": "3E",
+   "patches": {
+    "1A": [3624, 2265, 120, 120],
+    "2A": [3624, 2553, 120, 120],
+    "3A": [3625, 2841, 120, 120],
+    "4A": [3625, 3129, 120, 120],
+    "5A": [3626, 3417, 120, 120],
+    "6A": [3626, 3705, 120, 120],
+    "1B": [3908, 2265, 120, 120],
+    "2B": [3909, 2553, 120, 120],
+    "3B": [3910, 2841, 120, 120],
+    "4B": [3912, 3129, 120, 120],
+    "5B": [3913, 3417, 120, 120],
+    "6B": [3915, 3705, 120, 120],
+    "1C": [4192, 2266, 120, 120],
+    "2C": [4194, 2553, 120, 120],
+    "3C": [4196, 2841, 120, 120],
+    "4C": [4199, 3129, 120, 120],
+    "5C": [4201, 3417, 120, 120],
+    "6C": [4203, 3705, 120, 120],
+    "1D": [4476, 2266, 120, 120],
+    "2D": [4479, 2553, 120, 120],
+    "3D": [4482, 2841, 120, 120],
+    "4D": [4485, 3129, 120, 120],
+    "5D": [4489, 3417, 120, 120],
+    "6D": [4492, 3705, 120, 120],
+    "1E": [5120, 2263, 120, 120],
+    "2E": [5126, 2551, 120, 120],
+    "3E": [5131, 2839, 120, 120],
+    "4E": [5137, 3127, 120, 120],
+    "5E": [5143, 3415, 120, 120],
+    "6E": [5149, 3703, 120, 120],
+    "1F": [5407, 2261, 120, 120],
+    "2F": [5414, 2550, 120, 120],
+    "3F": [5421, 2839, 120, 120],
+    "4F": [5428, 3127, 120, 120],
+    "5F": [5435, 3416, 120, 120],
+    "6F": [5442, 3704, 120, 120],
+    "1G": [5694, 2260, 120, 120],
+    "2G": [5702, 2549, 120, 120],
+    "3G": [5710, 2838, 120, 120],
+    "4G": [5718, 3127, 120, 120],
+    "5G": [5726, 3416, 120, 120],
+    "6G": [5735, 3705, 120, 120],
+    "1H": [5981, 2258, 120, 120],
+    "2H": [5990, 2548, 120, 120],
+    "3H": [6000, 2838, 120, 120],
+    "4H": [6009, 3127, 120, 120],
+    "5H": [6018, 3417, 120, 120],
+    "6H": [6027, 3706, 120, 120]
+   },
+   "located": "2026-10-09: chart_reference.py locate on the camera-area dump, corners 1A (3682, 2326), 1D (4535, 2327), 6A (3685, 3767), 6D (4551, 3769) and 1E (5180, 2325), 1H (6041, 2322), 6E (5207, 3767), 6H (6089, 3767); patch side 240 px, boxes 120 px, fit residual <= 3.7 px; every box lies inside its patch on the overlay.",
+   "independent_measurement": {
+    "renderer": "rawpy 0.27.1 (LibRaw 0.22.1): as-shot white balance, LibRaw's demosaic and highlight clip, LibRaw's camera matrix; colour-science 0.4.7",
+    "measured": "2026-10-09",
+    "as_shot": {
+     "mean": 2.8745,
+     "p90": 4.683,
+     "max": 5.9394
+    },
+    "chart_balanced": {
+     "mean": 2.8983,
+     "p90": 4.6802,
+     "max": 5.8863
+    }
+   }
+  },
+  {
+   "id": "canon-eos-5d-mark-iv-cr2-sraw",
+   "reference": "datacolor-spydercheckr-2014",
+   "chart_identification": "The same SpyderCHECKR as canon-eos-5d-mark-iv-cr2-raw, in another frame of the same scene (S-RAW, half the linear resolution).",
+   "scene": "As canon-eos-5d-mark-iv-cr2-raw.",
+   "frame": {
+    "size": [3360, 2240],
+    "origin": [0, 0]
+   },
+   "normalisation_patch": "3E",
+   "patches": {
+    "1A": [1811, 1123, 60, 60],
+    "2A": [1811, 1267, 60, 60],
+    "3A": [1810, 1410, 60, 60],
+    "4A": [1810, 1554, 60, 60],
+    "5A": [1810, 1698, 60, 60],
+    "6A": [1809, 1842, 60, 60],
+    "1B": [1953, 1123, 60, 60],
+    "2B": [1953, 1267, 60, 60],
+    "3B": [1953, 1411, 60, 60],
+    "4B": [1953, 1555, 60, 60],
+    "5B": [1953, 1699, 60, 60],
+    "6B": [1953, 1842, 60, 60],
+    "1C": [2094, 1124, 60, 60],
+    "2C": [2095, 1268, 60, 60],
+    "3C": [2096, 1412, 60, 60],
+    "4C": [2096, 1555, 60, 60],
+    "5C": [2097, 1699, 60, 60],
+    "6C": [2098, 1843, 60, 60],
+    "1D": [2236, 1125, 60, 60],
+    "2D": [2237, 1269, 60, 60],
+    "3D": [2238, 1412, 60, 60],
+    "4D": [2240, 1556, 60, 60],
+    "5D": [2241, 1700, 60, 60],
+    "6D": [2242, 1844, 60, 60],
+    "1E": [2557, 1125, 60, 60],
+    "2E": [2560, 1269, 60, 60],
+    "3E": [2563, 1413, 60, 60],
+    "4E": [2565, 1557, 60, 60],
+    "5E": [2568, 1700, 60, 60],
+    "6E": [2570, 1844, 60, 60],
+    "1F": [2701, 1125, 60, 60],
+    "2F": [2704, 1269, 60, 60],
+    "3F": [2707, 1413, 60, 60],
+    "4F": [2710, 1557, 60, 60],
+    "5F": [2713, 1701, 60, 60],
+    "6F": [2716, 1845, 60, 60],
+    "1G": [2844, 1125, 60, 60],
+    "2G": [2848, 1269, 60, 60],
+    "3G": [2851, 1413, 60, 60],
+    "4G": [2855, 1558, 60, 60],
+    "5G": [2859, 1702, 60, 60],
+    "6G": [2862, 1846, 60, 60],
+    "1H": [2987, 1125, 60, 60],
+    "2H": [2992, 1269, 60, 60],
+    "3H": [2996, 1414, 60, 60],
+    "4H": [3000, 1558, 60, 60],
+    "5H": [3004, 1703, 60, 60],
+    "6H": [3008, 1847, 60, 60]
+   },
+   "located": "2026-10-09: chart_reference.py locate on the camera-area dump, corners 1A (1841, 1156), 1D (2267, 1157), 6A (1841, 1873), 6D (2272, 1876) and 1E (2587, 1157), 1H (3018, 1157), 6E (2600, 1875), 6H (3038, 1877); patch side 120 px, boxes 60 px, fit residual <= 2.5 px; every box lies inside its patch on the overlay.",
+   "independent_measurement": {
+    "renderer": "rawpy 0.27.1 (LibRaw 0.22.1): as-shot white balance, LibRaw's demosaic and highlight clip, LibRaw's camera matrix; colour-science 0.4.7",
+    "measured": "2026-10-09",
+    "as_shot": {
+     "mean": 3.0115,
+     "p90": 4.7846,
+     "max": 5.9126
+    },
+    "chart_balanced": {
+     "mean": 2.9943,
+     "p90": 4.833,
+     "max": 5.8597
+    }
+   }
+  },
+  {
+   "id": "fujifilm-x-t4-raf-lossless",
+   "reference": "xrite-colorchecker24-after-2014",
+   "alternate_references": [
+    "xrite-colorchecker24-before-2014"
+   ],
+   "chart_identification": "'x-rite' and 'colorchecker CLASSIC' printed on a credit-card-size target with a millimetre scale: the ColorChecker Classic Mini (MSCCMN-RET), held portrait so that the Classic's landscape columns run bottom to top (bottom-left A1 dark skin, top-left F1 bluish green, top-right F4 black, bottom-right A4 white); reviewed on Lucent's preview and LibRaw's rendering, 2026-10-09. Its production date is printed on the back and cannot be read: the edition after November 2014 is inferred from the X-Rite 'colorchecker CLASSIC' branding and the camera (2020); the earlier edition's values are measured as a sensitivity check (alternate_references).",
+   "scene": "The chart is pinned to a tree trunk in forest shade among wood-anemone leaves (skylight and foliage-reflected light).",
+   "frame": {
+    "size": [6240, 4160],
+    "origin": [6, 7]
+   },
+   "normalisation_patch": "C4",
+   "patches": {
+    "A1": [3083, 2774, 110, 110],
+    "B1": [3082, 2484, 110, 110],
+    "C1": [3082, 2193, 110, 110],
+    "D1": [3081, 1902, 110, 110],
+    "E1": [3080, 1611, 110, 110],
+    "F1": [3079, 1320, 110, 110],
+    "A2": [3368, 2772, 110, 110],
+    "B2": [3368, 2482, 110, 110],
+    "C2": [3369, 2191, 110, 110],
+    "D2": [3370, 1901, 110, 110],
+    "E2": [3370, 1611, 110, 110],
+    "F2": [3371, 1321, 110, 110],
+    "A3": [3652, 2769, 110, 110],
+    "B3": [3654, 2479, 110, 110],
+    "C3": [3656, 2190, 110, 110],
+    "D3": [3659, 1901, 110, 110],
+    "E3": [3661, 1612, 110, 110],
+    "F3": [3663, 1322, 110, 110],
+    "A4": [3936, 2766, 110, 110],
+    "B4": [3940, 2477, 110, 110],
+    "C4": [3944, 2189, 110, 110],
+    "D4": [3948, 1900, 110, 110],
+    "E4": [3952, 1612, 110, 110],
+    "F4": [3955, 1323, 110, 110]
+   },
+   "located": "2026-10-09: chart_reference.py locate on the camera-area dump, corners F1 (3133, 1372), F4 (4012, 1373), A1 (3136, 2818), A4 (3993, 2818); patch side about 222 px, boxes 110 px, fit residual <= 7.1 px; every box lies inside its patch on the overlay.",
+   "independent_measurement": {
+    "renderer": "rawpy 0.27.1 (LibRaw 0.22.1): as-shot white balance, LibRaw's demosaic and highlight clip, LibRaw's camera matrix; colour-science 0.4.7",
+    "measured": "2026-10-09",
+    "as_shot": {
+     "mean": 7.778,
+     "p90": 13.7694,
+     "max": 16.4544
+    },
+    "chart_balanced": {
+     "mean": 2.8524,
+     "p90": 4.8512,
+     "max": 7.9924
+    }
+   }
+  },
+  {
+   "id": "fujifilm-x-t4-raf-compressed",
+   "reference": "xrite-colorchecker24-after-2014",
+   "alternate_references": [
+    "xrite-colorchecker24-before-2014"
+   ],
+   "chart_identification": "The same ColorChecker Classic Mini as fujifilm-x-t4-raf-lossless, in another frame of the same scene.",
+   "scene": "As fujifilm-x-t4-raf-lossless.",
+   "frame": {
+    "size": [6240, 4160],
+    "origin": [6, 7]
+   },
+   "normalisation_patch": "C4",
+   "patches": {
+    "A1": [3113, 2804, 112, 112],
+    "B1": [3108, 2508, 112, 112],
+    "C1": [3103, 2213, 112, 112],
+    "D1": [3099, 1917, 112, 112],
+    "E1": [3094, 1622, 112, 112],
+    "F1": [3090, 1326, 112, 112],
+    "A2": [3403, 2797, 112, 112],
+    "B2": [3400, 2503, 112, 112],
+    "C2": [3397, 2208, 112, 112],
+    "D2": [3393, 1913, 112, 112],
+    "E2": [3390, 1618, 112, 112],
+    "F2": [3387, 1323, 112, 112],
+    "A3": [3693, 2791, 112, 112],
+    "B3": [3692, 2497, 112, 112],
+    "C3": [3690, 2203, 112, 112],
+    "D3": [3688, 1909, 112, 112],
+    "E3": [3686, 1615, 112, 112],
+    "F3": [3684, 1321, 112, 112],
+    "A4": [3984, 2785, 112, 112],
+    "B4": [3983, 2491, 112, 112],
+    "C4": [3983, 2198, 112, 112],
+    "D4": [3982, 1905, 112, 112],
+    "E4": [3982, 1611, 112, 112],
+    "F4": [3982, 1318, 112, 112]
+   },
+   "located": "2026-10-09: chart_reference.py locate on the camera-area dump, corners F1 (3143, 1378), F4 (4039, 1369), A1 (3166, 2852), A4 (4041, 2840); patch side about 226 px, boxes 112 px, fit residual <= 6.2 px; every box lies inside its patch on the overlay.",
+   "independent_measurement": {
+    "renderer": "rawpy 0.27.1 (LibRaw 0.22.1): as-shot white balance, LibRaw's demosaic and highlight clip, LibRaw's camera matrix; colour-science 0.4.7",
+    "measured": "2026-10-09",
+    "as_shot": {
+     "mean": 6.9353,
+     "p90": 12.6995,
+     "max": 14.2397
+    },
+    "chart_balanced": {
+     "mean": 2.8904,
+     "p90": 4.8593,
+     "max": 8.1701
+    }
+   }
+  }
+ ]
+}

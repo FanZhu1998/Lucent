@@ -43,6 +43,8 @@
 //   --data-root <folder>       Use <folder> instead of %LOCALAPPDATA%\Lucent for the catalog
 //                              (<folder>\data) and the caches (<folder>\cache): screenshots and
 //                              smoke tests without touching the user's library. Created if needed.
+//                              Downloaded updates stay in %LOCALAPPDATA%\Lucent\cache\updates
+//                              (service_factory.cpp: a folder only this user can change).
 //   --set <control>=<value>    With --open-first (W6): once the photo's first frame is shown, make
 //                              this edit (one revision each, in order, each waiting for its final
 //                              frame). <control> is a slider key (exposure, contrast, highlights,
@@ -113,6 +115,41 @@
 //   --quit-when-done           With --export-batch: exit when the batch has finished (after the
 //                              screenshots): 0 when no photo failed, 4 otherwise, 5 when the batch
 //                              could not be created.
+//   W12 measurement hooks (the performance baseline, docs/performance, ADR 0021):
+//   --resume-batch             Instead of creating a batch: follow the newest batch of the library
+//                              that has work left until it has finished, and report it as
+//                              --export-batch does (a batch an earlier session left running, for
+//                              example one whose Lucent.exe was ended, continues by itself when
+//                              Lucent starts; a paused one is resumed). With --quit-when-done, exit
+//                              then, or with 5 at once when no batch has work left.
+//   --cancel-batch-after <n>   With --export-batch or --resume-batch: cancel the batch (as the
+//                              Exports view's Cancel does) once <n> photos are done and another one
+//                              is being processed.
+//   --pause-batch-after <n>    With --export-batch or --resume-batch: pause the batch once <n>
+//                              photos are done, then resume it --resume-after <ms> (default 5000,
+//                              0..600000) after its last running photo finished.
+//   --cancel-auto-after <ms>   With --auto: cancel the run <ms> after it started (as the Automatic
+//                              settings panel's Cancel does).
+//   With --measure these runs add lines of key=value fields (milliseconds since the automation
+//   started, "_ms"; mebibytes, "_mib"), which tools/bench parses:
+//     measure: first frame presented <n> ms after the process started
+//     measure: first RAW preview shown <n> ms after the import started   (--open-first: the photo's
+//              first frame rendered from the RAW data, not the camera's preview)
+//     measure: batch <id> timeline: submit_ms= created_ms= first_done_ms= finished_ms= done=
+//              exported= failed= skipped= cancelled= seconds= per_minute=
+//              (created_ms is when --resume-batch found the batch; done and the outcome counts are
+//              those reached after the automation first saw the batch, so photos left out when it
+//              was created, or done before a restart, are not among them; per_minute is exported
+//              (or analysed) photos per minute from created_ms to finished_ms)
+//     measure: batch <id> scheduler: <the batch service's statistics of this session>
+//     measure: batch <id> cancel: requested_ms= done= running= stopped_after_ms=
+//     measure: batch <id> pause: requested_ms= running= settled_after_ms= resume_after_ms=
+//     measure: auto run: ended_after_ms= cancelled=
+//     measure: auto cancel: requested_after_ms= ended_after_request_ms= cancelled= progress=
+//     measure: process: peak_working_set_mib= peak_commit_mib= commit_mib= cpu_s= user_s= kernel_s=
+//              wall_s=
+//   (the process line ends every --measure run: at the screenshot, when the services are idle, or
+//   before --quit-when-done exits).
 //
 // Progress lines ("lucent: ...") go to stderr, which a WIN32 program only has when the caller
 // redirects it (for example `Lucent.exe --screenshot a.png 2> log.txt`). Set
@@ -185,6 +222,12 @@ struct DeveloperOptions {
     bool quit_when_done = false;
     BatchAutomatic batch_automatic = BatchAutomatic::Off;  // --automatic (W8)
     bool keep_consistent = false;                          // --keep-consistent (W8)
+    // W12 measurement hooks (see the file comment).
+    bool resume_batch = false;                // --resume-batch
+    std::optional<int> cancel_batch_after;    // --cancel-batch-after <n>
+    std::optional<int> pause_batch_after;     // --pause-batch-after <n>
+    int resume_after_ms = 5000;               // --resume-after <ms>
+    std::optional<int> cancel_auto_after_ms;  // --cancel-auto-after <ms>
 };
 
 struct CommandLine {
@@ -258,6 +301,12 @@ private:
     // W7 batch automation.
     void start_batch();
     void on_batch_changed(const BatchSnapshot& batch);
+    // W12 measurement hooks (see the file comment).
+    void on_batches_listed(const QList<BatchSnapshot>& batches);
+    void apply_batch_hooks(const BatchSnapshot& batch, qint64 done);
+    void report_batch_timeline(const BatchSnapshot& batch);
+    // The "measure: process" line, once.
+    void report_process();
     // True while the automation's batch is preparing, running, or finished without its final review
     // count and report (the screenshot waits for them).
     [[nodiscard]] bool batch_pending() const;
@@ -325,6 +374,28 @@ private:
     qint64 batch_last_done_ = -1;
     bool running_shot_taken_ = false;
     bool screenshot_done_ = false;
+
+    // W12 measurement hooks. clock_ times; -1 until known.
+    bool measurements_reported_ = false;
+    bool process_reported_ = false;
+    qint64 batch_submit_ms_ = -1;
+    qint64 batch_created_ms_ = -1;  // --resume-batch: when the batch was found
+    qint64 batch_first_done_ms_ = -1;
+    qint64 batch_finished_ms_ = -1;
+    // The batch's first snapshot this session saw (a batch it created: its counts at creation).
+    std::optional<BatchSnapshot> batch_first_seen_;
+    bool resume_listed_ = false;
+    bool batch_cancel_requested_ = false;
+    qint64 batch_cancel_ms_ = -1;
+    qint64 batch_cancel_done_ = 0;
+    qint64 batch_cancel_running_ = 0;
+    bool batch_pause_requested_ = false;
+    bool batch_pause_settled_ = false;
+    qint64 batch_pause_ms_ = -1;
+    qint64 batch_pause_running_ = 0;
+    qint64 auto_finished_ms_ = -1;  // auto_clock_ when auto_finished arrived
+    qint64 auto_cancel_ms_ = -1;    // auto_clock_ when the cancel was requested
+    double auto_cancel_progress_ = -1.0;
 };
 
 // Writes "lucent: <message>" and a newline to stderr (when the process has one).

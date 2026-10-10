@@ -5,7 +5,8 @@ import Lucent
 
 // Help > About (W10, ADR 0018): Lucent's version, the camera support database the session uses
 // (its version and qualification date, or why none is in use) and what the four support states
-// mean (blueprint section 3, "User-visible compatibility states").
+// mean (blueprint section 3, "User-visible compatibility states"). W12 (ADR 0022): "Check for
+// updates" (UpdatePanel).
 Popup {
     id: about
 
@@ -29,6 +30,9 @@ Popup {
         border.width: 1
         border.color: Theme.border
     }
+
+    // Whether a downloaded update may be installed now follows the running exports and Auto.
+    onOpened: about.controller.updates.refresh()
 
     contentItem: Flickable {
         clip: true
@@ -147,6 +151,11 @@ Popup {
                         Accessible.name: modelData.label + ": " + text
                     }
                 }
+            }
+
+            UpdatePanel {
+                updates: about.controller.updates
+                Layout.fillWidth: true
             }
 
             StyledButton {

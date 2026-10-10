@@ -7,7 +7,9 @@
 // Only declared extents are compared with the source size; nothing is decoded. What is checked
 // per container:
 //   Tiff, Dng, Orf, Rw2  the IFD 0 chain, SubIFD trees and their strips and tiles
-//                        (find_image_data_overruns with TiffSignatures::WithVendorRaw)
+//                        (find_image_data_overruns with TiffSignatures::WithVendorRaw); for Rw2
+//                        (Panasonic RW2, Leica RWL) IFD 0's raw data at RawDataOffset instead of
+//                        its strip table (RawDataRule::Panasonic)
 //   Cr3                  the top-level ISO base media file boxes (ftyp, moov, uuid, mdat, ...):
 //                        each must end inside the source; a box of size 0 extends to its end
 //   Raf                  the JPEG preview, CFA header and CFA data ranges of the RAF header

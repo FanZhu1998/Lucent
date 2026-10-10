@@ -55,6 +55,15 @@ Expected<Services> create_services(const ServiceOptions& options) {
         backend.lucent_directories = {directories->root};
         // W10: per-user data packs would live in <data>\assets (refused until they can be signed).
         backend.user_data_directory = directories->data;
+        // W12: downloaded installers are disposable (the cache); Setup's log goes with Lucent's.
+        // They go to the user's own cache even with --data-root: Setup reads its installer again by
+        // name after Lucent exits, so every folder above it must be one that only this user (and
+        // administrators) can rename, as in the user profile; a --data-root folder may be one other
+        // users can change (SEC-01, W12; update_service.hpp).
+        const Expected<core::AppDirectories> own =
+            options.data_root.empty() ? directories : core::default_app_directories();
+        backend.update_directory = own ? own->cache / L"updates" : std::filesystem::path{};
+        backend.log_directory = directories->logs;
     } else {
         core::log_error("ui.services", "Lucent's application folders are unavailable: {}",
                         created.error().describe());

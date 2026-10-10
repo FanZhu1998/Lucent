@@ -3,8 +3,14 @@
 // writers, on synthetic data; plus the validity of the committed expectations and families files.
 // W10 phase 3 (ADR 0018): the camera support database export, and that the committed asset
 // (assets/camera-support) is exactly the export of the committed report.
+// W12 (ADR 0020): the chart definitions, the colour reference's colour science (against
+// colour-science's values), its statistics, gate and exclusions, independent evidence in the state
+// rules and the report, and that the committed charts agree with the manifest and expectations.
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,9 +21,13 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <lucent/core/text.hpp>
 #include <lucent/image/cfa.hpp>
+#include <lucent/image/color_math.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 
+#include "charts.hpp"
+#include "colour_reference.hpp"
 #include "expectations.hpp"
 #include "mode_key.hpp"
 #include "qualification.hpp"
@@ -541,6 +551,35 @@ TEST(Report, StateSeverityOrdersWorstFirst) {
 
 // ---- Committed data ---------------------------------------------------------------------------------
 
+// The value of an environment variable, or empty.
+std::string environment(const char* name) {
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string out(value);
+    std::free(value);
+    return out;
+}
+
+// The committed qualification report and camera support asset. LUCENT_QUALIFICATION_REPORT and
+// LUCENT_CAMERA_SUPPORT_DIR point these tests at a regenerated report and asset folder instead: a
+// change that adds fixtures or checks is verified against the outputs it regenerates before they
+// are committed from a clean build (docs/qualification/README.md). Unset, the committed files.
+std::filesystem::path committed_report_path() {
+    const std::string override_path = environment("LUCENT_QUALIFICATION_REPORT");
+    return override_path.empty() ? std::filesystem::path(LUCENT_SOURCE_DIR) / "docs" / "qualification" /
+                                       "qualification-report.json"
+                                 : std::filesystem::path(core::utf8_to_wide_lossy(override_path));
+}
+
+std::filesystem::path committed_asset_dir() {
+    const std::string override_path = environment("LUCENT_CAMERA_SUPPORT_DIR");
+    return override_path.empty() ? std::filesystem::path(LUCENT_SOURCE_DIR) / "assets" / "camera-support"
+                                 : std::filesystem::path(core::utf8_to_wide_lossy(override_path));
+}
+
 TEST(CommittedData, ExpectationsAreValidAndCoverTheManifestExactly) {
     const CorpusPaths paths{std::filesystem::path(LUCENT_SOURCE_DIR)};
     auto expectations = load_expectations(paths.expectations());
@@ -592,7 +631,7 @@ TEST(CommittedData, PublishedReportAgreesWithTheExpectations) {
     const CorpusPaths paths{std::filesystem::path(LUCENT_SOURCE_DIR)};
     auto expectations = load_expectations(paths.expectations());
     ASSERT_TRUE(expectations) << expectations.error().describe();
-    auto report = read_json_file(paths.root / "docs" / "qualification" / "qualification-report.json");
+    auto report = read_json_file(committed_report_path());
     ASSERT_TRUE(report) << report.error().describe();
     ASSERT_EQ(report->value("schema", std::string()), kReportSchema);
     ASSERT_EQ(report->value("schema_version", 0), kReportSchemaVersion);
@@ -813,10 +852,9 @@ TEST(SupportExport, EveryLimitationCodeHasWording) {
 }
 
 TEST(CommittedData, TheCameraSupportAssetIsTheExportOfTheReport) {
-    const std::filesystem::path root(LUCENT_SOURCE_DIR);
-    auto report = read_json_file(root / "docs" / "qualification" / "qualification-report.json");
+    auto report = read_json_file(committed_report_path());
     ASSERT_TRUE(report) << report.error().describe();
-    const std::filesystem::path folder = root / "assets" / "camera-support";
+    const std::filesystem::path folder = committed_asset_dir();
     const std::string manifest_text = file_text(folder / "manifest.json");
     auto manifest = assets::parse_asset_manifest(manifest_text);
     ASSERT_TRUE(manifest) << manifest.error().describe();
@@ -837,6 +875,368 @@ TEST(CommittedData, TheCameraSupportAssetIsTheExportOfTheReport) {
         ASSERT_TRUE(match.has_value());
         EXPECT_EQ(match->entry->qualified_key, row.at("mode_key").get<std::string>());
         EXPECT_EQ(std::string(assets::to_string(match->state)), row.at("proposed_state").get<std::string>());
+    }
+}
+
+
+// ---- Colour reference (ADR 0020) --------------------------------------------------------------------
+
+Json minimal_charts() {
+    return Json::parse(R"({
+     "schema": "lucent.qualification-charts", "schema_version": 1, "reviewed": "2026-10-09",
+     "references": {
+      "ref": {"chart": "Test chart", "publisher": "Maker", "title": "Data", "url": "https://example.com",
+              "retrieved": "2026-10-09", "illuminant": "D50", "observer": "CIE 1931 2 degree",
+              "patches": {"A": {"name": "grey", "lab": [65.0, 0.5, 1.0]},
+                          "B": {"name": "red", "lab": [41.0, 60.0, 31.0]},
+                          "C": {"name": "blue", "lab": [25.0, 14.0, -49.0]}}}},
+     "fixtures": [
+      {"id": "cam-a", "reference": "ref", "frame": {"size": [100, 80], "origin": [2, 3]},
+       "normalisation_patch": "A",
+       "patches": {"A": [10, 10, 20, 20], "B": [35, 10, 20, 20], "C": [60, 10, 20, 20]},
+       "independent_measurement": {"renderer": "test", "measured": "2026-10-09",
+                                   "as_shot": {"mean": 1.0, "p90": 2.0, "max": 3.0},
+                                   "chart_balanced": {"mean": 1.5, "p90": 2.5, "max": 3.5}}}]
+    })");
+}
+
+TEST(Charts, ParsesAValidDocument) {
+    auto charts = parse_charts(minimal_charts());
+    ASSERT_TRUE(charts) << charts.error().describe();
+    const ChartFixture* f = charts->find("cam-a");
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(f->frame_size, (std::array<std::int32_t, 2>{100, 80}));
+    EXPECT_EQ(f->frame_origin, (std::array<std::int32_t, 2>{2, 3}));
+    ASSERT_EQ(f->boxes.size(), 3u);
+    EXPECT_EQ(f->box("B")->x, 35);
+    ASSERT_TRUE(f->independent);
+    EXPECT_DOUBLE_EQ(f->independent->chart_balanced.max, 3.5);
+    const ChartReference* ref = charts->reference("ref");
+    ASSERT_NE(ref, nullptr);
+    EXPECT_DOUBLE_EQ(ref->find("C")->lab[2], -49.0);
+    EXPECT_EQ(charts->find("cam-b"), nullptr);
+}
+
+TEST(Charts, RejectsDefinitionsTheMeasurementCouldGetWrong) {
+    const auto refused = [](const Json& doc, ErrorCode code, const char* why) {
+        auto parsed = parse_charts(doc);
+        ASSERT_FALSE(parsed.has_value()) << why;
+        EXPECT_EQ(parsed.error().code, code) << why;
+        EXPECT_EQ(parsed.error().where, "qualify.charts") << why;
+    };
+    Json doc = minimal_charts();
+    doc["schema_version"] = 2;
+    refused(doc, ErrorCode::VersionMismatch, "a newer schema");
+    doc = minimal_charts();
+    doc["schema"] = "something-else";
+    refused(doc, ErrorCode::VersionMismatch, "another document");
+    doc = minimal_charts();
+    doc["references"]["ref"]["illuminant"] = "D65";
+    refused(doc, ErrorCode::InvalidArgument, "reference data that is not D50");
+    doc = minimal_charts();
+    doc["references"]["ref"]["observer"] = "CIE 1964 10 degree";
+    refused(doc, ErrorCode::InvalidArgument, "another observer");
+    doc = minimal_charts();
+    doc["references"]["ref"]["patches"]["A"]["lab"] = Json::array({120.0, 0.0, 0.0});
+    refused(doc, ErrorCode::InvalidArgument, "L* above 100");
+    doc = minimal_charts();
+    doc["fixtures"][0]["reference"] = "unknown";
+    refused(doc, ErrorCode::InvalidArgument, "an unknown reference");
+    doc = minimal_charts();
+    doc["fixtures"][0]["patches"]["C"] = Json::array({90, 10, 20, 20});
+    refused(doc, ErrorCode::InvalidArgument, "a box that leaves the frame");
+    doc = minimal_charts();
+    doc["fixtures"][0]["patches"].erase("C");
+    refused(doc, ErrorCode::InvalidArgument, "a reference patch without a box");
+    doc = minimal_charts();
+    doc["fixtures"][0]["patches"]["D"] = Json::array({10, 40, 20, 20});
+    refused(doc, ErrorCode::InvalidArgument, "a box for a patch the reference does not list");
+    doc = minimal_charts();
+    doc["fixtures"][0]["normalisation_patch"] = "D";
+    refused(doc, ErrorCode::InvalidArgument, "a normalisation patch without a box");
+    doc = minimal_charts();
+    doc["fixtures"].push_back(doc["fixtures"][0]);
+    refused(doc, ErrorCode::InvalidArgument, "a duplicate fixture");
+    doc = minimal_charts();
+    doc["fixtures"][0]["alternate_references"] = Json::array({"missing"});
+    refused(doc, ErrorCode::InvalidArgument, "an unknown alternate reference");
+}
+
+TEST(ColourReference, QuantileInterpolatesLikeNumpy) {
+    EXPECT_DOUBLE_EQ(quantile({1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 0.9), 9.1);
+    EXPECT_DOUBLE_EQ(quantile({2, 1}, 0.9), 1.9);
+    EXPECT_DOUBLE_EQ(quantile({3, 1, 2}, 0.5), 2.0);
+    EXPECT_DOUBLE_EQ(quantile({5}, 0.9), 5.0);
+    EXPECT_DOUBLE_EQ(quantile({}, 0.9), 0.0);
+}
+
+// Golden values of colour-science 0.4.7 (research/tools/chart_reference.py's colour science), so
+// that the C++ check and the independent tool compute the same numbers.
+TEST(ColourReference, ColourScienceAgreesWithTheReferenceImplementation) {
+    const image::Vec3d d50 = *image::xy_to_XYZ(image::kD50White);
+    const auto near = [](const std::array<double, 3>& a, const std::array<double, 3>& b, double tol) {
+        return std::abs(a[0] - b[0]) < tol && std::abs(a[1] - b[1]) < tol && std::abs(a[2] - b[2]) < tol;
+    };
+    EXPECT_TRUE(near(lab_from_xyz(image::Vec3d{0.2, 0.3, 0.4}, d50), {61.65422221, -38.74949368, -23.22696525}, 1e-6));
+    // The linear segment near black.
+    EXPECT_TRUE(near(lab_from_xyz(image::Vec3d{0.001, 0.002, 0.0015}, d50), {1.80659259, -3.74935584, 0.28352397}, 1e-6));
+    const image::Vec3d xyz = xyz_from_lab({61.35, 34.81, 18.38}, d50);
+    EXPECT_TRUE(near({xyz[0], xyz[1], xyz[2]}, {0.38512813, 0.29648791, 0.15678676}, 1e-7));
+    EXPECT_TRUE(near(lab_from_xyz(xyz, d50), {61.35, 34.81, 18.38}, 1e-9));
+    // Bradford D65 -> D50, as colour.adaptation.chromatic_adaptation_VonKries(transform="Bradford").
+    const image::Matrix3d cat = *image::chromatic_adaptation(*image::xy_to_XYZ(image::kD65White), d50,
+                                                             image::ChromaticAdaptationMethod::Bradford);
+    const image::Vec3d adapted = cat * image::Vec3d{0.3, 0.4, 0.5};
+    EXPECT_TRUE(near({adapted[0], adapted[1], adapted[2]}, {0.29846155, 0.39652521, 0.37918631}, 1e-7));
+}
+
+// Working-space (Rec.2020 / D65) values whose chart-balanced and as-shot evaluation reproduce the
+// reference exactly: the reference XYZ (D50) adapted to D65 and scaled by an arbitrary exposure.
+std::vector<ChartSample> exact_samples(const ChartDefinitions& charts, const ChartFixture& chart, double exposure) {
+    const ChartReference* ref = charts.reference(chart.reference);
+    const image::Vec3d d50 = *image::xy_to_XYZ(image::kD50White);
+    const image::Matrix3d to_d65 = *image::chromatic_adaptation(d50, *image::xy_to_XYZ(image::kD65White),
+                                                                image::ChromaticAdaptationMethod::Bradford);
+    const image::Matrix3d to_rec2020 = *image::inverse(rec2020_to_xyz());
+    std::vector<ChartSample> samples;
+    for (const ChartBox& box : chart.boxes) {
+        ChartSample s;
+        s.patch = box.patch;
+        s.pixels = static_cast<std::uint64_t>(box.width) * static_cast<std::uint64_t>(box.height);
+        s.working_mean = exposure * (to_rec2020 * (to_d65 * xyz_from_lab(ref->find(box.patch)->lab, d50)));
+        samples.push_back(s);
+    }
+    return samples;
+}
+
+const ChartDefinitions& committed_charts() {
+    static const ChartDefinitions charts = [] {
+        auto loaded = load_charts(CorpusPaths{std::filesystem::path(LUCENT_SOURCE_DIR)}.charts());
+        EXPECT_TRUE(loaded) << loaded.error().describe();
+        return loaded ? *loaded : ChartDefinitions{};
+    }();
+    return charts;
+}
+
+TEST(ColourReference, ThePublishedColoursMeasureZero) {
+    const ChartDefinitions& charts = committed_charts();
+    for (const ChartFixture& chart : charts.fixtures) {
+        const ChartEvaluation e =
+            evaluate_chart(charts, chart, exact_samples(charts, chart, 0.37), rec2020_to_xyz(), image::kD65White);
+        ASSERT_TRUE(e.measurable) << chart.id << ": " << e.problem;
+        EXPECT_EQ(e.patches.size(), chart.boxes.size()) << chart.id;
+        EXPECT_LT(e.balanced.max, 1e-6) << chart.id;
+        EXPECT_LT(e.as_shot.max, 1e-6) << chart.id;
+        EXPECT_NEAR(e.normalisation_scale, 1.0 / 0.37, 1e-9) << chart.id;
+        EXPECT_TRUE(e.passes) << chart.id;
+    }
+}
+
+TEST(ColourReference, ChartBalancingRemovesTheCapturesWhiteBalanceAndExposure) {
+    const ChartDefinitions& charts = committed_charts();
+    const ChartFixture& chart = charts.fixtures.front();
+    // A cast that is a von Kries scaling in Bradford cone space (a white balance far from the
+    // chart's light, plus exposure): the as-shot statistics show it, the chart-balanced ones remove it.
+    const image::Matrix3d cast = *image::chromatic_adaptation(*image::xy_to_XYZ(image::kD65White),
+                                                              *image::xy_to_XYZ(image::Chromaticity{0.4476, 0.4074}),
+                                                              image::ChromaticAdaptationMethod::Bradford);
+    std::vector<ChartSample> samples = exact_samples(charts, chart, 2.0);
+    const image::Matrix3d to_rec2020 = *image::inverse(rec2020_to_xyz());
+    for (ChartSample& s : samples) {
+        s.working_mean = to_rec2020 * (cast * (rec2020_to_xyz() * s.working_mean));
+    }
+    const ChartEvaluation e = evaluate_chart(charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    ASSERT_TRUE(e.measurable) << e.problem;
+    EXPECT_GT(e.as_shot.mean, 5.0);
+    EXPECT_LT(e.balanced.max, 1e-6);
+    EXPECT_TRUE(e.passes);
+}
+
+TEST(ColourReference, TheGateFailsGrossInterpretationErrors) {
+    const ChartDefinitions& charts = committed_charts();
+    const ChartFixture& chart = charts.fixtures.front();
+    const auto evaluate_with = [&](const auto& distort) {
+        std::vector<ChartSample> samples = exact_samples(charts, chart, 0.5);
+        for (ChartSample& s : samples) {
+            s.working_mean = distort(s.working_mean);
+        }
+        return evaluate_chart(charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    };
+    // Red and blue exchanged.
+    const ChartEvaluation swapped = evaluate_with([](const image::Vec3d& v) { return image::Vec3d{v[2], v[1], v[0]}; });
+    EXPECT_TRUE(swapped.measurable);
+    EXPECT_FALSE(swapped.passes) << swapped.summary();
+    // A display transfer function applied to scene-linear values.
+    const ChartEvaluation gamma = evaluate_with([](const image::Vec3d& v) {
+        return image::Vec3d{std::pow(std::max(v[0], 0.0), 1.0 / 2.2), std::pow(std::max(v[1], 0.0), 1.0 / 2.2),
+                            std::pow(std::max(v[2], 0.0), 1.0 / 2.2)};
+    });
+    EXPECT_FALSE(gamma.passes) << gamma.summary();
+    // Colour lost: every patch pulled two thirds of the way to its luminance.
+    const ChartEvaluation washed = evaluate_with([](const image::Vec3d& v) {
+        const double y = rec2020_to_xyz()(1, 0) * v[0] + rec2020_to_xyz()(1, 1) * v[1] + rec2020_to_xyz()(1, 2) * v[2];
+        return image::Vec3d{y + (v[0] - y) / 3.0, y + (v[1] - y) / 3.0, y + (v[2] - y) / 3.0};
+    });
+    EXPECT_FALSE(washed.passes) << washed.summary();
+}
+
+TEST(ColourReference, ANormalisationPatchWithoutAPositiveConeResponseFailsTheGate) {
+    // COR-7 (W12 review): a colour path wrong enough to give the grey normalisation patch a
+    // non-positive Bradford cone response (here XYZ 1, 0.1, 0: rho > 0, gamma < 0) cannot be
+    // chart-balanced; the gate fails with that reason instead of using an adaptation that failed.
+    const ChartDefinitions& charts = committed_charts();
+    const ChartFixture& chart = charts.fixtures.front();
+    std::vector<ChartSample> samples = exact_samples(charts, chart, 0.5);
+    const image::Matrix3d to_rec2020 = *image::inverse(rec2020_to_xyz());
+    bool replaced = false;
+    for (ChartSample& s : samples) {
+        if (s.patch == chart.normalisation_patch) {
+            s.working_mean = to_rec2020 * image::Vec3d{1.0, 0.1, 0.0};
+            replaced = true;
+        }
+    }
+    ASSERT_TRUE(replaced);
+    const ChartEvaluation e = evaluate_chart(charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    EXPECT_TRUE(e.measurable);
+    EXPECT_FALSE(e.passes);
+    EXPECT_NE(e.problem.find("cannot be mapped onto its reference"), std::string::npos) << e.problem;
+    EXPECT_NE(e.summary().find("the chart fails: "), std::string::npos) << e.summary();
+    EXPECT_TRUE(e.patches.empty());
+}
+
+TEST(ColourReference, ClippedPatchesAreExcludedAndTheChartMustStayMeasurable) {
+    auto charts = parse_charts(minimal_charts());
+    ASSERT_TRUE(charts);
+    const ChartFixture& chart = *charts->find("cam-a");
+    std::vector<ChartSample> samples = exact_samples(*charts, chart, 1.0);
+    // B: 1 % of its samples clipped (above kColourReferenceClippedFraction): excluded; with 2 of 3
+    // patches left (below kColourReferenceMinMeasured) the chart is not measurable.
+    samples[1].clipped_samples = samples[1].pixels * 3 / 100;
+    ChartEvaluation e = evaluate_chart(*charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    EXPECT_EQ(e.excluded.count("B"), 1u);
+    EXPECT_FALSE(e.measurable);
+    EXPECT_FALSE(e.passes);
+    EXPECT_NE(e.problem.find("only 2 of 3"), std::string::npos) << e.problem;
+    // A few clipped samples are tolerated.
+    samples[1].clipped_samples = 0;
+    samples[2].clipped_samples = 1;
+    e = evaluate_chart(*charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    EXPECT_TRUE(e.measurable) << e.problem;
+    EXPECT_TRUE(e.excluded.empty());
+    // A clipped normalisation patch makes the chart unmeasurable.
+    samples[0].clipped_samples = samples[0].pixels;
+    e = evaluate_chart(*charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    EXPECT_FALSE(e.measurable);
+    EXPECT_NE(e.problem.find("normalisation patch A is clipped"), std::string::npos) << e.problem;
+}
+
+TEST(StateRules, IndependentColourEvidenceIsStrongAndNamed) {
+    FixtureExpectation e = verified_expectation();
+    FixtureResult r = passing_result();
+    e.mode_key = r.mode_key->to_string();
+    check_named(r, kCheckColourReference).evidence = Evidence::Independent;
+    propose_state(r, &e);
+    EXPECT_EQ(r.state, SupportState::Verified);
+    EXPECT_TRUE(r.evidence_gaps.empty());
+    EXPECT_EQ(r.colour_evidence, "independent_chart");
+    EXPECT_EQ(r.to_json().at("colour_evidence"), "independent_chart");
+
+    // Without a chart, colour rests on the like-for-like agreement with LibRaw.
+    FixtureResult no_chart = passing_result();
+    check_named(no_chart, kCheckColourReference).status = CheckStatus::NotApplicable;
+    check_named(no_chart, kCheckColourReference).evidence = Evidence::None;
+    propose_state(no_chart, &e);
+    EXPECT_EQ(no_chart.state, SupportState::Verified);
+    EXPECT_EQ(no_chart.colour_evidence, "decoder_calibration_agreement");
+    check_named(no_chart, kCheckColour).details["calibration_path"] = "monochrome_neutral";
+    propose_state(no_chart, &e);
+    EXPECT_EQ(no_chart.colour_evidence, "monochrome");
+    check_named(no_chart, kCheckColour).evidence = Evidence::Weak;
+    propose_state(no_chart, &e);
+    EXPECT_EQ(no_chart.colour_evidence, "gross_errors_only");
+    EXPECT_EQ(no_chart.state, SupportState::CompatibleUnverified);
+
+    // A chart that was not measured is an evidence gap; one outside the gate makes the mode Unsupported.
+    FixtureResult not_run = passing_result();
+    check_named(not_run, kCheckColourReference).status = CheckStatus::NotRun;
+    check_named(not_run, kCheckColourReference).evidence = Evidence::None;
+    propose_state(not_run, &e);
+    EXPECT_EQ(not_run.state, SupportState::CompatibleUnverified);
+    FixtureResult failed = passing_result();
+    check_named(failed, kCheckColourReference).status = CheckStatus::Fail;
+    check_named(failed, kCheckColourReference).evidence = Evidence::Independent;
+    propose_state(failed, &e);
+    EXPECT_EQ(failed.state, SupportState::Unsupported);
+    EXPECT_NE(failed.state_reasons.front().find("colour_reference"), std::string::npos);
+    EXPECT_TRUE(at_least_strong(Evidence::Independent));
+    EXPECT_FALSE(at_least_strong(Evidence::Weak));
+    EXPECT_EQ(to_string(Evidence::Independent), "independent");
+}
+
+TEST(Report, EvidenceAndColourEvidenceNameTheIndependentCheck) {
+    std::vector<OrderedJson> fixtures{fixture_json("a", "verified", "full"), fixture_json("c", "verified", "small")};
+    for (OrderedJson& c : fixtures[0].at("checks")) {
+        if (c.at("id").get<std::string>() == kCheckColourReference) {
+            c["evidence"] = "independent";
+            c["details"] = {{"reference", {{"chart", "Test chart"}}},
+                            {"chart_balanced", {{"mean", 2.9}, {"p90", 4.7}, {"max", 5.9}}},
+                            {"as_shot", {{"mean", 2.88}, {"p90", 4.7}, {"max", 5.92}}},
+                            {"independent_rendering", {{"chart_balanced", {{"mean", 2.9}, {"p90", 4.68}, {"max", 5.89}}}}}};
+        }
+    }
+    fixtures[0]["colour_evidence"] = "independent_chart";
+    for (OrderedJson& c : fixtures[1].at("checks")) {
+        if (c.at("id").get<std::string>() == kCheckColourReference) {
+            c["status"] = "not_applicable";
+        }
+    }
+    ReportInputs inputs{CorpusPaths{std::filesystem::path(LUCENT_SOURCE_DIR)}, "ids", {"a", "c"}, false};
+    const OrderedJson report = build_report(fixtures, inputs, {}, Json::object());
+    ASSERT_EQ(report.at("support_table").size(), 2u);
+    EXPECT_NE(report.at("support_table")[0].at("evidence").get<std::string>().find("independent: colour_reference"),
+              std::string::npos);
+    EXPECT_EQ(report.at("support_table")[0].at("colour_evidence"), "independent_chart");
+    EXPECT_EQ(report.at("support_table")[1].at("colour_evidence"), "decoder_calibration_agreement");
+    EXPECT_TRUE(report.at("inputs").contains("charts"));
+    const std::string md = support_table_markdown(report);
+    EXPECT_NE(md.find("| Evidence | Colour evidence | Limitations |"), std::string::npos);
+    EXPECT_NE(md.find("independent: chart's published values"), std::string::npos);
+    EXPECT_NE(md.find("## Colour reference"), std::string::npos);
+    EXPECT_NE(md.find("| `a` | Test chart | pass | 2.90 / 4.70 / 5.90 | 2.88 / 4.70 / 5.92 | 2.90 / 4.68 / 5.89 |"),
+              std::string::npos)
+        << md;
+}
+
+TEST(CommittedData, ChartsAgreeWithTheManifestAndTheExpectations) {
+    const CorpusPaths paths{std::filesystem::path(LUCENT_SOURCE_DIR)};
+    const ChartDefinitions& charts = committed_charts();
+    auto expectations = load_expectations(paths.expectations());
+    ASSERT_TRUE(expectations) << expectations.error().describe();
+    auto manifest = load_manifest(paths.manifest());
+    ASSERT_TRUE(manifest) << manifest.error().describe();
+    ASSERT_FALSE(charts.fixtures.empty());
+    for (const ChartFixture& chart : charts.fixtures) {
+        SCOPED_TRACE(chart.id);
+        EXPECT_TRUE(std::any_of(manifest->begin(), manifest->end(), [&](const ManifestFixture& f) { return f.id == chart.id; }));
+        const FixtureExpectation* e = expectations->find(chart.id);
+        ASSERT_NE(e, nullptr);
+        EXPECT_EQ(e->expected_checks.at(std::string(kCheckColourReference)), "pass");
+        // The boxes are in the frame the develop render outputs: its size and its origin in the
+        // upright visible area (the expectation's placement, or the origin when the frame is whole).
+        ASSERT_TRUE(e->rendered);
+        EXPECT_EQ(chart.frame_size, (std::array<std::int32_t, 2>{e->rendered->width, e->rendered->height}));
+        const std::array<std::int32_t, 2> origin =
+            e->image_area_applied ? std::array<std::int32_t, 2>{(*e->image_area_applied)[0], (*e->image_area_applied)[1]}
+                                  : std::array<std::int32_t, 2>{0, 0};
+        EXPECT_EQ(chart.frame_origin, origin);
+        // The gate passes the rendering that uses none of Lucent's code (its derivation, ADR 0020).
+        ASSERT_TRUE(chart.independent);
+        EXPECT_TRUE(within_colour_reference_gate(chart.independent->chart_balanced));
+    }
+    for (const FixtureExpectation& e : expectations->fixtures) {
+        if (charts.find(e.id) == nullptr) {
+            EXPECT_EQ(e.expected_checks.at(std::string(kCheckColourReference)), "not_applicable") << e.id;
+        }
     }
 }
 

@@ -1,0 +1,1667 @@
+{
+  "schema": "lucent.bench-budgets",
+  "version": 1,
+  "baseline": "docs/performance/data/2026-10-09",
+  "rule": "A measurement is a budget when its baseline has at least three values and a coefficient of variation of at most 10 % (times, rates) or 5 % (memory peaks): time max = max(1.25 x median, 1.10 x largest), memory max = 1.10 x largest, rate min = min(0.80 x median, 0.90 x smallest), three significant digits. Others are tracked. Valid on the reference machine in a like state only (machine.json).",
+  "budgets": [
+    {
+      "id": "startup.cold.first_frame",
+      "file": "startup",
+      "source": "cold / metrics.first_frame_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 3074,
+        "median": 3074,
+        "min": 2982,
+        "max": 3194,
+        "cv": 0.034,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "a cold start includes the antivirus scan of new files and the disk: it measures the machine as much as Lucent"
+      }
+    },
+    {
+      "id": "startup.warm.window_created",
+      "file": "startup",
+      "source": "warm / metrics.window_loaded_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 812,
+        "median": 812,
+        "min": 810,
+        "max": 825,
+        "cv": 0.01,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1020,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "startup.warm.first_frame",
+      "file": "startup",
+      "source": "warm / metrics.first_frame_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 945,
+        "median": 945,
+        "min": 944,
+        "max": 961,
+        "cv": 0.01,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1190,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "startup.warm.peak_working_set",
+      "file": "startup",
+      "source": "warm / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 181.5,
+        "median": 181.5,
+        "min": 169.4,
+        "max": 192.1,
+        "cv": 0.063,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "coefficient of variation 6 % above 5 %"
+      }
+    },
+    {
+      "id": "thumbnails.new_library.first",
+      "file": "thumbnails",
+      "source": "smoke-new-library / metrics.first_thumbnail_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 175,
+        "median": 175,
+        "min": 169,
+        "max": 195,
+        "cv": 0.076,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 219,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "thumbnails.restart.first",
+      "file": "thumbnails",
+      "source": "smoke-restart / metrics.first_thumbnail_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 152,
+        "median": 152,
+        "min": 145,
+        "max": 158,
+        "cv": 0.043,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 190,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "thumbnails.all_new_library.peak_working_set",
+      "file": "thumbnails",
+      "source": "all-new-library / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 643.9,
+        "median": 643.9,
+        "min": 642.5,
+        "max": 663.4,
+        "cv": 0.018,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 730,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.r5.first_raw_frame",
+      "file": "preview",
+      "source": "canon-eos-r5-cr3-raw / metrics.first_raw_preview_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 1193,
+        "median": 1193,
+        "min": 1184,
+        "max": 1201,
+        "cv": 0.007,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1500,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.r5.view_100",
+      "file": "preview",
+      "source": "canon-eos-r5-cr3-raw / metrics.zoom_preview.visible_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 1583,
+        "median": 1583,
+        "min": 1556,
+        "max": 1760,
+        "cv": 0.068,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1980,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.r5.peak_working_set",
+      "file": "preview",
+      "source": "canon-eos-r5-cr3-raw / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1404.9,
+        "median": 1404.9,
+        "min": 1403.3,
+        "max": 1407.6,
+        "cv": 0.002,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1550,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.r5.run",
+      "file": "auto-editor",
+      "source": "canon-eos-r5-cr3-raw / metrics.auto.ended_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 6391,
+        "median": 6391,
+        "min": 5884,
+        "max": 6692,
+        "cv": 0.065,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 7990,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.r5.peak_commit",
+      "file": "auto-editor",
+      "source": "canon-eos-r5-cr3-raw / metrics.process.peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1409.7,
+        "median": 1409.7,
+        "min": 1409.6,
+        "max": 1412.9,
+        "cv": 0.001,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1560,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.a7iv.first_raw_frame",
+      "file": "preview",
+      "source": "sony-ilce-7m4-arw-compressed / metrics.first_raw_preview_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 804,
+        "median": 804,
+        "min": 750,
+        "max": 811,
+        "cv": 0.042,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1010,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.a7iv.view_100",
+      "file": "preview",
+      "source": "sony-ilce-7m4-arw-compressed / metrics.zoom_preview.visible_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 1000,
+        "median": 1000,
+        "min": 936,
+        "max": 1119,
+        "cv": 0.091,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1250,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.a7iv.peak_working_set",
+      "file": "preview",
+      "source": "sony-ilce-7m4-arw-compressed / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1365,
+        "median": 1365,
+        "min": 1363.2,
+        "max": 1375.1,
+        "cv": 0.005,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1520,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.a7iv.run",
+      "file": "auto-editor",
+      "source": "sony-ilce-7m4-arw-compressed / metrics.auto.ended_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 2166,
+        "median": 2166,
+        "min": 2016,
+        "max": 2197,
+        "cv": 0.046,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 2710,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.a7iv.peak_commit",
+      "file": "auto-editor",
+      "source": "sony-ilce-7m4-arw-compressed / metrics.process.peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 981,
+        "median": 981,
+        "min": 980.9,
+        "max": 1019.5,
+        "cv": 0.022,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1130,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.dji.first_raw_frame",
+      "file": "preview",
+      "source": "dji-fc4382-dng / metrics.first_raw_preview_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 942,
+        "median": 942,
+        "min": 879,
+        "max": 997,
+        "cv": 0.063,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1180,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.dji.view_100",
+      "file": "preview",
+      "source": "dji-fc4382-dng / metrics.zoom_preview.visible_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 871,
+        "median": 871,
+        "min": 866,
+        "max": 932,
+        "cv": 0.041,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1090,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.dji.peak_working_set",
+      "file": "preview",
+      "source": "dji-fc4382-dng / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 662.3,
+        "median": 662.3,
+        "min": 658.3,
+        "max": 663.8,
+        "cv": 0.004,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 731,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.dji.run",
+      "file": "auto-editor",
+      "source": "dji-fc4382-dng / metrics.auto.ended_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 2129,
+        "median": 2129,
+        "min": 2003,
+        "max": 2153,
+        "cv": 0.038,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 2670,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.dji.peak_commit",
+      "file": "auto-editor",
+      "source": "dji-fc4382-dng / metrics.process.peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 534.2,
+        "median": 534.2,
+        "min": 533.5,
+        "max": 535,
+        "cv": 0.001,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 589,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.xt4.first_raw_frame",
+      "file": "preview",
+      "source": "fujifilm-x-t4-raf-lossless / metrics.first_raw_preview_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 2058,
+        "median": 2058,
+        "min": 1876,
+        "max": 2120,
+        "cv": 0.063,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 2580,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.xt4.view_100",
+      "file": "preview",
+      "source": "fujifilm-x-t4-raf-lossless / metrics.zoom_preview.visible_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 2438,
+        "median": 2438,
+        "min": 2370,
+        "max": 2498,
+        "cv": 0.026,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 3050,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.xt4.peak_working_set",
+      "file": "preview",
+      "source": "fujifilm-x-t4-raf-lossless / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1130.1,
+        "median": 1130.1,
+        "min": 1123.7,
+        "max": 1132.8,
+        "cv": 0.004,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1250,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.xt4.run",
+      "file": "auto-editor",
+      "source": "fujifilm-x-t4-raf-lossless / metrics.auto.ended_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 6360,
+        "median": 6360,
+        "min": 6305,
+        "max": 6532,
+        "cv": 0.019,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 7950,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.xt4.peak_commit",
+      "file": "auto-editor",
+      "source": "fujifilm-x-t4-raf-lossless / metrics.process.peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1174.9,
+        "median": 1174.9,
+        "min": 1173.6,
+        "max": 1205.6,
+        "cv": 0.015,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1330,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.z6.first_raw_frame",
+      "file": "preview",
+      "source": "nikon-z-6-nef-lossless / metrics.first_raw_preview_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 1012,
+        "median": 1012,
+        "min": 991,
+        "max": 1052,
+        "cv": 0.03,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1270,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.z6.view_100",
+      "file": "preview",
+      "source": "nikon-z-6-nef-lossless / metrics.zoom_preview.visible_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 1144,
+        "median": 1144,
+        "min": 1117,
+        "max": 1207,
+        "cv": 0.04,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1430,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "preview.z6.peak_working_set",
+      "file": "preview",
+      "source": "nikon-z-6-nef-lossless / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1074.6,
+        "median": 1074.6,
+        "min": 1064.4,
+        "max": 1076.1,
+        "cv": 0.006,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1190,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.z6.run",
+      "file": "auto-editor",
+      "source": "nikon-z-6-nef-lossless / metrics.auto.ended_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 2045,
+        "median": 2045,
+        "min": 2002,
+        "max": 2129,
+        "cv": 0.031,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 2560,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_editor.z6.peak_commit",
+      "file": "auto-editor",
+      "source": "nikon-z-6-nef-lossless / metrics.process.peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 787.4,
+        "median": 787.4,
+        "min": 786.9,
+        "max": 788.1,
+        "cv": 0.001,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 867,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.r5.exposure_step",
+      "file": "edit",
+      "source": "canon-eos-r5-cr3-raw-exposure / metrics.edit_exposure=1",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 47,
+        "median": 47,
+        "min": 45,
+        "max": 54,
+        "cv": 0.097,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 59.4,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.r5.exposure_drag_median",
+      "file": "edit",
+      "source": "canon-eos-r5-cr3-raw-exposure / metrics.drag.shown_median_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 90,
+        "median": 90,
+        "min": 84,
+        "max": 94,
+        "cv": 0.056,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 113,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.r5.exposure_drag_max",
+      "file": "edit",
+      "source": "canon-eos-r5-cr3-raw-exposure / metrics.drag.shown_max_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 112,
+        "median": 112,
+        "min": 107,
+        "max": 125,
+        "cv": 0.081,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 140,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.r5.exposure_service_median",
+      "file": "edit",
+      "source": "canon-eos-r5-cr3-raw-exposure / metrics.drag.service_median_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 69,
+        "median": 69,
+        "min": 63,
+        "max": 71,
+        "cv": 0.062,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 86.3,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.r5.shadows_drag_median",
+      "file": "edit",
+      "source": "canon-eos-r5-cr3-raw-shadows / metrics.drag.shown_median_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 108,
+        "median": 108,
+        "min": 104,
+        "max": 122,
+        "cv": 0.085,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 135,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.z6.exposure_step",
+      "file": "edit",
+      "source": "nikon-z-6-nef-lossless-exposure / metrics.edit_exposure=1",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 86.5,
+        "median": 86.5,
+        "min": 66,
+        "max": 107,
+        "cv": 0.335,
+        "n": 2
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "fewer than three values"
+      }
+    },
+    {
+      "id": "edit.z6.exposure_drag_median",
+      "file": "edit",
+      "source": "nikon-z-6-nef-lossless-exposure / metrics.drag.shown_median_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 99,
+        "median": 99,
+        "min": 99,
+        "max": 109,
+        "cv": 0.056,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 124,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.z6.exposure_drag_max",
+      "file": "edit",
+      "source": "nikon-z-6-nef-lossless-exposure / metrics.drag.shown_max_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 161,
+        "median": 161,
+        "min": 160,
+        "max": 165,
+        "cv": 0.016,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 202,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.z6.exposure_service_median",
+      "file": "edit",
+      "source": "nikon-z-6-nef-lossless-exposure / metrics.drag.service_median_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 83,
+        "median": 83,
+        "min": 77,
+        "max": 87,
+        "cv": 0.061,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 104,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "edit.z6.shadows_drag_median",
+      "file": "edit",
+      "source": "nikon-z-6-nef-lossless-shadows / metrics.drag.shown_median_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 126,
+        "median": 126,
+        "min": 124,
+        "max": 140,
+        "cv": 0.067,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 158,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "auto_cancel.analysis",
+      "file": "auto-cancel",
+      "source": "canon-eos-r5-cr3-raw-after-1000-ms / metrics.auto_cancel.ended_after_request_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 74,
+        "median": 74,
+        "min": 34,
+        "max": 80,
+        "cv": 0.399,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "coefficient of variation 40 % above 10 %"
+      }
+    },
+    {
+      "id": "auto_cancel.final_check",
+      "file": "auto-cancel",
+      "source": "canon-eos-r5-cr3-raw-after-4000-ms / metrics.auto_cancel.ended_after_request_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 245,
+        "median": 245,
+        "min": 239,
+        "max": 268,
+        "cv": 0.061,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 307,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "analysis.median_over_images",
+      "file": "auto-analysis",
+      "source": "extra.over_images.analysis_seconds.median",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 1.611,
+        "median": 1.611,
+        "min": 1.611,
+        "max": 1.611,
+        "cv": 0.019,
+        "n": 38
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 2.02,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "analysis.p95_over_images",
+      "file": "auto-analysis",
+      "source": "extra.over_images.analysis_seconds.p95",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 3.009,
+        "median": 3.009,
+        "min": 3.009,
+        "max": 3.009,
+        "cv": 0.019,
+        "n": 38
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 3.77,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "analysis.whole_run",
+      "file": "auto-analysis",
+      "source": "lucent-auto / seconds",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 81.989,
+        "median": 81.989,
+        "min": 81.736,
+        "max": 83.449,
+        "cv": 0.011,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 103,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "analysis.peak_commit",
+      "file": "auto-analysis",
+      "source": "lucent-auto / resources.root.peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1149.887,
+        "median": 1149.887,
+        "min": 1149.711,
+        "max": 1150.348,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1270,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.jpeg.median_over_images",
+      "file": "export",
+      "source": "extra.over_images.jpeg.seconds.median",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 2.579,
+        "median": 2.579,
+        "min": 2.579,
+        "max": 2.579,
+        "cv": 0.081,
+        "n": 37
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 3.23,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.jpeg.p95_over_images",
+      "file": "export",
+      "source": "extra.over_images.jpeg.seconds.p95",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 6.304,
+        "median": 6.304,
+        "min": 6.304,
+        "max": 6.304,
+        "cv": 0.081,
+        "n": 37
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 7.89,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.jpeg.r5",
+      "file": "export",
+      "source": "jpeg/canon-eos-r5-cr3-raw / seconds",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 5.087,
+        "median": 5.087,
+        "min": 4.762,
+        "max": 5.161,
+        "cv": 0.042,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 6.36,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.jpeg.r5.peak_commit",
+      "file": "export",
+      "source": "jpeg/canon-eos-r5-cr3-raw / peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 730.309,
+        "median": 730.309,
+        "min": 730.266,
+        "max": 730.371,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 804,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.tiff16.median_over_images",
+      "file": "export",
+      "source": "extra.over_images.tiff16.seconds.median",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 8.607,
+        "median": 8.607,
+        "min": 8.607,
+        "max": 8.607,
+        "cv": 0.043,
+        "n": 37
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 10.8,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.tiff16.p95_over_images",
+      "file": "export",
+      "source": "extra.over_images.tiff16.seconds.p95",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 23.079,
+        "median": 23.079,
+        "min": 23.079,
+        "max": 23.079,
+        "cv": 0.043,
+        "n": 37
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 28.9,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.tiff16.r5",
+      "file": "export",
+      "source": "tiff16/canon-eos-r5-cr3-raw / seconds",
+      "kind": "time",
+      "unit": "s",
+      "baseline": {
+        "value": 19.094,
+        "median": 19.094,
+        "min": 19.061,
+        "max": 19.857,
+        "cv": 0.023,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 23.9,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.tiff16.r5.peak_commit",
+      "file": "export",
+      "source": "tiff16/canon-eos-r5-cr3-raw / peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 774.977,
+        "median": 774.977,
+        "min": 774.281,
+        "max": 775.004,
+        "cv": 0.001,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 853,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "export.jpeg.a7rv.peak_commit",
+      "file": "export",
+      "source": "jpeg/sony-ilce-7rm5-arw-compressed / peak_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1393.836,
+        "median": 1393.836,
+        "min": 1393.824,
+        "max": 1393.855,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1540,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-jpeg.per_minute",
+      "file": "batch",
+      "source": "smoke-jpeg / metrics.batch_timeline.per_minute",
+      "kind": "rate",
+      "unit": "photos/min",
+      "baseline": {
+        "value": 16.85,
+        "median": 16.85,
+        "min": 14.84,
+        "max": 17.96,
+        "cv": 0.096,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": null,
+        "min": 13.3,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-jpeg.largest_worker",
+      "file": "batch",
+      "source": "smoke-jpeg / metrics.batch_scheduler.peak_worker_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 757.3,
+        "median": 757.3,
+        "min": 757.1,
+        "max": 757.3,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 834,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-jpeg.workers_together",
+      "file": "batch",
+      "source": "smoke-jpeg / metrics.batch_scheduler.peak_aggregate_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 941.1,
+        "median": 941.1,
+        "min": 941,
+        "max": 941.2,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1040,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-jpeg.lucent_peak_working_set",
+      "file": "batch",
+      "source": "smoke-jpeg / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 164.5,
+        "median": 164.5,
+        "min": 162.7,
+        "max": 164.7,
+        "cv": 0.007,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 182,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-tiff16.per_minute",
+      "file": "batch",
+      "source": "smoke-tiff16 / metrics.batch_timeline.per_minute",
+      "kind": "rate",
+      "unit": "photos/min",
+      "baseline": {
+        "value": 6.35,
+        "median": 6.35,
+        "min": 5.74,
+        "max": 6.39,
+        "cv": 0.059,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": null,
+        "min": 5.08,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-tiff16.largest_worker",
+      "file": "batch",
+      "source": "smoke-tiff16 / metrics.batch_scheduler.peak_worker_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 774.6,
+        "median": 774.6,
+        "min": 774.5,
+        "max": 775.3,
+        "cv": 0.001,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 853,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-tiff16.workers_together",
+      "file": "batch",
+      "source": "smoke-tiff16 / metrics.batch_scheduler.peak_aggregate_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 902.3,
+        "median": 902.3,
+        "min": 902.3,
+        "max": 902.5,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 993,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-tiff16.lucent_peak_working_set",
+      "file": "batch",
+      "source": "smoke-tiff16 / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 163.4,
+        "median": 163.4,
+        "min": 162.3,
+        "max": 166.9,
+        "cv": 0.015,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 184,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-auto-jpeg.per_minute",
+      "file": "batch",
+      "source": "smoke-auto-jpeg / metrics.batch_timeline.per_minute",
+      "kind": "rate",
+      "unit": "photos/min",
+      "baseline": {
+        "value": 8,
+        "median": 8,
+        "min": 7.84,
+        "max": 8.23,
+        "cv": 0.024,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": null,
+        "min": 6.4,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-auto-jpeg.largest_worker",
+      "file": "batch",
+      "source": "smoke-auto-jpeg / metrics.batch_scheduler.peak_worker_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1188.3,
+        "median": 1188.3,
+        "min": 1187.3,
+        "max": 1189.5,
+        "cv": 0.001,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1310,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.smoke-auto-jpeg.workers_together",
+      "file": "batch",
+      "source": "smoke-auto-jpeg / metrics.batch_scheduler.peak_aggregate_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1281.4,
+        "median": 1281.4,
+        "min": 1281.4,
+        "max": 1496.2,
+        "cv": 0.092,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "coefficient of variation 9 % above 5 %"
+      }
+    },
+    {
+      "id": "batch.smoke-auto-jpeg.lucent_peak_working_set",
+      "file": "batch",
+      "source": "smoke-auto-jpeg / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 887.2,
+        "median": 887.2,
+        "min": 862.6,
+        "max": 889.4,
+        "cv": 0.017,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 979,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.all-jpeg.per_minute",
+      "file": "batch",
+      "source": "all-jpeg / metrics.batch_timeline.per_minute",
+      "kind": "rate",
+      "unit": "photos/min",
+      "baseline": {
+        "value": 22.53,
+        "median": 22.53,
+        "min": 21.86,
+        "max": 22.79,
+        "cv": 0.021,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": null,
+        "min": 18,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.all-jpeg.largest_worker",
+      "file": "batch",
+      "source": "all-jpeg / metrics.batch_scheduler.peak_worker_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1394.5,
+        "median": 1394.5,
+        "min": 1394.5,
+        "max": 1394.5,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1540,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.all-jpeg.workers_together",
+      "file": "batch",
+      "source": "all-jpeg / metrics.batch_scheduler.peak_aggregate_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1557.1,
+        "median": 1557.1,
+        "min": 1556.9,
+        "max": 1557.6,
+        "cv": 0,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 1720,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.all-jpeg.lucent_peak_working_set",
+      "file": "batch",
+      "source": "all-jpeg / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 600.4,
+        "median": 600.4,
+        "min": 598.9,
+        "max": 601.4,
+        "cv": 0.002,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": true,
+        "max": 662,
+        "min": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "batch.all-auto-jpeg.per_minute",
+      "file": "batch",
+      "source": "all-auto-jpeg / metrics.batch_timeline.per_minute",
+      "kind": "rate",
+      "unit": "photos/min",
+      "baseline": {
+        "value": 10.355,
+        "median": 10.355,
+        "min": 10.3,
+        "max": 10.41,
+        "cv": 0.008,
+        "n": 2
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "fewer than three values"
+      }
+    },
+    {
+      "id": "batch.all-auto-jpeg.largest_worker",
+      "file": "batch",
+      "source": "all-auto-jpeg / metrics.batch_scheduler.peak_worker_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1403.15,
+        "median": 1403.15,
+        "min": 1403,
+        "max": 1403.3,
+        "cv": 0,
+        "n": 2
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "fewer than three values"
+      }
+    },
+    {
+      "id": "batch.all-auto-jpeg.workers_together",
+      "file": "batch",
+      "source": "all-auto-jpeg / metrics.batch_scheduler.peak_aggregate_commit_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 1844.15,
+        "median": 1844.15,
+        "min": 1841.5,
+        "max": 1846.8,
+        "cv": 0.002,
+        "n": 2
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "fewer than three values"
+      }
+    },
+    {
+      "id": "batch.all-auto-jpeg.lucent_peak_working_set",
+      "file": "batch",
+      "source": "all-auto-jpeg / metrics.process.peak_working_set_mib",
+      "kind": "memory",
+      "unit": "MiB",
+      "baseline": {
+        "value": 969.75,
+        "median": 969.75,
+        "min": 950.2,
+        "max": 989.3,
+        "cv": 0.029,
+        "n": 2
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "fewer than three values"
+      }
+    },
+    {
+      "id": "batch_cancel.all-jpeg-cancel-after-2",
+      "file": "batch-cancel",
+      "source": "all-jpeg-cancel-after-2 / metrics.batch_cancel.stopped_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 216,
+        "median": 216,
+        "min": 206,
+        "max": 231,
+        "cv": 0.058,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "the interface applies batch events at most every 200 ms, the size of the whole measurement"
+      }
+    },
+    {
+      "id": "batch_cancel.smoke-tiff16-cancel-after-1",
+      "file": "batch-cancel",
+      "source": "smoke-tiff16-cancel-after-1 / metrics.batch_cancel.stopped_after_ms",
+      "kind": "time",
+      "unit": "ms",
+      "baseline": {
+        "value": 209,
+        "median": 209,
+        "min": 201,
+        "max": 233,
+        "cv": 0.078,
+        "n": 3
+      },
+      "budget": {
+        "budgeted": false,
+        "max": null,
+        "min": null,
+        "reason": "the interface applies batch events at most every 200 ms, the size of the whole measurement"
+      }
+    }
+  ]
+}

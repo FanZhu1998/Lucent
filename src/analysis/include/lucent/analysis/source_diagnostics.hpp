@@ -83,6 +83,27 @@ struct CoverageMap {
     }
 };
 
+// The saturation of every pixel of the upright full-resolution grid (the visible area; one cell per
+// sensor site) in the three classes measurements distinguish, one byte per pixel: what a CoverageMap
+// of that grid holds in a float (render_metrics.hpp compares a coverage with 0 and with
+// kSaturatedCoverage, the neutral evidence with 0). Used by the full-resolution final check
+// (frame_measurement.hpp), so that it keeps 1 byte per pixel instead of 4.
+inline constexpr std::uint8_t kNotSaturated = 0;      // no saturated sample (coverage 0)
+inline constexpr std::uint8_t kPartlySaturated = 1;   // some, below half (0 < coverage < 0.5)
+inline constexpr std::uint8_t kMostlySaturated = 2;   // half or more (coverage >= 0.5)
+
+struct SaturationClasses {
+    image::Size size;                   // the upright visible size
+    std::vector<std::uint8_t> classes;  // row-major
+
+    [[nodiscard]] bool empty() const noexcept { return classes.empty(); }
+};
+
+// A coverage that every comparison of the measurements treats as the class does: 0, 0.25, 1.
+[[nodiscard]] constexpr float saturation_class_coverage(std::uint8_t saturation_class) noexcept {
+    return saturation_class == kNotSaturated ? 0.0f : saturation_class == kPartlySaturated ? 0.25f : 1.0f;
+}
+
 // ---- Noise model -------------------------------------------------------------------------------
 
 // Persisted (append only).
@@ -138,16 +159,20 @@ struct SourceDiagnostics {
 struct SourceAnalysis {
     SourceDiagnostics diagnostics;
     std::vector<CoverageMap> coverage;  // one per requested grid, in request order
+    // With full_resolution_classes: the classes of the upright full-resolution grid (exactly the
+    // classes of its CoverageMap, without the float map).
+    SaturationClasses full_resolution;
 };
 
 // Measures the decoded samples (see the file comment). `coverage_grids` are upright grid sizes, each
-// at most the upright visible size.
+// at most the upright visible size; `full_resolution_classes` adds SourceAnalysis::full_resolution.
 // Errors (analysis.source): Internal for data that violates the decoded-RAW contract
 // (raw::check_consistency); InvalidArgument for an empty or oversized grid; Unsupported for a mosaic
 // whose CFA colours have no channel index; OutOfMemory; Cancelled.
 [[nodiscard]] Expected<SourceAnalysis> analyze_source(const raw::DecodedRaw& decoded,
                                                       std::span<const image::Size> coverage_grids,
                                                       bool parallel = true,
-                                                      const core::CancellationToken& cancel = {});
+                                                      const core::CancellationToken& cancel = {},
+                                                      bool full_resolution_classes = false);
 
 }  // namespace lucent::analysis

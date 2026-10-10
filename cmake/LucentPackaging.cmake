@@ -32,9 +32,10 @@
 #      Microsoft's redistributable (installer/lucent.iss).
 #   5. A second pass resolves everything against the folder alone and fails on anything missing.
 #
-# tools/package.ps1 then audits the folder independently (dumpbin), adds licences and the SBOM, and
-# compiles the installer. Developer tools (lucent-probe, lucent-render) and tests have no install
-# rules and are never part of the layout.
+# tools/package.ps1 then audits the folder independently (dumpbin), adds licences and the SBOM,
+# scans every shipped file for the build machine's folders (the user profile, the repository, the
+# build tree and the vcpkg folders recorded below; W12), and compiles the installer. Developer tools
+# (lucent-probe, lucent-render) and tests have no install rules and are never part of the layout.
 #
 # This file is included twice: by the root CMakeLists.txt at configure time (it defines
 # lucent_install_application) and by the generated install script, where only
@@ -522,8 +523,78 @@ function(lucent_install_application target)
         endif()
         string(APPEND LUCENT_PACKAGE_REQUIRED_QML_JSON "\"${name}\"")
     endforeach()
+
+    # Folders of this build machine that no shipped file may name (schema 5, W12): the user profile
+    # and the vcpkg folders this build used. The packaging audit adds the source and build trees.
+    # The vcpkg buildtrees and packages folders are where the root CMakeLists.txt points vcpkg
+    # (--x-buildtrees-root / --x-packages-root in VCPKG_INSTALL_OPTIONS), or inside the vcpkg root.
+    set(LUCENT_PACKAGE_USER_PROFILE "")
+    if(DEFINED ENV{USERPROFILE})
+        file(TO_CMAKE_PATH "$ENV{USERPROFILE}" LUCENT_PACKAGE_USER_PROFILE)
+    endif()
+    set(LUCENT_PACKAGE_VCPKG_ROOT "")
+    if(Z_VCPKG_ROOT_DIR)
+        file(TO_CMAKE_PATH "${Z_VCPKG_ROOT_DIR}" LUCENT_PACKAGE_VCPKG_ROOT)
+    endif()
+    set(LUCENT_PACKAGE_VCPKG_BUILDTREES "")
+    set(LUCENT_PACKAGE_VCPKG_PACKAGES "")
+    set(LUCENT_PACKAGE_VCPKG_DOWNLOADS "")
+    if(LUCENT_PACKAGE_VCPKG_ROOT)
+        set(LUCENT_PACKAGE_VCPKG_BUILDTREES "${LUCENT_PACKAGE_VCPKG_ROOT}/buildtrees")
+        set(LUCENT_PACKAGE_VCPKG_PACKAGES "${LUCENT_PACKAGE_VCPKG_ROOT}/packages")
+        set(LUCENT_PACKAGE_VCPKG_DOWNLOADS "${LUCENT_PACKAGE_VCPKG_ROOT}/downloads")
+    endif()
+    # As vcpkg resolves them: the environment's downloads folder, then the command-line options.
+    if(DEFINED ENV{VCPKG_DOWNLOADS})
+        file(TO_CMAKE_PATH "$ENV{VCPKG_DOWNLOADS}" LUCENT_PACKAGE_VCPKG_DOWNLOADS)
+    endif()
+    foreach(option IN LISTS VCPKG_INSTALL_OPTIONS)
+        if(option MATCHES "^--x-buildtrees-root=(.+)$")
+            file(TO_CMAKE_PATH "${CMAKE_MATCH_1}" LUCENT_PACKAGE_VCPKG_BUILDTREES)
+        elseif(option MATCHES "^--x-packages-root=(.+)$")
+            file(TO_CMAKE_PATH "${CMAKE_MATCH_1}" LUCENT_PACKAGE_VCPKG_PACKAGES)
+        elseif(option MATCHES "^--downloads-root=(.+)$")
+            file(TO_CMAKE_PATH "${CMAKE_MATCH_1}" LUCENT_PACKAGE_VCPKG_DOWNLOADS)
+        endif()
+    endforeach()
+    foreach(variable USER_PROFILE VCPKG_ROOT VCPKG_BUILDTREES VCPKG_PACKAGES VCPKG_DOWNLOADS)
+        if(LUCENT_PACKAGE_${variable} MATCHES "[\"\\\\]")
+            message(FATAL_ERROR "lucent_install_application: unexpected character in ${LUCENT_PACKAGE_${variable}}")
+        endif()
+    endforeach()
+
+    # The update channel compiled into Lucent.exe (src/application/CMakeLists.txt, ADR 0022): recorded
+    # for tools/package.ps1, which checks it against the staged Lucent.exe's own report and the
+    # expected channels of installer/update-channels.json, and records it in the package manifest
+    # (schema 6, W12 review SEC-02). The values were validated where they are defined.
+    set(LUCENT_PACKAGE_UPDATE_KEYS_JSON "")
+    foreach(key IN LISTS LUCENT_UPDATE_PUBLIC_KEYS)
+        string(STRIP "${key}" key)
+        string(TOLOWER "${key}" key)
+        if(key)
+            if(LUCENT_PACKAGE_UPDATE_KEYS_JSON)
+                string(APPEND LUCENT_PACKAGE_UPDATE_KEYS_JSON ", ")
+            endif()
+            string(APPEND LUCENT_PACKAGE_UPDATE_KEYS_JSON "\"${key}\"")
+        endif()
+    endforeach()
+    set(LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON "")
+    foreach(thumbprint IN LISTS LUCENT_UPDATE_PUBLISHER_THUMBPRINTS)
+        string(STRIP "${thumbprint}" thumbprint)
+        string(TOLOWER "${thumbprint}" thumbprint)
+        if(thumbprint)
+            if(LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON)
+                string(APPEND LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON ", ")
+            endif()
+            string(APPEND LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON "\"${thumbprint}\"")
+        endif()
+    endforeach()
+    if(LUCENT_UPDATE_CHANNEL MATCHES "[\"\\\\]" OR LUCENT_UPDATE_MANIFEST_URL MATCHES "[\"\\\\]")
+        message(FATAL_ERROR "lucent_install_application: unexpected character in the update channel")
+    endif()
+
     file(CONFIGURE OUTPUT "${packaging_dir}/lucent-package.json.in" CONTENT [[{
-  "schema": 4,
+  "schema": 6,
   "name": "Lucent",
   "version": "@CMAKE_PROJECT_VERSION@",
   "versionMajor": @CMAKE_PROJECT_VERSION_MAJOR@,
@@ -544,6 +615,11 @@ function(lucent_install_application target)
   "qtVersion": "@Qt6_VERSION@",
   "vcpkgInstalledDir": "@LUCENT_PACKAGE_VCPKG_INSTALLED@",
   "vcpkgTriplet": "@LUCENT_PACKAGE_TRIPLET@",
+  "userProfile": "@LUCENT_PACKAGE_USER_PROFILE@",
+  "vcpkgRoot": "@LUCENT_PACKAGE_VCPKG_ROOT@",
+  "vcpkgBuildtreesDir": "@LUCENT_PACKAGE_VCPKG_BUILDTREES@",
+  "vcpkgPackagesDir": "@LUCENT_PACKAGE_VCPKG_PACKAGES@",
+  "vcpkgDownloadsDir": "@LUCENT_PACKAGE_VCPKG_DOWNLOADS@",
   "qtBinDir": "@LUCENT_PACKAGE_QT_BIN@",
   "qtPluginsDir": "@LUCENT_PACKAGE_QT_PLUGINS@",
   "qtQmlDir": "@LUCENT_PACKAGE_QT_QML@",
@@ -553,7 +629,10 @@ function(lucent_install_application target)
   "qmlSourceDir": "@ARG_QML_SOURCE_DIR@",
   "requiredPlugins": [@LUCENT_PACKAGE_REQUIRED_PLUGINS_JSON@],
   "requiredQmlModules": [@LUCENT_PACKAGE_REQUIRED_QML_JSON@],
-  "assets": [@LUCENT_PACKAGE_ASSETS_JSON@]
+  "assets": [@LUCENT_PACKAGE_ASSETS_JSON@],
+  "updateChannel": {"name": "@LUCENT_UPDATE_CHANNEL@", "manifestUrl": "@LUCENT_UPDATE_MANIFEST_URL@",
+                    "publicKeys": [@LUCENT_PACKAGE_UPDATE_KEYS_JSON@],
+                    "publisherThumbprints": [@LUCENT_PACKAGE_UPDATE_THUMBPRINTS_JSON@]}
 }
 ]] @ONLY)
     file(GENERATE

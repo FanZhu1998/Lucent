@@ -202,6 +202,7 @@ const std::vector<std::string_view>& check_ids() {
                                                    kCheckCfa,
                                                    kCheckBlackWhite,
                                                    kCheckColour,
+                                                   kCheckColourReference,
                                                    kCheckDimensions,
                                                    kCheckOrientation,
                                                    kCheckRequiredCorrections,

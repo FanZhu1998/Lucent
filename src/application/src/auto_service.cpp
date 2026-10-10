@@ -374,6 +374,15 @@ std::optional<AutoTaskResult> AutoService::wait(std::uint64_t ticket, std::chron
     return found->second.result;
 }
 
+std::size_t AutoService::runs_in_progress() const {
+    std::lock_guard lock(impl_->mutex);
+    std::size_t running = 0;
+    for (const auto& [ticket, task] : impl_->tasks) {
+        running += task.result.has_value() ? 0 : 1;
+    }
+    return running;
+}
+
 Subscription AutoService::subscribe(AutoObserver observer) { return impl_->observers.add(std::move(observer)); }
 
 }  // namespace lucent::app

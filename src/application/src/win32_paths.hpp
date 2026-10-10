@@ -31,6 +31,11 @@ namespace lucent::app::detail {
 [[nodiscard]] Expected<std::filesystem::path> canonical_path(const std::filesystem::path& path,
                                                              std::string_view where);
 
+// canonical_path() of an open file or directory (`handle`: a HANDLE opened with any access), in the
+// same form; `path` names it in errors.
+[[nodiscard]] Expected<std::filesystem::path> final_path_of(void* handle, const std::filesystem::path& path,
+                                                            std::string_view where);
+
 // `text` converted to upper case with the file system's (non-linguistic) casing rules
 // (LCMapStringEx, LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE), so two names that a case-insensitive
 // directory treats as the same name fold to the same string.

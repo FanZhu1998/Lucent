@@ -2,7 +2,7 @@
  "schema": "lucent.qualification-expectations",
  "schema_version": 1,
  "mode_key_version": 1,
- "reviewed": "2026-10-07",
+ "reviewed": "2026-10-09",
  "evidence_rule": "A 'verified' fact cites at least one independent source: manufacturer_spec, file_tag (tests/qualification/tools/file_facts.py), independent_decoder (RawSpeed cameras.xml) or reviewer_visual. decoder_reference (LibRaw/rawpy) and archive_metadata are recorded but never suffice (ADR 0016).",
  "sources": {
   "spec-canon-eos-r5": {
@@ -421,6 +421,97 @@
    "title": "Tags of the fixture file canon-eos-7d-mark-ii-dng-jxl, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
    "retrieved": "2026-10-05",
    "quote": "Make \"Canon\", Model \"Canon EOS 7D Mark II\", Orientation [1]; UniqueCameraModel \"Canon EOS 7D Mark II\"; raw IFD ifd0.subifd0: [5568]x[3708], Compression [7], PhotometricInterpretation [32803], SamplesPerPixel [1], BitsPerSample [16], DefaultCropOrigin [12.0, 12.0], DefaultCropSize [5472.0, 3648.0], ActiveArea [38, 72, 3708, 5568]; CFAPattern (33422) in ifd0.subifd0: RG/GB; ifd0.subifd1: NewSubFileType 16 (Enhanced image), 5496x3670, Compression 52546 (JPEG XL), PhotometricInterpretation 34892"
+  },
+  "file-canon-eos-350d-cr2": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file canon-eos-350d-cr2, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-09",
+   "quote": "Make \"Canon\", Model \"Canon EOS DIGITAL REBEL XT\", Orientation [8]; CR2 raw IFD ifd3: Compression [6]; Canon SensorInfo (maker note 0x00e0): SensorWidth 3516, SensorHeight 2328, SensorLeftBorder 52, SensorTopBorder 19, SensorRightBorder 3507, SensorBottomBorder 2322 (3456 x 2304 at (52, 19))"
+  },
+  "spec-canon-eos-350d": {
+   "kind": "manufacturer_spec",
+   "title": "Canon Camera Museum, EOS Digital Rebel XT (EOS Kiss Digital N, EOS 350D) specifications",
+   "url": "https://global.canon/en/c-museum/product/dslr789.html",
+   "retrieved": "2026-10-09",
+   "quote": "EOS Kiss Digital N / EOS Digital Rebel XT / EOS 350D ... Image format JPEG and RAW (12-bit) ... Large/Fine Approx. 3.3 MB (3456 x 2304 pixels) ... RAW Approx. 8.3 MB (3456 x 2304 pixels)"
+  },
+  "rawspeed-canon-eos-350d": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-09",
+   "quote": "Camera make=\"Canon\" model=\"Canon EOS 350D DIGITAL\" (alias \"Canon EOS DIGITAL REBEL XT\"): CFA (0,0) RED, (1,0) GREEN, (0,1) GREEN, (1,1) BLUE; Crop x=42 y=14 width=3474 height=2314; Sensor black=255 white=4095."
+  },
+  "file-olympus-xz-10-orf": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file olympus-xz-10-orf, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-09",
+   "quote": "Make \"OLYMPUS IMAGING CORP.\", Model \"XZ-10\", Orientation [6]; ORF IFD 0: [3984]x[2990], BitsPerSample [12], Compression [1], SamplesPerPixel [1]; EXIF CFAPattern (41730): RG/GB; Olympus ImageProcessing (maker note 0x2040): CropLeft 8, CropTop 14, CropWidth 3968, CropHeight 2976"
+  },
+  "spec-olympus-xz-10": {
+   "kind": "manufacturer_spec",
+   "title": "Olympus XZ-10 Instruction Manual (English), OM SYSTEM Learn Center",
+   "url": "https://learnandsupport.getolympus.com/sites/default/files/media/files/2018/04/XZ-10_MANUAL_EN.pdf",
+   "retrieved": "2026-10-09",
+   "quote": "Image size ... Y (Large) 3968×2976 ... JPEG images are cropped to the selected aspect ratio; RAW images, however, are not"
+  },
+  "rawspeed-olympus-xz-10": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-09",
+   "quote": "Camera make=\"OLYMPUS IMAGING CORP.\" model=\"XZ-10\" decoder_version=\"3\": Crop x=0 y=0 width=0 height=0; Sensor black=200 white=3900 (no CFA element: the CFA is read from the file)."
+  },
+  "file-ricoh-gxr-s10-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file ricoh-gxr-s10-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-09",
+   "quote": "Make \"RICOH\", Model \"GXR\", UniqueCameraModel \"RICOH S10 24-72mm F2.5-4.4 VC\", DNGVersion [1, 0, 0, 0], Orientation [6]; raw IFD ifd0.subifd0: [3672]x[2748], BitsPerSample [12], Compression [1], PhotometricInterpretation [32803], WhiteLevel [4095], DefaultCropOrigin [12.0, 6.0], DefaultCropSize [3648.0, 2736.0], no ActiveArea; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "file-bq-aquaris-u-plus-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file bq-aquaris-u-plus-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-09",
+   "quote": "Make \"bq\", Model \"Aquaris U Plus\", UniqueCameraModel \"Aquaris U Plus-bq-bq\", DNGVersion [1, 4, 0, 0], Orientation [8]; raw IFD ifd0: [4640]x[3480], BitsPerSample [16], Compression [1], PhotometricInterpretation [32803], WhiteLevel [1023], ActiveArea [0, 0, 3480, 4640], DefaultCropOrigin [8, 8], DefaultCropSize [4624, 3464]; CFAPattern (33422) in ifd0: GR/BG"
+  },
+  "file-oneplus-one-dng": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file oneplus-one-dng, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-09",
+   "quote": "Make \"OnePlus\", Model \"One A0001\", UniqueCameraModel \"OnePlus One A0001\", DNGVersion [1, 3, 0, 0], Orientation [6]; raw IFD ifd0.subifd0: [4212]x[3120], BitsPerSample [10], Compression [1], PhotometricInterpretation [32803], WhiteLevel [1023], ActiveArea [0, 0, 3120, 4208], no DefaultCropOrigin or DefaultCropSize; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "rawspeed-oneplus-one": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-09",
+   "quote": "Camera make=\"OnePlus\" model=\"One A0001\" mode=\"dng\": ID make=\"OnePlus\" model=\"One\" (OnePlus One)."
+  },
+  "file-sony-dslr-a450-arw": {
+   "kind": "file_tag",
+   "title": "Tags of the fixture file sony-dslr-a450-arw, read by tests/qualification/tools/file_facts.py (no LibRaw, no Lucent code)",
+   "retrieved": "2026-10-09",
+   "quote": "Make \"SONY\", Model \"DSLR-A450\", Orientation [6]; raw IFD ifd0.subifd0: [4608]x[3072], BitsPerSample [12], Compression [32767], PhotometricInterpretation [32803], SamplesPerPixel [1], no DefaultCropOrigin or DefaultCropSize; CFAPattern (33422) in ifd0.subifd0: RG/GB"
+  },
+  "spec-sony-dslr-a450": {
+   "kind": "manufacturer_spec",
+   "title": "Sony UK, DSLR-A450 Specifications (Internet Archive capture of 2019-07-22: https://web.archive.org/web/20190722131235/https://www.sony.co.uk/electronics/support/a-mount-body-dslr-a400-series/dslr-a450/specifications; the live page refuses automated retrieval)",
+   "url": "https://www.sony.co.uk/electronics/support/a-mount-body-dslr-a400-series/dslr-a450/specifications",
+   "retrieved": "2026-10-09",
+   "quote": "Recording Format JPEG (DCF Ver.2.0, Exif Ver.2.21, MPF Baseline) compliant, DPOF compatible, RAW (Sony ARW 2.1 format), RAW + JPEG ... RAW (pixels) 4592 x 3056 ... Image Size L - JPEG (pixels) 4592 x 3056 (14M)"
+  },
+  "rawspeed-sony-dslr-a450": {
+   "kind": "independent_decoder",
+   "title": "RawSpeed camera database (darktable), data/cameras.xml at commit 0a4a6fdc (2026-07-28), CC BY-SA 3.0; facts cited, file not copied",
+   "url": "https://github.com/darktable-org/rawspeed/blob/0a4a6fdc2da228c71c39025a2a5647b081042299/data/cameras.xml",
+   "retrieved": "2026-10-09",
+   "quote": "Camera make=\"SONY\" model=\"DSLR-A450\": CFA RED GREEN / GREEN BLUE; Crop x=0 y=0 width=0 height=0; Sensor black=500 white=16000."
+  },
+  "visual-2026-10-09": {
+   "kind": "reviewer_visual",
+   "title": "Reviewer inspection of the lucent-qualify --previews renders of the W12 fixtures (develop path, as shot, 1024 px)",
+   "retrieved": "2026-10-09",
+   "quote": "On 2026-10-09 the six rotated fixtures were inspected: all upright with natural colours and no dark or garbage borders (canon-eos-350d-cr2: a jumper above a lawn, sky at the top; olympus-xz-10-orf: a hot-air balloon above mountains; ricoh-gxr-s10-dng: a statue on a brick pedestal; bq-aquaris-u-plus-dng: a painting on a gallery wall above a tiled floor; oneplus-one-dng: buildings below a lawn slope; sony-dslr-a450-arw: daisies). LibRaw's own renderings (rawpy, which rotates the files itself) show the same orientation."
   }
  },
  "fixtures": [
@@ -480,6 +571,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -546,6 +638,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -620,6 +713,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "pass",
@@ -688,6 +782,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "pass",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -754,6 +849,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -820,6 +916,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -886,6 +983,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -958,6 +1056,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1026,6 +1125,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "pass",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1098,6 +1198,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "pass",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1164,6 +1265,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1230,6 +1332,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1302,6 +1405,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1374,6 +1478,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1440,6 +1545,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1506,6 +1612,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1585,6 +1692,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "pass",
@@ -1664,6 +1772,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "pass",
@@ -1748,6 +1857,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "pass",
@@ -1823,6 +1933,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -1895,6 +2006,7 @@
      "cfa": "not_run",
      "black_white": "not_run",
      "colour": "not_run",
+     "colour_reference": "not_applicable",
      "dimensions": "not_run",
      "orientation": "not_run",
      "required_corrections": "not_run",
@@ -1966,6 +2078,7 @@
      "cfa": "not_run",
      "black_white": "not_run",
      "colour": "not_run",
+     "colour_reference": "not_applicable",
      "dimensions": "not_run",
      "orientation": "not_run",
      "required_corrections": "not_run",
@@ -2032,6 +2145,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2099,6 +2213,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "pass",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2166,6 +2281,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2233,6 +2349,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2300,6 +2417,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2368,6 +2486,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2436,6 +2555,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2504,6 +2624,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2573,6 +2694,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2640,6 +2762,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2708,6 +2831,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2777,6 +2901,7 @@
      "cfa": "pass",
      "black_white": "pass",
      "colour": "pass",
+     "colour_reference": "not_applicable",
      "dimensions": "pass",
      "orientation": "pass",
      "required_corrections": "not_applicable",
@@ -2786,6 +2911,444 @@
     },
     "limitations": ["dng_enhanced_image_not_offered"]
    }
+  },
+  {
+   "id": "canon-eos-350d-cr2",
+   "camera": {
+    "family": "canon",
+    "file_make": "Canon",
+    "file_model": "Canon EOS DIGITAL REBEL XT",
+    "product": "Canon EOS 350D (EOS Digital Rebel XT, EOS Kiss Digital N)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-canon-eos-350d-cr2", "spec-canon-eos-350d"],
+     "note": "Model 'Canon EOS DIGITAL REBEL XT'; Canon sold the camera as EOS Kiss Digital N, EOS Digital Rebel XT and EOS 350D, and the decoder names it EOS 350D (mode key)"
+    }
+   },
+   "mode": {
+    "key": "mk1|canon|eos-350d|tiff|lossless-jpeg|3474x2314|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "CR2 RAW (lossless JPEG), 12-bit, portrait",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-canon-eos-350d-cr2", "spec-canon-eos-350d", "rawspeed-canon-eos-350d"],
+     "note": "CR2 raw IFD Compression 6 holds Canon's lossless JPEG; Canon: 'JPEG and RAW (12-bit)'"
+    }
+   },
+   "dimensions": {
+    "rendered": [2303, 3456],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [6, 8, 2303, 3456],
+    "camera_image_area": {
+     "size": [2304, 3456],
+     "status": "verified",
+     "sources": ["spec-canon-eos-350d", "file-canon-eos-350d-cr2"],
+     "note": "Canon's RAW 3456 x 2304 and the file's SensorInfo area 3456 x 2304 at (52, 19), given as the upright portrait image (width and height exchanged)"
+    },
+    "note": "LibRaw reads Canon's SensorInfo area and moves its odd top edge 19 to 20, one row shorter (3456 x 2303 at (52, 20); ADR 0017). In the 3474 x 2314 visible area at (42, 14) (RawSpeed's crop) the area lies at (10, 6): margins left 10, right 8, top 6, bottom 5. Orientation 8 turns the image 90 degrees counter-clockwise, so the top margin becomes the upright left edge and the right margin the upright top edge: (6, 8); orientation 6 would give (5, 10) and no rotation (10, 6). The output is one row shorter than Canon's size, within the 1-pixel tolerance."
+   },
+   "orientation": {
+    "exif": 8,
+    "status": "verified",
+    "sources": ["file-canon-eos-350d-cr2", "visual-2026-10-09"],
+    "note": "IFD 0 Orientation 8 (left-bottom: rotate 90 degrees counter-clockwise to view); the preview is upright (LibRaw: flip 5)"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["rawspeed-canon-eos-350d"],
+    "note": "RawSpeed CFA RGGB at the raw origin; LibRaw's visible origin (42, 14) has even offsets"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "colour_reference": "not_applicable",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "W12 rotated fixture of the decoder inset-crop source; its margins differ on every side, so the placement shows the rotation's direction."
+  },
+  {
+   "id": "olympus-xz-10-orf",
+   "camera": {
+    "family": "other",
+    "file_make": "OLYMPUS IMAGING CORP.",
+    "file_model": "XZ-10",
+    "product": "Olympus XZ-10",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-olympus-xz-10-orf"]
+    }
+   },
+   "mode": {
+    "key": "mk1|olympus|xz-10|orf|uncompressed|3984x2990|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ORF 12-bit uncompressed, portrait",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-olympus-xz-10-orf"],
+     "note": "ORF IFD 0 Compression 1 (uncompressed), BitsPerSample 12"
+    }
+   },
+   "dimensions": {
+    "rendered": [2976, 3968],
+    "image_area_source": "decoder_inset_crop",
+    "image_area_applied": [0, 8, 2976, 3968],
+    "camera_image_area": {
+     "size": [2976, 3968],
+     "status": "verified",
+     "sources": ["spec-olympus-xz-10", "file-olympus-xz-10-orf"],
+     "note": "Olympus: 3968 x 2976, RAW images not cropped to the aspect setting; the file's ImageProcessing crop 3968 x 2976 at (8, 14); given as the upright portrait image (width and height exchanged)"
+    },
+    "note": "LibRaw reads the camera's crop unchanged (3968 x 2976 at (8, 14) of the 3984 x 2990 frame, which is the visible area; RawSpeed: no crop): margins left 8, right 8, top 14, bottom 0. Orientation 6 turns the image 90 degrees clockwise, so the bottom margin becomes the upright left edge and the left margin the upright top edge: (0, 8); orientation 8 would give (14, 8). The file's 3:2 aspect-ratio setting (3968 x 2644 at (8, 180)) is the user crop, exposed and not applied (ADR 0017)."
+   },
+   "orientation": {
+    "exif": 6,
+    "status": "verified",
+    "sources": ["file-olympus-xz-10-orf", "visual-2026-10-09"],
+    "note": "IFD 0 Orientation 6 (right-top: rotate 90 degrees clockwise to view); the preview is upright (LibRaw: flip 6)"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-olympus-xz-10-orf"],
+    "note": "EXIF CFAPattern RG/GB; LibRaw's visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "verified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "colour_reference": "not_applicable",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "W12 rotated fixture of the decoder inset-crop source with a margin on one side only."
+  },
+  {
+   "id": "ricoh-gxr-s10-dng",
+   "camera": {
+    "family": "other",
+    "file_make": "RICOH",
+    "file_model": "GXR",
+    "product": "Ricoh GXR with the RICOH S10 24-72mm F2.5-4.4 VC camera unit",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-ricoh-gxr-s10-dng"],
+     "note": "Model 'GXR' and UniqueCameraModel 'RICOH S10 24-72mm F2.5-4.4 VC' (the decoder names it GXR S10)"
+    }
+   },
+   "mode": {
+    "key": "mk1|ricoh|gxr-s10|dng|uncompressed|3672x2748|12bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG 1.0 (in camera), uncompressed 12-bit, portrait",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-ricoh-gxr-s10-dng"],
+     "note": "raw IFD Compression 1 (uncompressed)"
+    }
+   },
+   "dimensions": {
+    "rendered": [2736, 3648],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [6, 12, 2736, 3648],
+    "camera_image_area": {
+     "size": [2736, 3648],
+     "status": "verified",
+     "sources": ["file-ricoh-gxr-s10-dng"],
+     "note": "DNG DefaultCropSize 3648 x 2736 at DefaultCropOrigin (12, 6), given as the upright portrait image (width and height exchanged)"
+    },
+    "note": "No ActiveArea: the crop is relative to the whole 3672 x 2748 raw image, margins 12 left and right, 6 top and bottom. Orientation 6 places it at (6, 12) of the upright 2748 x 3672 image (no rotation would leave (12, 6)); both rotation directions give (6, 12) for these margins, and the direction itself is checked by the colour check, whose rawpy reference rotates the file independently (region CIEDE2000 mean 0.6)."
+   },
+   "orientation": {
+    "exif": 6,
+    "status": "verified",
+    "sources": ["file-ricoh-gxr-s10-dng", "visual-2026-10-09"],
+    "note": "IFD 0 Orientation 6 (right-top: rotate 90 degrees clockwise to view); the preview is upright (LibRaw: flip 6)"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-ricoh-gxr-s10-dng"],
+    "note": "CFAPattern RG/GB in the raw IFD"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "colour_reference": "not_applicable",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "Colour evidence is weak (DNG camera profile versus LibRaw's matrix). W12 rotated fixture of the DNG DefaultCrop source."
+  },
+  {
+   "id": "bq-aquaris-u-plus-dng",
+   "camera": {
+    "family": "other",
+    "file_make": "bq",
+    "file_model": "Aquaris U Plus",
+    "product": "bq Aquaris U Plus (smartphone)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-bq-aquaris-u-plus-dng"],
+     "note": "UniqueCameraModel 'Aquaris U Plus-bq-bq'"
+    }
+   },
+   "mode": {
+    "key": "mk1|bq|aquaris-u-plus|dng|uncompressed|4640x3480|16bit|mosaic:GRBG|uint16|single-view|primary:0/1",
+    "label": "DNG 1.4 (Android camera), uncompressed 16-bit samples with 10-bit data, OpcodeList2 GainMap, portrait",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-bq-aquaris-u-plus-dng"],
+     "note": "IFD 0 Compression 1 (uncompressed), BitsPerSample 16, WhiteLevel 1023"
+    }
+   },
+   "dimensions": {
+    "rendered": [3464, 4624],
+    "image_area_source": "dng_default_crop",
+    "image_area_applied": [8, 8, 3464, 4624],
+    "camera_image_area": {
+     "size": [3464, 4624],
+     "status": "verified",
+     "sources": ["file-bq-aquaris-u-plus-dng"],
+     "note": "DNG DefaultCropSize 4624 x 3464 at (8, 8) of the ActiveArea 4640 x 3480, given as the upright portrait image (width and height exchanged)"
+    },
+    "note": "Orientation 8 places the area at (8, 8) of the upright 3480 x 4640 image (margins of 8 on every side). The stored image's last eight columns read about 5 against the black level 64 (padding): the DefaultCrop excludes them, and after the rotation they are the upright top rows outside the area. The black_white check evaluates the camera's area (check suite 3); four OpcodeList2 GainMap opcodes (flags 1, optional) are applied before it."
+   },
+   "orientation": {
+    "exif": 8,
+    "status": "verified",
+    "sources": ["file-bq-aquaris-u-plus-dng", "visual-2026-10-09"],
+    "note": "IFD 0 Orientation 8 (left-bottom: rotate 90 degrees counter-clockwise to view); the preview is upright (LibRaw: flip 5)"
+   },
+   "representation": {
+    "value": "mosaic:GRBG",
+    "status": "verified",
+    "sources": ["file-bq-aquaris-u-plus-dng"],
+    "note": "CFAPattern GR/BG in IFD 0"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "colour_reference": "not_applicable",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "pass",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "Colour evidence is weak (DNG camera profile versus LibRaw's matrix). W12 rotated fixture of the DNG DefaultCrop source with (optional) OpcodeList2 GainMap opcodes; required_corrections passes with no mandatory opcode."
+  },
+  {
+   "id": "oneplus-one-dng",
+   "camera": {
+    "family": "other",
+    "file_make": "OnePlus",
+    "file_model": "One A0001",
+    "product": "OnePlus One (smartphone, A0001)",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-oneplus-one-dng", "rawspeed-oneplus-one"]
+    }
+   },
+   "mode": {
+    "key": "mk1|oneplus|one-a0001|dng|uncompressed|4208x3120|10bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "DNG 1.3 (Android camera), uncompressed 10-bit, no DefaultCrop, mandatory OpcodeList2 GainMap, portrait",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-oneplus-one-dng"],
+     "note": "raw IFD Compression 1 (uncompressed), BitsPerSample 10"
+    }
+   },
+   "dimensions": {
+    "rendered": [3120, 4208],
+    "image_area_source": "dng_default_whole_image",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [3120, 4208],
+     "status": "verified",
+     "sources": ["file-oneplus-one-dng"],
+     "note": "no DefaultCrop tags: DNG's default crop is the whole ActiveArea 4208 x 3120 (ActiveArea [0, 0, 3120, 4208]), given as the upright portrait image (width and height exchanged)"
+    },
+    "note": "The raw IFD is 4212 x 3120; the ActiveArea leaves out its last four columns, which the visible area excludes too. The frame is the whole upright image."
+   },
+   "orientation": {
+    "exif": 6,
+    "status": "verified",
+    "sources": ["file-oneplus-one-dng", "visual-2026-10-09"],
+    "note": "IFD 0 Orientation 6 (right-top: rotate 90 degrees clockwise to view); the preview is upright (LibRaw: flip 6)"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-oneplus-one-dng"],
+    "note": "CFAPattern RG/GB in the raw IFD"
+   },
+   "mandatory_steps": [
+    {
+     "id": "dng_opcode:2:0:GainMap",
+     "lucent_support": "applied",
+     "description": "Lens-shading gain map (OpcodeList2, flags 0: mandatory), applied to the normalised mosaic (ADR 0014)."
+    },
+    {
+     "id": "dng_opcode:2:1:GainMap",
+     "lucent_support": "applied",
+     "description": "Lens-shading gain map (OpcodeList2, flags 0: mandatory), applied to the normalised mosaic (ADR 0014)."
+    },
+    {
+     "id": "dng_opcode:2:2:GainMap",
+     "lucent_support": "applied",
+     "description": "Lens-shading gain map (OpcodeList2, flags 0: mandatory), applied to the normalised mosaic (ADR 0014)."
+    },
+    {
+     "id": "dng_opcode:2:3:GainMap",
+     "lucent_support": "applied",
+     "description": "Lens-shading gain map (OpcodeList2, flags 0: mandatory), applied to the normalised mosaic (ADR 0014)."
+    }
+   ],
+   "expected": {
+    "state": "compatible_unverified",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "colour_reference": "not_applicable",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "pass",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": []
+   },
+   "notes": "Colour evidence is weak (DNG camera profile versus LibRaw's matrix). W12 rotated fixture of the whole-image source and of the DNG opcode path (mandatory GainMaps); DJI drones write orientation 1 only, so no rotated DJI file exists in the archive."
+  },
+  {
+   "id": "sony-dslr-a450-arw",
+   "camera": {
+    "family": "sony",
+    "file_make": "SONY",
+    "file_model": "DSLR-A450",
+    "product": "Sony Alpha DSLR-A450",
+    "identity": {
+     "status": "verified",
+     "sources": ["file-sony-dslr-a450-arw", "spec-sony-dslr-a450"]
+    }
+   },
+   "mode": {
+    "key": "mk1|sony|dslr-a450|tiff|sony-arw-compressed-lossy|4608x3072|14bit|mosaic:RGGB|uint16|single-view|primary:0/1",
+    "label": "ARW 2.1 compressed, portrait",
+    "compression": {
+     "status": "verified",
+     "sources": ["file-sony-dslr-a450-arw", "spec-sony-dslr-a450"],
+     "note": "raw IFD Compression 32767 (Sony ARW compressed); Sony: 'RAW (Sony ARW 2.1 format)', the camera's only RAW format"
+    }
+   },
+   "dimensions": {
+    "rendered": [3072, 4608],
+    "image_area_source": "unknown",
+    "image_area_applied": null,
+    "camera_image_area": {
+     "size": [3056, 4592],
+     "status": "verified",
+     "sources": ["spec-sony-dslr-a450"],
+     "note": "Sony: RAW 4592 x 3056, given as the upright portrait image (width and height exchanged)"
+    },
+    "note": "The ARW declares no DefaultCrop tags; LibRaw records a crop size of 4592 x 3056 without its origin, which Lucent does not use (an incomplete declaration), so the area is unknown and Lucent renders the whole 4608 x 3072 visible area (RawSpeed: no crop), 16 pixels more per dimension than Sony's size."
+   },
+   "orientation": {
+    "exif": 6,
+    "status": "verified",
+    "sources": ["file-sony-dslr-a450-arw", "visual-2026-10-09"],
+    "note": "IFD 0 Orientation 6 (right-top: rotate 90 degrees clockwise to view); the preview is upright (LibRaw: flip 6)"
+   },
+   "representation": {
+    "value": "mosaic:RGGB",
+    "status": "verified",
+    "sources": ["file-sony-dslr-a450-arw", "rawspeed-sony-dslr-a450"],
+    "note": "CFAPattern RG/GB in the raw IFD; RawSpeed RGGB; visible origin (0, 0)"
+   },
+   "mandatory_steps": [],
+   "expected": {
+    "state": "limited",
+    "checks": {
+     "fixture_integrity": "pass",
+     "decode_parity": "pass",
+     "mode_key": "pass",
+     "subimages": "pass",
+     "interpretation": "pass",
+     "cfa": "pass",
+     "black_white": "pass",
+     "colour": "pass",
+     "colour_reference": "not_applicable",
+     "dimensions": "pass",
+     "orientation": "pass",
+     "required_corrections": "not_applicable",
+     "numerical_validity": "pass",
+     "export_round_trip": "pass",
+     "determinism": "pass"
+    },
+    "limitations": ["default_crop_not_applied"]
+   },
+   "notes": "W12 rotated fixture of the unknown-area source."
   }
  ]
 }

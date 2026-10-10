@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <format>
+#include <new>
 #include <type_traits>
 #include <variant>
 
@@ -217,6 +218,55 @@ Expected<CoverageMap> coverage_for(const image::ImageBuffer<T>& frame, const raw
     return map;
 }
 
+// The classes of the upright full-resolution grid: coverage_for() of that grid, where every cell is
+// exactly one site (its `samples` samples), reduced to SaturationClasses without the float map.
+// The class boundary is the measurements' kSaturatedCoverage (render_metrics.hpp, 0.5).
+template <class T>
+Expected<SaturationClasses> saturation_classes_for(const image::ImageBuffer<T>& frame,
+                                                   const raw::RawMetadata& metadata, bool parallel,
+                                                   const core::CancellationToken& cancel) {
+    const image::PixelRect visible = metadata.geometry.visible_area;
+    const image::Orientation orientation = metadata.geometry.orientation;
+    const double white = metadata.levels.white;
+    const std::int32_t samples = metadata.representation.kind == raw::RawRepresentation::LinearColor ? 3 : 1;
+    const image::Size stored = visible.size();
+    SaturationClasses out;
+    out.size = image::oriented_size(stored, orientation);
+    try {
+        out.classes.assign(static_cast<std::size_t>(out.size.area()), kNotSaturated);
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::OutOfMemory, "cannot allocate the full-resolution saturation classes", kWhere);
+    }
+    const auto upright_width = static_cast<std::size_t>(out.size.width);
+    auto status = detail::for_each_band(
+        stored.height, parallel, cancel, kWhere,
+        [&](std::int32_t, std::int32_t begin, std::int32_t end) {
+            for (std::int32_t cy = begin; cy < end; ++cy) {
+                const T* p = frame.row(visible.y + cy) + std::int64_t{visible.x} * samples;
+                for (std::int32_t cx = 0; cx < stored.width; ++cx) {
+                    std::uint32_t saturated = 0;
+                    for (std::int32_t s = 0; s < samples; ++s, ++p) {
+                        if (is_finite_sample(*p) && static_cast<double>(*p) >= white) {
+                            ++saturated;
+                        }
+                    }
+                    // As coverage_for() computes the cell's fraction.
+                    const auto fraction = static_cast<float>(static_cast<double>(saturated) / static_cast<double>(samples));
+                    const std::uint8_t c = fraction <= 0.0f   ? kNotSaturated
+                                           : fraction >= 0.5f ? kMostlySaturated
+                                                              : kPartlySaturated;
+                    const image::Point u = image::map_to_oriented(image::Point{cx, cy}, stored, orientation);
+                    out.classes[static_cast<std::size_t>(u.y) * upright_width + static_cast<std::size_t>(u.x)] = c;
+                }
+            }
+        },
+        8);
+    if (!status) {
+        return Unexpected(std::move(status.error()));
+    }
+    return out;
+}
+
 // Robust read-noise estimate (normalised units) of the green channel on the optical-black margins.
 struct MaskedEstimate {
     std::optional<double> sigma;
@@ -395,7 +445,7 @@ double SourceDiagnostics::max_channel_fraction() const noexcept {
 
 Expected<SourceAnalysis> analyze_source(const raw::DecodedRaw& decoded,
                                         std::span<const image::Size> coverage_grids, bool parallel,
-                                        const core::CancellationToken& cancel) {
+                                        const core::CancellationToken& cancel, bool full_resolution_classes) {
     const auto start = Clock::now();
     if (auto consistent = raw::check_consistency(decoded); !consistent) {
         return Unexpected(std::move(consistent.error()));
@@ -448,6 +498,14 @@ Expected<SourceAnalysis> analyze_source(const raw::DecodedRaw& decoded,
                     return;
                 }
                 out.coverage.push_back(std::move(*map));
+            }
+            if (full_resolution_classes) {
+                auto classes = saturation_classes_for(frame, metadata, parallel, cancel);
+                if (!classes) {
+                    status = Unexpected(std::move(classes.error()));
+                    return;
+                }
+                out.full_resolution = std::move(*classes);
             }
             const MaskedEstimate masked = masked_read_noise(frame, metadata, *table);
             d.noise = make_noise_model(metadata, masked.sigma, masked.samples);

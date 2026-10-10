@@ -359,6 +359,45 @@ private:
     bool busy_ = false;
 };
 
+// Simulated updates (W12): a configured channel offering Lucent 9.9.0 whose download and installation
+// "succeed" without touching the network or any file; tests change script() (the outcomes, a channel
+// that is not configured, the reason installing must wait) and read checks() and installs().
+class FakeUpdateService final : public UpdateService {
+    Q_OBJECT
+
+public:
+    struct Script {
+        bool configured = true;
+        UpdateCheckInfo check;        // default: Available 9.9.0
+        UpdateDownloadInfo download;  // default: verified
+        UpdateInstallInfo install;    // default: Setup started
+        QString blocker;              // install_blocker(); a non-empty one refuses install()
+    };
+
+    explicit FakeUpdateService(FakeTimings timings, QObject* parent = nullptr);
+
+    [[nodiscard]] UpdateChannelInfo channel() const override;
+    [[nodiscard]] bool busy() const override { return busy_; }
+    void check() override;
+    void download() override;
+    void cancel() override;
+    [[nodiscard]] QString install_blocker() const override { return script_.blocker; }
+    void install() override;
+
+    [[nodiscard]] Script& script() noexcept { return script_; }
+    [[nodiscard]] int checks() const noexcept { return checks_; }
+    [[nodiscard]] int installs() const noexcept { return installs_; }
+
+private:
+    void later(std::function<void()> work);
+
+    FakeTimings timings_;
+    Script script_;
+    bool busy_ = false;
+    int checks_ = 0;
+    int installs_ = 0;
+};
+
 // The complete simulated service set, with simulation_notice set. `batches` false: a session
 // without durable batches (exports are listed as in-process jobs).
 [[nodiscard]] Services create_fake_services(FakeTimings timings = {}, bool batches = true);

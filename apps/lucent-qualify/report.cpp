@@ -88,10 +88,12 @@ std::string escape_cell(std::string text) {
     return out;
 }
 
-// "12 of 13 checks pass with strong evidence; weak: colour" for a fixture result.
+// "12 of 13 checks strong; weak: colour" for a fixture result; checks with independent evidence
+// (ADR 0020) count as strong and are named: "14 of 14 checks strong; independent: colour_reference".
 std::string evidence_text(const OrderedJson& f) {
     int applicable = 0;
     int strong = 0;
+    std::vector<std::string> independent;
     std::vector<std::string> weak;
     std::vector<std::string> failed;
     std::vector<std::string> not_run;
@@ -102,7 +104,10 @@ std::string evidence_text(const OrderedJson& f) {
             continue;
         }
         ++applicable;
-        if (status == "pass" && c.at("evidence") == "strong") {
+        if (status == "pass" && c.at("evidence") == "independent") {
+            ++strong;
+            independent.push_back(id);
+        } else if (status == "pass" && c.at("evidence") == "strong") {
             ++strong;
         } else if (status == "pass") {
             weak.push_back(id);
@@ -122,10 +127,41 @@ std::string evidence_text(const OrderedJson& f) {
             }
         }
     };
+    list("independent", independent);
     list("weak", weak);
     list("failed", failed);
     list("not run", not_run);
     return out.str();
+}
+
+// ADR 0020: what a fixture's colour rests on, weakest first.
+int colour_evidence_rank(std::string_view evidence) noexcept {
+    if (evidence == "independent_chart") {
+        return 3;
+    }
+    if (evidence == "decoder_calibration_agreement" || evidence == "monochrome") {
+        return 2;
+    }
+    if (evidence == "gross_errors_only") {
+        return 1;
+    }
+    return 0;
+}
+
+std::string colour_evidence_label(std::string_view evidence) {
+    if (evidence == "independent_chart") {
+        return "independent: chart's published values";
+    }
+    if (evidence == "decoder_calibration_agreement") {
+        return "agreement with LibRaw's calibration";
+    }
+    if (evidence == "monochrome") {
+        return "monochrome: no colour to verify";
+    }
+    if (evidence == "gross_errors_only") {
+        return "gross errors only (not like for like)";
+    }
+    return "none";
 }
 
 std::string state_name(std::string_view state) {
@@ -337,6 +373,7 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
     report["inputs"] = {{"manifest", input(inputs.paths.manifest(), inputs.paths.root)},
                         {"expectations", input(inputs.paths.expectations(), inputs.paths.root)},
                         {"families", input(inputs.paths.families(), inputs.paths.root)},
+                        {"charts", input(inputs.paths.charts(), inputs.paths.root)},
                         {"render_reference", input(inputs.paths.render_reference(), inputs.paths.root)}};
     report["selection"] = {
         {"tier", inputs.tier}, {"ids", inputs.ids}, {"isolated_processes", inputs.isolated}};
@@ -381,7 +418,12 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
         OrderedJson lookup_variants = OrderedJson::array();
         std::vector<std::string> ids;
         std::vector<std::string> gaps;
+        std::string colour_evidence = "independent_chart";
         for (const OrderedJson* f : group) {
+            const std::string evidence = f->value("colour_evidence", std::string("none"));
+            if (colour_evidence_rank(evidence) < colour_evidence_rank(colour_evidence)) {
+                colour_evidence = evidence;
+            }
             if (f->contains("lookup_key") && f->at("lookup_key").is_string()) {
                 lookup_keys.insert(f->at("lookup_key").get<std::string>());
             }
@@ -416,6 +458,7 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
              {"fixtures", ids},
              {"proposed_state", worst->value("proposed_state", std::string())},
              {"evidence", evidence_text(*worst)},
+             {"colour_evidence", colour_evidence},
              {"limitations", std::vector<std::string>(limitations.begin(), limitations.end())},
              {"evidence_gaps", gaps}});
     }
@@ -494,19 +537,23 @@ std::string support_table_markdown(const OrderedJson& report) {
           "interpretation: a photo of a mode not listed here is Compatible, unverified at best.\n\n";
     md << "What the checks compare with: the camera's identity, compression, image area, orientation and "
           "representation are facts from independent sources (manufacturer specifications, the file's own "
-          "tags read without LibRaw, another decoder's camera database). Decoding and colour are compared "
-          "with a reference built on the same decoder (rawpy, LibRaw): they show that Lucent reads the data "
-          "and reproduces LibRaw's camera calibration faithfully, not that the calibration itself matches "
-          "an independent colour measurement (no colour chart or DNG SDK reference yet; ADR 0016). The raw-"
-          "buffer hash is compared for single-channel (mosaic and monochrome) data; full-colour data is "
-          "compared through the colour check.\n\n";
+          "tags read without LibRaw, another decoder's camera database). Decoding and the colour check are "
+          "compared with a reference built on the same decoder (rawpy, LibRaw): they show that Lucent reads "
+          "the data and reproduces LibRaw's camera calibration faithfully, not that the calibration itself "
+          "matches an independent colour measurement. Where a fixture shows a colour chart, the check "
+          "colour_reference measures the develop path's colours of its patches against the chart "
+          "manufacturer's published values (ADR 0020): only for those modes is colour verified independently "
+          "of LibRaw (\"Colour evidence\" below); every other mode's colour is agreement with LibRaw's "
+          "calibration, and DNG camera-profile colour is checked for gross errors only. The raw-buffer hash "
+          "is compared for single-channel (mosaic and monochrome) data; full-colour data is compared through "
+          "the colour check.\n\n";
 
     md << "| State | Meaning (blueprint section 3) |\n|---|---|\n";
     md << "| Verified | Exact model and capture mode passed Lucent's decoding, colour, geometry and export "
           "checks with "
           "strong evidence, and its identity, compression, image area, orientation and representation are "
-          "independently verified facts (colour is verified as agreement with LibRaw's calibration, see "
-          "above) |\n";
+          "independently verified facts (colour against a chart's published values where the fixture shows "
+          "one, otherwise as agreement with LibRaw's calibration: see \"Colour evidence\") |\n";
     md << "| Compatible, unverified | Decoder and required interpretation steps succeed, but the evidence or "
           "the "
           "expectations are insufficient |\n";
@@ -526,9 +573,9 @@ std::string support_table_markdown(const OrderedJson& report) {
           "checks that apply and pass with strong evidence; the reasons and gaps of each fixture follow "
           "below.\n\n";
     md << "| Family | Camera (make and model as decoded) | Product | Mode | Fixture | Proposed state | "
-          "Evidence | "
+          "Evidence | Colour evidence | "
           "Limitations |\n";
-    md << "|---|---|---|---|---|---|---|---|\n";
+    md << "|---|---|---|---|---|---|---|---|---|\n";
     std::vector<const OrderedJson*> rows;
     for (const OrderedJson& row : report.at("support_table")) {
         rows.push_back(&row);
@@ -562,6 +609,7 @@ std::string support_table_markdown(const OrderedJson& report) {
            << escape_cell(row.value("mode_label", std::string())) << " | " << ids << " | "
            << state_name(row.value("proposed_state", std::string())) << " | "
            << escape_cell(row.value("evidence", std::string())) << " | "
+           << escape_cell(colour_evidence_label(row.value("colour_evidence", std::string("none")))) << " | "
            << escape_cell(limits.empty() ? "none" : limits) << " |\n";
     }
 
@@ -611,6 +659,49 @@ std::string support_table_markdown(const OrderedJson& report) {
            << (area.is_object() ? escape_cell(area.value("source", std::string())) : std::string("-"))
            << " | " << (area.is_object() ? rect_text(area.at("declared")) : std::string("-")) << " | "
            << frame << " | " << output << " |\n";
+    }
+
+    md << "\n## Colour reference\n\n";
+    md << "Fixtures whose photograph shows a colour chart (`fixtures/qualification/charts.json`): the develop "
+          "path's as-shot scene-linear colours of every patch against the chart manufacturer's published "
+          "CIE L*a*b* (D50), CIEDE2000. *Chart balanced* (gated) maps the measured normalisation patch onto its "
+          "reference with one Bradford von Kries transform (exposure and the scene's white as the chart records "
+          "it); *as shot* only normalises exposure and adapts D65 to D50, so it also holds the capture's white "
+          "balance. *Independent rendering* is the same measurement of LibRaw's own rendering without Lucent's "
+          "code (research/tools/chart_reference.py). ADR 0020 gives the gate's derivation.\n\n";
+    md << "| Fixture | Chart | Status | Chart balanced mean / p90 / max | As shot mean / p90 / max | "
+          "Independent rendering, chart balanced |\n|---|---|---|---|---|---|\n";
+    bool any_chart = false;
+    for (const OrderedJson& f : report.at("fixtures")) {
+        for (const OrderedJson& c : f.at("checks")) {
+            if (c.value("id", std::string()) != kCheckColourReference ||
+                c.value("status", std::string()) == "not_applicable") {
+                continue;
+            }
+            any_chart = true;
+            const OrderedJson& d = c.at("details");
+            const auto triple = [](const OrderedJson& s) -> std::string {
+                if (!s.is_object()) {
+                    return "-";
+                }
+                char text[64];
+                std::snprintf(text, sizeof(text), "%.2f / %.2f / %.2f", s.value("mean", 0.0), s.value("p90", 0.0),
+                              s.value("max", 0.0));
+                return text;
+            };
+            const std::string chart =
+                d.contains("reference") ? d.at("reference").value("chart", std::string()) : std::string("-");
+            md << "| `" << f.at("id").get<std::string>() << "` | " << escape_cell(chart) << " | "
+               << c.value("status", std::string()) << " | "
+               << triple(d.contains("chart_balanced") ? d.at("chart_balanced") : OrderedJson()) << " | "
+               << triple(d.contains("as_shot") ? d.at("as_shot") : OrderedJson()) << " | "
+               << triple(d.contains("independent_rendering") ? d.at("independent_rendering").at("chart_balanced")
+                                                              : OrderedJson())
+               << " |\n";
+        }
+    }
+    if (!any_chart) {
+        md << "| none | - | - | - | - | - |\n";
     }
 
     md << "\n## Reasons, limitations and evidence gaps\n\n";

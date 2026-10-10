@@ -47,8 +47,8 @@ From the repository root, in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
 powershell -NoProfile -File tools\fetch-fixtures.ps1                      # smoke tier (default), ~154 MB
-powershell -NoProfile -File tools\fetch-fixtures.ps1 -Tier qualification  # ~998 MB
-powershell -NoProfile -File tools\fetch-fixtures.ps1 -Tier all            # everything, ~1.15 GB
+powershell -NoProfile -File tools\fetch-fixtures.ps1 -Tier qualification  # ~1.10 GB
+powershell -NoProfile -File tools\fetch-fixtures.ps1 -Tier all            # everything, ~1.26 GB
 powershell -NoProfile -File tools\fetch-fixtures.ps1 -Id dji-fc4382-dng,nikon-z-6-nef-lossless
 powershell -NoProfile -File tools\fetch-fixtures.ps1 -Id canon-eos-r5-cr3-raw -Force
 ```
@@ -93,7 +93,10 @@ Readers reject a newer `schema_version`; unknown extra fields are ignored.
 - **smoke** (5 files, 154 MB): one file per major decoder route (Canon CR3, Sony ARW, a DJI DNG
   whose OpcodeList3 carries a lens correction, Fujifilm X-Trans RAF, Nikon NEF). This is the
   default download and the tier that fixture-dependent tests should prefer.
-- **qualification** (29 files, 998 MB): the wider camera and mode matrix of blueprint section 3.
+- **qualification** (35 files, 1104 MB): the wider camera and mode matrix of blueprint section 3,
+  including six files shot in portrait (EXIF orientation 6 or 8, W12) that cover every image-area
+  source, and the four files whose photographs show a colour chart
+  (`qualification/charts.json`, ADR 0020).
 
 ## Coverage
 
@@ -137,12 +140,23 @@ components per pixel instead of a mosaic.
 | `hasselblad-x1d-ii-50c-3fr` | qualification | Hasselblad X1D II 50C | 3FR | 108.4 | flat, Bayer RGGB, 8278x6208 |
 | `adobe-dng-canon-eos-5d-mark-iii-linear-dng` | qualification | Canon EOS 5D Mark III via Adobe DNG Converter | DNG: LinearRaw (demosaiced), 3 samples per pixel | 24.1 | stack, 3960x2640 |
 | `canon-eos-7d-mark-ii-dng-jxl` | qualification | Canon EOS 7D Mark II via Lightroom Denoise | DNG 1.7: CFA original + JPEG XL "Enhanced" LinearRaw image | 38.3 | flat, Bayer RGGB, 5496x3670 (the CFA original only) |
+| `canon-eos-350d-cr2` | qualification | Canon EOS 350D (Digital Rebel XT) | CR2: RAW 12-bit, portrait (orientation 8); Canon SensorInfo crop | 7.5 | flat, Bayer RGGB, 3474x2314 |
+| `olympus-xz-10-orf` | qualification | Olympus XZ-10 | ORF: 12-bit uncompressed, portrait (orientation 6); ImageProcessing crop | 19.3 | flat, Bayer RGGB, 3984x2990 |
+| `ricoh-gxr-s10-dng` | qualification | Ricoh GXR (S10 unit) | DNG 1.0 in camera: uncompressed, DefaultCrop, portrait (orientation 6) | 15.3 | flat, Bayer RGGB, 3672x2748 |
+| `bq-aquaris-u-plus-dng` | qualification | bq Aquaris U Plus (phone) | DNG 1.4: DefaultCrop, OpcodeList2 GainMap (optional), portrait (orientation 8) | 32.3 | flat, Bayer GRBG, 4640x3480 |
+| `oneplus-one-dng` | qualification | OnePlus One (phone) | DNG 1.3: no DefaultCrop, OpcodeList2 GainMap (mandatory), portrait (orientation 6) | 17.2 | flat, Bayer RGGB, 4208x3120 |
+| `sony-dslr-a450-arw` | qualification | Sony DSLR-A450 | ARW 2.1 compressed, no crop declaration, portrait (orientation 6) | 14.7 | flat, Bayer RGGB, 4608x3072 |
 
 Route coverage: Bayer mosaics in RGGB and GRBG order, X-Trans, monochrome sensors, 3-component
 "stack" data (Canon sRAW, Sony YCC lossless M/S, LinearRaw DNG), DNG opcode lists
 (WarpRectilinear, FixVignetteRadial, GainMap, FixBadPixelsList), crop modes, multi-image files
 (Dual Pixel RAW, DNG 1.7 with an enhanced image), a big-endian DNG, and two files LibRaw 0.22
-refuses (Nikon HE/HE*), which exercise the Unsupported path.
+refuses (Nikon HE/HE*), which exercise the Unsupported path. Orientation: the six W12 files are
+rotated (6 or 8) with a camera image area from each source (decoder inset crop, DNG DefaultCrop,
+the DNG default whole image, unknown); every other file has orientation 1. Colour charts: the
+Canon EOS 5D Mark IV RAW and sRAW frames show a Datacolor SpyderCHECKR, the Fujifilm X-T4 frames an
+X-Rite ColorChecker Classic Mini (their published values and sample boxes:
+`qualification/charts.json`).
 
 Opcode lists and IFD layouts were read from the files themselves, not from archive metadata.
 

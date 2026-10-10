@@ -54,12 +54,16 @@ double log_quantile(const std::vector<std::uint64_t>& hist, std::uint64_t total,
 }
 
 // Noise of a normalised sample: the model, or the ISO 100 assumption without one.
-double noise_sigma(const ImageContext& context, double x) noexcept {
-    if (context.noise.available()) {
-        return context.noise.sigma(x);
+double noise_sigma(const SensorNoiseModel& noise, double x) noexcept {
+    if (noise.available()) {
+        return noise.sigma(x);
     }
     return std::sqrt(kAssumedReadNoiseAtIso100 * kAssumedReadNoiseAtIso100 +
                      std::max(0.0, x) / kAssumedFullWellAtIso100);
+}
+
+double noise_sigma(const ImageContext& context, double x) noexcept {
+    return noise_sigma(context.noise, x);
 }
 
 // Linear histogram over [low, high) with `bins` bins: the median and the median absolute deviation.
@@ -101,17 +105,23 @@ constexpr double kCastWindow = 0.5;  // |log ratio| of plausible casts (a factor
 
 // Estimator validity of a balanced camera pixel (see the header): every channel above 8 sigma and
 // 2^-11, below 0.9 of the clip level, no saturated sensor site.
-bool valid_pixel(const ImageContext& context, std::size_t i, double r, double g, double b,
-                 double clip_level) {
+bool valid_sample(double r, double g, double b, bool saturated_site, const SensorNoiseModel& noise,
+                  double clip_level) noexcept {
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
         return false;
     }
-    if (!context.saturation.empty() && context.saturation[i] > 0.0f) {
+    if (saturated_site) {
         return false;
     }
     const double lo = std::min({r, g, b});
     const double hi = std::max({r, g, b});
-    return lo >= std::max(std::exp2(-11.0), 8.0 * noise_sigma(context, g)) && hi <= 0.9 * clip_level;
+    return lo >= std::max(std::exp2(-11.0), 8.0 * noise_sigma(noise, g)) && hi <= 0.9 * clip_level;
+}
+
+bool valid_pixel(const ImageContext& context, std::size_t i, double r, double g, double b,
+                 double clip_level) {
+    return valid_sample(r, g, b, !context.saturation.empty() && context.saturation[i] > 0.0f, context.noise,
+                        clip_level);
 }
 
 double median_of(std::vector<double> v) {
@@ -304,20 +314,27 @@ Expected<std::vector<std::uint8_t>> neutral_evidence_mask(const engine::StageOne
     } catch (const std::bad_alloc&) {
         return fail(ErrorCode::OutOfMemory, "cannot allocate the neutral evidence", kWhere);
     }
+    const NeutralEvidenceRule rule{clip_level, cast_log_rg, cast_log_bg, radius};
     for (std::int32_t y = 0; y < px.height(); ++y) {
         const float* row = px.row(y);
         for (std::int32_t x = 0; x < px.width(); ++x, row += 3) {
             const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(px.width()) +
                                   static_cast<std::size_t>(x);
-            if (!valid_pixel(context, i, row[0], row[1], row[2], clip_level)) {
-                continue;
-            }
-            const double lr = std::log(static_cast<double>(row[0]) / row[1]);
-            const double lb = std::log(static_cast<double>(row[2]) / row[1]);
-            mask[i] = std::hypot(lr - cast_log_rg, lb - cast_log_bg) <= radius ? 1 : 0;
+            const bool saturated = !context.saturation.empty() && context.saturation[i] > 0.0f;
+            mask[i] = rule.neutral(row[0], row[1], row[2], saturated, context.noise) ? 1 : 0;
         }
     }
     return mask;
+}
+
+bool NeutralEvidenceRule::neutral(double r, double g, double b, bool saturated_site,
+                                  const SensorNoiseModel& noise) const noexcept {
+    if (!valid_sample(r, g, b, saturated_site, noise, clip_level)) {
+        return false;
+    }
+    const double lr = std::log(r / g);
+    const double lb = std::log(b / g);
+    return std::hypot(lr - cast_log_rg, lb - cast_log_bg) <= radius;
 }
 
 WhiteBalanceCorrection natural_v1_white_balance_correction(double log_rg, double log_bg,

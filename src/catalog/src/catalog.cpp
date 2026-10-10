@@ -600,13 +600,22 @@ Expected<BackupInfo> Catalog::backup_to(const std::filesystem::path& destination
 }
 
 Expected<BackupInfo> Catalog::create_backup() const {
+    return create_backup(BackupKind::Manual);
+}
+
+Expected<BackupInfo> Catalog::create_backup(BackupKind kind) const {
+    if (kind != BackupKind::Manual && kind != BackupKind::PreUpdate) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("a {} backup is taken by the catalog itself", to_string(kind)),
+                    std::string(kWhereBackup));
+    }
     Expected<Impl::ReaderLease> lease = impl_->acquire_reader(kWhereBackup);
     if (!lease) {
         return Unexpected(std::move(lease.error()));
     }
-    return detail::write_backup_into(
-        lease->connection(), impl_->path, impl_->backup_directory, BackupKind::Manual, impl_->schema.version,
-        impl_->options.backups_to_keep, impl_->options.busy_timeout, kWhereBackup);
+    return detail::write_backup_into(lease->connection(), impl_->path, impl_->backup_directory, kind,
+                                     impl_->schema.version, impl_->options.backups_to_keep,
+                                     impl_->options.busy_timeout, kWhereBackup);
 }
 
 Expected<std::vector<BackupInfo>> Catalog::list_backups() const {

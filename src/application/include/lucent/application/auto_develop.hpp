@@ -16,12 +16,16 @@
 //   3. With a related-shot consistency target, the session's regularisation towards it (soft,
 //      revalidated; locks and hard checks unchanged). For a group anchor, the appearance of its
 //      current settings (what it contributes to its group's target).
-//   4. With final_check, the full-resolution final check (step 7): the decode of step 1 is reused
-//      (a copy of the decoded samples is kept through the analysis, so the file is decoded once),
-//      its source diagnostics measured at full resolution (saturation coverage, noise model), and one
-//      interactive stage one (as shot) rendered; the as-shot baseline (AutoResult::candidates[0])
-//      is rendered and measured with analysis::make_image_context() and measure_render(), then the
-//      chosen settings, judged by analysis::evaluate_candidate() against that baseline with the
+//   4. With final_check, the full-resolution final check (step 7): the analysis' own interactive
+//      stage one (as shot, full resolution) and the saturation classes of its upright grid are
+//      reused (analysis::AutoOptions::keep_full_resolution, AutoSession::take_full_resolution():
+//      the file is decoded and its stage one rendered once), with the analysis' noise model; the
+//      chosen settings are rendered and measured against the as-shot baseline
+//      (AutoResult::candidates[0]) by analysis::FrameMeasurement, band by band (the context and the
+//      baseline's features exist for one band of rows at a time; the baseline is re-rendered band
+//      by band from the stage one when its operations are per pixel, otherwise its full render is
+//      kept), with exactly the statistics the whole-image measure_render() gave; then judged by
+//      analysis::evaluate_candidate() against that baseline with the
 //      analysis' own policy context (tone proposal, white-balance evidence and its neutral surfaces,
 //      locked exposure) and the same metric contract. A failure walks a bounded ladder: the chosen
 //      settings' analysis::conservative_fallbacks() (at most analysis::kMaxFallbackRechecks), then
@@ -45,8 +49,9 @@
 //      value it returns carries the current geometry, masks and chroma denoising unchanged. The
 //      final check renders the full settings, geometry and masks included, for the choice, its
 //      fallbacks and the baseline alike (they share the photographer's geometry and masks), and
-//      measures them in the geometry's output frame: the image context (saturation, signal, the
-//      neutral surfaces) is mapped through the same geometry (analysis::map_image_context()).
+//      measures them in the geometry's output frame: the context (saturation, signal, the neutral
+//      surfaces) of each output pixel is its upright pixel's through the same geometry, as
+//      analysis::map_image_context() maps it.
 //   5. The locks report: the controls the optimiser sets that are locked, and whether they kept it
 //      from its usual targets (a brightness deficit or excess of more than kLockedTargetEv left with
 //      exposure, shadows or highlights locked; locked settings that clip), each with a user-facing
@@ -272,10 +277,13 @@ struct AutoRun {
                                               const AutoRunProgress& progress = {});
 
 // Estimated peak pixel memory of run_automatic for `metadata` (probe metadata): the analysis'
-// (analysis::estimate_auto_memory) with the copy of the decoded samples kept for the check, or the
-// final check's (stage one, the full-resolution context and baseline features, one stage two), the
-// larger. Without settings the final check's stage two is the engine's settings-agnostic estimate
-// (denoising at its largest radius, no brush raster).
+// (analysis::estimate_auto_memory, keeping its stage one and saturation classes for the check), or
+// the final check's (that stage one and the classes, the baseline's full render unless it is
+// rendered by bands, and one stage two of an attempt with the local tone the search may add, or a
+// render with one measurement band: analysis::frame_measurement_band_bytes), the larger: about 37
+// bytes per pixel for a colour photo (it was about 62 before W12; ADR 0013). Without settings the
+// final check's stage two is the engine's settings-agnostic estimate (denoising at its largest
+// radius, no brush raster) and the baseline's full render is counted.
 [[nodiscard]] Expected<std::uint64_t> estimate_automatic_memory(const raw::RawMetadata& metadata,
                                                                 const AutoRunOptions& options = {});
 // The same for the item's `current` settings: the final check's stage two is estimated for them

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <format>
@@ -132,9 +133,28 @@ Expected<Answer> run_one(const std::variant<JobRequest, AnalysisRequest>& job, J
     try {
         if (hooks.allocate_bytes != 0) {
             const auto bytes = static_cast<std::size_t>(hooks.allocate_bytes);
-            auto block = std::make_unique_for_overwrite<std::byte[]>(bytes);
+            std::unique_ptr<std::byte[]> block;
+            try {
+                block = std::make_unique_for_overwrite<std::byte[]>(bytes);
+            } catch (const std::bad_alloc&) {
+                if (!hooks.allocation_error_internal) {
+                    throw;
+                }
+                // allocation-error-internal: as an allocation failure that surfaces under another code.
+                return fail(ErrorCode::Internal, "the job raised: the test allocation was refused",
+                            std::string(kWhere));
+            }
             for (std::size_t offset = 0; offset < bytes; offset += 4096) {
                 block[offset] = std::byte{1};  // commit and touch every page
+            }
+            // hold-allocation: keep it a while (cancellable), so other workers allocate meanwhile.
+            const auto until =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(hooks.hold_allocation_ms);
+            while (std::chrono::steady_clock::now() < until && !context.cancel().is_cancelled()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (Status c = context.cancel().check("workers.server"); !c) {
+                return Unexpected(std::move(c.error()));
             }
         }
         if (const auto* request = std::get_if<JobRequest>(&job)) {
