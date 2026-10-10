@@ -548,8 +548,8 @@ std::vector<std::string> basis_differences(const QualificationBasis& qualified,
     if (qualified.develop_engine != running.develop_engine) {
         out.push_back(std::format(
             "develop engine (stage graph, sensor normalisation, white balance, demosaicing, camera colour, "
-            "working space, guided filter, proxy downscale, DNG opcodes, image area): qualified with versions "
-            "{}, this build uses {}",
+            "working space, guided filter, proxy downscale, DNG opcodes, image area, lens-profile matching): "
+            "qualified with versions {}, this build uses {}",
             list(qualified.develop_engine), list(running.develop_engine)));
     }
     number("neutral look", qualified.neutral_look, running.neutral_look);

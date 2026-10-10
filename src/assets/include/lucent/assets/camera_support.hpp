@@ -202,7 +202,8 @@ struct QualificationBasis {
     std::uint32_t image_area_placement = 0;
     // engine::kDevelopEngineVersions, in its order: the stage graph, sensor normalisation, white
     // balance, the demosaic routes, camera colour, the working space, the guided filter, the proxy
-    // downscale, DNG opcode processing and the image-area placement.
+    // downscale, DNG opcode processing, the image-area placement and the lens-profile matching rules
+    // (ADR 0023).
     std::vector<std::uint32_t> develop_engine;
     std::uint32_t neutral_look = 0;  // engine::kNeutralLookVersion (the as-shot base look)
     std::uint32_t export_version = 0;  // exporter::kExportVersion (written as "export")
