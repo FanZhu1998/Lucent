@@ -349,14 +349,15 @@ powershell -NoProfile -File tools\package.ps1 -SkipBuild -StageOnly
 | Lay out | `cmake --install --component Lucent`: `windeployqt`, unused Qt Quick styles removed, `qt.conf`, the DLL closure from vcpkg (`cmake/LucentPackaging.cmake`) | `stage\`, `install.log`, `<build dir>\packaging\windeployqt.log` |
 | Audit | Every import resolves to the folder, Windows or the Visual C++ runtime, and every root DLL is imported; the required Qt plugins and every QML module Lucent uses (with the plugin DLL its `qmldir` names) are present; every file is Lucent's or unmodified from a vcpkg port; one GUI executable, x64 only. Errors stop the run | `audit.txt`, `audit.json` |
 | Smoke run | The staged `Lucent.exe` starts with `PATH` reduced to Windows' folders and a temporary `--data-root`, saves a screenshot and must exit with 0, without Qt or QML loading errors and without changing the folder | `smoke\` |
-| Sign | Only with `LUCENT_SIGN_CERT_SHA1` and `LUCENT_SIGN_TIMESTAMP_URL` set (see below) | |
+| Sign | Only with `LUCENT_SIGN_CERT_SHA1` set (see below): `Lucent.exe` and `lucent-worker.exe`, each signature verified | |
 | Licences | `stage\licenses\`: copyright files of the shipped ports, missing licence texts, Qt's LGPL-3.0 and GPL-3.0, `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` (with the third-party code inside Qt from Qt's own SBOMs, and the libraries linked statically into `Lucent.exe`), `Lucent.spdx.json` (SPDX 2.3, checked structurally and by `pyspdxtools` when available); `stage\Lucent-files.txt`, the installed-file list that the next version's upgrade uses | `Lucent-Setup-<version>-x64.spdx.json` |
-| Installer | `installer\lucent.iss` with the version from CMake | `Lucent-Setup-<version>-x64.exe`, `.exe.sha256`, `iscc.log` |
-| Manifest | Version, git commit, toolchain, audit summary, SBOM summary, the RAW extensions of "Open with Lucent", every installed file with its SHA-256, the installer's size and SHA-256 (none with `-StageOnly`) | `Lucent-Setup-<version>-x64.manifest.json` |
+| Builder paths | Every byte of every file of the folder is scanned for the build machine's folders: the user profile, the repository, the build tree, the vcpkg root, installed tree, buildtrees, packages and downloads folders, and any `X:\Users\<name>\` path, as 8-bit or UTF-16 text, with either separator and in any letter case. A hit (a PDB path in a DLL's debug directory, a `__FILE__` string, a path in a text file) stops the run with the file and byte offset. Setup and the manifest are scanned too | `builder-paths.txt`, `builder-paths.json` |
+| Installer | `installer\lucent.iss` with the version from CMake; Setup and the uninstaller signed when signing is configured | `Lucent-Setup-<version>-x64.exe`, `.exe.sha256`, `iscc.log` |
+| Manifest | Version, git commit, signing (certificate, test or release, timestamp, every signature checked), toolchain, audit summary (including the builder-path scan), SBOM summary, the RAW extensions of "Open with Lucent", every installed file with its SHA-256, the installer's size and SHA-256 (none with `-StageOnly`) | `Lucent-Setup-<version>-x64.manifest.json` |
 
-The script prints the installer's path, size and SHA-256. On the reference machine the 0.1.0 package
-takes about a minute after the build and produces a 38.4 MiB installer (about 40.3 MB; 24.4 MiB of
-it the redistributable) for a 55.2 MiB, 305-file installation. It also prints a reminder that the
+The script prints the installer's path, size and SHA-256. On the reference machine (2026-10-09) the
+0.1.0 package takes about a minute after the build and produces a 39.9 MiB installer (about 41.9 MB;
+24.4 MiB of it the redistributable) for a 62.9 MiB, 308-file installation. It also prints a reminder that the
 installer is not for public distribution until W12 settles how the LGPL libraries' source is
 provided (ADR 0009, decision 10).
 
@@ -367,8 +368,22 @@ names the port version it was reviewed for; when a dependency upgrade ships anot
 packaging stops until the entry and the [licence ledger](../legal/third-party-notices.md) are
 reviewed.
 
-**Signing** is off by default, and packages built so far are unsigned. To sign `Lucent.exe`, Setup
-and the uninstaller with a code-signing certificate from the current user's certificate store:
+**No build-machine paths.** The package must not name the folders of the machine that built it
+(ADR 0002 and ADR 0009 amendments, W12). The triplet links every port with `/PDBALTPATH:%_PDB%`
+and compiles it with `/d1trimfile:` for the vcpkg folders; Lucent's release build does the same
+for its own folders. Because the DLLs then record only their PDBs' file names, vcpkg's own PDB
+copying finds nothing (every port's log warns "Could not find a matching pdb file"); the triplet's
+post-portfile step (`cmake/triplets/post-portfile/install-pdbs.cmake`) installs the PDBs beside the
+DLLs instead, so the dependencies' symbols stay available. Changing the triplet or that step
+rebuilds every port once (1.2 hours on the reference machine, mostly Qt), and so does saving either
+with other line endings: vcpkg hashes their bytes. If the builder-path scan fails,
+`builder-paths.txt` names each file, byte offset and folder; a hit in a "PE debug directory" is a
+PDB path (a missing `/PDBALTPATH`), one in "file data" usually a `__FILE__` string.
+`installer\tests\Test-BuilderPathScan.ps1` checks the scan itself without a build.
+
+**Signing** is off by default, and packages built so far are unsigned. To sign `Lucent.exe`,
+`lucent-worker.exe`, Setup and the uninstaller with a code-signing certificate whose private key is
+in the current user's personal store (`Cert:\CurrentUser\My`):
 
 ```powershell
 $env:LUCENT_SIGN_CERT_SHA1 = '<certificate thumbprint>'
@@ -376,6 +391,47 @@ $env:LUCENT_SIGN_TIMESTAMP_URL = '<RFC 3161 timestamp URL of the certificate iss
 # optional: $env:LUCENT_SIGNTOOL = '<path to signtool.exe>' (default: signtool.exe from the Windows SDK)
 powershell -NoProfile -File tools\package.ps1
 ```
+
+`tools\package.ps1` checks the certificate before it builds anything (in that store, with its
+private key, valid now, usable for code signing; a thumbprint pasted from the certificate dialog
+works) and refuses a self-signed certificate or a missing timestamp server. It verifies every
+signature it makes: by that thumbprint, verifying offline with WinVerifyTrust (digest and chain, no
+revocation check, no network) and timestamped; a Setup that fails is deleted. The manifest records
+the certificate and every signature. Inno Setup signs the uninstaller inside Setup, so only an
+installation shows it: `installer\tests\Test-InstalledPackage.ps1 -SignerThumbprint <thumbprint>`
+checks Setup, the installed `Lucent.exe` and `lucent-worker.exe`, and `unins000.exe` (a signed
+uninstaller keeps its messages in `unins000.msg`, Inno Setup's file).
+
+**Rehearsing signing without a real certificate.** Use a temporary self-signed certificate in the
+current user's personal store, never in a Root or TrustedPublisher store, and `LUCENT_SIGN_TEST=1`:
+the one verification failure accepted is then the untrusted root, a timestamp is optional (none is
+made without `LUCENT_SIGN_TIMESTAMP_URL`: requesting one sends each file's digest to the timestamp
+server), and the manifest records `signing.test = true`. Such a package is never distributed.
+Delete the certificate and its private key afterwards:
+
+```powershell
+$cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Lucent signing rehearsal' `
+    -CertStoreLocation Cert:\CurrentUser\My -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 `
+    -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddDays(1)
+$env:LUCENT_SIGN_CERT_SHA1 = $cert.Thumbprint; $env:LUCENT_SIGN_TEST = '1'
+powershell -NoProfile -File tools\package.ps1 -SkipBuild
+# signtool verify /pa /v <file> now ends with "A certificate chain processed, but terminated in a
+# root certificate which is not trusted by the trust provider": expected for a test certificate.
+$pkg = 'build\release\package'
+powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 -Installer "$pkg\Lucent-Setup-0.1.0-x64.exe" `
+    -Manifest "$pkg\Lucent-Setup-0.1.0-x64.manifest.json" -Fixture <RAW file> -SignerThumbprint $cert.Thumbprint -AllowUntrustedRoot
+Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -DeleteKey
+# New-SelfSignedCertificate also puts a copy (without the key) into CurrentUser\CA:
+Remove-Item "Cert:\CurrentUser\CA\$($cert.Thumbprint)" -ErrorAction SilentlyContinue
+Get-ChildItem Cert:\ -Recurse | Where-Object Thumbprint -eq $cert.Thumbprint   # must list nothing
+Remove-Item Env:\LUCENT_SIGN_CERT_SHA1, Env:\LUCENT_SIGN_TEST
+```
+
+The W12 rehearsal of this procedure (ADR 0009 amendment, decision 13 and its evidence) signed
+`Lucent.exe`, `lucent-worker.exe`, Setup and the uninstaller, passed all 35 checks of
+`Test-InstalledPackage.ps1` with the signer check, and left no certificate or key behind. Then run
+`tools\package.ps1 -SkipBuild -StageOnly` (or a full package) without the variables, so no
+test-signed Setup stays in the output folder.
 
 **Testing the installer.** `installer\tests\Test-InstalledPackage.ps1` needs no developer tools. It
 refuses to run when Lucent is already installed for the user, installs silently into a temporary

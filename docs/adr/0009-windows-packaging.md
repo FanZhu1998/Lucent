@@ -1,6 +1,6 @@
 # ADR 0009: Windows packaging: installed layout, dependency audit and per-user Inno Setup installer
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below)
 - **Date:** 2026-10-03
 - **Workflow:** W5 (Installer slice)
 
@@ -351,3 +351,143 @@ Facts established on the reference machine (2026-10-03):
   and settings stay and the messages say where they are.
 - **MSIX, WiX/MSI, NSIS.** The blueprint chooses Inno Setup for the first release; MSIX may be
   reconsidered with an update channel (W12).
+
+## Amendment: build-machine paths and the signing rehearsal (W12, 2026-10-09)
+
+### Context
+
+Decision 3 did not scan binaries for paths, because every DLL vcpkg built carried its builder's
+PDB path; the consequences left the fix to W12. ADR 0002's amendment removes those paths where they
+are made (the triplet's linker and compiler options, and the same options for Lucent's own release
+binaries); this amendment makes packaging prove it for every byte the package ships. Decision 9's
+signing hooks had never run, because no certificate existed. W12 rehearsed them with a temporary
+self-signed certificate that was trusted nowhere, and fixed what the rehearsal found.
+
+### Decision
+
+12. **No build-machine path in a shipped file.** Once the licences, the installed-file list and the
+    SBOM exist, `tools\package.ps1` scans every byte of every file of the installation folder
+    (`Invoke-BuilderPathAudit`, `installer\scripts\LucentPackaging.psm1`), then Setup, then the text
+    of the package manifest before writing it. It searches for
+    - the user profile (recorded at configure time in `lucent-package.json`, schema 5, and that of
+      the packaging process), also without its drive letter (`\Users\<name>`);
+    - the repository, the source and build trees, the vcpkg installed tree and the vcpkg root,
+      buildtrees, packages and downloads folders (configure time and the environment), with their
+      8.3 short forms where those differ;
+    - any `X:\Users\<name>\` folder other than Public, Default and All Users, which also catches
+      binaries that a binary cache brought from another machine;
+
+    as UTF-8, ANSI and UTF-16LE text, with `\` or `/` (repeated, as in JSON and C strings), in any
+    letter case, after `X:`, `\\?\X:` or the MSYS form `/x/`. A match stops the packaging and names
+    the file, the byte offset, the encoding, whether the bytes lie in a PE debug directory (the
+    CodeView PDB path) or in the file's data, the folder and the surrounding text
+    (`builder-paths.txt`, `builder-paths.json`); a Setup that fails is deleted. The manifest records
+    the names of the folders searched (never their paths), the files and bytes scanned and the
+    hits, and names a tool below the user profile as `%USERPROFILE%\...` (the Inno Setup compiler
+    on the reference machine). Every match starts at a separator (the drive letter is checked
+    behind it), so the regular expression engine skips to `\` and `/` bytes: the folder of 0.1.0,
+    66 MB, takes about 2 s.
+
+13. **Signing, verified.** Decision 9 holds, with these changes from the rehearsal:
+    - The certificate is checked before the build: in `Cert:\CurrentUser\My`, where
+      `signtool /sha1` looks, with its private key, valid now, and usable for code signing. A
+      thumbprint pasted from the certificate dialog works (spaces and the invisible mark the dialog
+      adds are dropped). Unless the signature is a test signature (below), a self-signed
+      certificate or a missing `LUCENT_SIGN_TIMESTAMP_URL` is refused.
+    - Every signature is checked for what it must be, not by `Get-AuthenticodeSignature`'s status
+      alone: signed by the configured thumbprint, verifying offline (WinVerifyTrust,
+      `WINTRUST_ACTION_GENERIC_VERIFY_V2`, no revocation check and no network retrieval: the digest
+      and the chain) and timestamped when a timestamp server is set. Before, any valid signature
+      passed, also one by another certificate.
+    - `LUCENT_SIGN_TEST=1` makes a test signature, for rehearsals only: the one failure accepted is
+      the untrusted root (`CERT_E_UNTRUSTEDROOT`), the timestamp is optional, and the manifest says
+      `signing.test`. Before, a rehearsal was impossible: the hook required a timestamp server, and
+      an untrusted root failed its `Valid` check.
+    - A `$` in the sign tool's path or arguments is doubled for Inno Setup, whose Sign Tool command
+      lines use `$` as an escape character.
+    - The manifest (schema 3) records the certificate (thumbprint, subject, issuer, expiry), test or
+      release, the timestamp server and each signature checked (file, signer, WinVerifyTrust result,
+      timestamp); `installer.signed` now means signed by that certificate and verified.
+    - Inno Setup signs the uninstaller inside Setup (`SignedUninstaller`), so packaging cannot see
+      it, and a signed uninstaller keeps its messages in `unins000.msg` beside `unins000.exe`.
+      `installer\tests\Test-InstalledPackage.ps1` now counts that file as Inno Setup's (the file
+      comparison would have failed for any signed package) and, with `-SignerThumbprint` (and
+      `-AllowUntrustedRoot` for a test certificate), checks Setup, the installed `Lucent.exe`,
+      `lucent-worker.exe` and `unins000.exe`.
+    - Timestamping was not rehearsed: an RFC 3161 request sends each file's digest to the
+      timestamp server over the network, which an offline rehearsal does not do. A release
+      signature requires it.
+
+### Evidence
+
+Reference machine, 2026-10-09, MSVC 19.44.35207. "Before" is the installation folder of the W12
+performance baseline (`build\w12-perf`); "after" is the `release` build of this change
+(`build\w12-hyg-release`), made once every port had been rebuilt with the new triplet (ADR 0002
+amendment), scanned by `tools\package.ps1 -StageOnly`.
+
+| | Before | After |
+|---|---|---|
+| Installation folder scanned | 308 files, 66.0 MB | 308 files, 66.0 MB, in 2.1 s |
+| PDB paths in PE debug directories | 63: every DLL, plugin and QML plugin vcpkg built | 0 |
+| `__FILE__` strings | 2: `tiff.dll` (libtiff's `tif_dir.c`), `Qt6Quick.dll` (`qquickdesignersupport.cpp`) | 0 |
+| `Lucent.exe`, `lucent-worker.exe` | 0 | 0 |
+| Licences, SBOM, `qt.conf`, QML files, assets | 0 | 0 |
+| Setup, package manifest | not scanned | 0 |
+
+All 65 earlier hits named the vcpkg buildtrees folder below the user profile. Outside the package,
+the 274 DLLs and EXEs vcpkg installed hold one path, in Qt's build tool `syncqt.exe`, which is never
+shipped. `installer\tests\Test-BuilderPathScan.ps1` (54 checks, no build needed) covers the
+encodings, the separators, the drive forms, the exclusions and the debug-directory classification.
+
+The signing rehearsal (2026-10-09):
+
+1. A temporary certificate: `New-SelfSignedCertificate -Type CodeSigningCert -CertStoreLocation
+   Cert:\CurrentUser\My`, RSA 3072, SHA-256, a non-exportable key in the Microsoft Software Key
+   Storage Provider, valid two days. Windows also put a copy without the key into
+   `CurrentUser\CA` (intermediate certification authorities); no Root or TrustedPublisher store
+   changed.
+2. `tools\package.ps1 -SkipBuild` with `LUCENT_SIGN_CERT_SHA1` and `LUCENT_SIGN_TEST=1`, no
+   timestamp server: `Lucent.exe` and `lucent-worker.exe` signed (`signtool sign /fd sha256 /sha1`),
+   and Inno Setup's sign tool ran for the uninstaller (`uninst.e32.tmp`) and for Setup. Every
+   signature was verified: signed by the thumbprint, WinVerifyTrust `0x800B0109` (the untrusted
+   root, accepted for a test signature), no timestamp. 73 s; Setup 39.9 MiB; the manifest records
+   `signed`, `signing.test` and the three signatures.
+3. Independent checks of the three files: `signtool verify /pa /v` names the certificate's SHA-1
+   hash and ends with "SignTool Error: A certificate chain processed, but terminated in a root
+   certificate which is not trusted by the trust provider" (exit code 1), as it must for a
+   certificate that nothing trusts; `Get-AuthenticodeSignature` reports UnknownError with the same
+   message and the expected signer.
+4. `installer\tests\Test-InstalledPackage.ps1 -SignerThumbprint <thumbprint> -AllowUntrustedRoot
+   -Tasks ''` (installed for the user into `%TEMP%` and uninstalled): 35 of 35 checks passed,
+   including the signatures of Setup and of the installed `Lucent.exe`, `lucent-worker.exe` and
+   `unins000.exe`. Setup logged "Writing uninstaller messages: ...\unins000.msg"; before this
+   amendment the test's file comparison would have failed on that file.
+5. The certificate was deleted from both stores, with its private key (`Remove-Item -DeleteKey` in
+   `Cert:\CurrentUser\My`). Afterwards no store holds it (`Get-ChildItem Cert:\ -Recurse`),
+   `certutil -user -store My <thumbprint>` fails with `0x80090011` (NTE_NOT_FOUND), the CNG key no
+   longer exists, its file in `%APPDATA%\Microsoft\Crypto\Keys` is gone, and every certificate store
+   of the user and the machine holds what it held before the rehearsal. (A first attempt stopped
+   in the rehearsal's own script before packaging. Its cleanup ran too: no store holds that
+   certificate, its CNG key does not exist, and the stores held as many certificates before the
+   second attempt as before the first.)
+
+`tools\package.ps1 -SkipBuild -StageOnly` then replaced the test-signed outputs with an unsigned
+folder (0 hits in 309 files).
+
+### Consequences
+
+- A package can no longer ship a path of the machine that built it: a dependency, compiler or tool
+  that brings one back stops the packaging with the file and the byte offset. The scan adds about
+  2 s.
+- The published manifest names the folders searched only by name, and the Inno Setup compiler as
+  `%USERPROFILE%\...`.
+- Release signing needs a code-signing certificate from a certification authority with its key in
+  the user's store (a hardware token's certificate appears there too), and a timestamp server; the
+  hooks refuse anything else unless `LUCENT_SIGN_TEST=1`. Not rehearsed: timestamping, a key on a
+  hardware token, SmartScreen reputation, and the time Windows takes to check the signature of a
+  40 MB Setup (Inno Setup suggests disk spanning for large signed setups; the single file is kept
+  until a measurement says otherwise).
+- A test-signed package is never distributed: its signatures chain to no trusted root and, without
+  a timestamp, stop verifying when the certificate expires.
+- The clean-machine gate (decision 11) should run `Test-InstalledPackage.ps1 -SignerThumbprint`
+  with the release certificate, which checks the uninstaller that packaging cannot see.
