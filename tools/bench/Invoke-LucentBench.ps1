@@ -13,8 +13,9 @@
     process it starts (commit, working set, CPU time; system CPU and available memory) every
     -SampleMs, and keeps the exact CPU time of processes that have ended.
 
-    Scenarios (-Scenario, default all, run in this order; each starts with one discarded warm-up run
-    unless noted):
+    Scenarios (-Scenario, default all, run in this order; each starts with one discarded warm-up run,
+    auto-analysis with a warm-up pass over the smoke tier; the 2026-10-09 baseline's auto-cancel,
+    auto-analysis and batch-cancel ran before these three had theirs, see docs\performance):
       startup        cold start: a fresh copy of the installed layout made with unbuffered I/O (none
                      of Lucent's files is in the system file cache) and a new data root; then warm
                      start: the same copy and data root again. -Repetitions pairs.
@@ -462,6 +463,10 @@ function Invoke-AutoCancelScenario {
     if ($photo.Count -eq 0) { $photo = @($smokeFixtures[0]) }
     $photo = $photo[0]
     $delays = @(1000, 4000)
+    # The discarded warm-up run every scenario starts with (ADR 0021, decision 3; COR-5, W12).
+    [void]$runs.Add((Invoke-Lucent -Scenario auto-cancel -Name "$($photo.Id)-after-$($delays[0])-ms" -Repetition 0 -Warmup -Screenshot `
+                -Arguments @('--data-root', (New-DataRoot auto-cancel 'warmup'), '--import', $linkPath["smoke/$($photo.Id)"],
+                    '--open-first', '--auto', '--cancel-auto-after', "$($delays[0])", '--measure')))
     for ($i = 1; $i -le $Repetitions; $i++) {
         foreach ($delay in $delays) {
             [void]$runs.Add((Invoke-Lucent -Scenario auto-cancel -Name "$($photo.Id)-after-$delay-ms" -Repetition $i -Screenshot `
@@ -482,6 +487,16 @@ function Invoke-AutoAnalysisScenario {
     $items = New-Object System.Collections.ArrayList
     $tier = 'all'
     if ($Quick) { $tier = 'smoke' }
+    # A discarded warm-up pass over the smoke tier (ADR 0021, decision 3; COR-5, W12): the first pass
+    # of the 2026-10-09 baseline, without it, was 1.5 % slower per image than the next two.
+    $warmOut = Join-Path $WorkDir 'auto-analysis\warmup'
+    if (Test-Path -LiteralPath $warmOut) { Remove-Item -LiteralPath $warmOut -Recurse -Force }
+    $warm = Invoke-BenchProcess -FilePath $autoExe -LogPrefix (Join-Path $logDir 'auto-analysis\warmup') -SampleMs $SampleMs `
+        -TimeoutSec 3600 -ArgumentList @('--group-by', 'none', '--tier', 'smoke', '--out', $warmOut, (Join-Path $repoRoot 'fixtures\cache'))
+    [void]$runs.Add([ordered]@{ name = 'lucent-auto'; repetition = 0; warmup = $true; exit_code = $warm.ExitCode
+            timed_out = $warm.TimedOut; seconds = $warm.Seconds; log = Get-RelativePath (Join-Path $logDir 'auto-analysis\warmup.stderr.txt') })
+    Write-Host ("  auto-analysis  warm-up (smoke tier)               exit {0,-3} {1,7:N1} s" -f $warm.ExitCode, $warm.Seconds)
+    Remove-Item -LiteralPath $warmOut -Recurse -Force -ErrorAction SilentlyContinue
     for ($i = 1; $i -le $Repetitions; $i++) {
         $out = Join-Path $WorkDir "auto-analysis\run-$i"
         if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
@@ -708,6 +723,10 @@ function Invoke-BatchCancelScenario {
         @{ name = 'smoke-tiff16-cancel-after-1'; corpus = $corpus.smoke; preset = 'tiff'; after = 1 }
     )
     if ($Quick) { $configs = @(@{ name = 'smoke-jpeg-cancel-after-1'; corpus = $corpus.smoke; preset = 'jpeg'; after = 1 }) }
+    # The discarded warm-up run every scenario starts with (ADR 0021, decision 3; COR-5, W12).
+    $warmup = $configs[0]
+    [void]$runs.Add((Invoke-BatchRun -Scenario batch-cancel -Name $warmup.name -Repetition 0 -Warmup -Corpus $warmup.corpus `
+                -Preset $warmup.preset -Automatic $false -Extra @('--cancel-batch-after', "$($warmup.after)")))
     for ($i = 1; $i -le $Repetitions; $i++) {
         foreach ($config in $configs) {
             [void]$runs.Add((Invoke-BatchRun -Scenario batch-cancel -Name $config.name -Repetition $i -Corpus $config.corpus `

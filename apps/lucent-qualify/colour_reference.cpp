@@ -43,22 +43,44 @@ struct Labs {
     double scale = 0.0;
 };
 
-Labs labs_against(const std::vector<image::Vec3d>& measured_xyz, const std::vector<std::array<double, 3>>& reference,
-                  std::size_t normalisation, const image::Vec3d& working_white) {
+// Errors: InvalidArgument when the measured normalisation patch cannot be mapped onto its reference
+// (a Bradford cone response or the adapted luminance that is not positive): a colour path that
+// wrong fails the gate with that reason (COR-7, W12).
+Expected<Labs> labs_against(const std::vector<image::Vec3d>& measured_xyz,
+                            const std::vector<std::array<double, 3>>& reference, std::size_t normalisation,
+                            const image::Vec3d& working_white) {
     Labs out;
     const image::Vec3d ref_n = xyz_from_lab(reference[normalisation], d50_white());
     const image::Vec3d& meas_n = measured_xyz[normalisation];
     // As shot: the rendering's white adapted to D50 (Bradford), then one exposure scale that gives
     // the normalisation patch its reference Y.
-    const image::Matrix3d to_d50 =
-        *image::chromatic_adaptation(working_white, d50_white(), image::ChromaticAdaptationMethod::Bradford);
-    out.scale = ref_n[1] / (to_d50 * meas_n)[1];
+    const Expected<image::Matrix3d> to_d50 =
+        image::chromatic_adaptation(working_white, d50_white(), image::ChromaticAdaptationMethod::Bradford);
+    if (!to_d50) {
+        return Unexpected(to_d50.error());
+    }
+    const double adapted_y = (*to_d50 * meas_n)[1];
+    if (!(adapted_y > 0.0)) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("the measured normalisation patch has no positive luminance once adapted to D50 "
+                                "(Y = {:.6g})",
+                                adapted_y),
+                    std::string(kWhere));
+    }
+    out.scale = ref_n[1] / adapted_y;
     // Chart balanced: the measured normalisation patch mapped exactly onto its reference XYZ.
-    const image::Matrix3d balance =
-        *image::chromatic_adaptation(meas_n, ref_n, image::ChromaticAdaptationMethod::Bradford);
+    const Expected<image::Matrix3d> balance =
+        image::chromatic_adaptation(meas_n, ref_n, image::ChromaticAdaptationMethod::Bradford);
+    if (!balance) {
+        return fail(ErrorCode::InvalidArgument,
+                    std::format("the measured normalisation patch (XYZ {:.6g}, {:.6g}, {:.6g}) cannot be mapped onto "
+                                "its reference: {}",
+                                meas_n[0], meas_n[1], meas_n[2], balance.error().message),
+                    std::string(kWhere));
+    }
     for (const image::Vec3d& xyz : measured_xyz) {
-        out.as_shot.push_back(lab_from_xyz(out.scale * (to_d50 * xyz), d50_white()));
-        out.balanced.push_back(lab_from_xyz(balance * xyz, d50_white()));
+        out.as_shot.push_back(lab_from_xyz(out.scale * (*to_d50 * xyz), d50_white()));
+        out.balanced.push_back(lab_from_xyz(*balance * xyz, d50_white()));
     }
     return out;
 }
@@ -72,6 +94,9 @@ double ChartSample::clipped_fraction() const noexcept {
 std::string ChartEvaluation::summary() const {
     if (!measurable) {
         return "the chart is not measurable: " + problem;
+    }
+    if (!problem.empty()) {
+        return "the chart fails: " + problem;
     }
     return std::format(
         "{} patches against the published values, chart-balanced CIEDE2000 mean {:.2f} (limit {:.1f}), 90th "
@@ -176,7 +201,15 @@ ChartEvaluation evaluate_chart(const ChartDefinitions& charts, const ChartFixtur
         return e;
     }
     const std::size_t n = static_cast<std::size_t>(normalisation - measured.begin());
-    const Labs labs = labs_against(xyz, ref_lab, n, *white);
+    const Expected<Labs> evaluated = labs_against(xyz, ref_lab, n, *white);
+    if (!evaluated) {
+        // Measured, and wrong beyond any comparison: a failure of the gate, with its reason.
+        e.measurable = true;
+        e.passes = false;
+        e.problem = evaluated.error().message;
+        return e;
+    }
+    const Labs& labs = *evaluated;
     e.normalisation_scale = labs.scale;
     std::vector<double> as_shot_de;
     std::vector<double> balanced_de;
@@ -209,12 +242,15 @@ ChartEvaluation evaluate_chart(const ChartDefinitions& charts, const ChartFixtur
         if (!complete) {
             continue;
         }
-        const Labs alt_labs = labs_against(xyz, alt_lab, n, *white);
+        const Expected<Labs> alt_labs = labs_against(xyz, alt_lab, n, *white);
+        if (!alt_labs) {
+            continue;  // sensitivity only: not gated
+        }
         std::vector<double> a;
         std::vector<double> b;
         for (std::size_t i = 0; i < measured.size(); ++i) {
-            a.push_back(delta_e(alt_labs.as_shot[i], alt_lab[i]));
-            b.push_back(delta_e(alt_labs.balanced[i], alt_lab[i]));
+            a.push_back(delta_e(alt_labs->as_shot[i], alt_lab[i]));
+            b.push_back(delta_e(alt_labs->balanced[i], alt_lab[i]));
         }
         e.alternates[alt_id] = {statistics_of(a), statistics_of(b)};
     }

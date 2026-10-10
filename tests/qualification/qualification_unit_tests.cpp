@@ -1080,6 +1080,30 @@ TEST(ColourReference, TheGateFailsGrossInterpretationErrors) {
     EXPECT_FALSE(washed.passes) << washed.summary();
 }
 
+TEST(ColourReference, ANormalisationPatchWithoutAPositiveConeResponseFailsTheGate) {
+    // COR-7 (W12 review): a colour path wrong enough to give the grey normalisation patch a
+    // non-positive Bradford cone response (here XYZ 1, 0.1, 0: rho > 0, gamma < 0) cannot be
+    // chart-balanced; the gate fails with that reason instead of using an adaptation that failed.
+    const ChartDefinitions& charts = committed_charts();
+    const ChartFixture& chart = charts.fixtures.front();
+    std::vector<ChartSample> samples = exact_samples(charts, chart, 0.5);
+    const image::Matrix3d to_rec2020 = *image::inverse(rec2020_to_xyz());
+    bool replaced = false;
+    for (ChartSample& s : samples) {
+        if (s.patch == chart.normalisation_patch) {
+            s.working_mean = to_rec2020 * image::Vec3d{1.0, 0.1, 0.0};
+            replaced = true;
+        }
+    }
+    ASSERT_TRUE(replaced);
+    const ChartEvaluation e = evaluate_chart(charts, chart, samples, rec2020_to_xyz(), image::kD65White);
+    EXPECT_TRUE(e.measurable);
+    EXPECT_FALSE(e.passes);
+    EXPECT_NE(e.problem.find("cannot be mapped onto its reference"), std::string::npos) << e.problem;
+    EXPECT_NE(e.summary().find("the chart fails: "), std::string::npos) << e.summary();
+    EXPECT_TRUE(e.patches.empty());
+}
+
 TEST(ColourReference, ClippedPatchesAreExcludedAndTheChartMustStayMeasurable) {
     auto charts = parse_charts(minimal_charts());
     ASSERT_TRUE(charts);

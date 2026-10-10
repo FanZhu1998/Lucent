@@ -10,10 +10,15 @@
     rates, 5 % for memory peaks); otherwise it is tracked, with the reason.
 
     Without -Create: reads -DataDir (a new run of the harness on the same machine), compares every
-    candidate with its budget and prints a Markdown table; exit code 1 when a budget is exceeded
-    (a time or memory above its maximum, a rate below its minimum), 0 otherwise. A tracked
-    measurement is shown beside its baseline and never fails the check. Compare only runs from the
-    same machine in a like state (machine.json).
+    candidate with its budget and prints a Markdown table; exit code 1 when a budget fails, 2 when
+    -DataDir holds no measurement at all, 0 otherwise. A budget fails when its measurement is above
+    its maximum (times, memory) or below its minimum (rates), and also when it cannot be trusted
+    (COR-2, W12): missing (a scenario that did not run or crashed, a renamed metric, a wrong
+    -DataDir), measured by more failed runs than the baseline's, over fewer values than the
+    baseline's (repetitions, or images of an over-images statistic), or over images of which one
+    failed that the baseline exported (a regression that makes the slowest photos fail would
+    otherwise lower the statistic). A tracked measurement is shown beside its baseline and never
+    fails the check. Compare only runs from the same machine in a like state (machine.json).
 
 .PARAMETER Create
     Write budgets from -BaselineDir.
@@ -86,13 +91,13 @@ foreach ($photo in @('r5', 'z6')) {
 }
 Add-Candidate @{ id = 'auto_cancel.analysis'; file = 'auto-cancel'; group = "$($smoke.r5)-after-1000-ms"; metric = 'metrics.auto_cancel.ended_after_request_ms'; kind = 'time'; unit = 'ms' }
 Add-Candidate @{ id = 'auto_cancel.final_check'; file = 'auto-cancel'; group = "$($smoke.r5)-after-4000-ms"; metric = 'metrics.auto_cancel.ended_after_request_ms'; kind = 'time'; unit = 'ms' }
-Add-Candidate @{ id = 'analysis.median_over_images'; file = 'auto-analysis'; stat = 'extra.over_images.analysis_seconds'; value = 'median'; cv = 'extra.over_images.repetition_cv.median'; kind = 'time'; unit = 's' }
-Add-Candidate @{ id = 'analysis.p95_over_images'; file = 'auto-analysis'; stat = 'extra.over_images.analysis_seconds'; value = 'p95'; cv = 'extra.over_images.repetition_cv.median'; kind = 'time'; unit = 's' }
+Add-Candidate @{ id = 'analysis.median_over_images'; file = 'auto-analysis'; stat = 'extra.over_images.analysis_seconds'; value = 'median'; cv = 'extra.over_images.repetition_cv.median'; failed = 'extra.failed_images'; kind = 'time'; unit = 's' }
+Add-Candidate @{ id = 'analysis.p95_over_images'; file = 'auto-analysis'; stat = 'extra.over_images.analysis_seconds'; value = 'p95'; cv = 'extra.over_images.repetition_cv.median'; failed = 'extra.failed_images'; kind = 'time'; unit = 's' }
 Add-Candidate @{ id = 'analysis.whole_run'; file = 'auto-analysis'; group = 'lucent-auto'; metric = 'seconds'; kind = 'time'; unit = 's' }
 Add-Candidate @{ id = 'analysis.peak_commit'; file = 'auto-analysis'; group = 'lucent-auto'; metric = 'resources.root.peak_commit_mib'; kind = 'memory'; unit = 'MiB' }
 foreach ($format in @('jpeg', 'tiff16')) {
-    Add-Candidate @{ id = "export.$format.median_over_images"; file = 'export'; stat = "extra.over_images.$format.seconds"; value = 'median'; cv = "extra.over_images.$format.repetition_cv.median"; kind = 'time'; unit = 's' }
-    Add-Candidate @{ id = "export.$format.p95_over_images"; file = 'export'; stat = "extra.over_images.$format.seconds"; value = 'p95'; cv = "extra.over_images.$format.repetition_cv.median"; kind = 'time'; unit = 's' }
+    Add-Candidate @{ id = "export.$format.median_over_images"; file = 'export'; stat = "extra.over_images.$format.seconds"; value = 'median'; cv = "extra.over_images.$format.repetition_cv.median"; failed = "extra.over_images.$format.failed"; kind = 'time'; unit = 's' }
+    Add-Candidate @{ id = "export.$format.p95_over_images"; file = 'export'; stat = "extra.over_images.$format.seconds"; value = 'p95'; cv = "extra.over_images.$format.repetition_cv.median"; failed = "extra.over_images.$format.failed"; kind = 'time'; unit = 's' }
     Add-Candidate @{ id = "export.$format.r5"; file = 'export'; group = "$format/$($smoke.r5)"; metric = 'seconds'; kind = 'time'; unit = 's' }
     Add-Candidate @{ id = "export.$format.r5.peak_commit"; file = 'export'; group = "$format/$($smoke.r5)"; metric = 'peak_commit_mib'; kind = 'memory'; unit = 'MiB' }
 }
@@ -112,7 +117,8 @@ foreach ($cancel in @('all-jpeg-cancel-after-2', 'smoke-tiff16-cancel-after-1'))
 
 $cache = @{}
 function Get-Measurement {
-    # The candidate's statistics in a data folder: median, min, max, cv, n, and the compared value.
+    # The candidate's statistics in a data folder: median, min, max, cv, n, the compared value, and
+    # how much of it failed: failed_runs (a group's) or failed (an over-images statistic's images).
     param([hashtable]$Candidate, [string]$Folder)
     $key = "$Folder|$($Candidate.file)"
     if (-not $cache.ContainsKey($key)) {
@@ -128,20 +134,26 @@ function Get-Measurement {
         $stats = $group.Value.PSObject.Properties[$Candidate.metric]
         if ($null -eq $stats -or $null -eq $stats.Value.median) { return $null }
         $s = $stats.Value
-        return [ordered]@{ value = $s.median; median = $s.median; min = $s.min; max = $s.max; cv = $s.cv; n = [int]$s.n }
+        $failedRuns = 0
+        if ($null -ne $group.Value.PSObject.Properties['failed_runs']) { $failedRuns = [int]$group.Value.failed_runs }
+        return [ordered]@{ value = $s.median; median = $s.median; min = $s.min; max = $s.max; cv = $s.cv; n = [int]$s.n
+            failed_runs = $failedRuns; failed = @() }
     }
     $s = Get-BenchValue $document $Candidate.stat
     if ($null -eq $s) { return $null }
     $value = Get-BenchValue $s $Candidate.value
     if ($null -eq $value) { return $null }
+    $failedImages = @()
+    if ($Candidate.ContainsKey('failed')) { $failedImages = @(Get-BenchValue $document $Candidate.failed | Where-Object { $_ }) }
     return [ordered]@{ value = $value; median = $value; min = $value; max = $value
-        cv = Get-BenchValue $document $Candidate.cv; n = [int](Get-BenchValue $s 'n') }
+        cv = Get-BenchValue $document $Candidate.cv; n = [int](Get-BenchValue $s 'n'); failed_runs = 0; failed = $failedImages }
 }
 
 if ($Create) {
     $folder = Resolve-RepoPath $BaselineDir
     $entries = foreach ($c in $candidates) {
         $m = Get-Measurement -Candidate $c -Folder $folder
+        if ($null -ne $m) { $m.Remove('failed_runs'); $m.Remove('failed') }
         $tracked = $null
         if ($c.ContainsKey('tracked')) { $tracked = $c.tracked }
         if ($null -eq $m) {
@@ -174,18 +186,44 @@ if ($Create) {
 if (-not $DataDir) { throw 'Give -DataDir (a new run of tools\bench\Invoke-LucentBench.ps1), or -Create.' }
 $definition = Read-BenchJson -Path (Resolve-RepoPath $Budgets)
 $folder = Resolve-RepoPath $DataDir
+if (-not (Test-Path -LiteralPath $folder -PathType Container) -or
+    @(Get-ChildItem -LiteralPath $folder -Filter '*.json' -File -ErrorAction SilentlyContinue).Count -eq 0) {
+    Write-Output "No measurement was found in $folder (a run of tools\bench\Invoke-LucentBench.ps1 writes <scenario>.json there)."
+    exit 2
+}
+# The baseline the budgets were derived from: what had already failed there is not a regression.
+$baselineFolder = Resolve-RepoPath ([string]$definition.baseline).Replace('/', '\')
 $failed = 0
 Write-Output '| Measurement | Unit | Baseline | Budget | Measured | Result |'
 Write-Output '|---|---|---|---|---|---|'
 foreach ($entry in @($definition.budgets)) {
     $candidate = @($candidates | Where-Object { $_.id -eq $entry.id } | Select-Object -First 1)
     $value = $null
+    $m = $null
     if ($candidate.Count -eq 1) {
         $m = Get-Measurement -Candidate $candidate[0] -Folder $folder
         if ($m) { $value = $m.value }
     }
     $result = Test-BenchBudgetValue -Budget $entry.budget -Value $value
-    if ($result -eq 'over' -or $result -eq 'under') { $failed++ }
+    if ($entry.budget.budgeted) {
+        # A budget is only as good as its measurement (COR-2).
+        $doubts = New-Object System.Collections.ArrayList
+        if ($candidate.Count -ne 1) { [void]$doubts.Add('no such measurement in this script') }
+        elseif ($null -ne $m) {
+            $base = Get-Measurement -Candidate $candidate[0] -Folder $baselineFolder
+            $baseFailedRuns = 0
+            $baseFailed = @()
+            if ($null -ne $base) { $baseFailedRuns = $base.failed_runs; $baseFailed = @($base.failed) }
+            if ($m.failed_runs -gt $baseFailedRuns) { [void]$doubts.Add("$($m.failed_runs) failed run(s)") }
+            $newlyFailed = @($m.failed | Where-Object { $baseFailed -notcontains $_ })
+            if ($newlyFailed.Count -gt 0) { [void]$doubts.Add("failed: $($newlyFailed -join ', ')") }
+            if ($entry.baseline -and $m.n -lt [int]$entry.baseline.n) { [void]$doubts.Add("$($m.n) of $($entry.baseline.n) values") }
+        }
+        if ($doubts.Count -gt 0) {
+            if ($result -eq 'ok') { $result = ($doubts -join '; ') } else { $result = "$result; " + ($doubts -join '; ') }
+        }
+        if ($result -ne 'ok') { $failed++ }
+    }
     $limit = 'tracked'
     if ($entry.budget.budgeted) {
         if ($null -ne $entry.budget.max) { $limit = "<= $($entry.budget.max)" } else { $limit = ">= $($entry.budget.min)" }
@@ -197,6 +235,6 @@ foreach ($entry in @($definition.budgets)) {
     Write-Output ("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $entry.id, $entry.unit, $baseline, $limit, $measured, $result)
 }
 Write-Output ''
-Write-Output ("{0} budgets exceeded." -f $failed)
+Write-Output ("{0} budgets failed (exceeded, missing or not trustworthy)." -f $failed)
 if ($failed -gt 0) { exit 1 }
 exit 0

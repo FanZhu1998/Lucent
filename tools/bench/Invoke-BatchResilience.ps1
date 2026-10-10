@@ -470,7 +470,14 @@ $memory = [ordered]@{
     session2 = Get-MemoryAnalysis -Samples $session2.samples -AggregateLimitMiB $limit -FromSeconds (Get-FirstProgressSeconds 'resume')
 }
 foreach ($key in @('session1', 'session2')) {
+    # Not judged is not bounded (COR-2): too few samples prove nothing either way.
     if ($memory[$key].bounded -eq $false) { [void]$problems.Add("memory grew in $key") }
+    elseif ($null -eq $memory[$key].bounded) {
+        [void]$problems.Add("memory could not be judged in ${key}: $($memory[$key].samples) samples, at least 20 needed")
+    }
+}
+if (-not ($limit -gt 0)) {
+    [void]$problems.Add('the batch scheduler reported no aggregate memory limit (batch_scheduler.aggregate_limit_mib): the workers were not checked against it')
 }
 
 # Throughput: photos done per minute while each session ran its batch (progress lines).

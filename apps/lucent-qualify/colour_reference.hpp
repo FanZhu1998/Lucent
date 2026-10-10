@@ -103,7 +103,9 @@ struct ChartPatchResult {
 
 struct ChartEvaluation {
     bool measurable = false;
-    std::string problem;                       // why it is not measurable
+    // Why it is not measurable or, measurable and failing, why no comparison was possible (the
+    // measured normalisation patch cannot be mapped onto its reference: a grossly wrong colour path).
+    std::string problem;
     std::vector<ChartPatchResult> patches;     // measured patches, in sample order
     std::map<std::string, double> excluded;    // patch -> clipped fraction
     double normalisation_scale = 0.0;          // the as-shot exposure normalisation (after the adaptation)

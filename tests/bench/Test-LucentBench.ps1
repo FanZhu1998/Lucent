@@ -2,7 +2,8 @@
 .SYNOPSIS
     Tests of the performance harness's shared functions (tools\bench\LucentBench.psm1): command-line
     quoting, statistics, the parsers of Lucent.exe's measure lines, the batch report check and the
-    process runner with its sampler.
+    process runner with its sampler; and the regression-budget gate (tools\bench\Test-BenchBudgets.ps1)
+    on the committed baseline and on altered copies of it.
 
 .DESCRIPTION
     Runs without a build and without camera fixtures (registered with CTest as
@@ -384,6 +385,46 @@ try {
     Assert-True ($cpu -ge 0 -and $cpu -le 100) "system CPU use is a percentage ($cpu)"
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- The regression-budget gate fails closed (tools\bench\Test-BenchBudgets.ps1; COR-2, W12) -------
+
+$gate = Join-Path $repoRoot 'tools\bench\Test-BenchBudgets.ps1'
+$baselineDir = Join-Path $repoRoot 'docs\performance\data\2026-10-09'
+$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$gateWork = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-bench-gate-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $gateWork | Out-Null
+function Invoke-Gate {
+    param([string]$DataDir)
+    $output = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gate -DataDir $DataDir)
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+}
+try {
+    $empty = Join-Path $gateWork 'empty'
+    New-Item -ItemType Directory -Path $empty | Out-Null
+    Assert-Equal 2 (Invoke-Gate $empty).ExitCode 'a folder without measurements is not a pass'
+    Assert-Equal 2 (Invoke-Gate (Join-Path $gateWork 'absent')).ExitCode 'a folder that does not exist is not a pass'
+    $baseline = Invoke-Gate $baselineDir
+    Assert-Equal 0 $baseline.ExitCode ('the baseline passes its own budgets: ' + ($baseline.Output | Select-Object -Last 1))
+
+    # A scenario that did not run, an image that failed although the baseline exported it, a failed run.
+    $altered = Join-Path $gateWork 'altered'
+    Copy-Item -LiteralPath $baselineDir -Destination $altered -Recurse
+    Remove-Item -LiteralPath (Join-Path $altered 'auto-analysis.json')
+    $exportPath = Join-Path $altered 'export.json'
+    $export = Get-Content -LiteralPath $exportPath -Raw | ConvertFrom-Json
+    $export.extra.over_images.jpeg.failed = @(@($export.extra.over_images.jpeg.failed) + 'sony-ilce-7m4-arw-compressed')
+    $export.summary.'jpeg/canon-eos-r5-cr3-raw'.failed_runs = 1
+    [System.IO.File]::WriteAllText($exportPath, (ConvertTo-Json -InputObject $export -Depth 64), (New-Object System.Text.UTF8Encoding($false)))
+    $result = Invoke-Gate $altered
+    Assert-Equal 1 $result.ExitCode 'missing, failed and newly failing measurements fail the gate'
+    Assert-Equal 1 @($result.Output | Where-Object { $_ -match '^\| analysis\.median_over_images \|.*\| missing \|$' }).Count 'a missing measurement fails'
+    Assert-Equal 1 @($result.Output | Where-Object { $_ -match '^\| export\.jpeg\.p95_over_images \|.*failed: sony-ilce-7m4-arw-compressed' }).Count 'an image that newly failed fails its statistic'
+    Assert-Equal 1 @($result.Output | Where-Object { $_ -match '^\| export\.jpeg\.r5 \|.*1 failed run' }).Count 'a failed run fails its group'
+    Assert-Equal 0 @($result.Output | Where-Object { $_ -match '^\| export\.tiff16\.median_over_images \|' -and $_ -notmatch '\| ok \|$' }).Count 'failures the baseline had are not regressions'
+}
+finally {
+    Remove-Item -LiteralPath $gateWork -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ("{0} checks, {1} failed" -f $script:checks, $script:failures)
