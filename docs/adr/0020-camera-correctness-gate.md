@@ -1,6 +1,6 @@
 # ADR 0020: Camera correctness gate: an independent colour reference from colour charts, and rotated fixtures for every image-area source
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09 by the closing review of W12 part 1: Consequences, COR-7)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (Release hardening), camera correctness
 - **Amends:** ADR 0016 decision 3 (check suite 3: the check `colour_reference`; `black_white` on the
@@ -270,6 +270,16 @@ Facts established for this decision (2026-10-09; LibRaw 0.22.2 in Lucent, rawpy 
   and `ColourReferenceFixture` (GTest) additionally requires Lucent's statistics to stay within 0.25
   (mean) and 0.5 (p90, max) of the recorded independent rendering, so a drift is reviewed. The
   Datacolor document survives only in the Internet Archive; its hash is recorded.
+- Closing review of W12 part 1 (COR-7): the C++ evaluation used the Bradford adaptation of the
+  measured normalisation patch onto its reference without checking it, while
+  `image::chromatic_adaptation()` refuses a colour with a non-positive cone response: a colour path
+  wrong enough to give the grey patch one (the kind of defect the gate exists to fail, which the
+  Python sensitivity study could not show, colour-science having no such failure) reached undefined
+  behaviour in a release build. It is now a failing evaluation with its reason ("the chart fails:
+  the measured normalisation patch ... cannot be mapped onto its reference"), as is an adapted
+  normalisation patch without positive luminance; an alternate reference that cannot be compared is
+  left out of the sensitivity statistics. Test:
+  `ColourReference.ANormalisationPatchWithoutAPositiveConeResponseFailsTheGate`.
 
 ## Alternatives considered
 

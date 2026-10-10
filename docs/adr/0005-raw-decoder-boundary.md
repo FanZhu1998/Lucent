@@ -296,6 +296,9 @@ the strips; the check of decision 14 compared a table LibRaw does not use.
     - for the fixed-rate Panasonic encodings (RawFormat, tag 0x002D, absent or 1 to 7), at least
       16 bytes per 14 pixels of SensorWidth (0x0002) x SensorHeight (0x0003): the classic encoding
       packs exactly 14 pixels into 16 bytes, RawFormat 5 and 7 pack 9 or 10, RawFormat 6 11 or 14;
+      and for those LibRaw reads in pages (absent or 1 to 5, `panasonic_load_raw()`), at least as
+      far as its page order consumes that bitstream, also when StripByteCounts is smaller (closing
+      review, below);
     - for any other encoding (RawFormat 8, a variable-rate compression) nothing beyond its start.
     Without a LONG RawDataOffset the strips are checked as before (what LibRaw then reads). Every
     other container and IFD keeps decision 14's rule. The overrun names its basis ("raw data ends
@@ -322,7 +325,31 @@ it is still an overrun), `Rw2RawDataMustFitTheFile` (cut inside the raw data or 
 - Older Panasonic and Leica files are no longer Unsupported for a structure Lucent misread; their
   qualification is unchanged otherwise (the support table is regenerated from a clean build by the
   orchestrator).
-- Residual (as for the RW2 bullet of the Consequences above): the bound is a minimum. A classic
-  encoding reads its last 16 KiB block in two parts (LibRaw's load_flags 0x2008), so a copy cut
-  inside the last block's unused tail still decodes, possibly with stale bytes in the last rows;
+- Residual (as for the RW2 bullet of the Consequences above): the bound is a minimum.
   RawFormat 8 files cut after the start of their data rely on LibRaw's own checks.
+
+### Closing review (W12 part 1, 2026-10-09)
+
+The review (COR-6) found that the minimum ignored the order in which LibRaw 0.22.2 reads the
+classic encoding. `panasonic_load_raw()` reads 16 KiB pages with load_flags 0x2008 (set by a LONG
+0x0118 in `src/metadata/tiff.cpp`): each page as `fread(buf + 0x2008, 0x1FF8)` then
+`fread(buf, 0x2008)`, consuming the bitstream from `buf[0]` (`pana_data()`,
+`src/decoders/decoders_dcraw.cpp`; RawFormat 5 consumes the same buffer in order). A page's first
+bitstream bytes are therefore its file bytes 0x1FF8 onwards, and a last page holding K bytes of
+bitstream needs the file to reach 0x1FF8 + K bytes into it when K <= 0x2008, the whole page
+otherwise. A copy cut in between decoded without a structural error (at most one short read at the
+end), its last K bytes of bitstream taken from the previous page's stale buffer: for the DMC-FZ70
+(1166 pages and K = 6,144) 8,184 truncation lengths, about 1.1 sensor rows of pixels.
+
+18. **The paged minimum** (`tiff_extent.cpp`, `panasonic_paged_end()`): for RawFormat absent or 1
+    to 5, the raw data must reach the end LibRaw's page order consumes for 16 bytes per 14 pixels
+    of the sensor (whole pages, then 0x1FF8 + K or a whole last page), whatever StripByteCounts
+    says; the overrun names the basis ("... read by LibRaw in 16 KiB pages whose last 8200 bytes
+    come first"). RawFormat 6 and 7 are read row by row (`panasonicC6_load_raw()`,
+    `panasonicC7_load_raw()`, which also require their exact data size) and keep the plain minimum;
+    RawFormat 5's lower bound (14 pixels per 16 bytes, where it packs 9 or 10) stays a lower bound,
+    because the paged end grows with the bitstream. The three samples above store whole pages and
+    pass unchanged. Regression test `ContainerExtent.Rw2RawDataFollowsLibRawsPageOrder`: the
+    FZ70's raw data cut to 16 bytes per 14 pixels, 4096 bytes more, or one byte short of
+    19,118,072 bytes is an overrun at that end, the exact end passes, a last page of 9,856 bytes
+    needs the whole page, and RawFormat 7 keeps the plain minimum.

@@ -1,6 +1,6 @@
 # ADR 0021: Performance baseline: a reproducible harness over the shipped programs, the first baseline, and regression budgets only where the variance allows
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), the performance report
 
@@ -85,7 +85,8 @@ client, chat clients, antivirus), with about 2 GB of physical memory available b
      `tools\package.ps1 -SkipBuild -StageOnly` stages (Qt deployed by windeployqt, as Setup
      installs it); the other runs use the build's `bin` folder.
    - *Repetitions.* Each scenario starts with one discarded warm-up run, then records three
-     repetitions (`-Repetitions`). Figures are the median with the minimum and maximum; p95 is the
+     repetitions (`-Repetitions`); in the 2026-10-09 baseline auto-cancel, auto-analysis and
+     batch-cancel had no warm-up yet (amendment, decision 9). Figures are the median with the minimum and maximum; p95 is the
      nearest rank, which for three repetitions is the maximum, so a p95 over repetitions is only
      quoted where there are many values (images, drag frames). Per-image figures (analysis,
      export) take each image's median over its repetitions first, then the median and p95 over the
@@ -151,7 +152,8 @@ client, chat clients, antivirus), with about 2 GB of physical memory available b
    batch's workers together (9 %), the four figures of the automatic batch of all fixtures (two runs
    only) and the two batch cancellations (the interface's 200 ms resolution).
    `Test-BenchBudgets.ps1 -DataDir <new run>` compares a new run of the harness on the same machine
-   and exits 1 when a budget is exceeded. An exceeded budget is first measured again
+   and exits 1 when a budget fails: exceeded, or (amendment, decision 8) missing or not trustworthy.
+   An exceeded budget is first measured again
    with the machine idle; if it holds, it is a regression to fix, or a deliberate cost recorded with
    a new baseline and a note in this ADR (new budgets come only from a new baseline,
    `Test-BenchBudgets.ps1 -Create`). No figure here is a promise to users, and the blueprint's
@@ -229,3 +231,31 @@ client, chat clients, antivirus), with about 2 GB of physical memory available b
 - **Budgets from the blueprint's targets** ("sub-second proxy feedback"). The blueprint calls them
   targets to measure, not demonstrated figures; a budget must come from a measured baseline and its
   variance, and a target the data does not support is not set.
+
+## Amendment: closing review of W12 part 1 (2026-10-09)
+
+The review found that the budget check passed when measurements were missing (an empty `-DataDir`
+printed every row "missing" and "0 budgets exceeded.", exit 0) or rested on failed runs, and that
+the resilience run passed its memory check with too few samples or without the aggregate limit
+(COR-2); and that auto-cancel, auto-analysis and batch-cancel had no discarded warm-up run although
+decision 3 says every scenario has one (COR-5).
+
+8. **The checks fail closed.** `Test-BenchBudgets.ps1` exits 2 when `-DataDir` holds no
+   measurement, and a budgeted figure fails when it is missing, when its group has more failed runs
+   than the baseline's, when it rests on fewer values than the baseline's (repetitions, or the
+   images of an over-images statistic), or when an image failed that the baseline exported (the
+   baseline's own failures, the Nikon Z 8 HE files and the dual-pixel R5 crop, are not
+   regressions); the table names the reason. `Invoke-BatchResilience.ps1` reports a session whose
+   memory could not be judged (fewer than 20 samples) and a missing aggregate limit as problems.
+   `lucent_bench_harness_tests` checks the gate on the committed baseline (passes) and on altered
+   copies (an empty folder, a missing scenario, a failed run, a newly failing image), 165 checks.
+9. **Every scenario has its warm-up.** auto-cancel and batch-cancel start with one discarded run of
+   their first configuration, auto-analysis with a discarded pass over the smoke tier (one quick run
+   of the three scenarios recorded one warm-up each and kept it out of the statistics). The
+   2026-10-09 baseline is kept as measured: five budgets (`analysis.median_over_images`,
+   `analysis.p95_over_images`, `analysis.whole_run`, `analysis.peak_commit`,
+   `auto_cancel.final_check`) include a cold first repetition (the analysis' first pass was 1.5 %
+   slower per image than the next two), which makes them at most that much looser. They are derived
+   again, with the over-images statistics gated on the repetition variability of the statistic
+   itself rather than the median per-image CV, by the next baseline (the idle-machine baseline of
+   the W12 licence and release phase).

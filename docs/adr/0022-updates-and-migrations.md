@@ -1,6 +1,6 @@
 # ADR 0022: Updates and migrations: an offline-first "Check for updates" over a signed release manifest, catalog fixtures of every schema version, and the update rehearsal
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), updates and migrations
 - **Amends:** ADR 0008 (a pre-update backup kind), ADR 0009 (the update handoff to Setup, the
@@ -62,7 +62,9 @@ What existed before this ADR (2026-10-09):
    time, the keys through CNG (a point off the curve is refused). The values are compiled into
    `Lucent.exe` (a generated `update_channel_config.cpp`), which Authenticode protects: nothing at run
    time, no setting, file or command-line option, changes the channel or its keys. More than one key
-   is pinned only while a key is being replaced.
+   is pinned only while a key is being replaced. Every configure prints the pinned keys and
+   publishers, and packaging records and checks the channel a package's `Lucent.exe` reports against
+   the committed list of release channels (amendment, decision 15).
 
 3. **The release manifest and its signature** (`update_manifest.hpp`). The channel serves
    `release-manifest.json`, "lucent.release-manifest" version 1: product `Lucent`, channel, version
@@ -99,32 +101,38 @@ What existed before this ADR (2026-10-09):
    Content-Length is Corrupt. Tests use `UrlPolicy::LoopbackOnly` (http or https to 127.0.0.1 or ::1
    only, no proxy), so a test can never reach another machine.
 
-6. **Download and verification** (`UpdateService::download()`). The installer is downloaded into the
-   per-user cache, `<cache>\updates`, under a temporary name opened exclusively, streaming at most the
+6. **Download and verification** (`UpdateService::download()`; corrected by the amendment,
+   decision 14). The installer is downloaded into the user's own cache,
+   `%LOCALAPPDATA%\Lucent\cache\updates` (also with `--data-root`), a folder that is prepared first:
+   refused when it is a junction or symbolic link or belongs to another user, given a protected
+   DACL (this user, SYSTEM and Administrators only) and resolved to its final path, which every
+   later step uses. It is downloaded under a temporary name opened exclusively, streaming at most the
    manifest's size; the complete file is renamed `Lucent-Setup-<version>-x64.exe` and opened for
    reading with writers, renamers and deleters excluded (`FILE_SHARE_READ` only; the handle itself can
-   only read, so Setup and the loader still open the file). Through that handle Lucent checks the
-   size and SHA-256 the signed manifest names and, when the build names publisher thumbprints, an
-   Authenticode signature that verifies and chains to a trusted root (`core::check_authenticode()`,
-   WinVerifyTrust through the handle, no revocation check, no network) by one of those certificates
-   (SHA-1 or SHA-256 thumbprint). A file that fails is deleted. The returned `DownloadedInstaller`
-   keeps the handle until Setup is started: nobody can change the verified file meanwhile. Earlier
-   downloads are deleted first, except a complete one of the same release, which is checked the same
-   way and reused.
+   only read, so Setup and the loader still open the file). Through that handle Lucent checks that it
+   is this user's own file at that final path with no other name, the size and SHA-256 the signed
+   manifest names and, when the build names publisher thumbprints, an Authenticode signature that
+   verifies and chains to a trusted root (`core::check_authenticode()`, WinVerifyTrust through the
+   handle, no revocation check, no network) by one of those certificates (SHA-1 or SHA-256
+   thumbprint). A file that fails is deleted. The returned `DownloadedInstaller` keeps the handle:
+   while it is held, nobody can change, replace, rename or delete the verified file or rename a
+   folder above it. Earlier downloads are deleted first, except a complete one of the same release,
+   which is checked the same way and reused.
 
 7. **Installation, between jobs** (`UpdateService::install()`, the Backend's blocker and backup):
    - it waits while an export batch runs (`BatchService::list_unfinished()`, state Running) or Auto
      runs (`AutoService::runs_in_progress()`): AlreadyExists `app.update.busy`, which the shell words as
      "Lucent installs updates between jobs". A paused batch does not block: it continues after the
      update (decision 13);
-   - the held file's size and SHA-256 are checked once more;
+   - the held file is checked to be still at its final path, and its size and SHA-256 once more;
    - **migration recovery information**: a verified pre-update backup of the writable catalog
      (`Catalog::create_backup(BackupKind::PreUpdate)`, `<catalog>.<time>.v<schema>.pre-update.bak`,
      five kept, pruned on their own); an error stops the installation (`app.update.prepare`). The new
      version's first start then migrates the catalog after its own pre-migration backup (ADR 0008);
-   - Setup is started with `CreateProcessW` (no inherited handles), graphical (not silent: the
-     photographer sees the familiar wizard, which upgrades the installation in place and offers
-     "Launch Lucent"), with `/LOG=<cache>\logs\setup-<version>.log`;
+   - Setup is started from that final path with `CreateProcessW` (no inherited handles), graphical
+     (not silent: the photographer sees the familiar wizard, which upgrades the installation in place
+     and offers "Launch Lucent"), with `/LOG=<cache>\logs\setup-<version>.log`; the service keeps the
+     installer's handle until it is destroyed, when Lucent exits;
    - the shell then exits cleanly (`AppController::quitRequested`, `QCoreApplication::exit(0)`): the
      services stop, running batch jobs are given back, the catalog checkpoints and closes. Setup's
      Restart Manager closes a Lucent that is still running (`CloseApplications=yes`, ADR 0009).
@@ -140,9 +148,12 @@ What existed before this ADR (2026-10-09):
    creates a persisted, non-exportable ECDSA P-256 key in the current user's key storage provider
    (never in the repository) and prints the public key a build pins; `New-LucentReleaseManifest`
    writes the manifest of a packaged Setup in Lucent's canonical form (it refuses an http URL, a bad
-   channel name, a version that is not SemVer, notes above 16 KiB); `Protect-LucentReleaseManifest`
-   signs it in place with the key; `Test-LucentReleaseManifest` verifies a release as Lucent will
-   (signature, members, and optionally the installer's size and SHA-256). Publishing order: the
+   channel name, a version that is not SemVer, notes above 16 KiB, and, since the amendment
+   (decision 16), anything but the Setup the package manifest names, signed for release, with one
+   version everywhere and a `Lucent.exe` that checks the channel it is published on);
+   `Protect-LucentReleaseManifest` signs it in place with the key; `Test-LucentReleaseManifest`
+   verifies a release at least as strictly as Lucent (signature, every member, type and bound, the
+   canonical text, and optionally the installer's size and SHA-256). Publishing order: the
    installer, then the signature, then the manifest.
 
 ### Migrations and compatibility
@@ -276,8 +287,11 @@ are rehearsed by the fixtures (decisions 10 and 11).
 - **A silent installation with automatic restart.** Rejected: the photographer should see what
   replaces the program; the graphical wizard is the same one a manual installation shows.
 - **Downloading into %TEMP% or verifying by path.** A path verified and then launched leaves a
-  window in which the file can change; the held handle that excludes writers closes it, and the
-  per-user cache keeps downloads beside Lucent's other disposable files.
+  window in which the file can change. A held handle that excludes writers keeps the file itself
+  unchanged, but not the path: a junction in the path can be pointed elsewhere between the check and
+  the launch, and Setup reads its installer again by name after Lucent has exited. Hence the
+  amendment's folder (decision 14): a final path without links, in a folder only this user can
+  change, in the user's own profile.
 - **Fixtures built by each test from today's code** (as before). They cannot show that a released
   migration was edited, and depend on today's writers; committed files of every version plus the
   history check do.
@@ -288,3 +302,110 @@ are rehearsed by the fixtures (decisions 10 and 11).
 - **Failing frozen batches with version-1 recipes after an update** (as before). Rejected: the
   conversion is lossless and render-identical, and losing queued work at an update contradicts
   "Apply application updates between jobs".
+
+## Amendment: closing review of W12 part 1 (2026-10-09)
+
+### Context
+
+The closing review of W12 part 1 found that decision 6's claims ("nobody can change the verified
+file meanwhile", "what is checked is what is launched") did not hold (SEC-01): the held handle pins
+the file object, not the path; the download folder was accepted when it was a junction, so the path
+launched could be pointed at another file after the check (reproduced with the service's own
+`CreateFileW` and `CreateProcessW` calls); and the handle was released as soon as `CreateProcessW`
+returned, while Inno Setup's loader hands over to Setup, which reads its payload from the original
+file by name. With the default per-user cache only the same user's code could interfere, and it can
+change the per-user installation anyway; with `--data-root` (shipped, a developer option) the cache
+could sit in a folder other users may change (a new folder under `C:\` inherits "Authenticated
+Users: Modify"). The review also found that the trust anchor (channel, URL, keys, thumbprints) came
+from the environment at the first configure and was neither recorded nor checked by packaging
+(SEC-02); that a test signature was not fenced off from release outputs and the update channel
+(SEC-03); that the manifest's version was not bound to Setup's (SEC-04); that the running version
+failed open to 0.0.0 when it did not parse (SEC-05); that the publisher's verifier accepted
+manifests Lucent refuses (SEC-06); and that the history check covered the migrations' DDL only,
+while v2's `min_reader_version` had been raised after v2 was introduced (SEC-08). A measurement made
+for this amendment: renaming a folder above a running program is allowed once no handle is open
+beneath it (Windows 11 26200: the image mapping of `ping.exe` did not prevent renaming its
+grandparent folder), so the handle alone cannot protect the path after Lucent exits.
+
+### Decision
+
+14. **The download folder is the user's own, protected, and links are resolved before anything is
+    verified** (`update_service.cpp`, `prepare_download_folder()`, `check_held_location()`; SEC-01).
+    - `Lucent.exe` downloads into `%LOCALAPPDATA%\Lucent\cache\updates` even with `--data-root`
+      (`service_factory.cpp`): every folder above it is the user profile's, which other standard
+      users cannot rename.
+    - The folder is created when missing and opened without following a link: a junction or
+      symbolic link there is refused (PermissionDenied, `app.update.folder`), and so is a folder
+      owned by anyone but this user, the token's default owner, Administrators or SYSTEM. It is
+      given a protected DACL, full control for this user, SYSTEM and Administrators only, inherited
+      by everything in it (existing files included), so no other user can add, replace, rename or
+      delete a file there. A volume without permissions (FAT, exFAT) cannot be protected: refused.
+    - The folder is resolved to its final path (`GetFinalPathNameByHandleW`); the temporary file,
+      the installer, the checks and the launch use that path, which holds no link. The installer
+      is accepted only as this user's own file at exactly that path with one name (a hard link
+      planted earlier, or a link that led elsewhere, is refused and fetched again).
+    - `install()` checks that the held file is still at that path, starts Setup from it, and keeps
+      the handle until the service is destroyed (Lucent exits right after): while it is held no
+      folder above the file can be renamed.
+    - Residual: after Lucent exits, the same user, or an administrator, can still change the file
+      before Setup reads it again; both can change the installation itself.
+15. **The channel a package checks is recorded and must be declared** (`tools\package.ps1`,
+    `LucentPackaging.psm1`, `installer\update-channels.json`; SEC-02). The build tree records the
+    compiled channel (`lucent-package.json` schema 6: name, URL, keys, thumbprints); the staged
+    `Lucent.exe` reports the channel compiled into it at start-up (its developer automation's line on
+    stderr, `app::describe_update_channel()`: "update channel '<name>' (<URL>): keys <ids>;
+    publishers <thumbprints>", "update channel: none", or "update channel refused: <reason>"; the same
+    line goes to `lucent.log`), which the smoke run must find and which must equal the build tree's
+    record; the package manifest (schema 4) records it with the declaration. A Setup needs
+    `-UpdateChannel none` (a build without a channel) or `-UpdateChannel <name>`: the build must
+    then match that entry of the committed `installer\update-channels.json` exactly (manifest URL,
+    key ids, publisher thumbprints), and a release channel there must name at least one publisher
+    certificate, so that its clients check the installer's Authenticode signature. No production
+    channel exists yet: the file lists none. Every configure prints the pinned keys and publishers.
+16. **Only what packaging built for release is published** (`New-LucentReleaseManifest`; SEC-03,
+    SEC-04). It takes the package manifest (`-PackageManifest`) and refuses an installer it does
+    not name (file name, size, SHA-256), a `-StageOnly` package, a version other than the
+    package's or the file name's, a package whose `Lucent.exe` checks no channel or another one,
+    and, unless `-AllowUnsignedInstaller` (tests and rehearsals), an unsigned, test-signed or
+    untimestamped package, an Authenticode signature that is not valid, not by the recorded
+    certificate or by a certificate the channel's `Lucent.exe` does not pin, or a ProductVersion
+    other than the version. `tools\package.ps1` accepts `LUCENT_SIGN_TEST=1` only with a
+    self-signed certificate and names its outputs `Lucent-Setup-<version>-x64-TEST-SIGNED.*` (ADR
+    0009 amendment).
+17. **The publisher's verifier is at least as strict as Lucent** (`Test-LucentReleaseManifest`;
+    SEC-06): every member Lucent requires with its type and bounds (schema version an integer, the
+    publication time and minimum Windows version as Lucent parses them, an installer of 1 byte to
+    2 GiB, at most 16 KiB of notes, a lowercase SHA-256), then the canonical text: the manifest
+    must be byte for byte what `New-LucentReleaseManifest` writes for those values (so an unknown,
+    repeated or reordered member, whitespace or another escape fails), and the signature file what
+    `Protect-LucentReleaseManifest` writes (canonical base64 of 64 bytes).
+18. **A configured channel needs the running version** (`UpdateService::create()`; SEC-05): without
+    one it is refused (InvalidArgument, `app.update.version`) instead of comparing releases with
+    0.0.0; the Backend logs why. CMake refuses a project version that is not MAJOR.MINOR.PATCH.
+19. **The migration history check covers each migration's row and apply function too**
+    (`check_historical_ddl.py`; SEC-08): the DDL, the `kBuiltinMigrations` row (version,
+    `min_reader_version`) and `migrate_to_v<k>` must be unchanged since the introducing commit,
+    except for the edits listed with their reasons: 5548046 raised v2's `min_reader_version` from 1
+    to 2 two days after v2 was introduced, before any release (catalogs W6 development builds wrote
+    in between say 1; v3's migration stamps 2, so they read like `v2.catalog` once migrated, and no
+    build that could misread them was released). The check still passes for all five versions.
+
+### Consequences
+
+| What | Result |
+|---|---|
+| A junction as the download folder | refused before anything is fetched (`app.update.folder`, PermissionDenied) |
+| The reviewer's reproduction: a junction above the folder pointed at another "installer" after the check | the installer's path is the folder's final path; Setup is started from the verified file |
+| The download folder and the files in it | a protected DACL: this user, SYSTEM and Administrators only, including files there before |
+| The started installer | held until the service is destroyed (cannot be deleted before) |
+| A configured channel without the running version | refused (`app.update.version`) |
+| `Test-LucentReleaseManifest` on the review's seven signed manifests Lucent refuses, whitespace and a loose signature file | all refused; `Test-ReleaseManifest.ps1` 36 of 36 checks |
+| `New-LucentReleaseManifest` with `-Version 9.9.9`, another installer, a package without a channel or with another, a `-StageOnly`, unsigned or test-signed package | all refused |
+| The packaging channel policy and parsers (`Test-UpdateChannelPolicy.ps1`) | 32 of 32 checks |
+| `check_historical_ddl.py` without its allow-list | fails v2 (row edited in 0491d19's version); with it, all five pass |
+
+- Deferred to the W12 licence and release phase, where the first signed release and channel are
+  made: a guard in Setup against installing over a newer version (SEC-04, part 2; it needs the
+  installer rehearsal to test), and decompressing compressed resources and Setup's payload in the
+  builder-path audit (SEC-07, ADR 0009 amendment). Neither changes a release made before then: no
+  release exists.

@@ -1,6 +1,6 @@
 # ADR 0009: Windows packaging: installed layout, dependency audit and per-user Inno Setup installer
 
-- **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below)
+- **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below, with its closing review)
 - **Date:** 2026-10-03
 - **Workflow:** W5 (Installer slice)
 
@@ -476,9 +476,11 @@ folder (0 hits in 309 files).
 
 ### Consequences
 
-- A package can no longer ship a path of the machine that built it: a dependency, compiler or tool
-  that brings one back stops the packaging with the file and the byte offset. The scan adds about
-  2 s.
+- A package can no longer ship a path of the machine that built it in the bytes of its files: a
+  dependency, compiler or tool that brings one back stops the packaging with the file and the byte
+  offset. The scan adds about 2 s. It reads raw bytes only: compressed content (Qt resources
+  compressed with zlib or zstd inside the shipped binaries, Setup's LZMA payload) is not
+  decompressed (closing review, below).
 - The published manifest names the folders searched only by name, and the Inno Setup compiler as
   `%USERPROFILE%\...`.
 - Release signing needs a code-signing certificate from a certification authority with its key in
@@ -488,6 +490,33 @@ folder (0 hits in 309 files).
   40 MB Setup (Inno Setup suggests disk spanning for large signed setups; the single file is kept
   until a measurement says otherwise).
 - A test-signed package is never distributed: its signatures chain to no trusted root and, without
-  a timestamp, stop verifying when the certificate expires.
+  a timestamp, stop verifying when the certificate expires. Since the closing review this is
+  enforced, not only stated (decision 14).
 - The clean-machine gate (decision 11) should run `Test-InstalledPackage.ps1 -SignerThumbprint`
   with the release certificate, which checks the uninstaller that packaging cannot see.
+
+### Closing review (W12 part 1, 2026-10-09)
+
+The review found that `LUCENT_SIGN_TEST=1` accepted an untrusted root and no timestamp for any
+certificate, a private test CA's included, while the outputs kept the release file names and
+nothing in the release tooling looked at the signing record (SEC-03); that the update channel a
+package's `Lucent.exe` checks was neither recorded nor checked (SEC-02, ADR 0022 amendment); and
+that the builder-path scan cannot see compressed content (SEC-07): in the 0.1.0 folder 373 zlib
+streams (about 4.9 MB decompressed) sit in 10 files, `Lucent.exe` (27) and `Qt6Quick.dll` (160)
+among them. The reviewer decompressed all of them and Setup's 166 KB header independently and found
+no builder path: no leak exists today.
+
+14. **A test signature is fenced off.** `LUCENT_SIGN_TEST=1` accepts only a self-signed certificate
+    (one a private CA issued is refused before the build), and the outputs are named
+    `Lucent-Setup-<version>-x64-TEST-SIGNED.*`; outputs of either name from an earlier run are
+    deleted first. `New-LucentReleaseManifest` (ADR 0022 amendment, decision 16) refuses a package
+    whose manifest says unsigned, `signing.test` or untimestamped, and an installer whose
+    Authenticode signature is not valid or not by the recorded certificate.
+15. **The package manifest records the update channel** (schema 4: `updateChannel`, the compiled
+    channel or null, and `updateChannelDeclared`), and `lucent-package.json` (schema 6) the build's
+    `LUCENT_UPDATE_*` values; `tools\package.ps1 -UpdateChannel none|<name>` is required for a
+    Setup (ADR 0022 amendment, decision 15).
+16. **Deferred to the W12 licence and release phase** (SEC-07): decompressing zlib and zstd resource
+    streams and Inno Setup's LZMA header and payload in the scan, or building Lucent's own resources
+    uncompressed and asserting that no compressed stream remains. Until then the scan's guarantee is
+    about uncompressed bytes, as stated above.

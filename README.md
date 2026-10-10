@@ -2,11 +2,14 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its tenth development
-> increment (W10, multi-brand camera qualification and the four support states, pending commit and
-> merge), the ninth except lens corrections (W9: DNG opcode lists, crop and straighten, masks and
-> colour noise reduction; lens corrections wait for a decision on their third-party dependency) and
-> the eighth (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches): a Qt Quick
+> **Status: pre-alpha, under active development.** Lucent has completed the first part of its
+> release hardening (W12 part 1: a camera-correctness gate with an independent colour reference, a
+> hard memory limit across the export workers, a performance baseline, an offline-first Check for
+> updates that no build is configured to use yet, and catalog fixtures of every schema version;
+> pending commit and merge), its tenth development increment (W10, multi-brand camera qualification
+> and the four support states), the ninth except lens corrections (W9: DNG opcode lists, crop and
+> straighten, masks and colour noise reduction; Lensfun lens corrections are W13) and the eighth
+> (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches): a Qt Quick
 > `Lucent.exe` that adds RAW files in place or as verified copies into a library folder, keeps them in a saved
 > library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
 > removable-media badges and relinking, and browses them with labelled camera previews and support
@@ -28,11 +31,11 @@ Offline, camera-independent RAW photo development for Windows.
 > kept consistent, and uncertain results are marked for review. Natural v1 is deliberately
 > conservative and **not yet calibrated** against photographers' preferences. DNG opcode lists are
 > applied at the stages the specification defines, and each camera's own image area is rendered by
-> default. Every photo shows a camera support state from Lucent's qualification of 34 camera modes
-> ([support table](docs/qualification/support-table.md)): 14 modes are Verified (exact model and
-> capture mode; colour verified as agreement with the decoder's camera calibration, from one
-> daylight test file per mode), 11 Compatible, unverified, 6 Limited and 3 Unsupported; any other
-> camera that decodes cleanly is Compatible, unverified. It runs from a source build or from an
+> default. Every photo shows a camera support state from Lucent's qualification of 40 test files
+> ([support table](docs/qualification/support-table.md)): 16 are Verified (exact model and capture
+> mode; colour checked against a colour chart's published values where the file shows one, otherwise
+> as agreement with the decoder's camera calibration), 14 Compatible, unverified, 7 Limited and 3
+> Unsupported; any other camera that decodes cleanly is Compatible, unverified. It runs from a source build or from an
 > unsigned per-user installer built from source (see [Installing](#installing)). The next section
 > describes the product Lucent is being built to become, from its blueprint, not what it can do
 > today.
@@ -81,9 +84,11 @@ Development proceeds in increments listed in the [roadmap](docs/development/road
 | W6 | Develop settings v1 and editing operations (white balance, exposure, guided-filter highlights and shadows, contrast, tone curve, saturation and vibrance, base look "neutral" v1), two-stage interactive rendering, versioned recipes with immutable revisions (catalog schema v2), undo/redo, copy/paste, the Edit view (ADR 0010) | Done, pending commit and merge |
 | W7 | Durable batch export: `lucent-worker.exe` and its versioned pipe protocol, memory-budgeted scheduling, catalog job journal (schema v3 and v4) with leases, a publication journal and receipts, verified no-clobber publication, restart recovery, pause / cancel / resume and destination attentions, EXIF capture metadata with an explicit GPS policy, completion reports, the Export batch dialog and the Exports view (ADR 0012) | Done, pending commit and merge |
 | W8 | Natural v1 automatic settings (`lucent_analysis`: metric contract, proposals, bounded deterministic search with rechecks, confidence and review flags, related-shot consistency; ADR 0011) and their integration: the editor's Auto with a full-resolution final check and conservative fallbacks, automatic revisions with analysis records (catalog schema v5), automatic batches (Auto, Analyse only, related shots kept consistent) analysed in the worker (protocol v2), the Automatic settings panel and Review badges (ADR 0013) | Done; the blind preference test and the calibration of Natural v1 are pending |
-| W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks, guided chroma denoise, recipes version 2 (ADR 0015); lens corrections | Done except lens corrections (pending a decision on the Lensfun dependency); masks, geometry and denoise pending commit and merge |
+| W9 | DNG opcode lists 1-3 at their specified stages (ADR 0014); crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks, guided chroma denoise, recipes version 2 (ADR 0015); lens corrections | Done except lens corrections (Lensfun, now W13); masks, geometry and denoise pending commit and merge |
 | W10 | Multi-brand qualification: the `lucent-qualify` harness, cited expectations and the support table (ADR 0016); the camera's image area (ADR 0017); the camera support database, a versioned and verified data asset generated from the qualification, and the blueprint's four support states in the library, the editor, batch exports and reports, with Help > About (`lucent_assets`, ADR 0018) | Done (phases 1 to 3 and the closing review), pending commit and merge; an independent colour reference, a rotated test file per image-area source and regenerating the qualification report and database from a clean committed build are deferred to W12 |
-| W11–W12 | Learned appearance, release hardening | Planned |
+| W11 | Learned appearance research: Image-Adaptive-3DLUT reproduced, native LUT inference accepted (ADR 0019) | Research done; product integration waits for a model with clear redistribution rights |
+| W12 | Release hardening. Part 1: the camera-correctness gate (ADR 0020), the workers' hard aggregate memory limit and Auto's final check by bands (ADR 0012, 0013 amendments), the performance harness and baseline (ADR 0021), build-machine paths kept out of the package, verified signing hooks, the offline-first Check for updates over a signed release manifest and catalog fixtures of every schema version (ADR 0009 amendment, ADR 0022), and their closing review | Part 1 done, pending commit and merge; the licence and release phase (licence inventory, LGPL source provision, release signing, the first update channel, the clean-machine installer test) follows W13 |
+| W13 | Lensfun lens corrections for non-DNG files | Planned |
 
 `Lucent.exe` is built with the `dev` preset and run from the build tree
 ([setup](docs/development/setup.md#running-lucentexe-from-a-build-tree)). The library is saved in
@@ -110,7 +115,8 @@ There is no published release yet. `tools\package.ps1` builds the installer from
 
 > **Not for distribution yet.** Do not publish or hand out installers built today: the way the
 > source code of the LGPL libraries it contains (Qt, LibRaw) is provided to recipients is decided
-> in release hardening (W12), and the installer's clean-machine test is still pending.
+> in the licence and release phase of release hardening (W12), the installer's clean-machine test
+> is still pending, and no build is signed or configured with an update channel yet.
 
 - **Per user, no administrator rights.** Lucent installs into `%LOCALAPPDATA%\Programs\Lucent`
   with a Start Menu shortcut and, optionally, a Desktop shortcut. Windows asks for permission only
