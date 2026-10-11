@@ -24,6 +24,19 @@ Your rights
 Corresponding source
 --------------------
 
+The complete corresponding source of these libraries, as they were built for this version of
+Lucent, is the archive
+
+    @SOURCE_PACKAGE@
+    (@SOURCE_PACKAGE_SIZE@ bytes, SHA-256 @SOURCE_PACKAGE_SHA256@)
+
+which is published next to Lucent-Setup-@VERSION@-x64.exe, from the same place and for as long as
+that installer is offered. It holds, for each library below, the exact upstream source archive,
+the build recipe used (the vcpkg port: build script and patches, including the Lucent project's
+own changes), the build settings (the vcpkg triplet) and a README that explains how to rebuild
+each library and replace its DLL. You do not need Lucent's own source code (MIT License) to
+rebuild or replace these libraries; it is published at @HOMEPAGE@.
+
 The libraries were built from the upstream source archives listed below, with the build recipe
 (build script and patches) of the vcpkg port named for each. vcpkg verifies every archive against
 the SHA-512 value shown. A recipe is identified by the git tree hash of its port folder in the
@@ -33,6 +46,7 @@ A port that Lucent overlays (vcpkg's recipe with Lucent's build changes) is inst
 in the folder named for it (licenses\<port>\recipe): its patches named lucent-*.patch are the
 Lucent project's only changes to the library's source, each described in the patch and in the
 recipe's portfile.cmake. Every other library is built without changes by the Lucent project. The
-same information is available in machine-readable form in Lucent.spdx.json (SPDX 2.3).
+same information is available in machine-readable form in Lucent.spdx.json (SPDX 2.3), and in
+MANIFEST.json inside the archive above.
 
 @COMPONENTS@

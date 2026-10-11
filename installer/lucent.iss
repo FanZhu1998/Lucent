@@ -16,6 +16,11 @@
 ;                               Inno Setup signs the uninstaller inside Setup; a signed uninstaller
 ;                               keeps its messages in unins000.msg beside unins000.exe, which
 ;                               installer\tests\Test-InstalledPackage.ps1 -SignerThumbprint checks
+;   VersionRehearsalOf          optional (tools\package.ps1 -VersionRehearsal, W12): this Setup is a
+;                               version rehearsal of the package version given here: AppVersion is
+;                               the next patch version, with the same files, so that the installer
+;                               test can upgrade to it and see the real Setup refuse to go back. It
+;                               says so in its name and version information; never published.
 ;
 ; Policies (ADR 0009):
 ; - Per user, no elevation: PrivilegesRequired=lowest installs into %LOCALAPPDATA%\Programs\Lucent.
@@ -28,6 +33,13 @@
 ;   version no longer installs, after Restart Manager has closed a running Lucent.
 ; - Uninstall removes the program, its shortcuts and registry entries, and keeps the user's library
 ;   (catalog), settings and caches in %LOCALAPPDATA%\Lucent and HKCU\Software\Lucent.
+; - Never over a newer Lucent (W12 review SEC-04, part 2; ADR 0009 amendment): when this user's
+;   installation (its uninstall registration's DisplayVersion) is newer than this Setup's version by
+;   Semantic Versioning precedence, or its version cannot be read, Setup stops at InitializeSetup,
+;   before anything is changed or the runtime installer runs: a message box (suppressed by
+;   /SUPPRESSMSGBOXES), the log line "Downgrade refused: ...", and exit code 1 ("Setup failed to
+;   initialize"). The same version is repaired and an older one upgraded. To go back to an older
+;   version the user uninstalls first (the library is kept).
 
 #if VER < EncodeVer(6, 3, 0)
   #error Inno Setup 6.3 or later is required.
@@ -53,6 +65,9 @@
 #ifndef AssociationsInclude
   #error AssociationsInclude is not defined: build the installer with tools\package.ps1.
 #endif
+#if AppVersionQuad != AppVersion + ".0"
+  #error AppVersionQuad must be AppVersion followed by .0: Lucent's versions are MAJOR.MINOR.PATCH.
+#endif
 
 #define AppName "Lucent"
 #define AppExe "Lucent.exe"
@@ -69,14 +84,22 @@
 AppId={{{#AppGuid}}
 AppName={#AppName}
 AppVersion={#AppVersion}
+#ifdef VersionRehearsalOf
+AppVerName={#AppName} {#AppVersion} (version rehearsal of {#VersionRehearsalOf}, not for distribution)
+#else
 AppVerName={#AppName} {#AppVersion}
+#endif
 AppPublisher={#AppName}
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppCopyright=Copyright (c) 2026 Fan Zhu. MIT License.
 VersionInfoVersion={#AppVersionQuad}
 VersionInfoProductName={#AppName}
+#ifdef VersionRehearsalOf
+VersionInfoDescription={#AppName} Setup, version rehearsal of {#VersionRehearsalOf}, not for distribution
+#else
 VersionInfoDescription={#AppName} Setup
+#endif
 PrivilegesRequired=lowest
 DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes
@@ -117,6 +140,8 @@ VCRuntimeCancelled=Lucent needs the Microsoft Visual C++ Runtime (x64) %1 or lat
 VCRuntimeBusy=Another installation is in progress, so the Microsoft Visual C++ Runtime could not be installed. Finish or restart that installation, then run Setup again.
 VCRuntimeFailed=The Microsoft Visual C++ Runtime (x64) could not be installed (%1), so Setup cannot continue.%n%nInstall the "Microsoft Visual C++ Redistributable (x64)" %2 or later from Microsoft, then run Setup again.
 VCRuntimeStillMissing=The Microsoft Visual C++ Runtime installer finished, but the runtime is still missing or older than %1, so Setup cannot continue.%n%nRestart Windows and run Setup again. If this message returns, repair "Microsoft Visual C++ Redistributable (x64)" in Settings > Apps, or install it from Microsoft.
+NewerVersionInstalled=Lucent %1 is installed, which is newer than Lucent %2, the version this Setup installs. Setup does not replace a newer Lucent with an older one: the newer version may have upgraded your photo library to a format an older Lucent can open only read-only, or not at all. Nothing was changed.%n%nTo keep Lucent %1, close this message. To go back to Lucent %2, first uninstall Lucent in Settings > Apps (your photo library, settings and photographs are kept), then run this Setup again.
+UnknownVersionInstalled=Lucent is installed, but Setup cannot read its version ("%1"), so it does not replace it: it might be newer than Lucent %2, the version this Setup installs. Nothing was changed.%n%nUninstall Lucent first in Settings > Apps (your photo library, settings and photographs are kept), then run this Setup again.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -250,6 +275,247 @@ begin
   if not Registered then
     Registered := RegistryViewHasRuntime(HKLM32, '32-bit');
   Result := Registered and RuntimeFilesPresent;
+end;
+
+// --- Never over a newer Lucent (W12 review SEC-04, part 2) ---------------------------------------
+//
+// Lucent's versions follow Semantic Versioning 2.0.0 (ADR 0022): MAJOR.MINOR.PATCH, optionally
+// -PRERELEASE (dot-separated identifiers) and +BUILD (ignored for precedence).
+
+function IsDigitText(const S: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := Length(S) > 0;
+  for I := 1 to Length(S) do
+    if (S[I] < '0') or (S[I] > '9') then
+      Result := False;
+end;
+
+// A pre-release identifier: [0-9A-Za-z-]+, and a numeric one without a leading zero.
+function IsIdentifierText(const S: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := Length(S) > 0;
+  for I := 1 to Length(S) do
+    if not (((S[I] >= '0') and (S[I] <= '9')) or ((S[I] >= 'A') and (S[I] <= 'Z')) or
+            ((S[I] >= 'a') and (S[I] <= 'z')) or (S[I] = '-')) then
+      Result := False;
+  if Result and IsDigitText(S) and (Length(S) > 1) and (S[1] = '0') then
+    Result := False;
+end;
+
+// The dot-separated parts of S (an empty part stays, so '1..2' has three).
+function SplitDots(const S: String): TArrayOfString;
+var
+  Rest: String;
+  P, N: Integer;
+begin
+  Rest := S;
+  N := 0;
+  repeat
+    P := Pos('.', Rest);
+    N := N + 1;
+    SetArrayLength(Result, N);
+    if P > 0 then
+    begin
+      Result[N - 1] := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end
+    else
+      Result[N - 1] := Rest;
+  until P = 0;
+end;
+
+// Core receives MAJOR, MINOR and PATCH, Pre the pre-release identifiers (none: empty). False when
+// Text is not a Semantic Version.
+function ParseVersion(const Text: String; var Core, Pre: TArrayOfString): Boolean;
+var
+  Version, PreText: String;
+  P, I: Integer;
+begin
+  Result := False;
+  Version := Text;
+  P := Pos('+', Version);
+  if P > 0 then
+    Version := Copy(Version, 1, P - 1);
+  PreText := '';
+  P := Pos('-', Version);
+  if P > 0 then
+  begin
+    PreText := Copy(Version, P + 1, Length(Version));
+    Version := Copy(Version, 1, P - 1);
+    if PreText = '' then
+      exit;
+  end;
+  Core := SplitDots(Version);
+  if GetArrayLength(Core) <> 3 then
+    exit;
+  for I := 0 to 2 do
+    if not IsDigitText(Core[I]) or ((Length(Core[I]) > 1) and (Core[I][1] = '0')) then
+      exit;
+  SetArrayLength(Pre, 0);
+  if PreText <> '' then
+  begin
+    Pre := SplitDots(PreText);
+    for I := 0 to GetArrayLength(Pre) - 1 do
+      if not IsIdentifierText(Pre[I]) then
+        exit;
+  end;
+  Result := True;
+end;
+
+function Sign(Value: Integer): Integer;
+begin
+  if Value < 0 then
+    Result := -1
+  else if Value > 0 then
+    Result := 1
+  else
+    Result := 0;
+end;
+
+// Numbers of any length (no leading zeros): -1, 0 or 1.
+function CompareDigits(const A, B: String): Integer;
+begin
+  if Length(A) <> Length(B) then
+    Result := Sign(Length(A) - Length(B))
+  else
+    Result := Sign(CompareStr(A, B));
+end;
+
+// Semantic Versioning precedence (section 11): -1, 0 or 1.
+function CompareVersions(const ACore, APre, BCore, BPre: TArrayOfString): Integer;
+var
+  I, Count: Integer;
+begin
+  for I := 0 to 2 do
+  begin
+    Result := CompareDigits(ACore[I], BCore[I]);
+    if Result <> 0 then
+      exit;
+  end;
+  // A release ranks above its pre-releases.
+  if (GetArrayLength(APre) = 0) or (GetArrayLength(BPre) = 0) then
+  begin
+    Result := Sign(GetArrayLength(BPre) - GetArrayLength(APre));
+    exit;
+  end;
+  Count := GetArrayLength(APre);
+  if GetArrayLength(BPre) < Count then
+    Count := GetArrayLength(BPre);
+  for I := 0 to Count - 1 do
+  begin
+    if IsDigitText(APre[I]) and IsDigitText(BPre[I]) then
+      Result := CompareDigits(APre[I], BPre[I])
+    else if IsDigitText(APre[I]) then
+      Result := -1
+    else if IsDigitText(BPre[I]) then
+      Result := 1
+    else
+      Result := Sign(CompareStr(APre[I], BPre[I]));
+    if Result <> 0 then
+      exit;
+  end;
+  Result := Sign(GetArrayLength(APre) - GetArrayLength(BPre));
+end;
+
+// Where Inno Setup registers this user's installation of Lucent (HKA: HKCU, Setup never runs in
+// administrative install mode).
+function UninstallRegistrationKey: String;
+begin
+  Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#AppGuid}' + '}_is1';
+end;
+
+// Runs before anything else: Setup stops (exit code 1) when the installed Lucent is newer than this
+// Setup's, or its version cannot be read (see the policy at the top).
+// Test hook: /LucentTestCompareVersions=<a>,<b>;<c>,<d>;... logs how this Setup orders each pair
+// ("Version comparison: a < b", "=", ">", or "invalid") and stops Setup (exit code 1) without
+// reading or changing anything else, so installer\tests\Test-InstalledPackage.ps1 can check the
+// precedence rules above on the compiled Setup. It can only stop Setup, never let it install.
+procedure LogVersionComparisons(const Pairs: String);
+var
+  Rest, Pair, A, B, Relation: String;
+  P: Integer;
+  ACore, APre, BCore, BPre: TArrayOfString;
+begin
+  Rest := Pairs;
+  while Rest <> '' do
+  begin
+    P := Pos(';', Rest);
+    if P > 0 then
+    begin
+      Pair := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end
+    else
+    begin
+      Pair := Rest;
+      Rest := '';
+    end;
+    P := Pos(',', Pair);
+    if P = 0 then
+      continue;
+    A := Copy(Pair, 1, P - 1);
+    B := Copy(Pair, P + 1, Length(Pair));
+    if not ParseVersion(A, ACore, APre) or not ParseVersion(B, BCore, BPre) then
+      Relation := 'invalid'
+    else
+      case CompareVersions(ACore, APre, BCore, BPre) of
+        -1: Relation := '<';
+        0: Relation := '=';
+      else
+        Relation := '>';
+      end;
+    Log('Version comparison: ' + A + ' ' + Relation + ' ' + B);
+  end;
+end;
+
+function InitializeSetup: Boolean;
+var
+  Installed, Probe: String;
+  InstalledCore, InstalledPre, ThisCore, ThisPre: TArrayOfString;
+begin
+  Result := True;
+  Probe := ExpandConstant('{param:LucentTestCompareVersions|}');
+  if Probe <> '' then
+  begin
+    LogVersionComparisons(Probe);
+    Log('Version comparison test hook: Setup stops');
+    Result := False;
+    exit;
+  end;
+  if not ParseVersion('{#AppVersion}', ThisCore, ThisPre) then
+  begin
+    Log('Downgrade check: this Setup''s version {#AppVersion} is not a Semantic Version; Setup stops');
+    SuppressibleMsgBox('This Setup''s version ({#AppVersion}) is invalid, so it cannot check the installed Lucent. Setup stops.', mbCriticalError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if not RegQueryStringValue(HKA, UninstallRegistrationKey, 'DisplayVersion', Installed) then
+  begin
+    Log('Downgrade check: Lucent is not installed for this user');
+    exit;
+  end;
+  if not ParseVersion(Installed, InstalledCore, InstalledPre) then
+  begin
+    Log('Downgrade refused: the installed Lucent''s version "' + Installed + '" cannot be read; this Setup installs {#AppVersion}');
+    SuppressibleMsgBox(FmtMessage(CustomMessage('UnknownVersionInstalled'), [Installed, '{#AppVersion}']), mbError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if CompareVersions(InstalledCore, InstalledPre, ThisCore, ThisPre) > 0 then
+  begin
+    Log('Downgrade refused: Lucent ' + Installed + ' is installed, newer than {#AppVersion}, which this Setup installs');
+    SuppressibleMsgBox(FmtMessage(CustomMessage('NewerVersionInstalled'), [Installed, '{#AppVersion}']), mbError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if CompareVersions(InstalledCore, InstalledPre, ThisCore, ThisPre) = 0 then
+    Log('Downgrade check: Lucent ' + Installed + ' is installed; this Setup repairs it')
+  else
+    Log('Downgrade check: Lucent ' + Installed + ' is installed; this Setup upgrades it to {#AppVersion}');
 end;
 
 procedure InitializeWizard;

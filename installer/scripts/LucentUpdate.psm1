@@ -235,7 +235,13 @@ function New-LucentReleaseManifest {
         Tests only: accept an http URL (Lucent's tests serve loopback http).
     .PARAMETER AllowUnsignedInstaller
         Tests and rehearsals only: accept an installer that is unsigned or test-signed, or carries no
-        ProductVersion. Never for a release.
+        ProductVersion, and a package manifest that records no corresponding-source archive. Never for
+        a release.
+    .NOTES
+        A release's package manifest (schema 5) records its corresponding-source archive,
+        Lucent-<version>-corresponding-source.zip (ADR 0024): it must be beside the installer with the
+        recorded size and SHA-256, because it is published with it. The archive is not named in the
+        release manifest (Lucent downloads only the installer); it is published at the same place.
     #>
     [CmdletBinding()]
     param(
@@ -261,8 +267,30 @@ function New-LucentReleaseManifest {
         throw "The installer's name $([System.IO.Path]::GetFileName($installerPath)) is not Lucent-Setup-$Version-x64.exe."
     }
     if ($Version -notmatch $script:SemVer) { throw "'$Version' is not a semantic version (SemVer 2.0.0)." }
-    # The release's own Lucent.exe must keep checking this channel (SEC-02).
+    # The corresponding source of the LGPL libraries is published with every installer, from the same
+    # place (ADR 0024): the package manifest (schema 5) records the archive, and the archive beside the
+    # installer must be exactly that one. Only tests and rehearsals (-AllowUnsignedInstaller) may
+    # publish a package that records none.
     $names = @($package.PSObject.Properties.Name)
+    $sourceRecord = if ($names -contains 'correspondingSource') { $package.correspondingSource } else { $null }
+    if ($null -eq $sourceRecord) {
+        if (-not $AllowUnsignedInstaller) {
+            throw "$PackageManifest records no corresponding-source archive (a package manifest of schema 5 does, ADR 0024): package the release again with tools\package.ps1."
+        }
+    }
+    else {
+        $sourceName = "Lucent-$Version-corresponding-source.zip"
+        $sourcePath = Join-Path (Split-Path -Parent $installerPath) $sourceName
+        if ([string]$sourceRecord.file -cne $sourceName -or -not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            throw "The corresponding-source archive $sourceName must be beside the installer, to be published with it (ADR 0024); $sourcePath is missing or the package records another name ($($sourceRecord.file))."
+        }
+        $sourceSize = (Get-Item -LiteralPath $sourcePath).Length
+        $sourceSha = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($sourceSize -ne [int64]$sourceRecord.size -or $sourceSha -ne ([string]$sourceRecord.sha256).ToLowerInvariant()) {
+            throw "$sourcePath ($sourceSize bytes, SHA-256 $sourceSha) is not the corresponding-source archive the package manifest records ($($sourceRecord.size) bytes, $($sourceRecord.sha256))."
+        }
+    }
+    # The release's own Lucent.exe must keep checking this channel (SEC-02).
     $compiled = if ($names -contains 'updateChannel') { $package.updateChannel } else { $null }
     if ($null -eq $compiled -or $compiled.name -cne $Channel) {
         $what = if ($null -eq $compiled) { 'checks no update channel' } else { "checks the channel '$($compiled.name)'" }

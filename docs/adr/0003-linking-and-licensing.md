@@ -1,6 +1,6 @@
 # ADR 0003: Linking model and third-party licensing
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-10: "Amendment: the release decisions" below, with ADR 0024)
 - **Date:** 2026-09-24
 - **Workflow:** W1 (Foundation and RAW probe)
 
@@ -120,3 +120,29 @@ provision for covered libraries and a shipped licence bundle generated from the 
 - **Running a GPL application as a subprocess** (for example RawTherapee's command line) to get its
   demosaicing. The blueprint notes that a command-line boundary is not an automatic answer to
   licensing obligations. It would also bundle a full application. Rejected.
+
+## Amendment: the release decisions (W12 licence and release phase, 2026-10-10)
+
+The user decided how Lucent is distributed and how the LGPL libraries' source reaches recipients
+([ADR 0024](0024-release-and-licensing.md)). For this ADR:
+
+9. **Lucent is free and open source under the MIT licence and is not sold.** The linking model
+   (decisions 1 to 6) is unchanged: LGPL libraries stay unmodified replaceable DLLs, except the two
+   patches of Lucent's overlay ports for GLib and GNU libintl (ADR 0009, decision 17), which ship with
+   the source. Lucent's MIT terms never restrict modifying the libraries or reverse engineering Lucent
+   to debug such modifications, as LGPL-2.1 section 6 and LGPL-3.0 section 4 require of the terms of a
+   combined work.
+10. **The corresponding-source provision is an archive beside every installer**,
+    `Lucent-<version>-corresponding-source.zip`, written and checked by `tools\package.ps1`: the
+    upstream archives (verified by SHA-512 against vcpkg's record and the recipe's pin at the registry
+    baseline), the recipes as built (registry ports and Lucent's overlay ports), the triplet, vcpkg's
+    build records and a README on rebuilding and replacing each library. It covers every LGPL library
+    that ships today: Qt (`qtbase`, `qtdeclarative`, `qtsvg`), LibRaw, Lensfun, GLib, GNU libintl and
+    GNU libiconv. The "Consequences" item "a corresponding-source provision for LibRaw and Qt" is met
+    by it.
+11. **A copyleft licence cannot ship without a reviewed source provision.** Packaging stops when a
+    shipped component's concluded licence, a library linked statically from it, or third-party code
+    recorded inside it leaves no choice but a copyleft licence and `installer\license-policy.json`
+    does not mark the port `lgpl` or `correspondingSource`. This extends decision 7: the ledger
+    records each shipped component's obligations and their status for a release
+    ([licence ledger](../legal/third-party-notices.md), "Release status").

@@ -29,22 +29,42 @@
        WinVerifyTrust result, the timestamp.
     5. Writes licenses\: Lucent's licence, the copyright file of every shipped vcpkg port, licence
        texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, the licence text of every third-party data
-       asset (the lens database's CC BY-SA 3.0, installer\license-policy.json "assets"), LGPL-NOTICE.txt,
-       THIRD-PARTY-NOTICES.txt
-       (including the third-party code inside Qt from Qt's own SBOM and the libraries linked
-       statically into Lucent's executables), then Lucent-files.txt (the installed-file list that the next
-       version's Setup uses to upgrade) and the SBOM Lucent.spdx.json (SPDX 2.3, checked
-       structurally, and with pyspdxtools when it is available).
+       asset (the lens database's CC BY-SA 3.0, installer\license-policy.json "assets"),
+       THIRD-PARTY-NOTICES.txt (including the third-party code inside Qt from Qt's own SBOM and the
+       libraries linked statically into Lucent's executables).
+       Then the corresponding source (W12, ADR 0024): Lucent-<version>-corresponding-source.zip beside
+       the installer, holding for every shipped library whose licence needs a source provision (the
+       LGPL libraries; installer\license-policy.json "lgpl"/"correspondingSource") the upstream
+       source archives from vcpkg's downloads folder (SHA-512 as vcpkg verified it and as the recipe
+       pins it at the registry baseline), the vcpkg recipe as built (registry port or Lucent's overlay
+       port, every file with the SHA-256 vcpkg recorded), vcpkg's build record, the triplet, Lucent's
+       vcpkg manifest and a README on rebuilding and relinking. The archive is deterministic (sorted,
+       stored entries with a fixed time) and is checked again by reading it back
+       (Test-CorrespondingSourcePackage). Packaging stops when a shipped port's licence leaves no
+       choice but a copyleft licence and the policy provides no source for it, or when a provided port
+       is missing from the archive. LGPL-NOTICE.txt then names the archive with its size and SHA-256.
+       Last come Lucent-files.txt (the installed-file list that the next version's Setup uses to
+       upgrade) and the SBOM Lucent.spdx.json (SPDX 2.3, checked structurally, and with pyspdxtools
+       when it is available).
     6. Scans every byte of every file of the folder for the build machine's folders (W12): the user
        profile, the repository, the build tree, the vcpkg root, installed tree, buildtrees, packages
        and downloads folders, and any X:\Users\<name>\ path, in 8-bit and UTF-16 text, either
-       separator, any letter case. One hit (a PDB path in a PE debug directory, a __FILE__ string,
-       a path in a text file) stops the packaging, naming the file and the byte offset
-       (builder-paths.txt). Setup and the package manifest are scanned the same way.
+       separator, any letter case; and what the files compress (W12 review SEC-07): every zlib and
+       gzip stream (Qt's rcc resources, Qt's MIME database), decompressed and scanned, two levels
+       deep; a zstd frame, which the scan cannot decompress, is an error. One hit (a PDB path in a PE
+       debug directory, a __FILE__ string, a path in a text file or a compressed resource) stops the
+       packaging, naming the file, the compressed part and the byte offset (builder-paths.txt).
+       Setup (with its LZMA-compressed setup data, setup engine and installed files decompressed),
+       the package manifest and the corresponding-source archive's own files (README, MANIFEST.json,
+       recipes, triplet, build records; the upstream archives are verified by SHA-512 instead) are
+       scanned the same way.
     7. Compiles installer\lucent.iss with Inno Setup 6 (unless -StageOnly; Setup and the uninstaller
-       are signed when signing is configured, and Setup's signature is verified) and writes the
-       package manifest (version, git commit, signing, the update channel, every file with its
-       SHA-256, the installer's size and SHA-256, or no installer with -StageOnly).
+       are signed when signing is configured, and Setup's signature is verified; the compiler's
+       licence line is recorded, and a non-commercial compiler is refused for a distribution the
+       policy calls commercial) and writes the package manifest (schema 5: version, git commit,
+       signing, the distribution decision, the update channel, every file with its SHA-256, the
+       corresponding-source archive with every file in it, the installer's size and SHA-256, or no
+       installer with -StageOnly).
 
     The update channel (W12 review SEC-02; ADR 0022): the channel compiled into Lucent.exe (the
     LUCENT_UPDATE_* values of the build's first configure) is printed, checked against what the
@@ -56,11 +76,17 @@
     Outputs go to <BuildDir>\package unless -OutputDir is given:
       stage\                                  the installation folder that Setup installs
       Lucent-Setup-<version>-x64.exe           the installer
+      Lucent-<version>-corresponding-source.zip the corresponding source of the LGPL libraries,
+                                               published with the installer (ADR 0024)
       Lucent-Setup-<version>-x64.manifest.json package manifest
       Lucent-Setup-<version>-x64.spdx.json     copy of the SBOM
       Lucent-Setup-<version>-x64.exe.sha256    checksum line
       audit.txt, audit.json, builder-paths.txt, builder-paths.json, install.log, smoke\ (the smoke
       run), iscc.log (and windeployqt.log in <BuildDir>\packaging)
+      rehearsal\                              with -VersionRehearsal only: a test installer of the
+                                               next patch version (never published)
+
+    What a release publishes, and the gates before it, are in docs\release\checklist.md.
 
 .PARAMETER BuildDir
     Release build tree (default build\release).
@@ -91,6 +117,12 @@
 .PARAMETER UpdateChannels
     The expected update channels (default installer\update-channels.json); a rehearsal of a test
     channel names its own file.
+.PARAMETER VersionRehearsal
+    Also compile <OutputDir>\rehearsal\Lucent-Setup-<next patch>-x64-VERSION-REHEARSAL.exe: the same
+    installation folder registered as the next patch version (W12 review SEC-04, part 2), for
+    installer\tests\Test-InstalledPackage.ps1 -NewerInstaller, which upgrades to it and checks that
+    the package's Setup refuses to go back. A test installer: unsigned, not in the package manifest,
+    never published. Not with -StageOnly.
 
 .EXAMPLE
     powershell -NoProfile -File tools\package.ps1 -UpdateChannel none
@@ -100,6 +132,10 @@
     powershell -NoProfile -File tools\package.ps1 -SkipBuild -StageOnly
 
 .NOTES
+    Lucent is distributed free under its MIT licence (installer\license-policy.json "distribution",
+    ADR 0024): Inno Setup's non-commercial terms apply, and releases are unsigned until a
+    code-signing certificate exists.
+
     Authenticode signing is off by default, and builds made so far are unsigned. To sign Lucent.exe,
     lucent-worker.exe, Setup and the uninstaller, set before running:
       LUCENT_SIGN_CERT_SHA1      thumbprint of a code-signing certificate with its private key in the
@@ -137,7 +173,8 @@ param(
     [string]$VCRedist,
     [string]$SpdxValidator,
     [string]$UpdateChannel,
-    [string]$UpdateChannels
+    [string]$UpdateChannels,
+    [switch]$VersionRehearsal
 )
 
 $ErrorActionPreference = 'Stop'
@@ -156,6 +193,7 @@ function Resolve-RepoPath([string]$Path) {
 }
 
 if ($SkipBuild -and ($Fresh -or $RunTests)) { throw '-SkipBuild cannot be combined with -Fresh or -RunTests.' }
+if ($VersionRehearsal -and $StageOnly) { throw '-VersionRehearsal compiles a second Setup: it cannot be combined with -StageOnly.' }
 # Checked again against the build below; a Setup must say which update channel it checks (SEC-02).
 if (-not $StageOnly -and -not $UpdateChannel) {
     throw 'Pass -UpdateChannel <name> (an entry of installer\update-channels.json) or -UpdateChannel none: a Setup declares which update channel its Lucent.exe checks.'
@@ -228,6 +266,36 @@ if (-not $info.runtimeDeployed) { throw "$buildPath was configured with LUCENT_I
 $policy = Get-Content -LiteralPath (Join-Path $installerDir 'license-policy.json') -Raw | ConvertFrom-Json
 $vcpkgConfiguration = Get-Content -LiteralPath (Join-Path $repoRoot 'vcpkg-configuration.json') -Raw | ConvertFrom-Json
 $vcpkgBaseline = $vcpkgConfiguration.'default-registry'.baseline
+if ($vcpkgBaseline -notmatch '^[0-9a-f]{40}$') { throw "vcpkg-configuration.json names no registry baseline commit." }
+
+# The distribution decision (ADR 0024): how Lucent is distributed decides which terms apply to the
+# tools and what each release publishes with its installer.
+$distribution = if ($policy.PSObject.Properties.Name -contains 'distribution') { $policy.distribution } else { $null }
+if (-not $distribution -or $distribution.commercial -isnot [bool] -or -not $distribution.lucentLicence -or
+    -not $distribution.correspondingSource -or $distribution.correspondingSource.provision -ne 'archive-beside-installer' -or
+    -not $distribution.signing -or -not $distribution.installerTool) {
+    throw 'installer\license-policy.json records no complete distribution decision (distribution: commercial, lucentLicence, correspondingSource.provision "archive-beside-installer", signing, installerTool; ADR 0024).'
+}
+Write-Host ("Distribution: {0} ({1}), {2}; corresponding source beside the installer; release signing: {3}" -f $distribution.model,
+    $distribution.lucentLicence, $(if ($distribution.commercial) { 'commercial' } else { 'non-commercial' }), $distribution.signing.release)
+# The policy's signing status and this package agree (ADR 0024): once releases are signed, an unsigned
+# Setup is a mistake; a release signature while the policy still says unsigned is worth a reminder.
+if ($distribution.signing.release -notin 'unsigned', 'signed') { throw "installer\license-policy.json: distribution.signing.release is '$($distribution.signing.release)', not 'unsigned' or 'signed'." }
+$releaseSigned = [bool]($signing -and -not $signing.Test)
+if (-not $StageOnly -and $distribution.signing.release -eq 'signed' -and -not $releaseSigned) {
+    throw 'installer\license-policy.json says releases are signed (distribution.signing.release), but this Setup would not carry a release signature: set LUCENT_SIGN_CERT_SHA1 and LUCENT_SIGN_TIMESTAMP_URL (see NOTES).'
+}
+if ($releaseSigned -and $distribution.signing.release -ne 'signed') {
+    Write-Warning "This package is signed for release, but installer\license-policy.json still says releases are $($distribution.signing.release): set distribution.signing.release to 'signed' in the release commit."
+}
+
+# One version everywhere: vcpkg.json's version is Lucent's version, as the CMake project's is (the
+# corresponding-source archive ships vcpkg.json; docs\release\checklist.md, version rules).
+$vcpkgManifest = Get-Content -LiteralPath (Join-Path $repoRoot 'vcpkg.json') -Raw | ConvertFrom-Json
+if ($vcpkgManifest.'version-semver' -cne $info.version) {
+    throw "vcpkg.json has version $($vcpkgManifest.'version-semver'), but the build is Lucent $($info.version) (CMakeLists.txt project VERSION). Change both together."
+}
+$msvc = if ($info.dumpbin -match '/MSVC/([0-9.]+)/') { $Matches[1] } else { 'unknown' }
 
 # Inno Setup is located before the slow steps, so a wrong -Iscc or LUCENT_ISCC fails at once.
 $isccInfo = $null
@@ -252,9 +320,13 @@ foreach ($name in @($releaseBaseName, "$releaseBaseName-TEST-SIGNED")) {
         if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
     }
 }
-foreach ($stale in @((Join-Path $OutputDir 'lucent-associations.iss'), (Join-Path $OutputDir 'builder-paths.txt'), (Join-Path $OutputDir 'builder-paths.json'))) {
+$sourcePackagePath = Join-Path $OutputDir "Lucent-$($info.version)-corresponding-source.zip"
+foreach ($stale in @((Join-Path $OutputDir 'lucent-associations.iss'), (Join-Path $OutputDir 'builder-paths.txt'), (Join-Path $OutputDir 'builder-paths.json'),
+                     $sourcePackagePath, "$sourcePackagePath.partial")) {
     if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
 }
+# An earlier run's version rehearsal (-VersionRehearsal) belongs to that run's layout.
+if (Test-Path -LiteralPath (Join-Path $OutputDir 'rehearsal')) { Remove-Item -LiteralPath (Join-Path $OutputDir 'rehearsal') -Recurse -Force }
 
 $gitHead = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')
 if ($gitHead.ExitCode -ne 0) { throw 'git rev-parse HEAD failed.' }
@@ -373,6 +445,35 @@ $assetLicences = @(Get-AssetLicences -StageDir $stage -Info $info -Policy $polic
 $components = New-LicenseBundle -StageDir $stage -Info $info -Report $report -Policy $policy -RepoRoot $repoRoot `
     -DownloadsDir $downloads -NoticesDir (Join-Path $installerDir 'notices') -StaticLibraries $staticLibraries `
     -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT -Baseline $vcpkgBaseline -GitCommit $gitCommit
+
+# The corresponding source of the LGPL libraries (W12, ADR 0024): written, then read back and checked
+# against vcpkg's record of every library that needs it, before the LGPL notice names it.
+Write-Step 'Writing the corresponding source of the LGPL libraries'
+$sourcePackage = New-CorrespondingSourcePackage -Path $sourcePackagePath -Info $info -Components $components -Report $report -Policy $policy `
+    -RepoRoot $repoRoot -DownloadsDir $downloads -NoticesDir (Join-Path $installerDir 'notices') -VcpkgRoot $env:VCPKG_ROOT `
+    -Baseline $vcpkgBaseline -GitCommit $gitCommit -GitDirty $gitDirty -Msvc $msvc
+$provision = Get-SourceProvisionPlan -Components $components -Policy $policy
+$sourceCheck = Test-CorrespondingSourcePackage -Path $sourcePackagePath -Version $info.version `
+    -Expected @($provision.Components | ForEach-Object { Get-SourceProvisionExpectation -Component $_ })
+$sourceProblems = @($provision.Errors) + @($sourceCheck.Errors)
+if ($sourceCheck.Sha256 -ne $sourcePackage.Sha256) { $sourceProblems += "The archive changed after it was written ($($sourceCheck.Sha256), written $($sourcePackage.Sha256))." }
+if ($sourceProblems.Count -gt 0) {
+    foreach ($problem in $sourceProblems) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
+    Remove-Item -LiteralPath $sourcePackagePath -Force
+    throw "$(Split-Path -Leaf $sourcePackagePath) is incomplete or wrong ($($sourceProblems.Count) problem(s)); it was deleted."
+}
+Write-Host ("    {0}: {1:N1} MiB ({2:N0} bytes), {3} files, SHA-256 {4}" -f $sourcePackage.File, ($sourcePackage.Size / 1MB), $sourcePackage.Size,
+    @($sourcePackage.Entries).Count, $sourcePackage.Sha256)
+foreach ($record in $sourcePackage.Components) {
+    Write-Host ("    {0} {1} ({2}): {3}; recipe {4}" -f $record.Port, $record.Version, $record.Licence,
+        ((@($record.Archives) | ForEach-Object { "$($_.file) ($(if ($_.size -ge 1MB) { '{0:N1} MiB' -f ($_.size / 1MB) } else { '{0:N0} KiB' -f ($_.size / 1KB) }))" }) -join ', '),
+        $(if ($record.IsOverlay) { "Lucent overlay ($($record.Recipe.lucentSource))" } else { 'vcpkg registry port at the baseline' }))
+}
+foreach ($tool in $sourcePackage.BuildTools) { Write-Host "    Build tool recipe: $($tool.Port) $($tool.Version) (Lucent overlay $($tool.LucentSource))" }
+Write-Host "    Read back with System.IO.Compression: every expected archive and recipe file present, every hash as recorded"
+Write-LgplNotice -StageDir $stage -Info $info -Components $components -NoticesDir (Join-Path $installerDir 'notices') `
+    -SourcePackage $sourcePackage -Baseline $vcpkgBaseline -GitCommit $gitCommit
+
 $sbomRelative = 'licenses\Lucent.spdx.json'
 $sbomPath = Join-Path $stage $sbomRelative
 $listed = Write-InstalledFileList -StageDir $stage -Version $info.version -AlsoList @($sbomRelative)
@@ -410,7 +511,7 @@ Copy-Item -LiteralPath $sbomPath -Destination (Join-Path $OutputDir "$baseName.s
 
 # --- 6. The build machine's folders in shipped files ----------------------------------------------
 
-Write-Step 'Scanning every file of the folder for the build machine''s folders (user profile, repository, build tree, vcpkg)'
+Write-Step 'Scanning every file of the folder, and what it compresses, for the build machine''s folders (user profile, repository, build tree, vcpkg)'
 $pathScanner = New-BuilderPathScanner -Rules (Get-BuilderPathRules -Info $info -RepoRoot $repoRoot)
 $pathReports = New-Object System.Collections.Generic.List[object]
 $pathReportText = Join-Path $OutputDir 'builder-paths.txt'
@@ -418,10 +519,23 @@ $pathReportJson = Join-Path $OutputDir 'builder-paths.json'
 $pathReports.Add((Invoke-BuilderPathAudit -Scanner $pathScanner -Root $stage -Label 'Installation folder'))
 Write-BuilderPathReport -Reports $pathReports.ToArray() -Scanner $pathScanner -TextPath $pathReportText -JsonPath $pathReportJson
 $folderScan = $pathReports[0]
-Write-Host ("    {0} files, {1:N1} MiB in {2} s: {3} hit(s)" -f $folderScan.Files, ($folderScan.Bytes / 1MB), $folderScan.Seconds, @($folderScan.Hits).Count)
+Write-Host ("    {0} files, {1:N1} MiB in {2} s: {3} hit(s); {4}" -f $folderScan.Files, ($folderScan.Bytes / 1MB), $folderScan.Seconds, @($folderScan.Hits).Count,
+    (Format-CompressedContentTally $folderScan.Compressed))
 if (@($folderScan.Errors).Count -gt 0) {
     foreach ($problem in ($folderScan.Errors | Select-Object -First 40)) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
     throw "$(@($folderScan.Hits).Count) place(s) in $(@($folderScan.HitFiles).Count) shipped file(s) name a folder of the build machine; see $pathReportText."
+}
+# The corresponding-source archive is published too: its own files (README, MANIFEST.json, recipes,
+# triplet, build records) must not name the build machine's folders either. The upstream archives
+# are the upstream projects' bytes, verified by SHA-512 instead.
+$sourceScan = Invoke-BuilderPathAudit -Scanner $pathScanner -Blobs $sourcePackage.Texts -Label 'Corresponding source (files other than the upstream archives)'
+$pathReports.Add($sourceScan)
+Write-BuilderPathReport -Reports $pathReports.ToArray() -Scanner $pathScanner -TextPath $pathReportText -JsonPath $pathReportJson
+Write-Host ("    {0}: {1} files, {2:N1} KiB: {3} hit(s)" -f $sourcePackage.File, $sourceScan.Files, ($sourceScan.Bytes / 1KB), @($sourceScan.Hits).Count)
+if (@($sourceScan.Errors).Count -gt 0) {
+    foreach ($problem in ($sourceScan.Errors | Select-Object -First 40)) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
+    Remove-Item -LiteralPath $sourcePackagePath -Force
+    throw "$($sourcePackage.File) names a folder of the build machine; it was deleted. See $pathReportText."
 }
 
 # --- 7. Installer --------------------------------------------------------------------------------
@@ -469,6 +583,20 @@ if (-not $StageOnly) {
     }
     $engine = @($compile.Output | ForEach-Object { if ($_ -match '^Compiler engine version: (.+)$') { $Matches[1] } }) | Select-Object -First 1
     if ($engine) { $isccInfo | Add-Member -NotePropertyName Version -NotePropertyValue $engine.Trim() }
+    # The compiler states its licence on the line after its version ("Non-commercial use only" for
+    # the free edition). Its non-commercial terms cover Lucent's free distribution (ADR 0024), not a
+    # commercial one.
+    $compileLines = [string[]]@($compile.Output)
+    $isccLicence = $null
+    for ($i = 0; $i -lt $compileLines.Count - 1; $i++) {
+        if ($compileLines[$i] -match '^Compiler engine version: ' -and $compileLines[$i + 1] -match 'commercial') { $isccLicence = $compileLines[$i + 1].Trim(); break }
+    }
+    $isccInfo | Add-Member -NotePropertyName Licence -NotePropertyValue $isccLicence
+    if ($isccLicence -match 'non-commercial' -and $distribution.commercial) {
+        Remove-Item -LiteralPath $installerPath -Force
+        throw "This Inno Setup compiler reports '$isccLicence', but installer\license-policy.json records a commercial distribution: use a commercially licensed Inno Setup (ADR 0024)."
+    }
+    Write-Host "    Compiler: $(if ($engine) { $engine.Trim() } else { 'Inno Setup 6' })$(if ($isccLicence) { ", $isccLicence" }) (Lucent's distribution: $(if ($distribution.commercial) { 'commercial' } else { 'free, non-commercial' }))"
     # A Setup that failed a check is deleted, so no unchecked installer is left next to the folder.
     if ($signing) {
         $check = Test-AuthenticodeFile -Path $installerPath -Thumbprint $signing.Certificate.Thumbprint -AllowUntrustedRoot:$signing.Test -RequireTimestamp:([bool]$signing.TimestampUrl)
@@ -476,11 +604,14 @@ if (-not $StageOnly) {
         Add-SignatureRecord "$baseName.exe" $check
         Write-Host ("    Setup signed by {0}: {1} (WinVerifyTrust {2}), {3}; the uninstaller is signed inside it (SignedUninstaller)" -f $check.Signer, $check.Trust, $check.TrustResult, $(if ($check.Timestamped) { 'timestamped' } else { 'no timestamp' }))
     }
-    # Setup's own uncompressed parts (loader, version information, signature) must not name the
-    # build machine's folders either; the files it installs were scanned in step 6.
-    $setupScan = Invoke-BuilderPathAudit -Scanner $pathScanner -Path $installerPath -Label 'Setup'
+    # Setup must not name the build machine's folders either: its loader, version information and
+    # signature, and (W12 review SEC-07) what it compresses: the setup data (the compiled script,
+    # messages, file names; LZMA), the setup engine (LZMA) and the installed files (LZMA2: the folder
+    # scanned in step 6 and Microsoft's runtime installer), each decompressed and scanned.
+    $setupScan = Invoke-BuilderPathAudit -Scanner $pathScanner -Path $installerPath -Label 'Setup' -InnoSetup
     $pathReports.Add($setupScan)
     Write-BuilderPathReport -Reports $pathReports.ToArray() -Scanner $pathScanner -TextPath $pathReportText -JsonPath $pathReportJson
+    Write-Host ("    Setup scanned in {0} s: {1} hit(s); {2}" -f $setupScan.Seconds, @($setupScan.Hits).Count, (Format-CompressedContentTally $setupScan.Compressed))
     if (@($setupScan.Errors).Count -gt 0) {
         foreach ($problem in $setupScan.Errors) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
         Remove-Item -LiteralPath $installerPath -Force
@@ -491,6 +622,37 @@ if (-not $StageOnly) {
         file = $installerItem.Name; size = $installerItem.Length; sha256 = (Get-Sha256 $installerPath)
         signed = [bool]$signing }
     Write-TextFile -Path "$installerPath.sha256" -Text "$($installerEntry.sha256) *$($installerItem.Name)`n" -KeepLineEndings
+
+    # The version rehearsal (W12 review SEC-04, part 2): the same installation folder as the next patch
+    # version, so that installer\tests\Test-InstalledPackage.ps1 -NewerInstaller can upgrade to it and
+    # see the package's Setup refuse to go back. Unsigned, named as a rehearsal, in its own folder, never
+    # recorded in the package manifest and never published.
+    if ($VersionRehearsal) {
+        if ($info.version -notmatch '^(\d+)\.(\d+)\.(\d+)$') { throw "The version '$($info.version)' is not MAJOR.MINOR.PATCH." }
+        $rehearsalVersion = '{0}.{1}.{2}' -f $Matches[1], $Matches[2], ([int64]$Matches[3] + 1)
+        $rehearsalDir = Join-Path $OutputDir 'rehearsal'
+        if (Test-Path -LiteralPath $rehearsalDir) { Remove-Item -LiteralPath $rehearsalDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $rehearsalDir | Out-Null
+        $rehearsalBase = "Lucent-Setup-$rehearsalVersion-x64-VERSION-REHEARSAL"
+        Write-Step "Compiling the version rehearsal $rehearsalBase.exe (Lucent $($info.version)'s files as $rehearsalVersion; never published)"
+        $rehearsalArgs = @(
+            "/DAppVersion=$rehearsalVersion", "/DAppVersionQuad=$rehearsalVersion.0", "/DVersionRehearsalOf=$($info.version)",
+            "/DStagingDir=$stage", "/DVCRedistFile=$($vc.Path)", "/DVCRedistMajor=$($vc.Major)", "/DVCRedistMinor=$($vc.Minor)",
+            "/DVCRedistBuild=$($vc.Build)", "/DVCRuntimeDlls=$($report.VcRuntimeImports -join ',')",
+            "/DAssociationsInclude=$associationsPath", "/O$rehearsalDir", "/F$rehearsalBase", (Join-Path $installerDir 'lucent.iss'))
+        $rehearsalCompile = Invoke-NativeCommand -FilePath $isccInfo.Path -Arguments $rehearsalArgs -LogPath (Join-Path $rehearsalDir 'iscc.log')
+        $rehearsalPath = Join-Path $rehearsalDir "$rehearsalBase.exe"
+        if ($rehearsalCompile.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $rehearsalPath)) {
+            $rehearsalCompile.Output | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
+            throw "ISCC failed on the version rehearsal ($($rehearsalCompile.ExitCode)); see $(Join-Path $rehearsalDir 'iscc.log')."
+        }
+        Write-TextFile -Path (Join-Path $rehearsalDir 'README.txt') -Text ((@(
+            "$rehearsalBase.exe is a TEST INSTALLER, never to be published: the files of Lucent $($info.version)",
+            "($baseName.exe) registered as version $rehearsalVersion, made by tools\package.ps1 -VersionRehearsal so that",
+            'installer\tests\Test-InstalledPackage.ps1 -NewerInstaller can upgrade to a newer version and check that',
+            "the package's Setup refuses to install over it (W12 review SEC-04).") -join "`n") + "`n")
+        Write-Host ("    {0} ({1:N1} MiB, SHA-256 {2})" -f $rehearsalPath, ((Get-Item -LiteralPath $rehearsalPath).Length / 1MB), (Get-Sha256 $rehearsalPath))
+    }
 }
 
 # --- 8. Manifest ---------------------------------------------------------------------------------
@@ -503,10 +665,10 @@ function ConvertTo-PublishedPath([string]$Path) {
     if ($Path.StartsWith($profileRoot, [System.StringComparison]::OrdinalIgnoreCase)) { return '%USERPROFILE%\' + $Path.Substring($profileRoot.Length) }
     return $Path
 }
-$msvc = if ($info.dumpbin -match '/MSVC/([0-9.]+)/') { $Matches[1] } else { 'unknown' }
 $files = Get-FileInventory -Root $stage
+$sourceProvisionPorts = @($provision.Components | ForEach-Object Port)
 $manifest = [ordered]@{
-    schema = 4
+    schema = 5
     product = 'Lucent'
     version = $info.version
     architecture = 'x64'
@@ -514,6 +676,20 @@ $manifest = [ordered]@{
     gitDirty = $gitDirty
     created = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     installer = $installerEntry
+    # The corresponding source of the LGPL libraries, published beside the installer (ADR 0024).
+    correspondingSource = [ordered]@{
+        file = $sourcePackage.File; size = $sourcePackage.Size; sha256 = $sourcePackage.Sha256
+        root = $sourcePackage.Root; format = 'zip, stored entries sorted by name, each dated 1980-02-01 00:00'
+        components = @($sourcePackage.Components | ForEach-Object { [ordered]@{
+            port = $_.Port; version = $_.Version; licence = $_.Licence
+            archives = @($_.Archives | ForEach-Object { [ordered]@{ file = $_.file; url = $_.url; size = $_.size; sha512 = $_.sha512; sha256 = $_.sha256 } })
+            recipe = [ordered]@{ folder = $_.Recipe.folder; origin = $_.Recipe.origin; files = @($_.Recipe.files) } } })
+        buildTools = @($sourcePackage.BuildTools | ForEach-Object { [ordered]@{ port = $_.Port; version = $_.Version; recipe = $_.Recipe.folder } })
+        files = @($sourcePackage.Entries) }
+    distribution = [ordered]@{
+        model = $distribution.model; lucentLicence = $distribution.lucentLicence; commercial = $distribution.commercial
+        decided = $distribution.decided; releaseSigning = $distribution.signing.release
+        installerTool = "$($distribution.installerTool.name), $($distribution.installerTool.use) use" }
     signed = [bool]$signing
     signing = $(if ($signing) { [ordered]@{
         test = $signing.Test
@@ -533,6 +709,7 @@ $manifest = [ordered]@{
         innoSetup = $(if ($isccInfo) { ConvertTo-PublishedPath $isccInfo.Path } else { $null })
         innoSetupVersion = $(if ($isccInfo -and ($isccInfo.PSObject.Properties.Name -contains 'Version')) { $isccInfo.Version } else { $null })
         innoSetupSha256 = $(if ($isccInfo) { $isccInfo.Sha256 } else { $null })
+        innoSetupLicence = $(if ($isccInfo -and ($isccInfo.PSObject.Properties.Name -contains 'Licence')) { $isccInfo.Licence } else { $null })
         innoSetupStandardInstall = $(if ($isccInfo) { $isccInfo.Standard } else { $null }) }
     audit = [ordered]@{
         errors = $report.Errors.Count; warnings = @($report.Warnings)
@@ -545,11 +722,15 @@ $manifest = [ordered]@{
             searched = @($pathScanner.Groups | ForEach-Object Rule | Select-Object -Unique)
             filesScanned = ($pathReports | Measure-Object -Property Files -Sum).Sum
             bytesScanned = ($pathReports | Measure-Object -Property Bytes -Sum).Sum
+            # W12 review SEC-07: compressed parts decompressed and scanned (zlib and gzip streams, Setup's LZMA parts).
+            compressedPartsScanned = ($pathReports | ForEach-Object { $_.Compressed.Streams } | Measure-Object -Sum).Sum
+            decompressedBytesScanned = ($pathReports | ForEach-Object { $_.Compressed.Bytes } | Measure-Object -Sum).Sum
             hits = 0 } }
     sbom = [ordered]@{ file = 'licenses\Lucent.spdx.json'; packages = $sbom.Packages; files = $sbom.Files; validatedBy = $(if ($sbomValidated) { 'pyspdxtools' } else { 'structural check only' }) }
     fileAssociations = [ordered]@{ progId = 'Lucent.RawPhoto'; extensions = @($extensions | ForEach-Object { ".$_" })
         openWithProgids = 'only for extensions that already have a default program at install time' }
-    components = @($components | ForEach-Object { [ordered]@{ port = $_.Port; version = $_.Version; licence = $_.LicenseConcluded; linkage = $_.Linkage } })
+    components = @($components | ForEach-Object { [ordered]@{ port = $_.Port; version = $_.Version; licence = $_.LicenseConcluded; linkage = $_.Linkage
+        correspondingSource = ($sourceProvisionPorts -contains $_.Port) } })
     staticLibraries = @($components | ForEach-Object { $_.StaticLibraries } | Where-Object { $_ } | ForEach-Object { [ordered]@{ library = $_.Path; licence = $_.LicenseConcluded } })
     files = $files
 }
@@ -581,5 +762,8 @@ if ($signing) {
         $(if ($signing.Test) { ' - TEST SIGNATURE (untrusted root accepted), not for distribution' } else { '' }))
 }
 Write-Host ("    Update channel: {0}{1}" -f (Format-UpdateChannel $compiledChannel), $(if ($UpdateChannel) { " (declared: $UpdateChannel)" } else { ' (not declared: -StageOnly)' }))
+Write-Host ("    Corresponding source: {0}" -f $sourcePackagePath)
+Write-Host ("    Size:      {0:N1} MiB ({1} bytes), {2} files" -f ($sourcePackage.Size / 1MB), $sourcePackage.Size, @($sourcePackage.Entries).Count)
+Write-Host ("    SHA-256:   {0}" -f $sourcePackage.Sha256)
 Write-Host ("    Manifest:  {0}" -f $manifestPath)
-Write-Host '    Not for public distribution yet: how the LGPL libraries'' corresponding source is provided is decided in W12 (ADR 0009).'
+Write-Host '    A release publishes the installer, its corresponding-source archive and its manifest together, after the gates of docs\release\checklist.md.'

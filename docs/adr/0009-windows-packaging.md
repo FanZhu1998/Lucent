@@ -1,7 +1,9 @@
 # ADR 0009: Windows packaging: installed layout, dependency audit and per-user Inno Setup installer
 
 - **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below, with its closing review;
-  amended 2026-10-10 by the closing review of W13: "Amendment: the Lensfun dependencies' builder paths and recipes" below)
+  amended 2026-10-10 by the closing review of W13: "Amendment: the Lensfun dependencies' builder paths and recipes" below;
+  amended 2026-10-10 by the W12 licence and release phase: "Amendment: the corresponding source and the release" below, with ADR 0024;
+  amended 2026-10-10 by the W12 release phase: "Amendment: the release phase's deferred fixes" below)
 - **Date:** 2026-10-03
 - **Workflow:** W5 (Installer slice)
 
@@ -558,3 +560,137 @@ support). Decision 12 grants no exception, so the strings had to go where they a
     folder; its recipe files keep their SHA-1 from that copy. The notice's introduction no longer
     calls every LGPL library unmodified: it names the `lucent-*.patch` files as the Lucent project's
     only source changes.
+
+## Amendment: the corresponding source and the release (W12 licence and release phase, 2026-10-10)
+
+Decision 10 kept the installer from public distribution until the corresponding source of the LGPL
+libraries was provided. The user decided the provision and the distribution model on 2026-10-10
+([ADR 0024](0024-release-and-licensing.md)); packaging now implements them.
+
+19. **Every package run writes the corresponding source** (`-StageOnly` included):
+    `Lucent-<version>-corresponding-source.zip` beside the installer, made after the licence bundle
+    (`New-CorrespondingSourcePackage`), read back and checked with `System.IO.Compression`
+    (`Test-CorrespondingSourcePackage`) and deleted when anything is missing or wrong; its own files
+    are scanned for the build machine's folders like the installation folder (decision 12). Its
+    contents and checks are ADR 0024's decisions 2 to 4.
+20. **`licenses\LGPL-NOTICE.txt` names the archive** with its size and SHA-256 (it is written after
+    the archive, `Write-LgplNotice`), and lists for each library where its source archive and recipe
+    are inside it; `THIRD-PARTY-NOTICES.txt` names the archive too and credits Inno Setup.
+21. **The package manifest is schema 5**: `correspondingSource` (the archive with every file in it and
+    each component's archives and recipe), `distribution` (from `installer\license-policy.json`),
+    `components[].correspondingSource`, and `toolchain.innoSetupLicence` (the compiler's licence line;
+    a non-commercial compiler is refused for a commercial distribution).
+22. **"Not for public distribution" no longer applies** to a package made this way. A release still
+    passes the gates of `docs\release\checklist.md`, among them decision 11's clean-machine test,
+    now prepared as a Windows Sandbox run (`installer\sandbox`), which waits for Windows Sandbox to
+    be enabled on the reference machine. Decision 9 stands: releases are unsigned until a
+    code-signing certificate exists, and the signing path stays as rehearsed (decision 13).
+23. **One version.** Packaging refuses a build whose `vcpkg.json` version differs from the CMake
+    project version.
+
+## Amendment: the release phase's deferred fixes (W12, 2026-10-10)
+
+Three items the closing review of W12 part 1 and the licence phase left: Setup could install an
+older Lucent over a newer one (SEC-04, part 2), the builder-path scan could not see compressed
+content (SEC-07, decision 16), and the clean-machine gate (decision 11) had no harness that
+exercised Lucent itself in Windows Sandbox.
+
+24. **Setup never goes back over a newer Lucent** (`installer\lucent.iss`, `InitializeSetup`). It
+    reads this user's installation from Inno Setup's own registration (`HKA`: HKCU, Setup never runs
+    in administrative mode; `DisplayVersion` of `{AppId}_is1`) and compares it with its own version
+    by Semantic Versioning 2.0.0 precedence (MAJOR.MINOR.PATCH numerically, a release above its
+    pre-releases, pre-release identifiers numerically or in ASCII order, build metadata ignored).
+    Newer, or a version it cannot read: Setup stops before anything else (the runtime check
+    included) with a message box saying which version is installed and that going back means
+    uninstalling first (the library is kept; an older Lucent opens a newer catalog read-only or not
+    at all, ADR 0022), the log line `Downgrade refused: ...`, and exit code 1 ("Setup failed to
+    initialize") in silent mode; `/SUPPRESSMSGBOXES` suppresses the box, not the refusal. The same
+    version is repaired (`Downgrade check: ... this Setup repairs it`), an older one upgraded. The
+    preprocessor refuses an `AppVersionQuad` that is not `AppVersion` followed by `.0`. "Check for
+    updates" never offers an older version (ADR 0022), so the guard is for Setups run by hand. A
+    test hook, `/LucentTestCompareVersions=<a>,<b>;...`, logs how Setup orders each pair and stops
+    Setup (exit code 1) before it reads or changes anything: it can only stop Setup, never let it
+    install, and lets the installer test check the compiled precedence rules.
+25. **The version rehearsal.** `tools\package.ps1 -VersionRehearsal` also compiles
+    `rehearsal\Lucent-Setup-<next patch>-x64-VERSION-REHEARSAL.exe`: the same installation folder
+    registered as the next patch version (`VersionRehearsalOf` puts "version rehearsal of <v>, not
+    for distribution" in its name and version information), unsigned, not in the package manifest,
+    never published. `installer\tests\Test-InstalledPackage.ps1 -NewerInstaller` installs the
+    package's Setup (after checking 19 version pairs through the test hook: Semantic Versioning
+    2.0.0's own examples and malformed versions), repairs it over the running Lucent (the same
+    version, which the step's checks now say), upgrades to the newer Setup, and runs the package's
+    Setup again: it must exit with 1, log the refusal, start no runtime check, and leave the
+    registration, every installed file (size, time, SHA-256) and the shortcuts as they were; then
+    everything is uninstalled. With `-PreviousInstaller` (the update rehearsal) the previous
+    release's Setup must refuse to go back the same way, and a same-version repair follows the
+    upgrade.
+26. **The builder-path scan decompresses what the shipped files compress** (decision 16 resolved;
+    `installer\scripts\LucentCompressedContent.cs`, `Find-BuilderPathsInContent`). Every file's
+    bytes are scanned as before, and then what they compress: every zlib (RFC 1950) and gzip (RFC
+    1952) stream at any offset that decodes completely and matches its Adler-32 or CRC-32 (Qt's rcc
+    resources, which qCompress, and Qt's gzip-compressed MIME database; PNG data), followed one
+    level further into what those hold. Setup is read through its loader's offset table (version 2,
+    as Inno Setup 6.7 writes it, CRC-checked): the setup data blocks (LZMA: the compiled script,
+    messages, file names), the setup engine (LZMA; Inno Setup's x86 call-address transform undone,
+    then its size and CRC-32 checked against the offset table) and the installed files (LZMA2) are
+    decompressed and scanned. A hit names the file, the compressed part and its offset, and the
+    offset in the decompressed data. What the scan cannot decompress fails the packaging instead of
+    passing unseen: a zstd frame (Qt is built without zstd, so no shipped file has one), a part
+    beyond the limits (256 MiB a stream, 1 GiB a file), a Setup layout the reader does not know (a
+    future Inno Setup version needs the reader updated). The decoders are written from the
+    specifications (RFC 1951, the LZMA SDK's specification) and checked against independent
+    encoders: .NET's DeflateStream and GZipStream, liblzma (`installer\tests\inno_setup_vector.py`),
+    ISCC itself. Not covered: raw deflate without a zlib or gzip wrapper (ZIP entries; Lucent ships
+    no ZIP), and inside Setup's decompressed installed files the bytes Inno Setup's call transform
+    changes in executables (405 of the folder's 478 compressed streams still decode there): those
+    files are the installation folder's, scanned exactly before compression, and the installer test
+    compares every installed file with the package manifest's SHA-256. The manifest's
+    `audit.builderPaths` records `compressedPartsScanned` and `decompressedBytesScanned`.
+27. **The clean-machine gate has its harness** (decision 11;
+    [docs/release/clean-machine.md](../release/clean-machine.md); ADR 0024 decision 10):
+    `tools\Test-CleanMachine.ps1` prepares a gate folder (the package, its version rehearsal, three
+    smoke fixtures, the scripts) mapped read-only with a writable results folder, writes and
+    validates the `.wsb` (`installer\sandbox\LucentSandbox.psm1`, against
+    `installer\sandbox\wsb-configuration.xsd`), starts Windows Sandbox and waits with a timeout; the
+    logon script `installer\sandbox\Invoke-CleanMachineGate.ps1` installs silently, imports, runs
+    Auto, exports JPEG and 16-bit TIFF and takes screenshots through the installed `Lucent.exe`,
+    uninstalls, runs the installer test and writes `gate.json`, which the host checks against what
+    it asked for. `installer\sandbox\New-LucentSandbox.ps1` is replaced by it. The gate waits for
+    Windows Sandbox to be enabled on the reference machine; `-LocalRehearsal` runs the logon script
+    on any machine.
+
+### Evidence (2026-10-10, the reference laptop)
+
+- **Versions.** `Test-InstalledPackage.ps1 -RuntimeOutcomes -NewerInstaller` on the final release
+  package of `build\rel-def` and its version rehearsal (0.1.1): 56 of 56 checks (55 of 55 on the
+  package before the test hook existed). The 19 version pairs came out in Semantic Versioning order
+  and the five malformed versions as unreadable; the install took 5 to 7 s; the same-version repair
+  over the running Lucent logged `Downgrade check: Lucent 0.1.0 is installed; this Setup repairs
+  it`; the upgrade registered 0.1.1 with the same 391 files; the package's Setup then exited with 1
+  after `Downgrade refused: Lucent 0.1.1 is installed, newer than 0.1.0, which this Setup
+  installs`, with nothing changed and no runtime check; the uninstallation and the runtime outcomes
+  passed as before.
+- **Compressed content.** The installation folder (391 files, 72.4 MiB): 478 compressed parts (477
+  zlib streams in 10 Qt and Lucent binaries, Qt6Core.dll's gzip-compressed MIME database), 5.2 MiB
+  decompressed, no builder path; the scan takes 11 to 13 s instead of about 2 s. Setup: its two
+  setup data blocks, the setup engine (4.4 MB, CRC-32 as recorded) and the installed files (the
+  folder and Microsoft's redistributable, 101.5 MB) decompressed, 106.4 MiB with the 448 zlib
+  streams found in Setup and in those parts, no builder path, 13.5 s. `Test-BuilderPathScan.ps1`:
+  paths planted in a qCompress resource, a gzip member, a zlib stream inside a zlib stream, and the
+  LZMA setup data and LZMA2 installed files of a synthetic Inno Setup 6.7 executable are found and
+  named; a zstd frame and a damaged offset table fail; with `-InnoSetupCompiler`, a Setup that ISCC
+  6.7.3 compiles with a path in its `[Code]` and one in an installed file shows both (68 of 68
+  checks).
+- **The clean-machine harness.** `Test-CleanMachineHarness.ps1` (CTest
+  `lucent_clean_machine_harness_tests`): 33 checks. The local rehearsal
+  (`tools\Test-CleanMachine.ps1 -LocalRehearsal`) with the final package and three smoke fixtures:
+  Setup installed silently into the gate folder's profile in 5 s; run 1 imported the DJI DNG, the
+  X-T4 RAF and the Z 6 NEF, ran Auto on the DNG (2.1 s, its revision current) and exported three
+  valid JPEGs (16 s); run 2 exported three valid 16-bit TIFFs from the same library (29 s); the
+  photos were unchanged; the uninstallation removed the program, its shortcut and its registration
+  and kept the library; the installer test inside passed 56 of 56 checks, the 19 version comparisons
+  among them. 19 of the gate's 21 checks passed: the development machine is not clean (Python, Git,
+  Ninja, the runtime) and is online, which a rehearsal records without failing. The first rehearsal
+  found two defects of the gate itself, fixed before this run: `--export-all` needs an existing
+  output folder, and Windows PowerShell 5.1 refused to add an array to the result's ordered
+  dictionary by property name (now an indexer).

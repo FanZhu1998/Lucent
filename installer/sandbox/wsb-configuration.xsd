@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows Sandbox configuration file (.wsb), as Microsoft documents it ("Use and configure Windows
+  Sandbox": the elements vGPU, Networking, MappedFolders (MappedFolder: HostFolder, SandboxFolder,
+  ReadOnly), LogonCommand (Command), AudioInput, VideoInput, ProtectedClient, PrinterRedirection,
+  ClipboardRedirection and MemoryInMB under Configuration; the switches take Enable, Disable or
+  Default; folders are absolute paths; ReadOnly is true or false). Microsoft publishes no schema, so
+  this is a transcription of that page (Windows 10 1903 to Windows 11 24H2) for
+  installer\sandbox\LucentSandbox.psm1 (Test-LucentSandboxConfiguration), which validates every
+  configuration the clean-machine gate writes (docs\release\clean-machine.md). Element names are
+  case-sensitive here although Windows Sandbox may accept other cases: the gate writes them as
+  documented. Keep this file ASCII.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:simpleType name="Switch">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="Enable"/>
+      <xs:enumeration value="Disable"/>
+      <xs:enumeration value="Default"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="AbsoluteFolder">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Za-z]:\\[^&lt;&gt;&quot;|?*]*"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="ReadOnlyFlag">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="true"/>
+      <xs:enumeration value="false"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="Configuration">
+    <xs:complexType>
+      <xs:all>
+        <xs:element name="vGPU" type="Switch" minOccurs="0"/>
+        <xs:element name="Networking" type="Switch" minOccurs="0"/>
+        <xs:element name="MappedFolders" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="MappedFolder" minOccurs="0" maxOccurs="unbounded">
+                <xs:complexType>
+                  <xs:all>
+                    <xs:element name="HostFolder" type="AbsoluteFolder"/>
+                    <xs:element name="SandboxFolder" type="AbsoluteFolder" minOccurs="0"/>
+                    <xs:element name="ReadOnly" type="ReadOnlyFlag" minOccurs="0"/>
+                  </xs:all>
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="LogonCommand" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Command" type="xs:string"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="AudioInput" type="Switch" minOccurs="0"/>
+        <xs:element name="VideoInput" type="Switch" minOccurs="0"/>
+        <xs:element name="ProtectedClient" type="Switch" minOccurs="0"/>
+        <xs:element name="PrinterRedirection" type="Switch" minOccurs="0"/>
+        <xs:element name="ClipboardRedirection" type="Switch" minOccurs="0"/>
+        <xs:element name="MemoryInMB" type="xs:positiveInteger" minOccurs="0"/>
+      </xs:all>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

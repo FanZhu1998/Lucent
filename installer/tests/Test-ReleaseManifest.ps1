@@ -14,7 +14,9 @@
        version that is not SemVer, release notes above 16 KiB; and (W12 review SEC-03, SEC-04) a
        package manifest that names another installer, a version other than the package's, a package
        whose Lucent.exe checks no channel or another one, and an unsigned or test-signed package
-       without -AllowUnsignedInstaller.
+       without -AllowUnsignedInstaller; and (ADR 0024) a corresponding-source archive that is missing
+       beside the installer or differs from the one the package manifest records, and, without
+       -AllowUnsignedInstaller, a package manifest that records none.
     5. Manifests that Lucent's reader refuses are refused by Test-LucentReleaseManifest too, although
        validly signed (SEC-06): an unknown member, schema_version as a string, minimum_os '10.0', an
        impossible publication time, an installer of 0 bytes, 20 KiB of release notes, an extra
@@ -39,9 +41,10 @@ function Assert-True([bool]$Condition, [string]$What) {
     $script:checks++
     if (-not $Condition) { $script:failures++; Write-Host "FAILED: $What" }
 }
-function Assert-Throws([scriptblock]$Block, [string]$What) {
+function Assert-Throws([scriptblock]$Block, [string]$What, [string]$Pattern) {
     $script:checks++
-    try { & $Block; $script:failures++; Write-Host "FAILED (no error): $What" } catch { }
+    try { & $Block; $script:failures++; Write-Host "FAILED (no error): $What" }
+    catch { if ($Pattern -and $_.Exception.Message -notmatch $Pattern) { $script:failures++; Write-Host "FAILED (another error: $($_.Exception.Message)): $What" } }
 }
 
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-release-manifest-test-' + [guid]::NewGuid().ToString('N'))
@@ -67,10 +70,16 @@ try {
     $installer = Join-Path $work 'Lucent-Setup-0.2.0-x64.exe'
     [System.IO.File]::WriteAllBytes($installer, [byte[]](1..200 | ForEach-Object { [byte]($_ % 251) }))
     $installerSha = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+    # The corresponding-source archive tools\package.ps1 writes beside the installer (ADR 0024).
+    $sourceArchive = Join-Path $work 'Lucent-0.2.0-corresponding-source.zip'
+    [System.IO.File]::WriteAllBytes($sourceArchive, [byte[]](1..300 | ForEach-Object { [byte]($_ % 7) }))
+    $sourceRecord = [ordered]@{ file = 'Lucent-0.2.0-corresponding-source.zip'; size = 300
+        sha256 = (Get-FileHash -LiteralPath $sourceArchive -Algorithm SHA256).Hash.ToLowerInvariant() }
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     function Write-Package([string]$Path, [hashtable]$Change = @{}) {
-        $package = [ordered]@{ schema = 4; product = 'Lucent'; version = '0.2.0'; architecture = 'x64'
+        $package = [ordered]@{ schema = 5; product = 'Lucent'; version = '0.2.0'; architecture = 'x64'
             installer = [ordered]@{ file = 'Lucent-Setup-0.2.0-x64.exe'; size = 200; sha256 = $installerSha; signed = $false }
+            correspondingSource = $sourceRecord
             signed = $false; signing = $null
             updateChannel = [ordered]@{ name = 'stable'; manifestUrl = 'https://updates.example.org/lucent/release-manifest.json'
                 keyIds = @($public.KeyId); publisherThumbprints = @() } }
@@ -134,6 +143,22 @@ try {
     $testSigned = Write-Package (Join-Path $work 'test-signed.manifest.json') @{ signed = $true
         signing = [ordered]@{ test = $true; certificateSha1 = ('ab' * 20); timestamped = $false } }
     Assert-Throws { New-LucentReleaseManifest -Installer $installer -PackageManifest $testSigned -InstallerUrl $url -Channel stable -OutFile $bad } 'a test-signed package without -AllowUnsignedInstaller'
+    # The corresponding source is published with the installer (ADR 0024).
+    $noSource = Write-Package (Join-Path $work 'no-source.manifest.json') @{ correspondingSource = $null; signed = $true
+        signing = [ordered]@{ test = $false; certificateSha1 = ('ab' * 20); timestamped = $true } }
+    Assert-Throws { New-LucentReleaseManifest -Installer $installer -PackageManifest $noSource -InstallerUrl $url -Channel stable -OutFile $bad } `
+        'a release package that records no corresponding-source archive' 'corresponding-source'
+    $rehearsal = New-LucentReleaseManifest -Installer $installer -PackageManifest $noSource -AllowUnsignedInstaller -InstallerUrl $url -Channel stable -OutFile (Join-Path $work 'rehearsal.json')
+    Assert-True ($rehearsal.Version -eq '0.2.0') 'a rehearsal (-AllowUnsignedInstaller) of a package without one is accepted'
+    $otherName = Write-Package (Join-Path $work 'other-name.manifest.json') @{ correspondingSource = [ordered]@{ file = 'sources.zip'; size = 300; sha256 = $sourceRecord.sha256 } }
+    Assert-Throws { New-LucentReleaseManifest -Installer $installer -PackageManifest $otherName -AllowUnsignedInstaller -InstallerUrl $url -Channel stable -OutFile $bad } `
+        'a corresponding-source archive under another name' 'corresponding-source archive'
+    [System.IO.File]::WriteAllBytes($sourceArchive, [byte[]](1..300 | ForEach-Object { [byte]($_ % 5) }))
+    Assert-Throws { New-LucentReleaseManifest -Installer $installer -PackageManifest $package -AllowUnsignedInstaller -InstallerUrl $url -Channel stable -OutFile $bad } `
+        'a corresponding-source archive that differs from the recorded one' 'is not the corresponding-source archive'
+    Remove-Item -LiteralPath $sourceArchive
+    Assert-Throws { New-LucentReleaseManifest -Installer $installer -PackageManifest $package -AllowUnsignedInstaller -InstallerUrl $url -Channel stable -OutFile $bad } `
+        'a corresponding-source archive missing beside the installer' 'must be beside the installer'
     Assert-True (-not (Test-Path -LiteralPath $bad)) 'nothing was written for a refused release'
 
     # 5. What Lucent's reader refuses, the verifier refuses too, although validly signed (SEC-06).

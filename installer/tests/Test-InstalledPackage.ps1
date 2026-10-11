@@ -50,7 +50,19 @@
        running Lucent; the signature checks of 7 apply to the upgraded files. After the upgrade the
        new Lucent.exe runs on the previous version's data root: it must open the catalog (migrating
        it, after a pre-migration backup, when its schema is older), find the imported photo and
-       exit with 0. -PreviousManifest checks the previous installation's files.
+       exit with 0. -PreviousManifest checks the previous installation's files. Then the previous
+       Setup must refuse to go back (see 9), and -Installer repairs the installation (same version).
+    9. Versions (W12 review SEC-04, part 2; installer\lucent.iss): before anything is installed,
+       Setup's test hook /LucentTestCompareVersions orders Semantic Versioning 2.0.0's examples,
+       refuses malformed versions and stops Setup (exit code 1) without installing anything. Without
+       -PreviousInstaller, step 4 is a same-version repair (the installed version stays). With
+       -NewerInstaller (a Setup of a higher version, such as the version rehearsal of
+       tools\package.ps1 -VersionRehearsal), the installation is then upgraded to it (registration
+       and files checked, against -NewerManifest when given), and -Installer must refuse to install
+       over it: exit code 1, "Downgrade refused" in its log, the runtime installer not started, the
+       registration, every installed file (size, time, SHA-256) and the shortcuts unchanged. A
+       refused downgrade is checked the same way after the update rehearsal (8). Step 5 then
+       uninstalls whatever version is installed.
 
     A signed uninstaller keeps its messages in unins000.msg (Inno Setup cannot add them to a signed
     EXE): unins000.exe, .dat and .msg are Inno Setup's own files, not the package's.
@@ -83,12 +95,27 @@
     The previous version's Setup: installed first and upgraded with -Installer (see DESCRIPTION, 8).
 .PARAMETER PreviousManifest
     With -PreviousInstaller: the previous package's manifest, to check its installation's files.
+.PARAMETER NewerInstaller
+    A Setup of a higher version than -Installer's: upgraded to after the repair, then -Installer must
+    refuse to go back (see DESCRIPTION, 9).
+.PARAMETER NewerManifest
+    With -NewerInstaller: its package manifest (default: -Manifest; a version rehearsal installs the
+    same files).
 
 .EXAMPLE
     powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
         -Installer build\release\package\Lucent-Setup-0.1.0-x64.exe `
         -Manifest build\release\package\Lucent-Setup-0.1.0-x64.manifest.json `
         -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3 -RuntimeOutcomes
+
+.EXAMPLE
+    # Install, same-version repair, upgrade and a refused downgrade (W12 review SEC-04), with the
+    # version rehearsal Setup that tools\package.ps1 -VersionRehearsal writes beside the package.
+    powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
+        -Installer build\release\package\Lucent-Setup-0.1.0-x64.exe `
+        -Manifest build\release\package\Lucent-Setup-0.1.0-x64.manifest.json `
+        -NewerInstaller build\release\package\rehearsal\Lucent-Setup-0.1.1-x64-VERSION-REHEARSAL.exe `
+        -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3
 
 .EXAMPLE
     # The update rehearsal: the previous version's installation upgraded in place (W12, ADR 0022).
@@ -114,7 +141,9 @@ param(
     [string]$SignerThumbprint,
     [switch]$AllowUntrustedRoot,
     [string]$PreviousInstaller,
-    [string]$PreviousManifest
+    [string]$PreviousManifest,
+    [string]$NewerInstaller,
+    [string]$NewerManifest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,6 +160,8 @@ $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $Fixture = (Resolve-Path -LiteralPath $Fixture).Path
 if ($PreviousInstaller) { $PreviousInstaller = (Resolve-Path -LiteralPath $PreviousInstaller).Path }
 elseif ($PreviousManifest) { throw '-PreviousManifest needs -PreviousInstaller.' }
+if ($NewerInstaller) { $NewerInstaller = (Resolve-Path -LiteralPath $NewerInstaller).Path }
+elseif ($NewerManifest) { throw '-NewerManifest needs -NewerInstaller.' }
 # The Setup installed first: the previous version's for the update rehearsal.
 $firstInstaller = if ($PreviousInstaller) { $PreviousInstaller } else { $Installer }
 if ($SignerThumbprint) {
@@ -150,6 +181,7 @@ $dataRoot = Join-Path $WorkDir 'data'
 New-Item -ItemType Directory -Path $dataRoot | Out-Null
 $manifestData = if ($Manifest) { Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json } else { $null }
 $previousManifestData = if ($PreviousManifest) { Get-Content -LiteralPath $PreviousManifest -Raw | ConvertFrom-Json } else { $null }
+$newerManifestData = if ($NewerManifest) { Get-Content -LiteralPath $NewerManifest -Raw | ConvertFrom-Json } else { $manifestData }
 
 $checks = New-Object System.Collections.Generic.List[object]
 $notes = New-Object System.Collections.Generic.List[string]
@@ -328,9 +360,30 @@ function Invoke-Uninstall([string]$Directory, [string]$LogPath) {
     return $finished
 }
 
-# --- 1. Install ----------------------------------------------------------------------------------
+# --- Setup's version precedence (W12 review SEC-04), through its test hook -------------------------
 
 Write-Host "Work folder: $WorkDir"
+# Semantic Versioning 2.0.0's own examples and the cases Lucent's guard must refuse to read.
+$comparisons = [ordered]@{
+    '1.0.0,2.0.0' = '<'; '2.0.0,2.1.0' = '<'; '2.1.0,2.1.1' = '<'; '0.10.0,0.9.0' = '>'; '123456789012345678901.0.0,2.0.0' = '>'
+    '1.0.0-alpha,1.0.0-alpha.1' = '<'; '1.0.0-alpha.1,1.0.0-alpha.beta' = '<'; '1.0.0-alpha.beta,1.0.0-beta' = '<'
+    '1.0.0-beta,1.0.0-beta.2' = '<'; '1.0.0-beta.2,1.0.0-beta.11' = '<'; '1.0.0-beta.11,1.0.0-rc.1' = '<'; '1.0.0-rc.1,1.0.0' = '<'
+    '1.0.0+build.7,1.0.0' = '='; '0.1.0,0.1.0' = '='
+    '1.0,1.0.0' = 'invalid'; '01.0.0,1.0.0' = 'invalid'; '1.0.0-01,1.0.0' = 'invalid'; '1.0.0-,1.0.0' = 'invalid'; '1.0.0-a_b,1.0.0' = 'invalid' }
+$hookLog = Join-Path $WorkDir 'version-precedence.log'
+$hookDir = Join-Path $WorkDir 'app-version-precedence'
+$exitCode = Invoke-Setup -Directory $hookDir -LogPath $hookLog -Setup $Installer -Extra @("/LucentTestCompareVersions=$(@($comparisons.Keys) -join ';')")
+$hookLines = if (Test-Path -LiteralPath $hookLog) { @(Get-Content -LiteralPath $hookLog | Where-Object { $_ -match 'Version comparison: ' }) } else { @() }
+$wrongOrder = @($comparisons.Keys | Where-Object {
+    $pair = $_ -split ','
+    $expected = 'Version comparison: {0} {1} {2}$' -f [regex]::Escape($pair[0]), [regex]::Escape($comparisons[$_]), [regex]::Escape($pair[1])
+    -not ($hookLines | Where-Object { $_ -match $expected }) })
+Add-Check "Setup orders versions by Semantic Versioning precedence ($($comparisons.Count) pairs through its test hook) and the hook installs nothing" `
+    ($exitCode -eq 1 -and $wrongOrder.Count -eq 0 -and -not (Test-Path -LiteralPath $hookDir) -and -not (Test-Path -LiteralPath $uninstallKey)) `
+    ("exit code {0}{1}" -f $exitCode, $(if ($wrongOrder) { '; wrong: ' + ($wrongOrder -join ' ') } else { '' }))
+
+# --- 1. Install ----------------------------------------------------------------------------------
+
 $installLog = Join-Path $WorkDir 'install.log'
 $installTimer = [System.Diagnostics.Stopwatch]::StartNew()
 $exitCode = Invoke-Setup -Directory $appDir -LogPath $installLog -Setup $firstInstaller
@@ -528,7 +581,15 @@ function Get-LineIndex([string]$Pattern) {
 }
 $shutdownAt = Get-LineIndex 'Shutting down applications using our files'
 $cleanupAt = Get-LineIndex 'Upgrade: removed \d+ files'
-Add-Check 'Upgrade over the running installation: Setup exit code 0' ($exitCode -eq 0) "exit code $exitCode"
+# Without -PreviousInstaller this is a same-version repair (W12 review SEC-04): the version stays.
+$stepName = if ($PreviousInstaller) { 'Upgrade from the previous version over the running installation' } else { 'Same-version repair over the running installation' }
+Add-Check "$($stepName): Setup exit code 0" ($exitCode -eq 0) "exit code $exitCode"
+if (-not $PreviousInstaller) {
+    $repaired = if (Test-Path -LiteralPath $uninstallKey) { [string](Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion } else { '' }
+    $checkLine = @($reinstallLines | Where-Object { $_ -match 'Downgrade check: ' }) | Select-Object -First 1
+    Add-Check "$($stepName): the registered version stays $previousVersion, and Setup says it repairs" ($repaired -eq $previousVersion -and [bool]$checkLine -and $checkLine -match 'repairs it') `
+        "registered $repaired; $checkLine"
+}
 Add-Check 'Restart Manager closed the running Lucent before the upgrade cleanup' ($wasRunning -and $closed -and $shutdownAt -ge 0 -and $cleanupAt -gt $shutdownAt) `
     ("running before: {0}; closed: {1}; log lines: shutdown {2}, cleanup {3}" -f $wasRunning, $closed, $shutdownAt, $cleanupAt)
 $left = @($stale | Where-Object { Test-Path -LiteralPath (Join-Path $appDir $_) })
@@ -594,6 +655,70 @@ if ($PreviousInstaller) {
         ((@($opened | Select-Object -First 1) + @($unavailable | Select-Object -First 1)) -join ' | ')
     Add-Check 'A schema migration, if any, came after a verified pre-migration backup' ($migrated.Count -eq 0 -or $backups.Count -gt 0) `
         ("{0} migration line(s), {1} pre-migration backup(s)" -f $migrated.Count, $backups.Count)
+}
+
+# --- Versions: repair, upgrade and refused downgrades (W12 review SEC-04, part 2) -----------------
+
+function Get-RegisteredVersion {
+    if (Test-Path -LiteralPath $uninstallKey) { return [string](Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion }
+    return ''
+}
+# Every installed file (size, time, SHA-256) and the shortcuts: what a refused Setup must leave as it was.
+function Get-InstallationSnapshot {
+    $lines = @(Get-ChildItem -LiteralPath $appDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
+        '{0}|{1}|{2}|{3}' -f $_.FullName.Substring($appDir.Length + 1), $_.Length, $_.LastWriteTimeUtc.Ticks,
+            (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash })
+    foreach ($link in $startMenuLink, $desktopLink) {
+        if (Test-Path -LiteralPath $link) { $lines += ('{0}|{1}' -f $link, (Get-Item -LiteralPath $link).LastWriteTimeUtc.Ticks) }
+    }
+    return ($lines -join "`n")
+}
+function Test-RefusedDowngrade([string]$Setup, [string]$Label, [string]$LogName) {
+    $installed = Get-RegisteredVersion
+    $snapshot = Get-InstallationSnapshot
+    $log = Join-Path $WorkDir $LogName
+    $code = Invoke-Setup -Directory $appDir -LogPath $log -Setup $Setup
+    $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
+    $line = @($text -split "`r?`n" | Where-Object { $_ -match 'Downgrade refused: ' }) | Select-Object -First 1
+    Add-Check "$($Label): Setup refuses with exit code 1 and says why in its log" ($code -eq 1 -and [bool]$line) "exit code $code; $line"
+    Add-Check "$($Label): nothing changed (registered version $installed, every installed file, the shortcuts)" `
+        ((Get-RegisteredVersion) -eq $installed -and (Get-InstallationSnapshot) -eq $snapshot) "registered now: $(Get-RegisteredVersion)"
+    Add-Check "$($Label): the runtime check and installer did not run" ($text -notmatch 'VC\+\+ runtime:') ''
+}
+function Test-InstalledFileListMatches([string]$Name) {
+    $listedNow = if (Test-Path -LiteralPath $listPath) { @(Get-Content -LiteralPath $listPath | Where-Object { $_ -and -not $_.StartsWith(';') }) } else { @() }
+    $presentNow = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch $innoFilePattern } |
+        ForEach-Object { $_.FullName.Substring($appDir.Length + 1) })
+    Add-Check $Name ($listedNow.Count -gt 0 -and @(Compare-Object $listedNow $presentNow).Count -eq 0) "$($listedNow.Count) listed, $($presentNow.Count) installed"
+}
+$versionSteps = [ordered]@{ installed = $previousVersion }
+
+if ($PreviousInstaller) {
+    # The previous release's Setup must not go back over the upgraded installation, and the package's
+    # Setup repairs it in place.
+    Test-RefusedDowngrade -Setup $PreviousInstaller -Label 'Downgrade to the previous version' -LogName 'downgrade-previous.log'
+    $current = Get-RegisteredVersion
+    $repairLog = Join-Path $WorkDir 'repair.log'
+    $exitCode = Invoke-Setup -Directory $appDir -LogPath $repairLog
+    $repairText = if (Test-Path -LiteralPath $repairLog) { Get-Content -LiteralPath $repairLog -Raw } else { '' }
+    Add-Check 'Same-version repair after the upgrade: Setup exit code 0, version unchanged' `
+        ($exitCode -eq 0 -and (Get-RegisteredVersion) -eq $current -and $repairText -match 'Downgrade check: .* this Setup repairs it') "exit code $exitCode, registered $(Get-RegisteredVersion)"
+    Test-InstalledFiles 'Files after the repair match the package manifest (SHA-256)'
+    $versionSteps.upgradedTo = $current
+}
+
+if ($NewerInstaller) {
+    $versionBefore = Get-RegisteredVersion
+    $newerLog = Join-Path $WorkDir 'upgrade-newer.log'
+    $exitCode = Invoke-Setup -Directory $appDir -LogPath $newerLog -Setup $NewerInstaller
+    $newer = Get-RegisteredVersion
+    $newerText = if (Test-Path -LiteralPath $newerLog) { Get-Content -LiteralPath $newerLog -Raw } else { '' }
+    Add-Check "Upgrade from $versionBefore to the newer Setup: exit code 0, one registration of the newer version" `
+        ($exitCode -eq 0 -and $newer -and $newer -ne $versionBefore -and $newerText -match 'Downgrade check: .* this Setup upgrades it') "exit code $exitCode; registered $newer"
+    Test-InstalledFiles 'Files after the upgrade to the newer Setup match its package manifest (SHA-256)' $newerManifestData
+    Test-InstalledFileListMatches "After the upgrade to the newer Setup $fileListName lists exactly the installed files"
+    Test-RefusedDowngrade -Setup $Installer -Label "Downgrade from $newer to the package's Setup" -LogName 'downgrade.log'
+    $versionSteps.newer = $newer
 }
 
 # --- 3. Uninstall --------------------------------------------------------------------------------
@@ -672,6 +797,7 @@ $result = [ordered]@{
     checks = @($checks | ForEach-Object { [ordered]@{ name = $_.Name; passed = $_.Passed; detail = $_.Detail } })
     modulesFromInstallation = @($fromApp); modulesFromWindows = @($fromWindows); modulesOther = @($foreign)
     openWithProgidsExtensions = @($associated); supportedTypes = @($supported)
+    versions = $versionSteps
 }
 $json = ConvertTo-Json -InputObject $result -Depth 6
 [System.IO.File]::WriteAllText((Join-Path $WorkDir 'result.json'), $json, (New-Object System.Text.UTF8Encoding($false)))

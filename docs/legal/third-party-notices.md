@@ -1,12 +1,14 @@
-# Third-party components: development licence ledger
+# Third-party components: licence ledger
 
-> **Development ledger, not a release notice bundle.** This file tracks which third-party
-> components the Lucent source tree builds with or depends on, under which licence, and what each
-> licence will require when Lucent is distributed. It does not reproduce the licence texts and does
-> not satisfy any notice obligation by itself. The shipped notice bundle and SBOM are generated
-> from the files a release actually deploys by `tools\package.ps1` into the installation's
-> `licenses\` folder (W5, [ADR 0009](../adr/0009-windows-packaging.md), decision 10); release
-> hardening completes them (W12; ADR 0003).
+> **Ledger, not a release notice bundle.** This file tracks which third-party components the
+> Lucent source tree builds with or depends on, under which licence, what each licence requires when
+> Lucent is distributed, and how a release meets it ([Release status](#release-status)). It does not
+> reproduce the licence texts and does not satisfy any notice obligation by itself. The shipped
+> notice bundle and SBOM are generated from the files a release actually deploys by
+> `tools\package.ps1` into the installation's `licenses\` folder (W5,
+> [ADR 0009](../adr/0009-windows-packaging.md), decision 10), and the corresponding source of the LGPL
+> libraries into `Lucent-<version>-corresponding-source.zip` beside the installer (W12,
+> [ADR 0024](../adr/0024-release-and-licensing.md)).
 
 - **Lucent's own code:** MIT (`LICENSE` at the repository root).
 - **Policy:** [ADR 0003: linking model and third-party licensing](../adr/0003-linking-and-licensing.md).
@@ -20,6 +22,35 @@
 - **Dependency pinning:** vcpkg registry baseline `e143402b5545bab137cc465225a82da63cb2148f`,
   triplet `x64-windows-lucent` (shared, dynamic CRT, release-only). See
   [ADR 0002](../adr/0002-build-and-dependency-management.md).
+
+## Distribution decision (2026-10-10)
+
+The user decided, before the first public release:
+
+- **Lucent is free and open-source software under its MIT licence and is not sold.** Lucent's
+  terms (the MIT License) do not restrict modifying the LGPL libraries or reverse engineering Lucent
+  to debug such modifications.
+- **Corresponding source:** every installer is published with
+  `Lucent-<version>-corresponding-source.zip`, from the same place and for as long as the installer
+  is offered (LGPL-2.1 section 4; for the LGPL-3.0 libraries GPL-3.0 section 6(d), which LGPL-3.0
+  incorporates). It holds, for each shipped LGPL library, the upstream source archives (SHA-512 as
+  vcpkg verified them and as the recipe pins them at the registry baseline), the vcpkg recipe as built
+  (registry port or Lucent's overlay port, every file as vcpkg hashed it), vcpkg's build record, the
+  triplet, Lucent's vcpkg manifest and a README on rebuilding each library and replacing its DLL.
+  `licenses\LGPL-NOTICE.txt` names the archive with its size and SHA-256. Packaging fails when a
+  shipped component's licence leaves no choice but a copyleft licence and
+  `installer\license-policy.json` provides no source for it, or when a provided library is missing
+  from the archive.
+- **Inno Setup** (Setup and its uninstaller) is used under its non-commercial terms, which cover a
+  free distribution. The compiler on the reference machine (6.7.3) reports "Non-commercial use only";
+  packaging records that line in the package manifest and refuses it if the policy ever says
+  `commercial: true`. `THIRD-PARTY-NOTICES.txt` credits Inno Setup, whose own notices stay in its
+  binaries.
+- **Releases are unsigned** until a code-signing certificate exists (the signing pipeline stays
+  ready, ADR 0009 decision 13). Unsigned packages are not offered on an update channel.
+
+The decision is recorded in `installer\license-policy.json` ("distribution") and in every package
+manifest (schema 5, "distribution").
 
 ## How this ledger was verified
 
@@ -49,9 +80,66 @@ Re-verified on 2026-10-03 (W5) against the installation folder of the 0.1.0 pack
 - **Licence elections and credit lines** that packaging applies are recorded, per reviewed port
   version, in `installer\license-policy.json`; packaging stops when another version ships.
 
+Re-verified on 2026-10-10 (W12 licence and release phase) against the installation folder of the
+0.1.0 `-StageOnly` package of the `release` preset (`build\rel-lic`, commit `f2faf0e` with the
+phase's changes): 23 shipped components (21 with DLLs, 2 compiled in), 8 of them LGPL, the two data
+assets, and the corresponding-source archive written and read back for the 8 LGPL libraries (the
+[Release status](#release-status) table).
+
 To refresh the ledger after changing `vcpkg.json`, the baseline or the triplet, repeat the steps
 above, update `installer\license-policy.json` and this file in the same change (ADR 0003,
 decision 7).
+
+## Release status
+
+How the 0.1.0 package (the `-StageOnly` run of 2026-10-10 above) meets each shipped component's
+obligations. "Notice" means the component's copyright file (and any further text named) is in
+`licenses\<port>\` and the component is listed in `THIRD-PARTY-NOTICES.txt`; "source" means its
+upstream archives and recipe are in `Lucent-0.1.0-corresponding-source.zip` and `LGPL-NOTICE.txt`
+names them; "replaceable" means a separate, unmodified (or, for GLib and GNU libintl, patched with the
+patch in the source) DLL that Lucent loads dynamically and never checks.
+
+| Component | Version | Licence as used | Ships as | Obligations | Status |
+|---|---|---|---|---|---|
+| Lucent | 0.1.0 | MIT | `Lucent.exe`, `lucent-worker.exe`, assets, `qt.conf` | Keep the notice | Met: `licenses\Lucent-LICENSE.txt`; source public at the release tag |
+| Qt Base (`qtbase`) | 6.11.1 | LGPL-3.0-only; its entry point `Qt6EntryPoint.lib` BSD-3-Clause | 4 DLLs, 4 plugins; the entry point linked statically | Replaceable, texts (LGPL-3.0, GPL-3.0), source, notices of the third-party code inside, terms allowing modification and reverse engineering | Met: replaceable (`--no-patchqt`), notice and texts, source, Qt's SBOM attributions (MPL-2.0 Public Suffix List among them, its source inside the qtbase archive) |
+| Qt Declarative (`qtdeclarative`) | 6.11.1 | LGPL-3.0-only | 19 DLLs, 18 QML plugin DLLs, QML module files | As Qt Base | Met: replaceable, notice, source |
+| Qt SVG (`qtsvg`) | 6.11.1 | LGPL-3.0-only | `Qt6Svg.dll`, 2 plugins | As Qt Base | Met: replaceable, notice, source |
+| LibRaw (`libraw`) | 0.22.2 | LGPL-2.1-only (elected over CDDL-1.0), with the BSD-style and MIT notices of its parts | `raw_r.dll` | Replaceable, LGPL-2.1 text, notices, source (LibRaw and LibRaw-cmake archives, port patches) | Met: replaceable, notice, source (2 archives) |
+| Lensfun (`lensfun`) | 0.3.4 | LGPL-3.0-only | `lensfun.dll` | As Qt Base | Met: replaceable, notice, source |
+| GLib (`glib`) | 2.90.0 | LGPL-2.1-or-later | `glib-2.0-0.dll` | Replaceable, text, source of the modified library, changed files marked | Met: patched by Lucent's overlay (`lucent-neutral-locale-dir.patch`, dated in the files it changes); source with the overlay recipe, also in `licenses\glib\recipe` |
+| GNU libintl (`gettext-libintl`) | 0.22.5 | LGPL-2.1-or-later | `intl-8.dll` | As GLib | Met: patched by Lucent's overlay (`lucent-no-builder-paths.patch`); source with the overlay recipe, also in `licenses\gettext-libintl\recipe` |
+| GNU libiconv (`libiconv`) | 1.19 | LGPL-2.1-or-later | `iconv-2.dll` | As LibRaw | Met: replaceable, notice, source |
+| FreeType (`freetype`) | 2.14.3 | FTL (elected over GPL-2.0-or-later) | `freetype.dll` | Credit in the documentation | Met: notice; credit line under "Required notices" |
+| libjpeg-turbo | 3.2.0 | BSD-3-Clause AND IJG | `jpeg8.dll` | IJG credit, its README.ijg | Met: notice with `README.ijg` from the verified archive; credit line |
+| libtiff (`tiff`) | 4.7.2 | libtiff | `tiff.dll` | Notices; LZW acknowledgement | Met: notice; credit line |
+| PCRE2 (`pcre2`) | 10.47 | BSD-3-Clause WITH PCRE2-exception | `pcre2-16.dll`, `pcre2-8.dll` | Its LICENCE.md | Met: `LICENCE.md` from the verified archive |
+| HarfBuzz (`harfbuzz`) | 14.5.0 | MIT AND MIT-Modern-Variant | `harfbuzz.dll` | Notice | Met |
+| Little CMS (`lcms`) | 2.19.1 | MIT | `lcms2-2.dll` | Notice; never the GPL plugins | Met (features `fastfloat` and `threaded` off) |
+| libpng | 1.6.58 | libpng-2.0 | `libpng16.dll` | Notice | Met |
+| zlib | 1.3.2 | Zlib | `z.dll` | Notice in source distributions | Met (its notice ships though its source does not) |
+| Brotli (`brotli`) | 1.2.0 | MIT | 2 DLLs | Notice | Met |
+| bzip2 | 1.0.8 | bzip2-1.0.6 | `bz2.dll` | Notice and disclaimer in the documentation | Met |
+| double-conversion | 3.4.0 | BSD-3-Clause | `double-conversion.dll` | Notice in the documentation | Met |
+| MD4C (`md4c`) | 0.6.0 | MIT | `md4c.dll` | Notice | Met |
+| SQLite (`sqlite3`) | 3.53.4 | Public domain (`blessing`) | `sqlite3.dll` | None | Listed |
+| nlohmann-json | 3.12.0 | MIT | Compiled in (header-only) | Notice | Met |
+| tl-expected | 1.3.1 | CC0-1.0 | Compiled in | None | Listed |
+| Lensfun lens database (asset `lens-database`) | 1.0.0 (data format 1, 2026-10-08) | CC-BY-SA-3.0 | `assets\lens-database`, 56 XML files | Attribution (title, authors, URI), licence text with every copy, notices intact, no technological measures restricting the licence's rights; adaptations under BY-SA | Met: credit in `THIRD-PARTY-NOTICES.txt` and Help > About; the licence text twice; files unmodified with `provenance.json`; Lucent's integrity check only decides whether Lucent uses the files, which stay plain XML |
+| Camera support database (asset `camera-support`) | 3.0.0 | MIT (Lucent's own) | `assets\camera-support` | None beyond Lucent's | Met |
+| Microsoft Visual C++ Redistributable | 14.44.35211.0 | Microsoft Software License Terms | Inside Setup only | Unmodified, official package | Met: Authenticode-checked when packaging, run by Setup only when needed |
+| Inno Setup (Setup and `unins000.exe`) | 6.7.3 | Inno Setup License, non-commercial use | Setup's loader and the uninstaller | Keep its copyright notices; non-commercial use | Met: unmodified; free distribution; credited in `THIRD-PARTY-NOTICES.txt` |
+
+Never shipped, enforced by the packaging audit (`neverShipped`): the GNU gettext programs
+(GPL-3.0; GLib's build runs them, and Lucent's overlay of their recipe is in the corresponding-source
+archive for completeness), Qt's tools (`qtshadertools`, `qtlanguageserver`, `windeployqt`), GoogleTest
+and the vcpkg helper ports. libffi (MIT) is reviewed but not imported. No model weights or datasets
+ship (ADR 0019).
+
+Not done for this package: the SBOM was checked structurally by packaging, but not by `pyspdxtools`
+(optional, `-SpdxValidator`; the W5 SBOM passed spdx-tools 0.8.5): spdx-tools is not installed on the
+reference machine now, and installing it needs PyPI. The release checklist's step 6 runs it where it
+is installed.
 
 **Usage key:**
 
@@ -90,7 +178,8 @@ Lucent uses LibRaw under **LGPL-2.1** (ADR 0003, decision 2). The installed LibR
 - provide the corresponding source: LibRaw 0.22.2 (tag `0.22.2`, pinned by SHA-512 in the port),
   the LibRaw-cmake build files (commit `eb98e4325aef2ce85d2eb031c2ff18640ca616d3`) and the vcpkg
   port patches (`dependencies.patch`, `fix-install.patch`, and the `LIBRAW_NODLL` edit to
-  `libraw_types.h`). Lucent itself does not modify LibRaw;
+  `libraw_types.h`). Lucent itself does not modify LibRaw. All of it is in
+  `Lucent-<version>-corresponding-source.zip` beside the installer (ADR 0024);
 - not forbid, in Lucent's end-user terms, modification of the library for the user's own use or
   reverse engineering for debugging such modifications.
 
@@ -177,7 +266,7 @@ the files the packaging audit found in the installation folder.
 | Git for Windows | 2.55.0 | GPL-2.0 | Version control; not linked |
 | Research environment (Python packages such as rawpy, which bundles LibRaw) | See `research/README.md` | Per package (rawpy: MIT wrapper; the bundled LibRaw keeps its LGPL-2.1/CDDL-1.0 terms) | Numerical references and experiments; never a runtime dependency |
 | Camera test fixtures | `fixtures/manifest.json` (fetched by `tools/fetch-fixtures.ps1`) | Per fixture, recorded in the manifest. The W1 set comes from raw.pixls.us and each file is marked CC0-1.0 | Downloaded on demand into `fixtures/cache/`, never committed or shipped |
-| Inno Setup | 6.7.3 (any 6.3 or later builds the installer) | Inno Setup License; the 6.7.3 compiler reports "Non-commercial use only" | Builds `Lucent-Setup-<version>-x64.exe`. Its Setup and uninstaller code is part of every installer | Review Inno Setup's commercial terms before a public release (blueprint section 9) |
+| Inno Setup | 6.7.3 (any 6.3 or later builds the installer) | Inno Setup License; the 6.7.3 compiler reports "Non-commercial use only" | Builds `Lucent-Setup-<version>-x64.exe`. Its Setup and uninstaller code is part of every installer | Reviewed for the first release (2026-10-10): Lucent is distributed free and not sold, so the non-commercial terms apply; packaging records the compiler's licence line and refuses a non-commercial compiler for a commercial distribution; Inno Setup is credited in `THIRD-PARTY-NOTICES.txt` (ADR 0024) |
 | RawTherapee, darktable, ART | Any | GPL-family (blueprint Appendix C) | Visual comparison references only: run as separate programs, never linked, bundled, invoked by Lucent or used as a source of code (ADR 0003, decision 6) |
 
 ## Known gaps to close before a release
@@ -193,16 +282,17 @@ the files the packaging audit found in the installation folder.
 4. **Deployed set** (closed in W5): `raw_r.dll` ships, `raw.dll` does not; `jpeg8.dll` ships,
    `turbojpeg.dll` and libspng do not; JasPer does not. The audit re-derives the set for every
    package.
-5. **Corresponding source for LGPL components:** `licenses\LGPL-NOTICE.txt` names the exact
-   upstream archives (with SHA-512) and vcpkg recipes (the port folder's git tree hash and a link
-   to the port at the registry baseline commit). How the source itself is provided to recipients
-   (bundled archive or written offer) is still to be decided before the first public release
-   (W12); until then the installer is not distributed (ADR 0009, decision 10).
-6. **Inno Setup terms:** the compiler used reports "Non-commercial use only"; review the terms (or
-   obtain a commercial licence) before a public release.
-7. **Packaging inputs:** the two texts of items 1 and 2 need the upstream archives in vcpkg's
-   downloads folder; a machine that restored the ports from the binary cache must download them
-   first (`docs/development/setup.md`, Packaging the installer).
+5. **Corresponding source for LGPL components** (closed in W12, ADR 0024): every package run writes
+   `Lucent-<version>-corresponding-source.zip` beside the installer with the upstream archives,
+   recipes, triplet and build records of the 8 LGPL libraries, reads it back to check it, and names it
+   in `licenses\LGPL-NOTICE.txt`; it is published with the installer, from the same place, for as
+   long as the installer is offered.
+6. **Inno Setup terms** (closed in W12, ADR 0024): Lucent is distributed free and is not sold, so
+   the compiler's non-commercial terms apply; the policy records it and packaging enforces it.
+7. **Packaging inputs:** the two texts of items 1 and 2 and the corresponding-source archive need the
+   upstream archives in vcpkg's downloads folder; a machine that restored the ports from the binary
+   cache must download them first (`vcpkg install --only-downloads`, which fetches only the archives
+   the ports pin; `docs/development/setup.md`, Packaging the installer).
 8. **Third-party code inside Qt** (closed in W5): Qt's copyright files carry generic licence texts
    only, not the holders of the code Qt compiles into its DLLs. Packaging reads Qt's own SBOMs
    (`vcpkg_installed\<triplet>\sbom\`) and lists that code with holders, licences and sources in

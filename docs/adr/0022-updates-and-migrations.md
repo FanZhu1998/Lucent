@@ -1,6 +1,6 @@
 # ADR 0022: Updates and migrations: an offline-first "Check for updates" over a signed release manifest, catalog fixtures of every schema version, and the update rehearsal
 
-- **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below)
+- **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below; amended 2026-10-10 by ADR 0024, decision 7: `New-LucentReleaseManifest` also refuses a package whose corresponding-source archive is not beside the installer as its package manifest records it; the two items deferred below were done on 2026-10-10, ADR 0009 decisions 24 to 26: Setup refuses to install over a newer Lucent, rehearsed with a version-rehearsal Setup, and the builder-path audit decompresses compressed content)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), updates and migrations
 - **Amends:** ADR 0008 (a pre-update backup kind), ADR 0009 (the update handoff to Setup, the
@@ -408,4 +408,5 @@ grandparent folder), so the handle alone cannot protect the path after Lucent ex
   made: a guard in Setup against installing over a newer version (SEC-04, part 2; it needs the
   installer rehearsal to test), and decompressing compressed resources and Setup's payload in the
   builder-path audit (SEC-07, ADR 0009 amendment). Neither changes a release made before then: no
-  release exists.
+  release exists. Both done on 2026-10-10 (ADR 0009, "Amendment: the release phase's deferred
+  fixes", decisions 24 to 26).

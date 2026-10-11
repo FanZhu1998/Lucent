@@ -9,8 +9,36 @@
     "\"assets\" names the bundled data assets (assets/<id>) that are third-party data under their own terms:",
     "their licence text (a file of the verified asset) goes to licenses/<id>, their credit lines to",
     "THIRD-PARTY-NOTICES.txt, and the SBOM gives their files that licence (ADR 0023). Every other asset is",
-    "Lucent's own (MIT)."
+    "Lucent's own (MIT).",
+    "\"distribution\" records how Lucent is distributed (ADR 0024): packaging refuses a commercial distribution",
+    "built with a non-commercial Inno Setup compiler, and builds the corresponding-source package the",
+    "provision names. A port marked \"lgpl\" (or \"correspondingSource\", for another copyleft licence) has its",
+    "upstream source archives, vcpkg recipe and build record in Lucent-<version>-corresponding-source.zip;",
+    "packaging fails when a shipped port's licence leaves no choice but a copyleft licence and its entry",
+    "marks neither, or when a marked port is missing from the archive."
   ],
+  "distribution": {
+    "decided": "2026-10-10",
+    "model": "free-open-source",
+    "comment": "Lucent is distributed free of charge as open-source software under its MIT licence (LICENSE); it is not sold (the user's decision of 2026-10-10, ADR 0024).",
+    "lucentLicence": "MIT",
+    "commercial": false,
+    "correspondingSource": {
+      "provision": "archive-beside-installer",
+      "file": "Lucent-<version>-corresponding-source.zip",
+      "comment": "The corresponding source of every shipped LGPL library (upstream archives verified by SHA-512, the vcpkg recipes and patches including Lucent's overlay ports, the triplet, vcpkg's build records and a README on rebuilding and relinking) is published next to each installer, from the same place and for as long as that installer is offered (LGPL-2.1 section 4; GPL-3.0 section 6(d), which LGPL-3.0 incorporates). licenses\\LGPL-NOTICE.txt names the archive with its size and SHA-256."
+    },
+    "signing": {
+      "release": "unsigned",
+      "comment": "Release installers are unsigned until a code-signing certificate exists; the signing pipeline (LUCENT_SIGN_CERT_SHA1, ADR 0009 decision 13) stays ready. An unsigned package cannot be published on an update channel (New-LucentReleaseManifest), so unsigned releases are built with -UpdateChannel none. Set release to \"signed\" in the release commit that introduces signing: packaging then refuses a Setup without a release signature."
+    },
+    "installerTool": {
+      "name": "Inno Setup",
+      "licence": "Inno Setup License",
+      "use": "non-commercial",
+      "comment": "The compiler used (6.7.3) reports \"Non-commercial use only\". Lucent's distribution is non-commercial (free, MIT, not sold), so those terms apply and no commercial licence is needed. Setup and its uninstaller keep Inno Setup's copyright notices; THIRD-PARTY-NOTICES.txt credits it. Packaging stops if \"commercial\" is true while the compiler reports non-commercial use."
+    }
+  },
   "neverShipped": {
     "gtest": "Test-only (ADR 0003): GoogleTest and GoogleMock are never packaged.",
     "qtshadertools": "Build tool (qsb); Qt tools are GPL-3.0 with the Qt GPL Exception 1.0 (ADR 0003).",
