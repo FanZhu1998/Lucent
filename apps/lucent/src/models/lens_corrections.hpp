@@ -12,7 +12,9 @@
 // file carries is never applied a second time: its switch is shown off and cannot be changed, and
 // `carriedNote` says so. Without a lens database (missing or refused) the panel says why and offers
 // nothing to change; a recipe made before Lucent had lens corrections (operation version 0) shows
-// `legacy` and offers turnOn().
+// `legacy` and offers turnOn(). W12 (APL-06): while the database still loads off the UI thread
+// (`loading`), nothing can be changed either and the panel says it is loading; the photo's frames wait
+// for it, and the panel follows when it has loaded (EditService::lens_database_changed).
 //
 // Changes. setAutomatic(true) returns to the automatic profile (the database's exact match only);
 // setAutomatic(false) opens the manual choice without changing anything until a profile is chosen
@@ -90,6 +92,8 @@ class LensCorrections : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("LensCorrections is provided by EditSession.lens.")
+    // W12 (APL-06): the lens database is still loading (`unavailableReason` says so; not a problem).
+    Q_PROPERTY(bool loading READ loading NOTIFY changed FINAL)
     // A lens database is active (otherwise `unavailableReason` says why) and its version.
     Q_PROPERTY(bool available READ available NOTIFY changed FINAL)
     Q_PROPERTY(QString unavailableReason READ unavailable_reason NOTIFY changed FINAL)
@@ -139,6 +143,7 @@ public:
     Q_INVOKABLE void closePicker();
     Q_INVOKABLE void setSearchText(const QString& text);
 
+    [[nodiscard]] bool loading() const noexcept { return database_.loading; }
     [[nodiscard]] bool available() const;
     [[nodiscard]] QString unavailable_reason() const;
     [[nodiscard]] QString database_version() const;
@@ -170,6 +175,8 @@ signals:
 
 private:
     void on_session_changed();
+    // W12 (APL-06): reads the database's description again (it has loaded).
+    void on_database_changed();
     void refresh_profiles();
     void apply(const EditLensCorrection& next);
     [[nodiscard]] bool carried(int correction) const;

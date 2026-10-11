@@ -588,6 +588,31 @@ TEST_F(BatchServiceTest, ALensCorrectionAMissingDependencyPreventsIsFlagged) {
     EXPECT_EQ(flagged, 1u) << "only the photo whose recipe names the missing profile";
 }
 
+// W12 (APL-06): Lucent.exe's lens database loads off the UI thread, so the batch service is given a
+// source for its text. Opening the service (and its recovery) never asks for it; the first batch does,
+// once, and every batch names it.
+TEST_F(BatchServiceTest, TheLensDatabaseSourceIsAskedOnceByTheFirstBatchNeverByOpen) {
+    auto asked = std::make_shared<std::atomic<int>>(0);
+    h().options().lens_database_source = [asked] {
+        ++*asked;
+        return std::string("lens-database 0.0.2 (manifest test)");
+    };
+    h().reopen();
+    EXPECT_EQ(asked->load(), 0) << "opening the batch service asked for the lens database";
+    const auto files = ts::write_dngs(dir_, L"in", 2);
+    const std::vector<ItemId> ids = h().import(files);
+    const catalog::BatchId first = h().run(h().request({ids[0]}, out_));
+    ASSERT_TRUE(first.valid());
+    const catalog::BatchId second = h().run(h().request({ids[1]}, out_));
+    ASSERT_TRUE(second.valid());
+    EXPECT_EQ(asked->load(), 1) << "asked once, then kept";
+    for (const catalog::BatchId id : {first, second}) {
+        const catalog::BatchRecord record = h().record(id);
+        EXPECT_NE(record.renderer_version.find("; lens database lens-database 0.0.2 (manifest test)"), std::string::npos)
+            << record.renderer_version;
+    }
+}
+
 TEST_F(BatchServiceTest, AGeometryEditSetsTheOutputSizeWithoutAReviewNote) {
     const auto files = ts::write_dngs(dir_, L"in", 1);
     const std::vector<ItemId> ids = h().import(files);

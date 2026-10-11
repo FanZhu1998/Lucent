@@ -113,8 +113,8 @@ class AppController : public QObject {
     Q_PROPERTY(QVariantMap cameraSupport READ camera_support CONSTANT FINAL)
     Q_PROPERTY(QVariantList supportStates READ support_states CONSTANT FINAL)
     // W13 (ADR 0023). Help > About: the lens database the lens corrections use
-    // (presentation::lens_database_map).
-    Q_PROPERTY(QVariantMap lensDatabase READ lens_database CONSTANT FINAL)
+    // (presentation::lens_database_map). W12 (APL-06): "loading" until it has loaded off the UI thread.
+    Q_PROPERTY(QVariantMap lensDatabase READ lens_database NOTIFY lensDatabaseChanged FINAL)
     // W12 (ADR 0022). Help > About's "Check for updates".
     Q_PROPERTY(lucent::ui::UpdateModel* updates READ updates CONSTANT FINAL)
 
@@ -308,6 +308,8 @@ signals:
     void pendingImportChanged();
     void backgroundActivityChanged();
     void activeExportCountChanged();
+    // W12 (APL-06): the lens database has finished loading (LibraryService::lens_database_changed).
+    void lensDatabaseChanged();
     // The window should open the Export batch dialog (openBatchExport, openFolderBatchExport).
     void batchExportRequested();
     // W12: an update's Setup is running; the application should exit cleanly now (main.cpp).

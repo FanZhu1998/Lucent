@@ -64,8 +64,9 @@ namespace lucent::ui::adapters {
                                                        const assets::CameraSupportLoad& load);
 
 // W13 (ADR 0023). Help > About's and the Lens corrections panel's description of the session's lens
-// database (`load.database` null: none, with `load`'s reason in the user's words).
-[[nodiscard]] LensDatabaseInfo to_lens_database_info(const assets::LensDatabaseLookup& load);
+// database (`load.database` null: none, with `load`'s reason in the user's words). W12 (APL-06): a null
+// `load` is a database still loading (LensDatabaseInfo::loading).
+[[nodiscard]] LensDatabaseInfo to_lens_database_info(const assets::LensDatabaseLookup* load);
 
 // The shell's flags for the source facts of `source` (W4): MissingSource, ChangedSource,
 // RemovableSource (a file on removable media, a card or a USB disk) and DuplicateContent.

@@ -239,6 +239,8 @@ TEST(ApplicationAdaptersCameraSupport, AMissingDatabaseIsReportedNotReplaced) {
 // Lens corrections panel), and nothing can be chosen.
 TEST_F(ApplicationAdaptersTest, TheBundledLensDatabaseIsActive) {
     create();
+    // W12 (APL-06): it loads off the UI thread.
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !library_->lens_database().loading; }, kAdapterWaitMs));
     const LensDatabaseInfo info = library_->lens_database();
     EXPECT_TRUE(info.available) << info.problem.toStdString();
     EXPECT_EQ(info.version, QStringLiteral("1.0.0"));
@@ -257,6 +259,7 @@ TEST(ApplicationAdaptersLensDatabase, AMissingDatabaseLeavesCorrectionsUnavailab
     options.asset_locations = locations;
     auto services = adapters::create_application_services(options);
     ASSERT_TRUE(services) << services.error().describe();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !services->library->lens_database().loading; }, kAdapterWaitMs));
     const LensDatabaseInfo info = services->library->lens_database();
     EXPECT_FALSE(info.available);
     EXPECT_TRUE(info.problem.contains(QStringLiteral("not installed"))) << info.problem.toStdString();

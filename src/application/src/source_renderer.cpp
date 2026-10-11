@@ -132,19 +132,29 @@ public:
     }
 
     std::optional<engine::LensDatabaseIdentity> lens_database() const override {
-        if (!options_.lens_database) {
+        const std::shared_ptr<const engine::LensDatabase> database = lens_database_now();
+        if (!database) {
             return std::nullopt;
         }
-        return options_.lens_database->info().identity;
+        return database->info().identity;
     }
 
 private:
+    // The database renders correct lenses with: the given one, or the loading source's once it has
+    // loaded (this waits for it; see the file comment).
+    std::shared_ptr<const engine::LensDatabase> lens_database_now() const {
+        if (options_.lens_database || !options_.lens_database_source) {
+            return options_.lens_database;
+        }
+        return options_.lens_database_source->database();
+    }
+
     engine::DevelopOptions develop_options() const {
         engine::DevelopOptions options;
         options.decode_limits = options_.decode_limits;
         options.memory_budget_bytes = options_.memory_budget_bytes;
         options.parallel = options_.parallel;
-        options.lens_database = options_.lens_database;
+        options.lens_database = lens_database_now();
         return options;
     }
 

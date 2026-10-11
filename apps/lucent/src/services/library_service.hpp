@@ -97,7 +97,8 @@ public:
     // About). Default: none (available false, no problem).
     [[nodiscard]] virtual CameraSupportInfo camera_support() const { return {}; }
     // W13 (ADR 0023). The lens database the lens-profile corrections use (Help > About). Default: none
-    // (available false, no problem).
+    // (available false, no problem). W12 (APL-06): LensDatabaseInfo::loading while it loads off the UI
+    // thread; lens_database_changed is emitted once it has loaded.
     [[nodiscard]] virtual LensDatabaseInfo lens_database() const { return {}; }
 
     // True from the first import_started until the last import_finished.
@@ -120,6 +121,8 @@ signals:
     void relink_finished(const lucent::ui::RelinkSummary& summary);
     void backup_finished(const lucent::ui::BackupResult& result);
     void verification_progress(const lucent::ui::VerificationProgress& progress);
+    // W12 (APL-06): the lens database has finished loading (lens_database() tells the outcome).
+    void lens_database_changed();
 };
 
 }  // namespace lucent::ui

@@ -128,7 +128,7 @@ Popup {
             Text {
                 objectName: "aboutLensDatabase"
                 text: about.lenses.summary
-                color: about.lenses.available ? Theme.textSecondary : Theme.unsupported
+                color: about.lenses.available || about.lenses.loading ? Theme.textSecondary : Theme.unsupported
                 font.pixelSize: Theme.fontBody
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true

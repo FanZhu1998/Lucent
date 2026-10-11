@@ -203,7 +203,8 @@ TEST(AdapterConversions, AboutDescribesTheLensDatabase) {
 
     assets::LensDatabaseLookup load;
     load.database = *database;
-    const LensDatabaseInfo info = to_lens_database_info(load);
+    const LensDatabaseInfo info = to_lens_database_info(&load);
+    EXPECT_FALSE(info.loading);
     EXPECT_TRUE(info.available);
     EXPECT_EQ(info.version, u"1.0.0");
     EXPECT_TRUE(info.library.startsWith(u"Lensfun 0.3"));
@@ -214,25 +215,35 @@ TEST(AdapterConversions, AboutDescribesTheLensDatabase) {
     // None: why, in the user's words (never a crash, corrections unavailable).
     assets::LensDatabaseLookup missing;
     missing.problem = Error{ErrorCode::NotFound, "no asset", "assets.load.missing", 0};
-    EXPECT_FALSE(to_lens_database_info(missing).available);
-    EXPECT_TRUE(to_lens_database_info(missing).problem.contains(u"not installed"));
+    EXPECT_FALSE(to_lens_database_info(&missing).available);
+    EXPECT_TRUE(to_lens_database_info(&missing).problem.contains(u"not installed"));
     assets::LensDatabaseLookup tampered;
     tampered.problem = Error{ErrorCode::Corrupt, "hash", "assets.load.hash", 0};
-    EXPECT_TRUE(to_lens_database_info(tampered).problem.contains(u"integrity check"));
+    EXPECT_TRUE(to_lens_database_info(&tampered).problem.contains(u"integrity check"));
     assets::LensDatabaseLookup unreadable;
     unreadable.problem = Error{ErrorCode::PermissionDenied, "denied", "core.file", 5};
-    EXPECT_TRUE(to_lens_database_info(unreadable).problem.contains(u"could not be read"));
+    EXPECT_TRUE(to_lens_database_info(&unreadable).problem.contains(u"could not be read"));
     assets::LensDatabaseLookup newer;
     newer.problem = Error{ErrorCode::VersionMismatch, "newer", "assets.lens.content", 0};
-    EXPECT_TRUE(to_lens_database_info(newer).problem.contains(u"another version of Lucent"));
+    EXPECT_TRUE(to_lens_database_info(&newer).problem.contains(u"another version of Lucent"));
     // The About dialog's map.
     const QVariantMap map = presentation::lens_database_map(info);
     EXPECT_TRUE(map.value(QStringLiteral("summary"))
                     .toString()
                     .contains(u"Version 1.0.0 of the Lensfun lens database"));
     EXPECT_EQ(
-        presentation::lens_database_map(to_lens_database_info(tampered)).value(QStringLiteral("summary")),
-        to_lens_database_info(tampered).problem);
+        presentation::lens_database_map(to_lens_database_info(&tampered)).value(QStringLiteral("summary")),
+        to_lens_database_info(&tampered).problem);
+
+    // W12 (APL-06): still loading off the UI thread: neither available nor a problem.
+    const LensDatabaseInfo loading = to_lens_database_info(nullptr);
+    EXPECT_TRUE(loading.loading);
+    EXPECT_FALSE(loading.available);
+    EXPECT_TRUE(loading.problem.isEmpty());
+    const QVariantMap loading_map = presentation::lens_database_map(loading);
+    EXPECT_TRUE(loading_map.value(QStringLiteral("loading")).toBool());
+    EXPECT_TRUE(loading_map.value(QStringLiteral("summary")).toString().contains(u"being checked and loaded"));
+    EXPECT_FALSE(presentation::lens_database_map(info).value(QStringLiteral("loading")).toBool());
 }
 
 TEST(AdapterConversions, SupportDetailExplainsEveryDistinctReason) {

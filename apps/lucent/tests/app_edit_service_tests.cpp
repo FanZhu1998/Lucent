@@ -13,14 +13,18 @@
 #include <QThread>
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <utility>
 
 #include <gtest/gtest.h>
 
 #include <lucent/application/recipe.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/catalog/types.hpp>
 
 #include "adapter_test_support.hpp"
@@ -39,8 +43,11 @@ namespace rts = lucent::raw::test_support;
 
 class AppEditServiceTest : public ::testing::Test {
 protected:
+    // The Backend's options (a subclass changes them).
+    virtual adapters::BackendOptions backend_options() { return testing::test_backend_options(); }
+
     void SetUp() override {
-        auto backend = adapters::Backend::create(testing::test_backend_options());
+        auto backend = adapters::Backend::create(backend_options());
         ASSERT_TRUE(backend) << backend.error().describe();
         backend_ = *backend;
         library_ = std::make_unique<AppLibraryService>(backend_);
@@ -227,6 +234,8 @@ TEST_F(AppEditServiceTest, AGestureIsOneRevisionAndUndoRedoAndResetMoveThroughTh
 // for the lens; a switch is one revision of the lens-correction part; the database is searched for the
 // manual profile choice.
 TEST_F(AppEditServiceTest, FramesSayWhatTheLensCorrectionDidAndASwitchIsOneRevision) {
+    // W12 (APL-06): it loads off the UI thread.
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !edits_->lens_database().loading; }, kAdapterWaitMs));
     const LensDatabaseInfo database = edits_->lens_database();
     ASSERT_TRUE(database.available) << database.problem.toStdString();
     EXPECT_EQ(database.version, u"1.0.0");
@@ -293,6 +302,112 @@ TEST_F(AppEditServiceTest, FramesSayWhatTheLensCorrectionDidAndASwitchIsOneRevis
         << engine_version;
     EXPECT_EQ(engine_version, backend_->recipes().engine_version());
     EXPECT_TRUE(command_failures_.isEmpty()) << command_failures_.join('\n').toStdString();
+}
+
+// W12 (APL-06): the lens database loads off the UI thread. A gate the test opens holds its loader.
+class LensLoaderGate {
+public:
+    void open() {
+        {
+            const std::lock_guard lock(mutex_);
+            open_ = true;
+        }
+        cv_.notify_all();
+    }
+    void pass() {
+        {
+            const std::lock_guard lock(mutex_);
+            arrived_ = true;
+        }
+        cv_.notify_all();
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this] { return open_; });
+    }
+    [[nodiscard]] bool wait_arrival() {
+        std::unique_lock lock(mutex_);
+        return cv_.wait_for(lock, std::chrono::seconds(30), [this] { return arrived_; });
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool open_ = false;
+    bool arrived_ = false;
+};
+
+class AppEditServiceLensLoadingTest : public AppEditServiceTest {
+protected:
+    adapters::BackendOptions backend_options() override {
+        adapters::BackendOptions options = testing::test_backend_options();
+        // The bundled database next to the tests, once the test opens the gate.
+        options.lens_database_loader = [gate = gate_] {
+            gate->pass();
+            return assets::load_lens_database(assets::default_asset_locations(nullptr));
+        };
+        return options;
+    }
+    void TearDown() override {
+        gate_->open();  // the Backend's destructor waits for its loader
+        AppEditServiceTest::TearDown();
+    }
+
+    std::shared_ptr<LensLoaderGate> gate_ = std::make_shared<LensLoaderGate>();
+};
+
+// While the database loads the services say so (nothing to choose, no problem), the UI thread waits for
+// nothing, and a photo's frames wait for the database instead of rendering without its corrections; once
+// it has loaded the services are told, and the frames, the profile search and the first revision use it
+// exactly as when it was loaded at start-up: pending, never wrong.
+TEST_F(AppEditServiceLensLoadingTest, FramesWaitForTheLoadingLensDatabaseAndTheServicesAreTold) {
+    ASSERT_TRUE(gate_->wait_arrival());
+    int edit_told = 0;
+    int library_told = 0;
+    QObject::connect(edits_.get(), &EditService::lens_database_changed, edits_.get(), [&] { ++edit_told; });
+    QObject::connect(library_.get(), &LibraryService::lens_database_changed, library_.get(), [&] { ++library_told; });
+    const LensDatabaseInfo loading = edits_->lens_database();
+    EXPECT_TRUE(loading.loading);
+    EXPECT_FALSE(loading.available);
+    EXPECT_TRUE(loading.problem.isEmpty());
+    EXPECT_TRUE(library_->lens_database().loading);
+    EXPECT_TRUE(edits_->search_lens_profiles(QStringLiteral("nikkor"), 10).isEmpty());
+
+    const ItemId id = import_file(L"lens.dng");
+    edits_->open(id);
+    QTest::qWait(600);
+    EXPECT_TRUE(frames_.isEmpty()) << "a frame was rendered before the lens database had loaded";
+    EXPECT_TRUE(frame_failures_.isEmpty()) << frame_failures_.join('\n').toStdString();
+    EXPECT_EQ(edit_told, 0);
+
+    gate_->open();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return edit_told == 1 && library_told == 1; }, kAdapterWaitMs));
+    const LensDatabaseInfo loaded = edits_->lens_database();
+    EXPECT_FALSE(loaded.loading);
+    EXPECT_TRUE(loaded.available) << loaded.problem.toStdString();
+    EXPECT_EQ(loaded.version, u"1.0.0");
+    EXPECT_EQ(library_->lens_database().version, u"1.0.0");
+    EXPECT_FALSE(edits_->search_lens_profiles(QStringLiteral("nikkor z 24-70 f4"), 10).isEmpty());
+
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !frames_.isEmpty(); }, kAdapterWaitMs));
+    ASSERT_TRUE(wait_idle());
+    for (const EditFramePtr& frame : frames_) {
+        ASSERT_TRUE(frame->lens);
+        EXPECT_TRUE(frame->lens->database) << "a frame was rendered without the lens database";
+        EXPECT_EQ(frame->lens->database_version, u"1.0.0");
+    }
+    // The first revision names the database the session renders with.
+    EditSettings settings = state_for(id)->settings;
+    settings.lens.distortion = false;
+    const quint64 token = edits_->apply(id, settings);
+    ASSERT_TRUE(wait_state(id, token));
+    ASSERT_TRUE(wait_idle());
+    auto history = backend_->recipe_store().history(app::ItemId{id});
+    ASSERT_TRUE(history) << history.error().describe();
+    ASSERT_EQ(history->revisions.size(), 1u);
+    EXPECT_NE(history->revisions.front().engine_version.find("; lens database lens-database 1.0.0 (manifest "),
+              std::string::npos)
+        << history->revisions.front().engine_version;
+    EXPECT_TRUE(command_failures_.isEmpty()) << command_failures_.join('\n').toStdString();
+    EXPECT_FALSE(off_ui_thread_);
 }
 
 TEST_F(AppEditServiceTest, ARecipeFromANewerLucentOpensReadOnlyWithItsReason) {

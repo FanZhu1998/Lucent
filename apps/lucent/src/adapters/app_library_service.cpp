@@ -102,6 +102,9 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
     : LibraryService(parent),
       backend_(std::move(backend)),
       dispatcher_(std::make_shared<UiDispatcher>(this)) {
+    // W12 (APL-06): the lens database loads off the UI thread; Help > About is told when it has.
+    backend_->lens_database_source()->on_ready(
+        [this, dispatcher = dispatcher_] { dispatcher->post([this] { emit lens_database_changed(); }); });
     app::Library* library = &backend_->library();
     // The session's camera support database (fixed for the session; kept alive by the backend).
     const app::CameraSupportRef database = backend_->camera_support();
@@ -339,7 +342,10 @@ CameraSupportInfo AppLibraryService::camera_support() const {
 }
 
 LensDatabaseInfo AppLibraryService::lens_database() const {
-    return to_lens_database_info(backend_->lens_database_load());
+    const app::LensDatabaseSource& source = *backend_->lens_database_source();
+    LensDatabaseInfo info = to_lens_database_info(source.try_get());  // never waits
+    info.loaded_at = source.finished_at();
+    return info;
 }
 
 RenderEventSink AppLibraryService::render_event_sink() {
