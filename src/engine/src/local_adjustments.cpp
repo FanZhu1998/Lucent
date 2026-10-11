@@ -460,6 +460,96 @@ struct Coverage {
         }
         return 0.0;
     }
+
+    // The coverage at a continuous point of U (a lens-corrected pixel's source position): the
+    // analytic shapes evaluated there, a brush raster interpolated bilinearly between its pixel
+    // centres (0 beyond its bounds, where the raster is 0 by construction).
+    [[nodiscard]] double at_point(double px, double py) const noexcept {
+        if (!std::isfinite(px) || !std::isfinite(py) || bounds.empty()) {
+            return 0.0;
+        }
+        if (px < bounds.x - 1.0 || py < bounds.y - 1.0 || px > static_cast<double>(bounds.right()) + 1.0 ||
+            py > static_cast<double>(bounds.bottom()) + 1.0) {
+            return 0.0;
+        }
+        switch (kind) {
+            case MaskKind::LinearGradient:
+                return linear.coverage(px, py);
+            case MaskKind::RadialGradient:
+                return radial.coverage(px, py);
+            case MaskKind::Brush: {
+                const double u = px - 0.5 - bounds.x;
+                const double v = py - 0.5 - bounds.y;
+                const double fu = std::floor(u);
+                const double fv = std::floor(v);
+                const auto i0 = static_cast<std::int32_t>(fu);
+                const auto j0 = static_cast<std::int32_t>(fv);
+                const double tu = u - fu;
+                const double tv = v - fv;
+                const auto value = [&](std::int32_t i, std::int32_t j) -> double {
+                    if (i < 0 || j < 0 || i >= bounds.width || j >= bounds.height) {
+                        return 0.0;
+                    }
+                    return raster->coverage.at(i, j, 0);
+                };
+                return (1.0 - tv) * ((1.0 - tu) * value(i0, j0) + tu * value(i0 + 1, j0)) +
+                       tv * ((1.0 - tu) * value(i0, j0 + 1) + tu * value(i0 + 1, j0 + 1));
+            }
+        }
+        return 0.0;
+    }
+};
+
+// Maps the U' pixels of a lens-corrected render to the U points their content comes from.
+struct ContentMap {
+    const LensGeometryMap* lens = nullptr;
+    double fx = 1.0;  // full-resolution pixels per render pixel
+    double fy = 1.0;
+
+    [[nodiscard]] image::PointD source(double x, double y) const noexcept {
+        const image::PointD s = lens->source_of(image::PointD{x * fx, y * fy}, 1);
+        return image::PointD{s.x / fx, s.y / fy};
+    }
+
+    // The U' pixels whose sources can lie in `rect` (pixels of U): the bounding box of the rectangle's
+    // boundary mapped into U', widened by two pixels and clipped to the image. Distortion maps lines
+    // to curves but the map is monotone in the radius, so the boundary's image bounds the inside's.
+    [[nodiscard]] image::PixelRect corrected_bounds(const image::PixelRect& rect, image::Size size) const noexcept {
+        if (rect.empty()) {
+            return rect;
+        }
+        double x0 = std::numeric_limits<double>::infinity();
+        double y0 = x0;
+        double x1 = -x0;
+        double y1 = -x0;
+        constexpr int kSteps = 64;
+        const double left = rect.x;
+        const double top = rect.y;
+        const double right = static_cast<double>(rect.right());
+        const double bottom = static_cast<double>(rect.bottom());
+        bool all = true;
+        for (int i = 0; i <= kSteps; ++i) {
+            const double t = static_cast<double>(i) / kSteps;
+            for (const image::PointD p : {image::PointD{left + t * (right - left), top},
+                                          image::PointD{left + t * (right - left), bottom},
+                                          image::PointD{left, top + t * (bottom - top)},
+                                          image::PointD{right, top + t * (bottom - top)}}) {
+                const auto c = lens->corrected_of(image::PointD{p.x * fx, p.y * fy});
+                if (!c) {
+                    all = false;
+                    continue;
+                }
+                x0 = std::min(x0, c->x / fx);
+                y0 = std::min(y0, c->y / fy);
+                x1 = std::max(x1, c->x / fx);
+                y1 = std::max(y1, c->y / fy);
+            }
+        }
+        if (!all || !(x1 >= x0) || !(y1 >= y0)) {
+            return image::PixelRect::from_size(size);  // conservative
+        }
+        return clip_to(size, x0 - 2.0, y0 - 2.0, x1 + 2.0, y1 + 2.0);
+    }
 };
 
 Status check_size(image::Size size) {
@@ -801,9 +891,17 @@ image::PixelRect mask_support(const MaskShape& shape, image::Size size) noexcept
 }
 
 std::uint64_t local_adjustments_working_bytes(std::span<const LocalAdjustment> adjustments, image::Size size,
-                                              std::int32_t tone_radius) noexcept {
+                                              std::int32_t tone_radius, const LensGeometryMap* lens,
+                                              image::Size full_size) noexcept {
     if (size.empty()) {
         return 0;
+    }
+    // With a lens correction the base layer is computed on the corrected image U' over the masks'
+    // supports mapped into it, as apply_local_adjustments() maps them (ContentMap).
+    std::optional<ContentMap> content;
+    if (lens != nullptr && !full_size.empty()) {
+        content = ContentMap{lens, static_cast<double>(full_size.width) / size.width,
+                             static_cast<double>(full_size.height) / size.height};
     }
     // A float plane over `r` with 64-byte rows (image::ImageBuffer's layout).
     const auto plane_bytes = [](const image::PixelRect& r) -> std::uint64_t {
@@ -827,7 +925,13 @@ std::uint64_t local_adjustments_working_bytes(std::span<const LocalAdjustment> a
         }
         if (a.controls.highlights != 0.0 || a.controls.shadows != 0.0) {
             tone = true;
-            tone_support = unite(tone_support, a.invert ? whole : support);
+            image::PixelRect in_image = support;
+            if (content) {
+                in_image = content->corrected_bounds(support, size);
+            } else if (lens != nullptr) {
+                in_image = whole;  // a lens correction without its full size: anywhere (an upper bound)
+            }
+            tone_support = unite(tone_support, a.invert ? whole : in_image);
         }
     }
     // The base layer: the log-luminance plane and the guided filter's two-channel working plane over
@@ -874,6 +978,14 @@ Expected<LocalAdjustmentsRecord> apply_local_adjustments(ColorImage& image,
     }
     LocalAdjustmentsRecord record;
     const image::Size size = image.pixels.size();
+    std::optional<ContentMap> content;
+    if (q.lens != nullptr) {
+        if (q.full_size.empty()) {
+            return fail(ErrorCode::InvalidArgument, "a lens-corrected render needs its full-resolution size", kWhere);
+        }
+        content = ContentMap{q.lens, static_cast<double>(q.full_size.width) / size.width,
+                             static_cast<double>(q.full_size.height) / size.height};
+    }
 
     // The adjustments with an effect, their coverage and their controls.
     struct Active {
@@ -885,6 +997,9 @@ Expected<LocalAdjustmentsRecord> apply_local_adjustments(ColorImage& image,
     std::vector<Active> active;
     bool tone = false;
     image::PixelRect tone_support;
+    // With a lens correction: the U' pixels whose source can be covered by some mask (outside it
+    // every coverage is 0, so their source positions are not computed).
+    image::PixelRect content_region;
     for (const LocalAdjustment& a : adjustments) {
         if (!a.has_effect()) {
             continue;
@@ -900,8 +1015,14 @@ Expected<LocalAdjustmentsRecord> apply_local_adjustments(ColorImage& image,
         }
         if (a.controls.highlights != 0.0 || a.controls.shadows != 0.0) {
             tone = true;
-            tone_support =
-                unite(tone_support, a.invert ? image::PixelRect::from_size(size) : source->coverage.bounds);
+            // The base layer is computed on the image (U' when the lens is corrected).
+            const image::PixelRect support =
+                content ? content->corrected_bounds(source->coverage.bounds, size) : source->coverage.bounds;
+            tone_support = unite(tone_support, a.invert ? image::PixelRect::from_size(size) : support);
+        }
+        if (content) {
+            content_region = unite(content_region, a.invert ? image::PixelRect::from_size(size)
+                                                            : content->corrected_bounds(source->coverage.bounds, size));
         }
         try {
             active.push_back(Active{std::move(source->coverage), a.opacity, a.invert, a.controls});
@@ -999,8 +1120,12 @@ Expected<LocalAdjustmentsRecord> apply_local_adjustments(ColorImage& image,
         for (std::int32_t x = 0; x < size.width; ++x, p += 3) {
             double e = 0.0, con = 0.0, hl = 0.0, sh = 0.0, sat = 0.0, temp = 0.0, tint = 0.0;
             bool any = false;
+            image::PointD source{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
+            if (content && content_region.contains(image::Point{x, y})) {
+                source = content->source(x + 0.5, y + 0.5);
+            }
             for (const Active& a : active) {
-                const double m = a.coverage.at(x, y);
+                const double m = content ? a.coverage.at_point(source.x, source.y) : a.coverage.at(x, y);
                 const double w = a.opacity * (a.invert ? 1.0 - m : m);
                 if (!(w > 0.0)) {
                     continue;

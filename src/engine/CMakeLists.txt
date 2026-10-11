@@ -1,6 +1,7 @@
 # lucent_engine: sensor normalisation, demosaicing routes, camera colour and the render pipeline
 # (blueprint section 5). It consumes the decoded-RAW data contract of lucent_raw, never a decoder
-# adapter (docs/architecture/overview.md).
+# adapter (docs/architecture/overview.md). Lensfun (LGPL-3.0, a DLL) is its private dependency for
+# lens-profile corrections: no Lensfun type appears in its headers (ADR 0023).
 #
 # Layout
 #   include/lucent/engine/   public headers
@@ -73,7 +74,28 @@ set(LUCENT_ENGINE_SOURCES
     # stage.
     include/lucent/engine/image_area.hpp
     src/image_area.cpp
+
+    # Lens-profile corrections (W13, ADR 0023): the Lensfun database, matching and planning (the only
+    # Lensfun user), Lensfun's model in double precision, and the per-row correction fused into
+    # stage two.
+    include/lucent/engine/lens_correction.hpp
+    src/lens_correction.cpp
+    src/lens_model.cpp
+    src/lens_sampler.hpp
+    src/lens_sampler.cpp
 )
+
+# Lensfun from vcpkg (port lensfun 0.3.4, shared): the port installs headers, an import library and
+# lensfun.dll (with GLib's DLLs) but no CMake package, so it is found directly. Lucent includes it
+# with angle brackets: an external header, compiled without Lucent's warnings.
+find_path(LUCENT_LENSFUN_INCLUDE_DIR NAMES lensfun/lensfun.h REQUIRED)
+find_library(LUCENT_LENSFUN_LIBRARY NAMES lensfun REQUIRED)
+if(NOT TARGET lucent_lensfun)
+    add_library(lucent_lensfun UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(lucent_lensfun PROPERTIES
+        IMPORTED_LOCATION "${LUCENT_LENSFUN_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LUCENT_LENSFUN_INCLUDE_DIR}")
+endif()
 
 lucent_add_library(engine
     SOURCES
@@ -82,6 +104,8 @@ lucent_add_library(engine
         Lucent::core
         Lucent::image
         Lucent::raw
+    PRIVATE_DEPS
+        lucent_lensfun
 )
 
 # ---------------------------------------------------------------------------------------------
@@ -117,13 +141,19 @@ set(LUCENT_ENGINE_TEST_SOURCES
     tests/develop_v2_test.cpp
     # Geometry versions and the camera's image area (ADR 0017).
     tests/geometry_version_test.cpp
+    # Lens-profile corrections (ADR 0023): settings v3, matching on synthetic and bundled databases,
+    # the model and round trips against Lensfun's own lfModifier, masks across toggles, v2 renders.
+    tests/lens_test_support.hpp
+    tests/lens_correction_test.cpp
 )
 
+# The lens tests compare Lucent's model with Lensfun's lfModifier, so they include Lensfun too.
 lucent_add_test(lucent_engine_tests
     SOURCES
         ${LUCENT_ENGINE_TEST_SOURCES}
     DEPS
         Lucent::engine
+        lucent_lensfun
     LABELS
         engine unit
 )
@@ -146,6 +176,8 @@ set(LUCENT_ENGINE_FIXTURE_TEST_SOURCES
     tests/guided_filter_reference_test.cpp
     tests/develop_fixture_test.cpp
     tests/dng_opcode_fixture_test.cpp
+    tests/lens_test_support.hpp
+    tests/lens_correction_fixture_test.cpp
 )
 
 lucent_add_test(lucent_engine_fixture_tests

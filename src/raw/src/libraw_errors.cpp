@@ -1,5 +1,6 @@
 // LibRaw error mapping, callbacks and name tables for the LibRaw adapter.
 
+#include <array>
 #include <bit>
 #include <cerrno>
 #include <cstdint>
@@ -81,6 +82,34 @@ void data_error_callback(void* data, const char* /*file*/, const INT64 offset) {
     }
 }
 
+// LibRaw's maker-note callback (LibRaw::set_makernotes_handler): called for every maker-note tag
+// while LibRaw parses the maker notes, with `ifp` (its LibRaw_abstract_datastream) positioned at the
+// tag's value and restored by LibRaw afterwards (src/metadata/makernotes.cpp, parse_makernote).
+// Keeps the first tag 0x009a of at least five LONGs: Canon's AspectInfo (CanonAspectInfo).
+void makernote_callback(void* data, int tag, int type, int len, unsigned int order, void* ifp, INT64 /*base*/) {
+    constexpr int kAspectInfoTag = 0x009a;
+    constexpr int kTiffLong = 4;
+    auto* state = static_cast<LibRawCallState*>(data);
+    if (state == nullptr || ifp == nullptr || tag != kAspectInfoTag || type != kTiffLong || len < 5 ||
+        state->canon_aspect) {
+        return;
+    }
+    auto* stream = static_cast<LibRaw_abstract_datastream*>(ifp);
+    std::array<unsigned char, 20> bytes{};
+    if (stream->read(bytes.data(), 1, bytes.size()) != static_cast<int>(bytes.size())) {
+        return;
+    }
+    const bool little = order == 0x4949;  // "II"; "MM" (0x4d4d) is big-endian
+    const auto value = [&](std::size_t i) {
+        const unsigned char* b = bytes.data() + 4 * i;
+        return little ? static_cast<std::uint32_t>(b[0]) | static_cast<std::uint32_t>(b[1]) << 8 |
+                            static_cast<std::uint32_t>(b[2]) << 16 | static_cast<std::uint32_t>(b[3]) << 24
+                      : static_cast<std::uint32_t>(b[3]) | static_cast<std::uint32_t>(b[2]) << 8 |
+                            static_cast<std::uint32_t>(b[1]) << 16 | static_cast<std::uint32_t>(b[0]) << 24;
+    };
+    state->canon_aspect = CanonAspectInfo{value(0), value(1), value(2), value(3), value(4)};
+}
+
 struct FlagName {
     unsigned bit;
     std::string_view name;
@@ -108,6 +137,7 @@ std::vector<std::string> names_of(unsigned bits, std::span<const FlagName> table
 void install_callbacks(LibRaw& raw, LibRawCallState& state) noexcept {
     raw.set_progress_handler(&progress_callback, &state);
     raw.set_dataerror_handler(&data_error_callback, &state);
+    raw.set_makernotes_handler(&makernote_callback, &state);
 }
 
 Error libraw_failure(int code, std::string_view stage, const LibRawFileStream& stream,

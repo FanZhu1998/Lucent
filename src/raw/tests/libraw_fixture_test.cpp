@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -448,7 +449,50 @@ TEST_F(LibRawFixtures, CameraImageAreasOfTheCorpus) {
         ++tested;
     }
     if (tested == 0) {
-        GTEST_SKIP() << "no fixture of this test is downloaded; run tools\fetch-fixtures.ps1";
+        GTEST_SKIP() << "no fixture of this test is downloaded; run tools\\fetch-fixtures.ps1";
+    }
+}
+
+// The sensor crops of the corpus (contract 1.5): the R5's 1.6x crop-mode files, from Canon's
+// AspectInfo; nothing for its full-frame files, the 5D Mark IV (no crop mode used) or the A7 IV's APS-C
+// mode, whose file records its 35 mm equivalent focal length instead (75 mm for 50 mm).
+TEST_F(LibRawFixtures, SensorCropsOfTheCorpus) {
+    struct Case {
+        const char* id;
+        std::optional<double> factor;  // std::nullopt: no sensor crop
+    };
+    const Case cases[] = {
+        {"canon-eos-r5-cr3-raw-crop", 1.6},
+        {"canon-eos-r5-cr3-craw-crop-dualpixel", 1.6},
+        {"canon-eos-r5-cr3-raw", std::nullopt},
+        {"canon-eos-r5-cr3-craw", std::nullopt},
+        {"canon-eos-5d-mark-iv-cr2-raw", std::nullopt},
+        {"sony-ilce-7m4-arw-compressed-apsc", std::nullopt},
+        {"nikon-z-6-nef-lossless", std::nullopt},
+    };
+    int tested = 0;
+    for (const Case& c : cases) {
+        const auto path = ts::fixture_file(c.id);
+        if (!path) {
+            continue;
+        }
+        SCOPED_TRACE(c.id);
+        ProbeOptions options;
+        options.subimage = 0;
+        options.describe_subimages = false;
+        auto probe = decoder_->probe(*path, options, {});
+        ASSERT_TRUE(probe) << probe.error().describe();
+        const std::optional<SensorCrop>& crop = probe->metadata.sensor_crop;
+        ASSERT_EQ(crop.has_value(), c.factor.has_value()) << (crop ? crop->basis : std::string("none"));
+        if (crop) {
+            ASSERT_TRUE(crop->factor);
+            EXPECT_DOUBLE_EQ(*crop->factor, *c.factor);
+            EXPECT_NE(crop->basis.find("APS-C crop"), std::string::npos) << crop->basis;
+        }
+        ++tested;
+    }
+    if (tested == 0) {
+        GTEST_SKIP() << "no fixture of this test is downloaded; run tools\\fetch-fixtures.ps1";
     }
 }
 

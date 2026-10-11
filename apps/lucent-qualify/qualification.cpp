@@ -611,7 +611,8 @@ OrderedJson lab_json(const std::array<double, 3>& lab) {
 }
 
 void colour_reference_check(CheckResult& c, const ChartDefinitions& charts, const ChartFixture& chart,
-                            const raw::DecoderRegistry& registry, const std::filesystem::path& file) {
+                            const raw::DecoderRegistry& registry, const std::filesystem::path& file,
+                            const engine::DevelopOptions& develop) {
     const ChartReference* reference = charts.reference(chart.reference);
     c.details["reference"] = {{"id", chart.reference},
                               {"chart", reference->chart},
@@ -625,7 +626,7 @@ void colour_reference_check(CheckResult& c, const ChartDefinitions& charts, cons
                            {"chart_balanced_p90", kColourReferenceP90Limit},
                            {"chart_balanced_max", kColourReferenceMaxLimit},
                            {"clipped_fraction", kColourReferenceClippedFraction}};
-    auto measured = measure_chart(registry, file, chart);
+    auto measured = measure_chart(registry, file, chart, develop);
     if (!measured) {
         set_check(c, CheckStatus::Fail, Evidence::Independent,
                   "the chart could not be measured on the develop path: " + describe(measured.error()));
@@ -872,6 +873,9 @@ ProcessMemory process_memory() noexcept {
 FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture& fixture,
                               const QualifyOptions& options) {
     const Clock::time_point started = Clock::now();
+    // The develop renders correct lenses as Lucent's exports do (ADR 0023, W13 closure).
+    engine::DevelopOptions develop;
+    develop.lens_database = options.lens_database;
     FixtureResult result;
     result.id = fixture.id;
     result.tier = fixture.tier;
@@ -1408,7 +1412,7 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
     if (chart != nullptr) {
         CheckResult& c = check_of(result, kCheckColourReference);
         const Clock::time_point t0 = Clock::now();
-        colour_reference_check(c, *corpus.charts, *chart, *registry, file);
+        colour_reference_check(c, *corpus.charts, *chart, *registry, file, develop);
         result.measurements.phase_seconds["colour_reference"] = seconds_since(t0);
         timed(c, t0);
     }  // stage one and two released
@@ -1436,12 +1440,12 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
         engine::DevelopSettings settings;
         engine::StageOneRequest request;
         request.kind = engine::StageOneKind::Export;
-        auto estimate = engine::estimate_develop_memory(meta, request, settings);
+        auto estimate = engine::estimate_develop_memory(meta, request, settings, develop);
         if (estimate) {
             result.measurements.develop_estimate_bytes = estimate->export_peak;
         }
         const Clock::time_point t0 = Clock::now();
-        auto developed = engine::render_develop_file(*registry, file, 0u, settings, {}, {});
+        auto developed = engine::render_develop_file(*registry, file, 0u, settings, develop, {});
         result.measurements.phase_seconds["develop_1"] = seconds_since(t0);
         CheckResult& dims = check_of(result, kCheckDimensions);
         CheckResult& orient = check_of(result, kCheckOrientation);
@@ -1458,6 +1462,24 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
             const engine::DevelopReport& report = developed->report;
             const engine::ColorImage& display = developed->display;
             const image::Size actual = display.pixels.size();
+            {
+                const engine::LensCorrectionPlan& plan = report.lens_correction.plan;
+                OrderedJson outcomes = OrderedJson::object();
+                for (const engine::LensCorrectionDecision& d : plan.decisions) {
+                    outcomes[std::string(engine::to_string(d.kind))] = std::string(engine::to_string(d.outcome));
+                }
+                result.lens_correction = {
+                    {"database", plan.database ? OrderedJson(std::format("{} {} (manifest {})", plan.database->asset_id,
+                                                                         plan.database->asset_version,
+                                                                         plan.database->manifest_sha256))
+                                               : OrderedJson(nullptr)},
+                    {"match", std::string(engine::to_string(plan.match.kind))},
+                    {"profile", plan.profile ? OrderedJson(std::format("{} / {} (crop factor {:.4g})",
+                                                                       plan.profile->maker, plan.profile->model,
+                                                                       plan.profile->crop_factor))
+                                             : OrderedJson(nullptr)},
+                    {"corrections", std::move(outcomes)}};
+            }
             if (result.camera_area.is_object()) {
                 const image::PixelRect& f = report.geometry_frame;
                 const bool whole = f == image::PixelRect::from_size(report.upright_size);
@@ -1728,7 +1750,7 @@ FixtureResult qualify_fixture(const QualifyCorpus& corpus, const ManifestFixture
             set_check(c, CheckStatus::NotRun, Evidence::None, "the first develop render failed");
         } else {
             auto developed =
-                engine::render_develop_file(*registry, file, 0u, engine::DevelopSettings{}, {}, {});
+                engine::render_develop_file(*registry, file, 0u, engine::DevelopSettings{}, develop, {});
             if (!developed) {
                 set_check(c, CheckStatus::Fail, Evidence::Strong,
                           "second develop render failed: " + describe(developed.error()));
@@ -1990,6 +2012,7 @@ OrderedJson FixtureResult::to_json() const {
     }
     j["limitations"] = std::move(limits);
     j["camera_area"] = camera_area;
+    j["lens_correction"] = lens_correction;
     j["proposed_state"] = to_string(state);
     j["expected_state"] = expected_state ? OrderedJson(*expected_state) : OrderedJson(nullptr);
     j["colour_evidence"] = colour_evidence;

@@ -21,9 +21,11 @@
 #include <lucent/engine/display_rendering.hpp>
 #include <lucent/engine/orientation.hpp>
 
+#include "lens_sampler.hpp"
 #include "opcode_stages.hpp"
 #include "parallel_rows.hpp"
 #include "render_warnings.hpp"
+#include "scratch_pool.hpp"
 
 namespace lucent::engine {
 
@@ -154,11 +156,15 @@ std::uint64_t plane_bytes(image::Size size, std::int32_t channels, const image::
 // base layer and a full-size geometry output.
 // `frame` is the geometry's frame at `size` (geometry_mapping(); the camera's image area for
 // geometry version 2), the whole image when null: with an area, even the identity geometry writes
-// a new output image.
+// a new output image. `lens` is the geometry of the lens correction stage two applies (its plan's,
+// defined at the full-resolution upright size `full_size`), null when it resamples nothing: masks
+// are then evaluated through it, and the base layer covers their supports mapped into the
+// corrected image.
 std::uint64_t stage_two_working_bytes(image::Size size, double scale, std::int32_t tone_radius,
                                       std::int32_t channels_out, const DevelopSettings* settings,
                                       const image::AllocationLimits& limits,
-                                      const image::PixelRect* frame = nullptr) {
+                                      const image::PixelRect* frame = nullptr, const LensGeometryMap* lens = nullptr,
+                                      image::Size full_size = {}) {
     const std::uint64_t one = plane_bytes(size, 1, limits);
     if (settings == nullptr) {
         const std::uint64_t denoise =
@@ -173,7 +179,8 @@ std::uint64_t stage_two_working_bytes(image::Size size, double scale, std::int32
         bytes = std::max(bytes, chroma_denoise_working_bytes(
                                     size, chroma_denoise_radius(settings->chroma_denoise.radius, scale)));
     }
-    bytes = std::max(bytes, local_adjustments_working_bytes(settings->local_adjustments, size, tone_radius));
+    bytes = std::max(bytes,
+                     local_adjustments_working_bytes(settings->local_adjustments, size, tone_radius, lens, full_size));
     if (auto mapping = GeometryMapping::create(settings->geometry, size,
                                                frame != nullptr ? *frame : image::PixelRect::from_size(size));
         mapping && !mapping->identity()) {
@@ -582,12 +589,50 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     if (!mapping) {
         return Unexpected(std::move(mapping.error()));
     }
+
+    // ---- 0. the lens correction's plan (lens_correction.hpp) --------------------------------------
+    auto t = Clock::now();
+    const std::optional<LensCorrectionSetting> lens_setting = effective_lens_correction(settings);
+    auto planned = plan_lens_correction(options.lens_database.get(), metadata, lens_setting, one.full_size,
+                                        one.orientation, mono);
+    if (!planned) {
+        return Unexpected(std::move(planned.error()));
+    }
+    LensCorrectionPlan lens_plan = std::move(*planned);
+    if (lens_plan.any_applied() && !is_whole_frame(one)) {
+        // The model is centred on the whole frame: a part of it (an analysis crop) is not corrected.
+        for (LensCorrectionDecision& d : lens_plan.decisions) {
+            if (d.outcome == LensCorrectionOutcome::Applied) {
+                d.outcome = LensCorrectionOutcome::NotApplicable;
+                d.detail = std::format("the stage-one image ({} x {}) is a part of the {} x {} frame, and the "
+                                       "lens model is centred on the whole frame",
+                                       size.width, size.height, one.full_size.width, one.full_size.height);
+            }
+        }
+        lens_plan.geometry.reset();
+        lens_plan.vignetting.reset();
+    }
+    const double lens_plan_seconds = seconds_since(t);
+    const bool lens_resamples = lens_plan.geometry.has_value();
+    // The fused pass writes in place into stage one's buffer only when nothing is resampled.
+    const bool in_place = reuse != nullptr && !mono && !lens_resamples;
+    // A non-consuming render with a stage-two cache corrects the lens once into an image the cache
+    // keeps (StageTwoCache::LensEntry: it depends on the stage-one image and the plan only), and later
+    // renders of the same image and plan read it instead of resampling again.
+    const std::uint64_t corrected_bytes = plane_bytes(size, one.pixels.channels(), options.limits);
+    StageTwoCache* const lens_cache = (reuse == nullptr && one.id != 0 && lens_plan.any_applied() &&
+                                       options.stage_two_cache && corrected_bytes <= options.stage_two_cache->max_bytes())
+                                          ? options.stage_two_cache.get()
+                                          : nullptr;
     {
-        std::uint64_t bytes =
-            stage_two_working_bytes(size, one.scale, local_tone_radius(one.full_size, one.scale), 3,
-                                    &settings, options.limits, &mapping->frame());
-        if (reuse == nullptr || mono) {
+        std::uint64_t bytes = stage_two_working_bytes(
+            size, one.scale, local_tone_radius(one.full_size, one.scale), 3, &settings, options.limits,
+            &mapping->frame(), lens_plan.geometry ? &*lens_plan.geometry : nullptr, one.full_size);
+        if (!in_place) {
             bytes += plane_bytes(size, 3, options.limits);
+        }
+        if (lens_cache != nullptr) {
+            bytes += corrected_bytes;
         }
         if (auto budget = check_budget(bytes, options.memory_budget_bytes, "stage two"); !budget) {
             return Unexpected(std::move(budget.error()));
@@ -623,7 +668,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     }
 
     // ---- 1. white balance, camera colour, working space, exposure (fused) -----------------------
-    auto t = Clock::now();
+    t = Clock::now();
     auto model = WhiteBalanceModel::create(metadata);
     if (!model) {
         return Unexpected(std::move(model.error()));
@@ -710,7 +755,8 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
     // The denoised image of an earlier render with the same inputs (DevelopOptions::stage_two_cache).
     const bool denoise = !settings.chroma_denoise.is_identity() && !mono;
     StageTwoCache* cache = (denoise && reuse == nullptr && one.id != 0) ? options.stage_two_cache.get() : nullptr;
-    const StageTwoCache::Key cache_key{one.id, settings.white_balance, settings.exposure_ev, settings.chroma_denoise};
+    const StageTwoCache::Key cache_key{one.id, settings.white_balance, settings.exposure_ev, settings.chroma_denoise,
+                                       lens_plan.revision()};
     std::shared_ptr<const StageTwoCache::Entry> cached;
     if (cache != nullptr) {
         cached = cache->find(cache_key);
@@ -718,9 +764,38 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             return fail(ErrorCode::Internal, "the stage-two cache holds an image of another size", kWhereTwo);
         }
     }
+    // The lens-corrected image (StageTwoCache::LensEntry), unless the denoised image already holds the
+    // whole fused pass: from the cache, or made now and kept.
+    std::shared_ptr<const StageTwoCache::LensEntry> corrected;
+    bool corrected_reused = false;
+    if (lens_cache != nullptr && !cached) {
+        const StageTwoCache::LensKey lens_key{one.id, lens_plan.revision()};
+        corrected = lens_cache->find_lens(lens_key);
+        if (corrected) {
+            if (corrected->pixels.size() != size || corrected->pixels.channels() != one.pixels.channels()) {
+                return fail(ErrorCode::Internal, "the stage-two cache holds a lens-corrected image of another size",
+                            kWhereTwo);
+            }
+            corrected_reused = true;
+        } else {
+            const detail::LensRowSampler whole(lens_plan, one.pixels.const_view(), one.full_size);
+            auto made = detail::correct_whole_image(whole, size, one.pixels.channels(), options.limits, cancel,
+                                                    options.parallel, kWhereTwo);
+            if (!made) {
+                return Unexpected(std::move(made.error()));
+            }
+            try {
+                corrected = std::make_shared<const StageTwoCache::LensEntry>(
+                    StageTwoCache::LensEntry{lens_key, std::move(made->pixels), made->outside_samples});
+            } catch (const std::bad_alloc&) {
+                return fail(ErrorCode::OutOfMemory, "cannot keep the lens-corrected image", kWhereTwo);
+            }
+            lens_cache->insert_lens(corrected);
+        }
+    }
 
     ColorImage& image = result.display;
-    if (reuse != nullptr && !mono) {
+    if (in_place) {
         image.pixels = std::move(*reuse);
     } else {
         auto buffer = image::ImageBuffer<float>::create_uninitialized(size.width, size.height, 3, options.limits);
@@ -738,11 +813,25 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         const std::array<float, 3> d = {static_cast<float>(report.correction[0]),
                                         static_cast<float>(report.correction[1]),
                                         static_cast<float>(report.correction[2])};
-        // Source rows: the stage-one buffer, or (in place) the output itself.
+        // Source rows: the stage-one buffer, or (in place) the output itself; with a lens correction,
+        // the corrected camera values of the row (lens_sampler.hpp), computed before the row is
+        // written.
         const image::ConstImageView<float> src =
-            (reuse != nullptr && !mono) ? image::ConstImageView<float>(image.pixels.view()) : one.pixels.const_view();
+            in_place ? image::ConstImageView<float>(image.pixels.view()) : one.pixels.const_view();
         const image::ImageView<float> dst = image.pixels.view();
         const std::int32_t width = size.width;
+        const detail::LensRowSampler sampler(lens_plan, src, one.full_size);
+        // Rows are corrected here only without a kept denoised or lens-corrected image.
+        const bool sample_rows = sampler.active() && !cached && !corrected;
+        detail::ScratchPool scratch_pool(
+            sample_rows ? static_cast<std::size_t>(width) * static_cast<std::size_t>(src.channels()) : 0);
+        std::vector<std::uint64_t> outside;
+        try {
+            outside.assign(sampler.resamples() && sample_rows ? static_cast<std::size_t>(size.height) : 0, 0);
+        } catch (const std::bad_alloc&) {
+            return fail(ErrorCode::OutOfMemory, "cannot allocate per-row counters", kWhereTwo);
+        }
+        std::atomic<bool> no_memory{false};
         auto status = detail::for_each_row(size.height, options.parallel, cancel, kWhereTwo, [&](std::int32_t y) {
             float* o = dst.row(y);
             if (cached) {  // the kept result of this pass and the denoising
@@ -750,6 +839,21 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
                 return;
             }
             const float* s = src.row(y);
+            float* scratch = nullptr;
+            if (corrected) {
+                s = corrected->pixels.row(y);  // the same values sampler.row() writes
+            } else if (sample_rows) {
+                scratch = scratch_pool.acquire();
+                if (scratch == nullptr) {
+                    no_memory.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                const std::uint64_t n = sampler.row(y, scratch);
+                if (!outside.empty()) {
+                    outside[static_cast<std::size_t>(y)] = n;
+                }
+                s = scratch;
+            }
             if (mono) {
                 for (std::int32_t x = 0; x < width; ++x, o += 3) {
                     const float v = std::min(s[x], clip_f);
@@ -757,6 +861,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
                     o[1] = m10 * v;
                     o[2] = m20 * v;
                 }
+                scratch_pool.release(scratch);
                 return;
             }
             for (std::int32_t x = 0; x < width; ++x, s += 3, o += 3) {
@@ -767,12 +872,77 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
                 o[1] = m10 * r + m11 * g + m12 * b;
                 o[2] = m20 * r + m21 * g + m22 * b;
             }
+            scratch_pool.release(scratch);
         });
         if (!status) {
             return Unexpected(std::move(status.error()));
         }
+        if (no_memory.load()) {
+            return fail(ErrorCode::OutOfMemory, "cannot allocate the lens correction's row scratch", kWhereTwo);
+        }
+        LensCorrectionRecord& lens = report.lens_correction;
+        lens.plan = lens_plan;
+        lens.render_size = size;
+        lens.resampled = sampler.resamples() && !cached;
+        lens.reused = corrected_reused;
+        if (corrected) {
+            lens.outside_samples = corrected->outside_samples;
+        }
+        for (const std::uint64_t n : outside) {
+            lens.outside_samples += n;
+        }
+    }
+    if (reuse != nullptr && lens_resamples) {
+        // The consuming render corrected the lens into a new buffer: stage one's is no longer needed.
+        *reuse = image::ImageBuffer<float>{};
     }
     const double fused_seconds = seconds_since(t);
+    report.lens_correction.seconds = lens_plan_seconds;
+    {
+        const LensCorrectionPlan& p = report.lens_correction.plan;
+        OperationRecord r;
+        r.operation = DevelopOperation::LensCorrection;
+        r.algorithm = "lensfun-profile-catmull-rom";
+        r.version = p.operation_version;
+        r.applied = p.any_applied();
+        r.parameters = {
+            param("automatic", p.automatic),
+            param("match", std::string(to_string(p.match.kind))),
+            param("fused_with", std::string("white_balance")),
+        };
+        if (p.database) {
+            r.parameters.push_back(param("database", std::format("{} {} (manifest {})", p.database->asset_id,
+                                                                 p.database->asset_version,
+                                                                 p.database->manifest_sha256)));
+        }
+        std::string reasons;
+        for (const std::string& reason : p.match.reasons) {
+            reasons += (reasons.empty() ? "" : "; ") + reason;
+        }
+        r.parameters.push_back(param("match_reasons", std::move(reasons)));
+        if (p.profile) {
+            r.parameters.push_back(param("profile", std::format("{} / {} (crop factor {:.4g})", p.profile->maker,
+                                                                p.profile->model, p.profile->crop_factor)));
+            r.parameters.push_back(param("lens_type", p.lens_type));
+            r.parameters.push_back(param("crop_factor", p.crop_factor));
+            r.parameters.push_back(param("crop_factor_basis", p.crop_factor_basis));
+        }
+        for (const LensCorrectionDecision& d : p.decisions) {
+            r.parameters.push_back(param(std::string(to_string(d.kind)),
+                                         std::format("{}: {}", to_string(d.outcome), d.detail)));
+        }
+        if (p.geometry) {
+            r.parameters.push_back(param("scale", p.geometry->scale));
+            r.parameters.push_back(param("lensfun_scale", p.geometry->lensfun_scale));
+            r.parameters.push_back(param("outside_samples",
+                                         static_cast<std::int64_t>(report.lens_correction.outside_samples)));
+        }
+        if (p.any_applied()) {
+            r.parameters.push_back(param("reused", report.lens_correction.reused));
+        }
+        r.parameters.push_back(param("plan_seconds", lens_plan_seconds));
+        report.operations.push_back(std::move(r));
+    }
     {
         OperationRecord r;
         r.operation = DevelopOperation::WhiteBalance;
@@ -938,6 +1108,11 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
             LocalAdjustmentsParameters p;
             p.white = report.white;
             p.tone_radius = local_tone_radius(one.full_size, one.scale);
+            if (report.lens_correction.plan.geometry) {
+                // The image is the corrected canvas: masks are evaluated at their content's source.
+                p.lens = &*report.lens_correction.plan.geometry;
+                p.full_size = one.full_size;
+            }
             auto applied = apply_local_adjustments(image, settings.local_adjustments, p, options.mask_cache.get(),
                                                    options.limits, cancel, options.parallel);
             if (!applied) {
@@ -1083,7 +1258,7 @@ Expected<DevelopResult> run_stage_two(const StageOneImage& one, image::ImageBuff
         r.operation = DevelopOperation::Geometry;
         r.algorithm = "straighten-catmull-rom-crop-orient";
         r.version = report.geometry_version;
-        r.applied = !mapping->identity();
+        r.applied = !mapping->affine_identity();
         r.parameters = {
             param("straighten_degrees", g.straighten_degrees),
             param("crop", std::vector<double>{g.crop.left, g.crop.top, g.crop.right, g.crop.bottom}),
@@ -1150,6 +1325,42 @@ Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings, cons
     return geometry_mapping(settings, image.pixels.size(), image.full_size, image.image_area);
 }
 
+Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings, const StageOneImage& image,
+                                           const DevelopOptions& options) {
+    auto mapping = geometry_mapping(settings, image);
+    if (!mapping || !options.lens_database || !is_whole_frame(image)) {
+        return mapping;
+    }
+    auto plan = plan_lens_correction(options.lens_database.get(), image.metadata, effective_lens_correction(settings),
+                                     image.full_size, image.orientation, image.pixels.channels() == 1);
+    if (!plan) {
+        return Unexpected(std::move(plan.error()));
+    }
+    if (!plan->geometry) {
+        return mapping;
+    }
+    return GeometryMapping::create(settings.geometry, mapping->upright_size(), mapping->frame(), *plan->geometry,
+                                   image.full_size);
+}
+
+Expected<GeometryMapping> geometry_mapping(const DevelopReport& report) {
+    auto mapping = geometry_mapping(report.settings, report.upright_size, report.full_size, report.image_area);
+    if (!mapping || !report.lens_correction.plan.geometry) {
+        return mapping;
+    }
+    return GeometryMapping::create(report.settings.geometry, mapping->upright_size(), mapping->frame(),
+                                   *report.lens_correction.plan.geometry, report.full_size);
+}
+
+bool is_whole_frame(const StageOneImage& image) noexcept {
+    const image::Size size = image.pixels.size();
+    if (size.empty() || image.full_size.empty() || proxy_size(image.full_size, long_edge(size)) != size) {
+        return false;
+    }
+    const double scale = static_cast<double>(long_edge(size)) / static_cast<double>(long_edge(image.full_size));
+    return std::abs(image.scale - scale) <= 1e-9;
+}
+
 std::shared_ptr<const StageTwoCache::Entry> StageTwoCache::find(const Key& key) {
     const std::lock_guard lock(mutex_);
     if (entry_ && entry_->key == key) {
@@ -1161,21 +1372,69 @@ std::shared_ptr<const StageTwoCache::Entry> StageTwoCache::find(const Key& key) 
 }
 
 void StageTwoCache::insert(std::shared_ptr<const Entry> entry) noexcept {
-    if (!entry || entry->pixels.byte_size() > max_bytes_) {
+    if (!entry) {
         return;
     }
+    const auto bytes = static_cast<std::uint64_t>(entry->pixels.byte_size());
+    std::shared_ptr<const Entry> replaced;  // released after the lock
+    {
+        const std::lock_guard lock(mutex_);
+        const std::uint64_t lens = lens_entry_ ? static_cast<std::uint64_t>(lens_entry_->pixels.byte_size()) : 0u;
+        if (bytes > max_bytes_ || lens > max_bytes_ - bytes) {
+            return;  // only beside the lens-corrected image, which serves every render
+        }
+        replaced = std::move(entry_);
+        entry_ = std::move(entry);
+    }
+}
+
+std::shared_ptr<const StageTwoCache::LensEntry> StageTwoCache::find_lens(const LensKey& key) {
     const std::lock_guard lock(mutex_);
-    entry_ = std::move(entry);
+    if (lens_entry_ && lens_entry_->key == key) {
+        ++lens_hits_;
+        return lens_entry_;
+    }
+    ++lens_misses_;
+    return nullptr;
+}
+
+void StageTwoCache::insert_lens(std::shared_ptr<const LensEntry> entry) noexcept {
+    if (!entry || static_cast<std::uint64_t>(entry->pixels.byte_size()) > max_bytes_) {
+        return;
+    }
+    std::shared_ptr<const Entry> dropped;  // both released after the lock
+    std::shared_ptr<const LensEntry> replaced;
+    {
+        const std::lock_guard lock(mutex_);
+        replaced = std::move(lens_entry_);
+        lens_entry_ = std::move(entry);
+        const auto lens = static_cast<std::uint64_t>(lens_entry_->pixels.byte_size());
+        if (entry_ && static_cast<std::uint64_t>(entry_->pixels.byte_size()) > max_bytes_ - lens) {
+            dropped = std::move(entry_);
+        }
+    }
 }
 
 void StageTwoCache::clear() noexcept {
-    const std::lock_guard lock(mutex_);
-    entry_.reset();
+    std::shared_ptr<const Entry> entry;  // released after the lock
+    std::shared_ptr<const LensEntry> lens;
+    {
+        const std::lock_guard lock(mutex_);
+        entry = std::move(entry_);
+        lens = std::move(lens_entry_);
+    }
 }
 
 StageTwoCache::Stats StageTwoCache::stats() const {
     const std::lock_guard lock(mutex_);
-    return Stats{entry_ ? static_cast<std::uint64_t>(entry_->pixels.byte_size()) : 0u, hits_, misses_};
+    Stats s;
+    s.bytes = (entry_ ? static_cast<std::uint64_t>(entry_->pixels.byte_size()) : 0u) +
+              (lens_entry_ ? static_cast<std::uint64_t>(lens_entry_->pixels.byte_size()) : 0u);
+    s.hits = hits_;
+    s.misses = misses_;
+    s.lens_hits = lens_hits_;
+    s.lens_misses = lens_misses_;
+    return s;
 }
 
 std::string_view to_string(StageOneKind kind) noexcept {
@@ -1214,6 +1473,8 @@ std::string_view to_string(DevelopOperation operation) noexcept {
             return "local_adjustments";
         case DevelopOperation::Geometry:
             return "geometry";
+        case DevelopOperation::LensCorrection:
+            return "lens_correction";
     }
     return "invalid";
 }
@@ -1357,11 +1618,27 @@ Expected<DevelopMemoryEstimate> estimate_memory(const raw::RawMetadata& metadata
                            full, kept);
         }
     }
+    // The lens correction stage two plans with these settings and options.lens_database (none: nothing
+    // is corrected). Without settings it is not known: with a database, any profile may resample.
+    std::optional<LensCorrectionPlan> lens_plan;
+    if (settings != nullptr) {
+        auto planned = plan_lens_correction(options.lens_database.get(), metadata, effective_lens_correction(*settings),
+                                            full, metadata.geometry.orientation, channels == 1);
+        if (!planned) {
+            return Unexpected(
+                Error{planned.error().code, planned.error().message, kWhereMemory, planned.error().native_code});
+        }
+        lens_plan = std::move(*planned);
+    }
+    const LensGeometryMap* lens = lens_plan && lens_plan->geometry ? &*lens_plan->geometry : nullptr;
+    const bool lens_resamples = settings == nullptr ? options.lens_database != nullptr : lens != nullptr;
     const std::uint64_t working = stage_two_working_bytes(kept, scale, local_tone_radius(full, scale), 3,
-                                                          settings, options.limits, &frame);
+                                                          settings, options.limits, &frame, lens, full);
     e.stage_two_bytes = plane_bytes(kept, 3, options.limits) + working;
-    // The export path consumes stage one: RGB is reused in place, monochrome expands to RGB.
-    const std::uint64_t in_place = (channels == 1 ? plane_bytes(kept, 3, options.limits) : 0) + working;
+    // The export path consumes stage one: RGB is reused in place, monochrome expands to RGB; a lens
+    // correction that resamples writes a new RGB image next to stage one's (released afterwards).
+    const bool new_rgb = channels == 1 || lens_resamples;
+    const std::uint64_t in_place = (new_rgb ? plane_bytes(kept, 3, options.limits) : 0) + working;
     e.export_peak = std::max(e.stage_one_peak, e.stage_one_bytes + in_place);
     return e;
 }

@@ -82,7 +82,11 @@ namespace lucent::raw {
 //        reading of the camera's own crop tags, or unknown) with its provenance, and the default
 //        user crop the file suggests (DNG DefaultUserCrop, the decoder's aspect-ratio crop). Pixel
 //        values and the visible area are unchanged: the engine applies the area (ADR 0017).
-inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 4};
+//   1.5: RawMetadata::sensor_crop, the camera's record that the recorded image is an in-camera
+//        crop of its sensor (Canon's APS-H and APS-C crop modes, from maker note AspectInfo), so
+//        that lens profiles matched by camera model are not applied as if the image covered the
+//        whole sensor (ADR 0023). Pixel values are unchanged.
+inline constexpr core::ContractVersion kDecodedRawContractVersion{1, 5};
 
 // ---------------------------------------------------------------------------------------------
 // Enumerations (persisted values; append only)
@@ -540,6 +544,31 @@ struct ImageArea {
 // own bound for applying inset crops: LibRaw::adjust_to_raw_inset_crop's default maxcrop).
 inline constexpr double kMinInsetCropFraction = 0.55;
 
+// An in-camera crop of the sensor (contract 1.5): the camera recorded only a centred part of its
+// sensor, which the photographer chose (for example Canon's 1.6x "APS-C crop" of a full-frame body),
+// so the recorded image does not cover the camera's whole sensor. Not the image area (which lies
+// within a recorded image) and not a crop the decoder applies. Anything that assumes the recorded
+// image covers the camera's whole sensor (a lens profile matched by camera model, a 35 mm
+// equivalent) must account for it. Filled only from the camera's own record; std::nullopt in
+// RawMetadata means that the file records none that Lucent reads (not that there is none).
+struct SensorCrop {
+    // The recorded image's crop factor relative to the camera's whole sensor (> 1): the camera
+    // maker's documented factor for the mode (Canon AspectInfo: APS-H crop 1.3, APS-C crop 1.6);
+    // std::nullopt when the file says that the image is a crop but not of what size.
+    std::optional<double> factor;
+    // LucentRule: Lucent reads the maker-note value while the decoder parses the maker notes and
+    // maps it with the documented rule that `basis` names.
+    Provenance provenance = Provenance::LucentRule;
+    std::string basis;  // developer-facing English: the tag, its values and the rule
+};
+
+// Canon's AspectInfo crop codes (maker note 0x009a, first value; ExifTool Canon::AspectInfo):
+// 12 "3:2 (APS-H crop)", 13 "3:2 (APS-C crop)", with Canon's crop factors for them.
+inline constexpr std::uint32_t kCanonAspectApsHCrop = 12;
+inline constexpr std::uint32_t kCanonAspectApsCCrop = 13;
+inline constexpr double kCanonApsHCropFactor = 1.3;
+inline constexpr double kCanonApsCCropFactor = 1.6;
+
 struct PriorProcessingStep {
     PriorProcessingKind kind = PriorProcessingKind::Demosaiced;
     std::string detail;  // developer-facing English
@@ -656,6 +685,9 @@ struct RawMetadata {
     ProjectionInfo projection;
     // The camera's intended image area (contract 1.4).
     ImageArea image_area;
+    // An in-camera crop of the sensor the camera records (contract 1.5); std::nullopt when the file
+    // records none that Lucent reads.
+    std::optional<SensorCrop> sensor_crop;
     RepresentationInfo representation;
     SensorLevels levels;
     CameraColorData color;

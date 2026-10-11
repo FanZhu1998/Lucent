@@ -36,6 +36,7 @@ product authority. The current module structure is described in
 | [0020](0020-camera-correctness-gate.md) | Camera correctness gate: an independent colour reference from colour charts, and rotated fixtures for every image-area source (amends 0016) | Accepted | 2026-10-09 | W12 |
 | [0021](0021-performance-baseline.md) | Performance baseline: a reproducible harness over the shipped programs, the first baseline, and regression budgets only where the variance allows | Accepted | 2026-10-09 | W12 |
 | [0022](0022-updates-and-migrations.md) | Updates and migrations: an offline-first "Check for updates" over a signed release manifest, catalog fixtures of every schema version, and the update rehearsal (amends 0008, 0009, 0012, 0018) | Accepted | 2026-10-09 | W12 |
+| [0023](0023-lens-profile-corrections.md) | Lens-profile corrections: Lensfun as a private engine dependency, a verified lens database, exact matches only, and DevelopSettings v3 (amends 0003, 0009, 0010, 0014, 0015, 0017, 0018) | Accepted (built and tested in W13; a release package waits for the GLib and libintl ports to stop naming build-machine folders, see its verification) | 2026-10-10 | W13 |
 
 ## Conventions
 

@@ -260,12 +260,12 @@ ChartEvaluation evaluate_chart(const ChartDefinitions& charts, const ChartFixtur
 }
 
 Expected<ChartMeasurement> measure_chart(const raw::DecoderRegistry& registry, const std::filesystem::path& file,
-                                         const ChartFixture& chart) {
+                                         const ChartFixture& chart, const engine::DevelopOptions& develop) {
     const engine::DevelopSettings settings;  // as shot (DevelopSettings{}), geometry version 2
     engine::StageOneRequest request;
     request.kind = engine::StageOneKind::Export;  // as render_develop_file() renders an export
     request.white_balance = settings.white_balance;
-    auto one = engine::render_stage_one_file(registry, file, 0u, request, {}, {});
+    auto one = engine::render_stage_one_file(registry, file, 0u, request, develop, {});
     if (!one) {
         return Unexpected(std::move(one.error()));
     }
@@ -276,7 +276,7 @@ Expected<ChartMeasurement> measure_chart(const raw::DecoderRegistry& registry, c
     {
         // Stage two's report: the matrices, gain, clip and frame of the develop render (its pixels
         // are released at once; only operation 1's values are measured).
-        auto two = engine::render_stage_two(*one, settings, {}, {});
+        auto two = engine::render_stage_two(*one, settings, develop, {});
         if (!two) {
             return Unexpected(std::move(two.error()));
         }

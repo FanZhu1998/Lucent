@@ -1,7 +1,7 @@
 {
   "schema": "lucent.bench-budgets",
   "version": 1,
-  "baseline": "docs/performance/data/2026-10-09",
+  "baseline": "docs/performance/data/2026-10-10",
   "rule": "A measurement is a budget when its baseline has at least three values and a coefficient of variation of at most 10 % (times, rates) or 5 % (memory peaks): time max = max(1.25 x median, 1.10 x largest), memory max = 1.10 x largest, rate min = min(0.80 x median, 0.90 x smallest), three significant digits. Others are tracked. Valid on the reference machine in a like state only (machine.json).",
   "budgets": [
     {
@@ -11,11 +11,11 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 3074,
-        "median": 3074,
-        "min": 2982,
-        "max": 3194,
-        "cv": 0.034,
+        "value": 3320,
+        "median": 3320,
+        "min": 3305,
+        "max": 3360,
+        "cv": 0.009,
         "n": 3
       },
       "budget": {
@@ -32,16 +32,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 812,
-        "median": 812,
-        "min": 810,
-        "max": 825,
-        "cv": 0.01,
+        "value": 846,
+        "median": 846,
+        "min": 838,
+        "max": 985,
+        "cv": 0.093,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1020,
+        "max": 1090,
         "min": null,
         "reason": null
       }
@@ -53,16 +53,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 945,
-        "median": 945,
-        "min": 944,
-        "max": 961,
-        "cv": 0.01,
+        "value": 949,
+        "median": 949,
+        "min": 936,
+        "max": 1087,
+        "cv": 0.084,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1190,
+        "max": 1200,
         "min": null,
         "reason": null
       }
@@ -74,18 +74,18 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 181.5,
-        "median": 181.5,
-        "min": 169.4,
-        "max": 192.1,
-        "cv": 0.063,
+        "value": 174.1,
+        "median": 174.1,
+        "min": 173,
+        "max": 175,
+        "cv": 0.006,
         "n": 3
       },
       "budget": {
-        "budgeted": false,
-        "max": null,
+        "budgeted": true,
+        "max": 193,
         "min": null,
-        "reason": "coefficient of variation 6 % above 5 %"
+        "reason": null
       }
     },
     {
@@ -95,16 +95,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 175,
-        "median": 175,
-        "min": 169,
-        "max": 195,
-        "cv": 0.076,
+        "value": 125,
+        "median": 125,
+        "min": 125,
+        "max": 131,
+        "cv": 0.027,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 219,
+        "max": 157,
         "min": null,
         "reason": null
       }
@@ -116,16 +116,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 152,
-        "median": 152,
-        "min": 145,
-        "max": 158,
-        "cv": 0.043,
+        "value": 113,
+        "median": 113,
+        "min": 112,
+        "max": 128,
+        "cv": 0.076,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 190,
+        "max": 142,
         "min": null,
         "reason": null
       }
@@ -137,16 +137,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 643.9,
-        "median": 643.9,
-        "min": 642.5,
-        "max": 663.4,
-        "cv": 0.018,
+        "value": 575.1,
+        "median": 575.1,
+        "min": 574.9,
+        "max": 575.9,
+        "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 730,
+        "max": 634,
         "min": null,
         "reason": null
       }
@@ -158,16 +158,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 1193,
-        "median": 1193,
-        "min": 1184,
-        "max": 1201,
-        "cv": 0.007,
+        "value": 1185,
+        "median": 1185,
+        "min": 1129,
+        "max": 1211,
+        "cv": 0.036,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1500,
+        "max": 1490,
         "min": null,
         "reason": null
       }
@@ -179,16 +179,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 1583,
-        "median": 1583,
-        "min": 1556,
-        "max": 1760,
-        "cv": 0.068,
+        "value": 1466,
+        "median": 1466,
+        "min": 1435,
+        "max": 1523,
+        "cv": 0.03,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1980,
+        "max": 1840,
         "min": null,
         "reason": null
       }
@@ -200,10 +200,10 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1404.9,
-        "median": 1404.9,
-        "min": 1403.3,
-        "max": 1407.6,
+        "value": 1397.7,
+        "median": 1397.7,
+        "min": 1396.4,
+        "max": 1401.3,
         "cv": 0.002,
         "n": 3
       },
@@ -221,16 +221,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 6391,
-        "median": 6391,
-        "min": 5884,
-        "max": 6692,
-        "cv": 0.065,
+        "value": 5806,
+        "median": 5806,
+        "min": 5724,
+        "max": 5952,
+        "cv": 0.02,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 7990,
+        "max": 7260,
         "min": null,
         "reason": null
       }
@@ -242,16 +242,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1409.7,
-        "median": 1409.7,
-        "min": 1409.6,
-        "max": 1412.9,
-        "cv": 0.001,
+        "value": 1382.1,
+        "median": 1382.1,
+        "min": 1382.1,
+        "max": 1382.7,
+        "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1560,
+        "max": 1530,
         "min": null,
         "reason": null
       }
@@ -263,16 +263,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 804,
-        "median": 804,
-        "min": 750,
-        "max": 811,
-        "cv": 0.042,
+        "value": 753,
+        "median": 753,
+        "min": 746,
+        "max": 819,
+        "cv": 0.052,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1010,
+        "max": 942,
         "min": null,
         "reason": null
       }
@@ -284,16 +284,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 1000,
-        "median": 1000,
-        "min": 936,
-        "max": 1119,
-        "cv": 0.091,
+        "value": 1550,
+        "median": 1550,
+        "min": 1498,
+        "max": 1552,
+        "cv": 0.02,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1250,
+        "max": 1940,
         "min": null,
         "reason": null
       }
@@ -305,16 +305,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1365,
-        "median": 1365,
-        "min": 1363.2,
-        "max": 1375.1,
+        "value": 1402.9,
+        "median": 1402.9,
+        "min": 1395.6,
+        "max": 1408.2,
         "cv": 0.005,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1520,
+        "max": 1550,
         "min": null,
         "reason": null
       }
@@ -326,16 +326,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 2166,
-        "median": 2166,
-        "min": 2016,
-        "max": 2197,
-        "cv": 0.046,
+        "value": 2049,
+        "median": 2049,
+        "min": 1975,
+        "max": 2137,
+        "cv": 0.039,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 2710,
+        "max": 2570,
         "min": null,
         "reason": null
       }
@@ -347,16 +347,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 981,
-        "median": 981,
-        "min": 980.9,
-        "max": 1019.5,
-        "cv": 0.022,
+        "value": 987.1,
+        "median": 987.1,
+        "min": 986.3,
+        "max": 987.4,
+        "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1130,
+        "max": 1090,
         "min": null,
         "reason": null
       }
@@ -368,16 +368,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 942,
-        "median": 942,
-        "min": 879,
-        "max": 997,
-        "cv": 0.063,
+        "value": 817,
+        "median": 817,
+        "min": 814,
+        "max": 866,
+        "cv": 0.035,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1180,
+        "max": 1030,
         "min": null,
         "reason": null
       }
@@ -389,16 +389,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 871,
-        "median": 871,
-        "min": 866,
-        "max": 932,
-        "cv": 0.041,
+        "value": 815,
+        "median": 815,
+        "min": 812,
+        "max": 815,
+        "cv": 0.002,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1090,
+        "max": 1020,
         "min": null,
         "reason": null
       }
@@ -410,16 +410,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 662.3,
-        "median": 662.3,
-        "min": 658.3,
-        "max": 663.8,
-        "cv": 0.004,
+        "value": 673.3,
+        "median": 673.3,
+        "min": 672.2,
+        "max": 680.8,
+        "cv": 0.007,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 731,
+        "max": 749,
         "min": null,
         "reason": null
       }
@@ -431,16 +431,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 2129,
-        "median": 2129,
-        "min": 2003,
-        "max": 2153,
-        "cv": 0.038,
+        "value": 1904,
+        "median": 1904,
+        "min": 1899,
+        "max": 1986,
+        "cv": 0.025,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 2670,
+        "max": 2380,
         "min": null,
         "reason": null
       }
@@ -452,16 +452,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 534.2,
-        "median": 534.2,
-        "min": 533.5,
-        "max": 535,
+        "value": 503.2,
+        "median": 503.2,
+        "min": 503.1,
+        "max": 504,
         "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 589,
+        "max": 555,
         "min": null,
         "reason": null
       }
@@ -473,16 +473,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 2058,
-        "median": 2058,
-        "min": 1876,
-        "max": 2120,
-        "cv": 0.063,
+        "value": 1941,
+        "median": 1941,
+        "min": 1936,
+        "max": 1961,
+        "cv": 0.007,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 2580,
+        "max": 2430,
         "min": null,
         "reason": null
       }
@@ -494,16 +494,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 2438,
-        "median": 2438,
-        "min": 2370,
-        "max": 2498,
-        "cv": 0.026,
+        "value": 2567,
+        "median": 2567,
+        "min": 2536,
+        "max": 2575,
+        "cv": 0.008,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 3050,
+        "max": 3210,
         "min": null,
         "reason": null
       }
@@ -515,16 +515,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1130.1,
-        "median": 1130.1,
-        "min": 1123.7,
-        "max": 1132.8,
-        "cv": 0.004,
+        "value": 1172.2,
+        "median": 1172.2,
+        "min": 1162,
+        "max": 1172.9,
+        "cv": 0.005,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1250,
+        "max": 1300,
         "min": null,
         "reason": null
       }
@@ -536,16 +536,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 6360,
-        "median": 6360,
-        "min": 6305,
-        "max": 6532,
-        "cv": 0.019,
+        "value": 5532,
+        "median": 5532,
+        "min": 5497,
+        "max": 5636,
+        "cv": 0.013,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 7950,
+        "max": 6920,
         "min": null,
         "reason": null
       }
@@ -557,16 +557,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1174.9,
-        "median": 1174.9,
-        "min": 1173.6,
-        "max": 1205.6,
-        "cv": 0.015,
+        "value": 1180.8,
+        "median": 1180.8,
+        "min": 1179.4,
+        "max": 1182.4,
+        "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1330,
+        "max": 1310,
         "min": null,
         "reason": null
       }
@@ -578,11 +578,11 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 1012,
-        "median": 1012,
-        "min": 991,
-        "max": 1052,
-        "cv": 0.03,
+        "value": 1015,
+        "median": 1015,
+        "min": 999,
+        "max": 1020,
+        "cv": 0.011,
         "n": 3
       },
       "budget": {
@@ -599,16 +599,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 1144,
-        "median": 1144,
-        "min": 1117,
-        "max": 1207,
-        "cv": 0.04,
+        "value": 1615,
+        "median": 1615,
+        "min": 1551,
+        "max": 1632,
+        "cv": 0.027,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1430,
+        "max": 2020,
         "min": null,
         "reason": null
       }
@@ -620,16 +620,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1074.6,
-        "median": 1074.6,
-        "min": 1064.4,
-        "max": 1076.1,
-        "cv": 0.006,
+        "value": 1115.8,
+        "median": 1115.8,
+        "min": 1113.9,
+        "max": 1118.9,
+        "cv": 0.002,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1190,
+        "max": 1240,
         "min": null,
         "reason": null
       }
@@ -641,16 +641,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 2045,
-        "median": 2045,
-        "min": 2002,
-        "max": 2129,
-        "cv": 0.031,
+        "value": 1924,
+        "median": 1924,
+        "min": 1919,
+        "max": 2103,
+        "cv": 0.053,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 2560,
+        "max": 2410,
         "min": null,
         "reason": null
       }
@@ -662,16 +662,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 787.4,
-        "median": 787.4,
-        "min": 786.9,
-        "max": 788.1,
+        "value": 792.4,
+        "median": 792.4,
+        "min": 792,
+        "max": 792.8,
         "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 867,
+        "max": 873,
         "min": null,
         "reason": null
       }
@@ -683,16 +683,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 47,
-        "median": 47,
+        "value": 45,
+        "median": 45,
         "min": 45,
-        "max": 54,
-        "cv": 0.097,
+        "max": 47,
+        "cv": 0.025,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 59.4,
+        "max": 56.3,
         "min": null,
         "reason": null
       }
@@ -704,16 +704,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 90,
-        "median": 90,
-        "min": 84,
-        "max": 94,
-        "cv": 0.056,
+        "value": 70,
+        "median": 70,
+        "min": 63,
+        "max": 72,
+        "cv": 0.069,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 113,
+        "max": 87.5,
         "min": null,
         "reason": null
       }
@@ -725,18 +725,18 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 112,
-        "median": 112,
-        "min": 107,
-        "max": 125,
-        "cv": 0.081,
+        "value": 85,
+        "median": 85,
+        "min": 75,
+        "max": 101,
+        "cv": 0.151,
         "n": 3
       },
       "budget": {
-        "budgeted": true,
-        "max": 140,
+        "budgeted": false,
+        "max": null,
         "min": null,
-        "reason": null
+        "reason": "coefficient of variation 15 % above 10 %"
       }
     },
     {
@@ -746,16 +746,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 69,
-        "median": 69,
-        "min": 63,
-        "max": 71,
-        "cv": 0.062,
+        "value": 62,
+        "median": 62,
+        "min": 54,
+        "max": 62,
+        "cv": 0.078,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 86.3,
+        "max": 77.5,
         "min": null,
         "reason": null
       }
@@ -767,16 +767,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 108,
-        "median": 108,
-        "min": 104,
-        "max": 122,
-        "cv": 0.085,
+        "value": 95,
+        "median": 95,
+        "min": 93,
+        "max": 96,
+        "cv": 0.016,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 135,
+        "max": 119,
         "min": null,
         "reason": null
       }
@@ -788,18 +788,18 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 86.5,
-        "median": 86.5,
-        "min": 66,
-        "max": 107,
-        "cv": 0.335,
-        "n": 2
+        "value": 55,
+        "median": 55,
+        "min": 54,
+        "max": 56,
+        "cv": 0.018,
+        "n": 3
       },
       "budget": {
-        "budgeted": false,
-        "max": null,
+        "budgeted": true,
+        "max": 68.8,
         "min": null,
-        "reason": "fewer than three values"
+        "reason": null
       }
     },
     {
@@ -809,16 +809,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 99,
-        "median": 99,
-        "min": 99,
-        "max": 109,
-        "cv": 0.056,
+        "value": 79,
+        "median": 79,
+        "min": 78,
+        "max": 79,
+        "cv": 0.007,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 124,
+        "max": 98.8,
         "min": null,
         "reason": null
       }
@@ -830,16 +830,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 161,
-        "median": 161,
-        "min": 160,
-        "max": 165,
-        "cv": 0.016,
+        "value": 94,
+        "median": 94,
+        "min": 93,
+        "max": 98,
+        "cv": 0.028,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 202,
+        "max": 118,
         "min": null,
         "reason": null
       }
@@ -851,16 +851,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 83,
-        "median": 83,
-        "min": 77,
-        "max": 87,
-        "cv": 0.061,
+        "value": 69,
+        "median": 69,
+        "min": 69,
+        "max": 70,
+        "cv": 0.008,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 104,
+        "max": 86.3,
         "min": null,
         "reason": null
       }
@@ -872,16 +872,16 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 126,
-        "median": 126,
-        "min": 124,
-        "max": 140,
-        "cv": 0.067,
+        "value": 100,
+        "median": 100,
+        "min": 100,
+        "max": 104,
+        "cv": 0.023,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 158,
+        "max": 125,
         "min": null,
         "reason": null
       }
@@ -893,18 +893,18 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 74,
-        "median": 74,
-        "min": 34,
-        "max": 80,
-        "cv": 0.399,
+        "value": 56,
+        "median": 56,
+        "min": 53,
+        "max": 71,
+        "cv": 0.161,
         "n": 3
       },
       "budget": {
         "budgeted": false,
         "max": null,
         "min": null,
-        "reason": "coefficient of variation 40 % above 10 %"
+        "reason": "coefficient of variation 16 % above 10 %"
       }
     },
     {
@@ -914,18 +914,18 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 245,
-        "median": 245,
-        "min": 239,
-        "max": 268,
-        "cv": 0.061,
+        "value": 112,
+        "median": 112,
+        "min": 108,
+        "max": 261,
+        "cv": 0.544,
         "n": 3
       },
       "budget": {
-        "budgeted": true,
-        "max": 307,
+        "budgeted": false,
+        "max": null,
         "min": null,
-        "reason": null
+        "reason": "coefficient of variation 54 % above 10 %"
       }
     },
     {
@@ -935,16 +935,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 1.611,
-        "median": 1.611,
-        "min": 1.611,
-        "max": 1.611,
-        "cv": 0.019,
+        "value": 1.454,
+        "median": 1.454,
+        "min": 1.454,
+        "max": 1.454,
+        "cv": 0.008,
         "n": 38
       },
       "budget": {
         "budgeted": true,
-        "max": 2.02,
+        "max": 1.82,
         "min": null,
         "reason": null
       }
@@ -956,16 +956,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 3.009,
-        "median": 3.009,
-        "min": 3.009,
-        "max": 3.009,
-        "cv": 0.019,
+        "value": 2.772,
+        "median": 2.772,
+        "min": 2.772,
+        "max": 2.772,
+        "cv": 0.008,
         "n": 38
       },
       "budget": {
         "budgeted": true,
-        "max": 3.77,
+        "max": 3.47,
         "min": null,
         "reason": null
       }
@@ -977,16 +977,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 81.989,
-        "median": 81.989,
-        "min": 81.736,
-        "max": 83.449,
-        "cv": 0.011,
+        "value": 71.685,
+        "median": 71.685,
+        "min": 71.623,
+        "max": 72.469,
+        "cv": 0.007,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 103,
+        "max": 89.7,
         "min": null,
         "reason": null
       }
@@ -998,10 +998,10 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1149.887,
-        "median": 1149.887,
-        "min": 1149.711,
-        "max": 1150.348,
+        "value": 1151.535,
+        "median": 1151.535,
+        "min": 1151.094,
+        "max": 1151.762,
         "cv": 0,
         "n": 3
       },
@@ -1019,16 +1019,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 2.579,
-        "median": 2.579,
-        "min": 2.579,
-        "max": 2.579,
-        "cv": 0.081,
-        "n": 37
+        "value": 2.596,
+        "median": 2.596,
+        "min": 2.596,
+        "max": 2.596,
+        "cv": 0.012,
+        "n": 38
       },
       "budget": {
         "budgeted": true,
-        "max": 3.23,
+        "max": 3.25,
         "min": null,
         "reason": null
       }
@@ -1040,16 +1040,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 6.304,
-        "median": 6.304,
-        "min": 6.304,
-        "max": 6.304,
-        "cv": 0.081,
-        "n": 37
+        "value": 7.023,
+        "median": 7.023,
+        "min": 7.023,
+        "max": 7.023,
+        "cv": 0.012,
+        "n": 38
       },
       "budget": {
         "budgeted": true,
-        "max": 7.89,
+        "max": 8.78,
         "min": null,
         "reason": null
       }
@@ -1061,16 +1061,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 5.087,
-        "median": 5.087,
-        "min": 4.762,
-        "max": 5.161,
-        "cv": 0.042,
+        "value": 4.219,
+        "median": 4.219,
+        "min": 4.194,
+        "max": 4.589,
+        "cv": 0.051,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 6.36,
+        "max": 5.28,
         "min": null,
         "reason": null
       }
@@ -1082,16 +1082,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 730.309,
-        "median": 730.309,
-        "min": 730.266,
-        "max": 730.371,
+        "value": 734.633,
+        "median": 734.633,
+        "min": 734.586,
+        "max": 734.695,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 804,
+        "max": 809,
         "min": null,
         "reason": null
       }
@@ -1103,16 +1103,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 8.607,
-        "median": 8.607,
-        "min": 8.607,
-        "max": 8.607,
-        "cv": 0.043,
-        "n": 37
+        "value": 7.208,
+        "median": 7.208,
+        "min": 7.208,
+        "max": 7.208,
+        "cv": 0.03,
+        "n": 38
       },
       "budget": {
         "budgeted": true,
-        "max": 10.8,
+        "max": 9.01,
         "min": null,
         "reason": null
       }
@@ -1124,16 +1124,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 23.079,
-        "median": 23.079,
-        "min": 23.079,
-        "max": 23.079,
-        "cv": 0.043,
-        "n": 37
+        "value": 20.909,
+        "median": 20.909,
+        "min": 20.909,
+        "max": 20.909,
+        "cv": 0.03,
+        "n": 38
       },
       "budget": {
         "budgeted": true,
-        "max": 28.9,
+        "max": 26.2,
         "min": null,
         "reason": null
       }
@@ -1145,16 +1145,16 @@
       "kind": "time",
       "unit": "s",
       "baseline": {
-        "value": 19.094,
-        "median": 19.094,
-        "min": 19.061,
-        "max": 19.857,
-        "cv": 0.023,
+        "value": 16.005,
+        "median": 16.005,
+        "min": 15.973,
+        "max": 16.939,
+        "cv": 0.034,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 23.9,
+        "max": 20.1,
         "min": null,
         "reason": null
       }
@@ -1166,16 +1166,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 774.977,
-        "median": 774.977,
-        "min": 774.281,
-        "max": 775.004,
-        "cv": 0.001,
+        "value": 775.758,
+        "median": 775.758,
+        "min": 775.48,
+        "max": 776.031,
+        "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 853,
+        "max": 854,
         "min": null,
         "reason": null
       }
@@ -1187,16 +1187,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1393.836,
-        "median": 1393.836,
-        "min": 1393.824,
-        "max": 1393.855,
+        "value": 1408.32,
+        "median": 1408.32,
+        "min": 1408.316,
+        "max": 1408.453,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1540,
+        "max": 1550,
         "min": null,
         "reason": null
       }
@@ -1208,17 +1208,17 @@
       "kind": "rate",
       "unit": "photos/min",
       "baseline": {
-        "value": 16.85,
-        "median": 16.85,
-        "min": 14.84,
-        "max": 17.96,
-        "cv": 0.096,
+        "value": 19.35,
+        "median": 19.35,
+        "min": 18.71,
+        "max": 19.37,
+        "cv": 0.02,
         "n": 3
       },
       "budget": {
         "budgeted": true,
         "max": null,
-        "min": 13.3,
+        "min": 15.4,
         "reason": null
       }
     },
@@ -1229,16 +1229,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 757.3,
-        "median": 757.3,
-        "min": 757.1,
-        "max": 757.3,
+        "value": 765.1,
+        "median": 765.1,
+        "min": 764.9,
+        "max": 765.1,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 834,
+        "max": 842,
         "min": null,
         "reason": null
       }
@@ -1250,16 +1250,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 941.1,
-        "median": 941.1,
-        "min": 941,
-        "max": 941.2,
+        "value": 1176.3,
+        "median": 1176.3,
+        "min": 1176.3,
+        "max": 1177,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1040,
+        "max": 1300,
         "min": null,
         "reason": null
       }
@@ -1271,16 +1271,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 164.5,
-        "median": 164.5,
-        "min": 162.7,
-        "max": 164.7,
-        "cv": 0.007,
+        "value": 171.6,
+        "median": 171.6,
+        "min": 170.4,
+        "max": 172.6,
+        "cv": 0.006,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 182,
+        "max": 190,
         "min": null,
         "reason": null
       }
@@ -1292,17 +1292,17 @@
       "kind": "rate",
       "unit": "photos/min",
       "baseline": {
-        "value": 6.35,
-        "median": 6.35,
-        "min": 5.74,
-        "max": 6.39,
-        "cv": 0.059,
+        "value": 7.04,
+        "median": 7.04,
+        "min": 6.97,
+        "max": 7.04,
+        "cv": 0.006,
         "n": 3
       },
       "budget": {
         "budgeted": true,
         "max": null,
-        "min": 5.08,
+        "min": 5.63,
         "reason": null
       }
     },
@@ -1313,16 +1313,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 774.6,
-        "median": 774.6,
-        "min": 774.5,
-        "max": 775.3,
-        "cv": 0.001,
+        "value": 778.7,
+        "median": 778.7,
+        "min": 778.6,
+        "max": 778.8,
+        "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 853,
+        "max": 857,
         "min": null,
         "reason": null
       }
@@ -1334,16 +1334,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 902.3,
-        "median": 902.3,
-        "min": 902.3,
-        "max": 902.5,
+        "value": 914.1,
+        "median": 914.1,
+        "min": 913.9,
+        "max": 914.3,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 993,
+        "max": 1010,
         "min": null,
         "reason": null
       }
@@ -1355,16 +1355,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 163.4,
-        "median": 163.4,
-        "min": 162.3,
-        "max": 166.9,
-        "cv": 0.015,
+        "value": 170.4,
+        "median": 170.4,
+        "min": 168.9,
+        "max": 170.8,
+        "cv": 0.006,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 184,
+        "max": 188,
         "min": null,
         "reason": null
       }
@@ -1376,17 +1376,17 @@
       "kind": "rate",
       "unit": "photos/min",
       "baseline": {
-        "value": 8,
-        "median": 8,
-        "min": 7.84,
-        "max": 8.23,
-        "cv": 0.024,
+        "value": 10,
+        "median": 10,
+        "min": 9.9,
+        "max": 10.09,
+        "cv": 0.01,
         "n": 3
       },
       "budget": {
         "budgeted": true,
         "max": null,
-        "min": 6.4,
+        "min": 8,
         "reason": null
       }
     },
@@ -1397,11 +1397,11 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1188.3,
-        "median": 1188.3,
-        "min": 1187.3,
-        "max": 1189.5,
-        "cv": 0.001,
+        "value": 1187.2,
+        "median": 1187.2,
+        "min": 1187.2,
+        "max": 1187.6,
+        "cv": 0,
         "n": 3
       },
       "budget": {
@@ -1418,18 +1418,18 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1281.4,
-        "median": 1281.4,
-        "min": 1281.4,
-        "max": 1496.2,
-        "cv": 0.092,
+        "value": 1521.5,
+        "median": 1521.5,
+        "min": 1376.4,
+        "max": 1524.7,
+        "cv": 0.057,
         "n": 3
       },
       "budget": {
         "budgeted": false,
         "max": null,
         "min": null,
-        "reason": "coefficient of variation 9 % above 5 %"
+        "reason": "coefficient of variation 6 % above 5 %"
       }
     },
     {
@@ -1439,16 +1439,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 887.2,
-        "median": 887.2,
-        "min": 862.6,
-        "max": 889.4,
-        "cv": 0.017,
+        "value": 896.1,
+        "median": 896.1,
+        "min": 895.5,
+        "max": 896.6,
+        "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 979,
+        "max": 987,
         "min": null,
         "reason": null
       }
@@ -1460,17 +1460,17 @@
       "kind": "rate",
       "unit": "photos/min",
       "baseline": {
-        "value": 22.53,
-        "median": 22.53,
-        "min": 21.86,
-        "max": 22.79,
-        "cv": 0.021,
+        "value": 28.62,
+        "median": 28.62,
+        "min": 28.61,
+        "max": 28.71,
+        "cv": 0.002,
         "n": 3
       },
       "budget": {
         "budgeted": true,
         "max": null,
-        "min": 18,
+        "min": 22.8,
         "reason": null
       }
     },
@@ -1481,16 +1481,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1394.5,
-        "median": 1394.5,
-        "min": 1394.5,
-        "max": 1394.5,
+        "value": 1409.2,
+        "median": 1409.2,
+        "min": 1409.1,
+        "max": 1409.4,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1540,
+        "max": 1560,
         "min": null,
         "reason": null
       }
@@ -1502,16 +1502,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1557.1,
-        "median": 1557.1,
-        "min": 1556.9,
-        "max": 1557.6,
+        "value": 1887.7,
+        "median": 1887.7,
+        "min": 1887.6,
+        "max": 1888.7,
         "cv": 0,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 1720,
+        "max": 2080,
         "min": null,
         "reason": null
       }
@@ -1523,16 +1523,16 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 600.4,
-        "median": 600.4,
-        "min": 598.9,
-        "max": 601.4,
-        "cv": 0.002,
+        "value": 610.7,
+        "median": 610.7,
+        "min": 609.3,
+        "max": 610.9,
+        "cv": 0.001,
         "n": 3
       },
       "budget": {
         "budgeted": true,
-        "max": 662,
+        "max": 672,
         "min": null,
         "reason": null
       }
@@ -1544,11 +1544,11 @@
       "kind": "rate",
       "unit": "photos/min",
       "baseline": {
-        "value": 10.355,
-        "median": 10.355,
-        "min": 10.3,
-        "max": 10.41,
-        "cv": 0.008,
+        "value": 12.895,
+        "median": 12.895,
+        "min": 12.78,
+        "max": 13.01,
+        "cv": 0.013,
         "n": 2
       },
       "budget": {
@@ -1565,10 +1565,10 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1403.15,
-        "median": 1403.15,
-        "min": 1403,
-        "max": 1403.3,
+        "value": 1417.85,
+        "median": 1417.85,
+        "min": 1417.4,
+        "max": 1418.3,
         "cv": 0,
         "n": 2
       },
@@ -1586,11 +1586,11 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 1844.15,
-        "median": 1844.15,
-        "min": 1841.5,
-        "max": 1846.8,
-        "cv": 0.002,
+        "value": 1871.85,
+        "median": 1871.85,
+        "min": 1851.1,
+        "max": 1892.6,
+        "cv": 0.016,
         "n": 2
       },
       "budget": {
@@ -1607,11 +1607,11 @@
       "kind": "memory",
       "unit": "MiB",
       "baseline": {
-        "value": 969.75,
-        "median": 969.75,
-        "min": 950.2,
-        "max": 989.3,
-        "cv": 0.029,
+        "value": 993.5,
+        "median": 993.5,
+        "min": 984.7,
+        "max": 1002.3,
+        "cv": 0.013,
         "n": 2
       },
       "budget": {
@@ -1628,11 +1628,11 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 216,
-        "median": 216,
-        "min": 206,
-        "max": 231,
-        "cv": 0.058,
+        "value": 207,
+        "median": 207,
+        "min": 200,
+        "max": 216,
+        "cv": 0.039,
         "n": 3
       },
       "budget": {
@@ -1649,11 +1649,11 @@
       "kind": "time",
       "unit": "ms",
       "baseline": {
-        "value": 209,
-        "median": 209,
-        "min": 201,
-        "max": 233,
-        "cv": 0.078,
+        "value": 202,
+        "median": 202,
+        "min": 33,
+        "max": 214,
+        "cv": 0.676,
         "n": 3
       },
       "budget": {

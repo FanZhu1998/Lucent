@@ -15,7 +15,7 @@
     Where to write the Markdown (default: standard output).
 
 .EXAMPLE
-    powershell -NoProfile -File tools\bench\Format-BenchReport.ps1 -DataDir docs\performance\data\2026-10-09
+    powershell -NoProfile -File tools\bench\Format-BenchReport.ps1 -DataDir docs\performance\data\2026-10-10
 
 .NOTES
     Windows PowerShell 5.1 and PowerShell 7. Keep this file ASCII.

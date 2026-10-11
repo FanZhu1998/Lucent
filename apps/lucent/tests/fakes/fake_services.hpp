@@ -99,6 +99,8 @@ public:
     [[nodiscard]] bool is_busy() const override;
     // A simulated camera support database 1.0.0 (Help > About, W10).
     [[nodiscard]] CameraSupportInfo camera_support() const override;
+    // W13: the simulated lens database (as FakeEditService::lens_database()).
+    [[nodiscard]] LensDatabaseInfo lens_database() const override;
 
     // The current snapshot of every item, in library order (for tests).
     [[nodiscard]] const std::vector<LibraryItem>& items() const noexcept { return items_; }
@@ -226,6 +228,25 @@ public:
     [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
     [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;
     [[nodiscard]] bool is_busy() const override { return pending_ > 0; }
+    // Simulated lens database (W13): "Simulated lens database 1.0.0" with a few profiles; every
+    // frame says what the settings' lens corrections did under the simulated match (FakeLens).
+    [[nodiscard]] LensDatabaseInfo lens_database() const override;
+    [[nodiscard]] QList<LensProfileEntry> search_lens_profiles(const QString& text, int limit) const override;
+
+    // The simulated lens match of every photo (frames rendered afterwards): by default an exact match
+    // of "Simulated Optics Zoom 24-70mm f/4" that calibrates all three corrections, nothing carried by
+    // the file. Pasting the lens corrections needs photos of the same size (the simulated "same camera
+    // and lens").
+    struct FakeLens {
+        LensMatchQuality match = LensMatchQuality::Exact;
+        bool database = true;
+        bool carried_distortion = false;
+        bool carried_vignetting = false;
+        bool calibrated_vignetting = true;
+    };
+    void set_lens(FakeLens lens) { lens_ = lens; }
+    // The profiles search_lens_profiles() searches.
+    [[nodiscard]] static QList<LensProfileEntry> simulated_profiles();
 
     // Revisions of `item` (for tests).
     [[nodiscard]] int revision_count(ItemId item) const;
@@ -293,6 +314,7 @@ private:
     std::map<ItemId, AutoRun> auto_runs_;
     bool fail_next_auto_ = false;
     bool auto_held_ = false;
+    FakeLens lens_;
     std::optional<Clipboard> clipboard_;
     quint64 next_token_ = 0;
     quint64 next_revision_ = 1;

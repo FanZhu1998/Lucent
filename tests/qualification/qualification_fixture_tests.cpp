@@ -51,6 +51,7 @@
 
 #include <lucent/assets/asset_store.hpp>
 #include <lucent/assets/camera_support.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/image/color_math.hpp>
 #include <lucent/raw/decoder_registry.hpp>
@@ -106,6 +107,14 @@ std::vector<ManifestFixture> manifest_fixtures() {
 
 class QualificationFixture : public ::testing::TestWithParam<ManifestFixture> {};
 
+// The bundled lens database next to this test, as lucent-qualify loads it (ADR 0016's W13 closure
+// amendment: the qualification renders lenses as Lucent's exports do).
+std::shared_ptr<const engine::LensDatabase> qualification_lens_database() {
+    static const std::shared_ptr<const engine::LensDatabase> database =
+        assets::load_lens_database(assets::default_asset_locations(nullptr)).database;
+    return database;
+}
+
 TEST_P(QualificationFixture, OutcomeMatchesItsExpectation) {
     const ManifestFixture& fixture = GetParam();
     const QualifyCorpus& c = corpus();
@@ -124,6 +133,8 @@ TEST_P(QualificationFixture, OutcomeMatchesItsExpectation) {
     QualifyOptions options;
     options.work_dir = std::filesystem::temp_directory_path() /
                        ("lucent-qualification-test-" + std::to_string(GetCurrentProcessId()));
+    options.lens_database = qualification_lens_database();
+    ASSERT_TRUE(options.lens_database) << "the bundled lens database (assets/lens-database next to this test) is missing";
     const FixtureResult result = qualify_fixture(c, fixture, options);
     std::error_code ec;
     std::filesystem::remove_all(options.work_dir, ec);
@@ -177,6 +188,10 @@ TEST_P(QualificationFixture, OutcomeMatchesItsExpectation) {
     EXPECT_TRUE(result.expectation_mismatches.empty());
     for (const std::string& m : result.expectation_mismatches) {
         ADD_FAILURE() << m;
+    }
+    // The develop render planned the lens with the bundled database (W13 closure).
+    if (result.lens_correction.is_object()) {
+        EXPECT_TRUE(result.lens_correction.at("database").is_string()) << result.lens_correction.dump();
     }
 }
 

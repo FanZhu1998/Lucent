@@ -440,6 +440,13 @@ FocusScope {
                         edit: root.edit
                     }
 
+                    // W13 (ADR 0023): lens-profile corrections.
+                    LensPanel {
+                        objectName: "lensPanel"
+                        Layout.fillWidth: true
+                        edit: root.edit
+                    }
+
                     PanelSection {
                         objectName: "historySection"
                         title: qsTr("History")

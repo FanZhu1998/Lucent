@@ -634,6 +634,28 @@ directory then restores from the binary cache in about 30 seconds. Do not delete
 the other process. The lock is released when that process exits. Long Qt builds belong in the
 `vcpkg-qt` checkout so they do not hold this lock.
 
+### A vcpkg install hangs in an autotools configure (`conftest.exe` at 0 CPU)
+
+Ports built with autotools under MSYS (gettext, gettext-libintl, libiconv) run many small test
+programs while they configure. On the reference machine gettext's "checking for a transitional
+chinese locale" ran its test under `LC_ALL=Chinese_China.54936` and blocked forever: a
+`conftest.exe` with no CPU and no window. The overlay ports `cmake/ports/gettext` and
+`cmake/ports/gettext-libintl` preset that probe's result (`gt_cv_locale_zh_CN=none`; ADR 0023), so it
+no longer hangs. Changing `cmake/ports/gettext-libintl` or `cmake/ports/gettext` rebuilds gettext's
+tools, which takes most of an hour on the reference machine, and what is built on libintl (GLib,
+then Lensfun): run such an install with the watchdog in a second window,
+
+```powershell
+powershell -NoProfile -File tools\Watch-Conftest.ps1 -MaxHours 3
+```
+
+which logs every `conftest.exe` it sees and stops one that has used no CPU for five minutes (the
+configure then takes the probe as failed and goes on). Check its log afterwards
+(`%TEMP%\watch-conftest.log`): a stopped probe other than a locale probe may have given the port a
+wrong answer, so look at the port's `config-*.log` in the buildtrees folder before trusting the build.
+Files in `cmake/ports` must keep LF line endings (`.gitattributes`): vcpkg hashes them byte for byte
+into the ports' ABI, so a CRLF checkout would rebuild them on every machine.
+
 ### Every package rebuilds from source (`VCPKG_ROOT`)
 
 A healthy configure reports `Restored N package(s) from ...\vcpkg\archives` and finishes in under a

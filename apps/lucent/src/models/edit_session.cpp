@@ -164,10 +164,15 @@ struct CategorySpec {
 };
 
 constexpr std::array kCategories{
-    CategorySpec{"whiteBalance", SettingsCategory::WhiteBalance}, CategorySpec{"exposure", SettingsCategory::Exposure},
-    CategorySpec{"tone", SettingsCategory::Tone},                 CategorySpec{"color", SettingsCategory::Color},
-    CategorySpec{"local", SettingsCategory::Local},               CategorySpec{"masks", SettingsCategory::Masks},
-    CategorySpec{"detail", SettingsCategory::Detail},             CategorySpec{"geometry", SettingsCategory::Geometry},
+    CategorySpec{"whiteBalance", SettingsCategory::WhiteBalance},
+    CategorySpec{"exposure", SettingsCategory::Exposure},
+    CategorySpec{"tone", SettingsCategory::Tone},
+    CategorySpec{"color", SettingsCategory::Color},
+    CategorySpec{"local", SettingsCategory::Local},
+    CategorySpec{"masks", SettingsCategory::Masks},
+    CategorySpec{"detail", SettingsCategory::Detail},
+    CategorySpec{"geometry", SettingsCategory::Geometry},
+    CategorySpec{"lensCorrections", SettingsCategory::LensCorrections},
 };
 
 double round_to(double value, int decimals) {
@@ -206,6 +211,7 @@ EditSession::EditSession(EditService& service, std::shared_ptr<FrameStore> store
     curve_samples_ = service_.sample_tone_curve(settings_.tone_curve, kCurveSamples);
     crop_ = std::make_unique<CropTool>(*this);
     masks_ = std::make_unique<MaskEditor>(*this);
+    lens_ = std::make_unique<LensCorrections>(*this);
 }
 
 EditSession::~EditSession() = default;
@@ -268,6 +274,7 @@ void EditSession::reset_frames() {
     frame_map_ = GeometryMap{};
     frame_uncropped_ = false;
     frame_masks_.clear();
+    frame_lens_.reset();
     frame_info_.reset();
     frame_full_resolution_ = false;
     frame_error_.clear();
@@ -994,7 +1001,8 @@ QVariantList EditSession::categories() const {
         list << QVariantMap{
             {QStringLiteral("key"), QString::fromLatin1(category.key)},
             {QStringLiteral("label"), category_label(category.category)},
-            // Selected by default: every category but Masks and Geometry (placed on this photo's content).
+            // Selected by default: every category but Masks and Geometry (placed on this photo's content)
+            // and Lens corrections (this camera's and lens's).
             {QStringLiteral("checked"), (kDefaultCategoryBits & category_bit(category.category)) != 0},
         };
     }
@@ -1335,6 +1343,9 @@ void EditSession::on_frame(const EditFramePtr& frame) {
     frame_map_ = frame_full_upright_.isEmpty()
                      ? GeometryMap{}
                      : service_.map_geometry(frame_geometry_, frame_full_upright_, frame_full_frame());
+    // W13: the lens correction of the pixels lies between the masks' positions and the geometry.
+    frame_map_.lens = frame->lens_map;
+    frame_lens_ = frame->lens;
     if (mask_overlay_ && !frame->mask_overlay.isNull() && frame->mask_overlay_id == selected_mask_) {
         store_->put(FrameStore::Kind::Mask, item_, frame->sequence, frame->mask_overlay);
         mask_overlay_source_ = FrameStore::url(FrameStore::Kind::Mask, item_, frame->sequence);

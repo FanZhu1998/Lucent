@@ -63,8 +63,10 @@ limitations of Lucent's engine the probe shows (X-Trans baseline demosaicing, an
 Pixel image) are always Limited, a camera mode the database does not list is Compatible,
 unverified, and a Verified mode stays Verified only while the database was qualified with the
 running build's decoder (version and codecs), decoded-RAW contract, mode-key, pipeline,
-develop-engine, neutral-look and export versions, and only for a file whose image area and DNG
-opcodes are those of the qualified file (an in-camera aspect-ratio setting, missing crop tags or a
+develop-engine, neutral-look and export versions and lens database (since W13 the qualification
+renders lenses as the exports do, with the bundled Lensfun database; ADR 0016's and ADR 0018's W13
+closure amendments), and only for a file whose image area and DNG opcodes are those of the
+qualified file (an in-camera aspect-ratio setting, missing crop tags or a
 gain map make it Compatible, unverified). A database that is missing or refused never improves a
 photo's state: Limited and Unsupported answers are kept, Verified becomes Compatible, unverified.
 

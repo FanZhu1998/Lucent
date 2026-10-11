@@ -986,9 +986,16 @@ CarriedLensCorrections carried_lens_corrections(const raw::RawMetadata& metadata
             counted = true;
         } else if (const auto* g = std::get_if<raw::DngGainMap>(&opcode.parameters);
                    g != nullptr && opcode.list != DngOpcodeListId::List1) {
+            // Over the whole image: an empty area, or one that reaches every edge of the image within
+            // its pitches. With pitch 1 that is the whole rectangle; lens-shading maps split per
+            // Bayer phase (pitch 2) start at row and column 0 or 1 and may stop one short of the
+            // bottom and right edges (ADR 0023).
             const raw::DngOpcodeRect& r = g->area.rect;
-            if (r.empty() ||  // the whole image
-                (r.top == 0 && r.left == 0 && r.bottom >= frame3.image.height && r.right >= frame3.image.width)) {
+            const std::uint64_t row_pitch = std::max<std::uint32_t>(g->area.row_pitch, 1u);
+            const std::uint64_t col_pitch = std::max<std::uint32_t>(g->area.col_pitch, 1u);
+            if (r.empty() || (r.top < row_pitch && r.left < col_pitch &&
+                              std::uint64_t{r.bottom} + row_pitch > frame3.image.height &&
+                              std::uint64_t{r.right} + col_pitch > frame3.image.width)) {
                 out.vignetting = true;
                 counted = true;
             }

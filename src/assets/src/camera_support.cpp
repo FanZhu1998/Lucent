@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <lucent/assets/camera_support.hpp>
+#include <lucent/assets/lens_database.hpp>
 #include <lucent/assets/mode_key.hpp>
 #include <lucent/engine/develop.hpp>
 #include <lucent/engine/develop_settings.hpp>
@@ -337,12 +338,21 @@ Expected<CameraSupportDatabase> parse_camera_support(std::string_view json) {
         database.report = detail::text(q, "report", "qualification");
         const Json& b = detail::member(q, "basis", "qualification");
         detail::require_object(b, "qualification.basis");
-        detail::only_members(b,
-                             {"decoder", "decoder_capabilities", "decoded_raw_contract", "mode_key", "check_suite",
-                              "state_rules", "render_pipeline", "develop_pipeline", "dng_opcode_processing",
-                              "geometry_operation", "image_area_placement", "develop_engine", "neutral_look",
-                              "export"},
-                             "qualification.basis");
+        if (version >= 3) {
+            detail::only_members(b,
+                                 {"decoder", "decoder_capabilities", "decoded_raw_contract", "mode_key",
+                                  "check_suite", "state_rules", "render_pipeline", "develop_pipeline",
+                                  "dng_opcode_processing", "geometry_operation", "image_area_placement",
+                                  "develop_engine", "neutral_look", "export", "lens_database"},
+                                 "qualification.basis");
+        } else {
+            detail::only_members(b,
+                                 {"decoder", "decoder_capabilities", "decoded_raw_contract", "mode_key",
+                                  "check_suite", "state_rules", "render_pipeline", "develop_pipeline",
+                                  "dng_opcode_processing", "geometry_operation", "image_area_placement",
+                                  "develop_engine", "neutral_look", "export"},
+                                 "qualification.basis");
+        }
         QualificationBasis& basis = database.basis;
         basis.decoder = detail::text(b, "decoder", "basis");
         basis.decoder_capabilities = detail::strings(b, "decoder_capabilities", "basis");
@@ -358,6 +368,12 @@ Expected<CameraSupportDatabase> parse_camera_support(std::string_view json) {
         basis.develop_engine = detail::small_numbers(b, "develop_engine", "basis");
         basis.neutral_look = detail::small_number(b, "neutral_look", "basis");
         basis.export_version = detail::small_number(b, "export", "basis");
+        if (version >= 3) {
+            basis.lens_database = detail::text(b, "lens_database", "basis");
+            if (basis.lens_database.empty()) {
+                detail::corrupt("qualification.basis.lens_database is empty (a version-3 basis names one)");
+            }
+        }
         const Json& s = detail::member(q, "summary", "qualification");
         detail::require_object(s, "qualification.summary");
         detail::only_members(s, {"modes", "verified", "compatible_unverified", "limited", "unsupported"},
@@ -428,7 +444,8 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
         using detail::OrderedJson;
         OrderedJson out = OrderedJson::object();
         out["schema"] = kCameraSupportSchema;
-        out["schema_version"] = kCameraSupportSchemaVersion;
+        const std::uint32_t schema_version = camera_support_schema_version(database);
+        out["schema_version"] = schema_version;
         OrderedJson q = OrderedJson::object();
         q["generated"] = database.generated;
         q["date"] = database.date;
@@ -439,7 +456,7 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
         for (const std::uint32_t version : basis.develop_engine) {
             engine_versions.push_back(version);
         }
-        q["basis"] = OrderedJson{{"decoder", basis.decoder},
+        OrderedJson basis_json = OrderedJson{{"decoder", basis.decoder},
                                  {"decoder_capabilities", strings_json(basis.decoder_capabilities)},
                                  {"decoded_raw_contract", basis.decoded_raw_contract},
                                  {"mode_key", basis.mode_key},
@@ -453,6 +470,10 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
                                  {"develop_engine", std::move(engine_versions)},
                                  {"neutral_look", basis.neutral_look},
                                  {"export", basis.export_version}};
+        if (schema_version >= 3) {
+            basis_json["lens_database"] = basis.lens_database;
+        }
+        q["basis"] = std::move(basis_json);
         q["summary"] = OrderedJson{{"modes", database.summary.modes},
                                    {"verified", database.summary.verified},
                                    {"compatible_unverified", database.summary.compatible_unverified},
@@ -493,6 +514,10 @@ Expected<std::string> write_camera_support(const CameraSupportDatabase& input) {
 
 // ---- Basis --------------------------------------------------------------------------------------
 
+std::uint32_t camera_support_schema_version(const CameraSupportDatabase& database) noexcept {
+    return database.basis.lens_database.empty() ? std::uint32_t{2} : kCameraSupportSchemaVersion;
+}
+
 QualificationBasis running_basis() {
     QualificationBasis basis;
     const raw::LibRawBuildInfo decoder = raw::libraw_build_info();
@@ -509,6 +534,7 @@ QualificationBasis running_basis() {
     basis.develop_engine.assign(engine::kDevelopEngineVersions.begin(), engine::kDevelopEngineVersions.end());
     basis.neutral_look = engine::kNeutralLookVersion;
     basis.export_version = exporter::kExportVersion;
+    basis.lens_database = lens_database_basis();
     return basis;
 }
 
@@ -548,12 +574,18 @@ std::vector<std::string> basis_differences(const QualificationBasis& qualified,
     if (qualified.develop_engine != running.develop_engine) {
         out.push_back(std::format(
             "develop engine (stage graph, sensor normalisation, white balance, demosaicing, camera colour, "
-            "working space, guided filter, proxy downscale, DNG opcodes, image area): qualified with versions "
-            "{}, this build uses {}",
+            "working space, guided filter, proxy downscale, DNG opcodes, image area, lens-profile matching): "
+            "qualified with versions {}, this build uses {}",
             list(qualified.develop_engine), list(running.develop_engine)));
     }
     number("neutral look", qualified.neutral_look, running.neutral_look);
     number("export", qualified.export_version, running.export_version);
+    if (qualified.lens_database != running.lens_database) {
+        out.push_back(std::format("lens database: qualified with {}, this build uses {}",
+                                  qualified.lens_database.empty() ? std::string("no record of one")
+                                                                  : qualified.lens_database,
+                                  running.lens_database));
+    }
     return out;
 }
 

@@ -1,8 +1,8 @@
 #pragma once
 
 // The develop pipeline (blueprint section 5 and section 4 "quick preview, then refine"):
-// DevelopSettings (v2, and v1 values) rendered from a decoded RAW image, split for interactive
-// editing into a cached stage one and a fast stage two.
+// DevelopSettings (v3, and v1 and v2 values) rendered from a decoded RAW image, split for
+// interactive editing into a cached stage one and a fast stage two.
 //
 // Stage one (render_stage_one), done once per image and cached by the caller:
 //     decode [-> DNG OpcodeList1] -> normalise [-> DNG OpcodeList2] -> white balance -> demosaic
@@ -19,8 +19,15 @@
 //     render path does. The export path (render_develop) is this stage one with the settings'
 //     white balance at full resolution, followed by stage two.
 //
-// Stage two (render_stage_two), per settings change, in this order (develop_operations.hpp,
-// chroma_denoise.hpp, local_adjustments.hpp, develop_geometry.hpp):
+// Stage two (render_stage_two), per settings change, in this order (lens_correction.hpp,
+// develop_operations.hpp, chroma_denoise.hpp, local_adjustments.hpp, develop_geometry.hpp):
+//   0. lens-profile corrections (DevelopSettings::lens_correction, operation version 1; ADR 0023),
+//      fused into the first pass: in linear camera RGB, each output pixel's camera channels are
+//      read at their own source positions (distortion and lateral chromatic aberration, Lensfun's
+//      model, Catmull-Rom) and divided by the vignetting there; the plan comes from
+//      DevelopOptions::lens_database (none: nothing is corrected) and is recorded in
+//      DevelopReport::lens_correction. Corrections the file carries are never applied again;
+//      settings older than version 3 correct nothing;
 //   1. white balance, camera colour, working space, exposure (one fused pass):
 //        c = min(v * d, clip) per camera channel, rgb = gain * M_ws * M_cam(target) * c, where
 //        d = target sample multipliers / stage one's (1 for the export kind), clip = the target's
@@ -43,10 +50,13 @@
 //      identity geometry renders the area), the whole upright image for version 1 or when the area
 //      is unknown (DevelopReport::output_size is the result's size, DevelopReport::upright_size the
 //      size of the stage-one image).
-// Operations 2-8 work on the whole upright image (stage one's frame, in which masks are defined,
-// the camera's border pixels included), so the crop, the rotation and the geometry version never
-// move a mask relative to the content; GeometryMapping (develop_geometry.hpp, geometry_mapping()
-// below) maps mask coordinates to output pixels for overlays.
+// Operations 2-8 work on the whole upright image (stage one's frame, the camera's border pixels
+// included; after a lens correction, the corrected canvas of the same size), so the crop, the
+// rotation and the geometry version never move a mask relative to the content. Masks are defined
+// in stage one's (uncorrected) frame and evaluated through the lens correction's point mapping, so
+// enabling or disabling a correction does not move them either; GeometryMapping
+// (develop_geometry.hpp, geometry_mapping() below) maps mask coordinates to output pixels for
+// overlays, through the lens correction when it is given one.
 // An operation whose settings are the identity is skipped (recorded with applied = false).
 //
 // Preview versus export (measured in develop_fixture_test.cpp and stated in the W6 report):
@@ -88,6 +98,7 @@
 #include <lucent/engine/dng_opcode_processing.hpp>
 #include <lucent/engine/guided_filter.hpp>
 #include <lucent/engine/image_area.hpp>
+#include <lucent/engine/lens_correction.hpp>
 #include <lucent/engine/local_adjustments.hpp>
 #include <lucent/engine/render.hpp>
 #include <lucent/engine/sensor.hpp>
@@ -105,22 +116,26 @@ namespace lucent::engine {
 // reordered, or the split between the stages changes).
 //   2: the DNG opcode stages (opcode processing version kDngOpcodeProcessingVersion 1).
 //   3: chroma denoising, local adjustments and geometry in stage two (DevelopSettings v2, ADR 0015).
-inline constexpr std::uint32_t kDevelopPipelineVersion = 3;
+//   4: lens-profile corrections fused into stage two's first pass (DevelopSettings v3, ADR 0023).
+inline constexpr std::uint32_t kDevelopPipelineVersion = 4;
 // Version of the proxy downscale semantics.
 inline constexpr std::uint32_t kBoxDownscaleVersion = 1;
 
 // Every semantic version of the pipeline's own algorithms that a recipe does not carry (a recipe
 // carries its operation and base-look versions): the stage graph, sensor normalisation, white
 // balance, the demosaic routes, camera colour, the working space, the guided filter, the proxy
-// downscale, DNG opcode processing and the placement of the camera's image area (which geometry
-// version 2 renders; ADR 0017). Pixels persisted under a recipe identity (rendered thumbnails) are
-// keyed by these as well, so a newer engine never shows an older engine's rendering. Append new
-// versions here.
-inline constexpr std::array<std::uint32_t, 12> kDevelopEngineVersions{
+// downscale, DNG opcode processing, the placement of the camera's image area (which geometry
+// version 2 renders; ADR 0017) and the lens-profile matching rules (ADR 0023). Pixels persisted
+// under a recipe identity (rendered thumbnails) are keyed by these as well, so a newer engine never
+// shows an older engine's rendering; they must also be keyed by the lens database's identity
+// (LensDatabaseInfo::identity), which is data, not a version of the engine. Append new versions
+// here.
+inline constexpr std::array<std::uint32_t, 13> kDevelopEngineVersions{
     kDevelopPipelineVersion, kSensorNormalizationVersion, kWhiteBalanceVersion,
     kMalvarHeCutlerVersion,  kXTransBaselineVersion,      kBypassVersion,
     kCameraColorVersion,     kWorkingSpaceVersion,        kGuidedFilterVersion,
-    kBoxDownscaleVersion,    kDngOpcodeProcessingVersion, kImageAreaPlacementVersion};
+    kBoxDownscaleVersion,    kDngOpcodeProcessingVersion, kImageAreaPlacementVersion,
+    kLensProfileMatchVersion};
 
 // How stage one balanced its samples (persisted; append only).
 enum class StageOneKind : std::uint8_t {
@@ -142,15 +157,23 @@ struct StageOneRequest {
 
 inline constexpr std::uint64_t kDefaultStageTwoCacheBytes = std::uint64_t{256} << 20;
 
-// Stage two's scene-linear image after the fused pass and chroma denoising, kept between renders of
-// one stage-one image (an edit session's quick frames), so that moving a control that comes after
-// the denoising (local tone, masks, curves, colour, geometry) does not repeat it. Used only when
-// chroma denoising is applied, by the non-consuming render_stage_two() of a StageOneImage with an
-// id; keyed by that id, the white balance, the exposure and the chroma-denoise setting (everything
-// the fused pass and the denoising depend on). One entry, replaced on every miss; an image larger
-// than `max_bytes` is not kept (the default keeps a 2048-pixel proxy's 32 MiB, not a full-resolution
-// image's). A hit copies the kept image and is bit-identical to a render without the cache. Its
-// memory is the caller's (stats().bytes). Internally synchronised.
+// What stage two can keep between renders of one stage-one image (an edit session's quick frames),
+// used by the non-consuming render_stage_two() of a StageOneImage with an id. Two entries:
+//   * the lens-corrected image (LensEntry): step 0's output, stage one's camera samples after the
+//     lens correction, before the white-balance correction, the clip and colour. It depends only on
+//     the stage-one image and the lens plan (LensCorrectionPlan::revision()), not on any slider, so
+//     every render of the session reuses it while the lens settings stay (ADR 0023, W13 closure: the
+//     resampling was most of an interactive frame's cost). Kept when the plan corrects something;
+//   * the denoised image (Entry): stage two's scene-linear image after the fused pass and chroma
+//     denoising, so that moving a control that comes after the denoising (local tone, masks, curves,
+//     colour, geometry) does not repeat it. Kept when chroma denoising is applied; keyed by the id,
+//     the white balance, the exposure, the chroma-denoise setting and the lens plan (everything the
+//     fused pass and the denoising depend on).
+// One entry of each kind, replaced on every miss. `max_bytes` bounds both together: an image that
+// cannot fit is not kept, and a denoised image is kept only beside the lens-corrected one (which
+// serves every render; the default keeps both for a 2048-pixel proxy, about 2 x 32 MiB, not a
+// full-resolution image). A hit copies or reads the kept image and is bit-identical to a render
+// without the cache. Its memory is the caller's (stats().bytes). Internally synchronised.
 class StageTwoCache {
 public:
     struct Key {
@@ -158,6 +181,7 @@ public:
         WhiteBalanceSetting white_balance = AsShotWhiteBalance{};
         double exposure_ev = 0.0;
         ChromaDenoiseSetting chroma_denoise;
+        std::uint64_t lens_plan = 0;  // LensCorrectionPlan::revision() (0: nothing corrected)
 
         friend bool operator==(const Key&, const Key&) = default;
     };
@@ -166,20 +190,38 @@ public:
         image::ImageBuffer<float> pixels;  // scene-linear Rec.2020 after chroma denoising
         ChromaDenoiseRecord record;
     };
+    struct LensKey {
+        std::uint64_t stage_one = 0;  // StageOneImage::id
+        std::uint64_t lens_plan = 0;  // LensCorrectionPlan::revision() (never 0: the plan corrects)
+
+        friend bool operator==(const LensKey&, const LensKey&) = default;
+    };
+    struct LensEntry {
+        LensKey key;
+        image::ImageBuffer<float> pixels;  // the corrected stage-one samples (its size and channels)
+        std::uint64_t outside_samples = 0;  // LensCorrectionRecord::outside_samples of the correction
+    };
     struct Stats {
-        std::uint64_t bytes = 0;
-        std::uint64_t hits = 0;
+        std::uint64_t bytes = 0;  // both entries
+        std::uint64_t hits = 0;   // denoised images
         std::uint64_t misses = 0;
+        std::uint64_t lens_hits = 0;  // lens-corrected images
+        std::uint64_t lens_misses = 0;
     };
 
     explicit StageTwoCache(std::uint64_t max_bytes = kDefaultStageTwoCacheBytes) noexcept : max_bytes_(max_bytes) {}
     StageTwoCache(const StageTwoCache&) = delete;
     StageTwoCache& operator=(const StageTwoCache&) = delete;
 
-    // The entry for `key`, or nullptr (counted as a hit or a miss).
+    // The denoised entry for `key`, or nullptr (counted as a hit or a miss).
     [[nodiscard]] std::shared_ptr<const Entry> find(const Key& key);
-    // Replaces the entry (ignored when its pixels exceed max_bytes).
+    // Replaces the denoised entry; ignored unless its pixels fit max_bytes beside the lens entry.
     void insert(std::shared_ptr<const Entry> entry) noexcept;
+    // The lens-corrected entry for `key`, or nullptr (counted as a lens hit or miss).
+    [[nodiscard]] std::shared_ptr<const LensEntry> find_lens(const LensKey& key);
+    // Replaces the lens-corrected entry (ignored when its pixels exceed max_bytes); drops the
+    // denoised entry when both no longer fit.
+    void insert_lens(std::shared_ptr<const LensEntry> entry) noexcept;
     [[nodiscard]] std::uint64_t max_bytes() const noexcept { return max_bytes_; }
     void clear() noexcept;
     [[nodiscard]] Stats stats() const;
@@ -187,12 +229,15 @@ public:
 private:
     mutable std::mutex mutex_;
     std::shared_ptr<const Entry> entry_;
+    std::shared_ptr<const LensEntry> lens_entry_;
     std::uint64_t max_bytes_ = 0;
     std::uint64_t hits_ = 0;
     std::uint64_t misses_ = 0;
+    std::uint64_t lens_hits_ = 0;
+    std::uint64_t lens_misses_ = 0;
 };
 
-// Execution options: they never change the pixels.
+// Execution options (they never change the pixels) and the lens database (data that does).
 struct DevelopOptions {
     raw::DecodeLimits decode_limits;  // *_file functions only
     image::AllocationLimits limits;   // per buffer
@@ -201,9 +246,15 @@ struct DevelopOptions {
     // Brush-mask rasters kept between stage-two renders of one image (an edit session's); null:
     // rasterised on every render. Its memory is the caller's (MaskRasterCache::stats()).
     std::shared_ptr<MaskRasterCache> mask_cache;
-    // The denoised image kept between stage-two renders of one stage-one image (an edit session's
-    // proxy); null: no reuse. Its memory is the caller's (StageTwoCache::stats()).
+    // The lens-corrected and the denoised image kept between stage-two renders of one stage-one image
+    // (an edit session's proxy); null: no reuse. Its memory is the caller's (StageTwoCache::stats()).
     std::shared_ptr<StageTwoCache> stage_two_cache;
+    // The Lensfun database the lens-profile corrections use (lens_correction.hpp; the verified
+    // asset, lucent_assets). Unlike the members above it is data that changes pixels: without it
+    // nothing is corrected (every plan says "no lens database"), and the report records which
+    // database a correction came from. Callers that persist pixels under a recipe identity must key
+    // them by its identity too.
+    std::shared_ptr<const LensDatabase> lens_database;
 };
 
 // The proxy downscale (make_proxy).
@@ -251,7 +302,8 @@ struct StageOneImage {
     [[nodiscard]] std::uint64_t byte_size() const noexcept { return pixels.byte_size(); }
 };
 
-// Persisted develop-operation identifiers (append only).
+// Persisted develop-operation identifiers (append only). Reports list the operations in execution
+// order: LensCorrection (13) first, then WhiteBalance (1) to Geometry (12).
 enum class DevelopOperation : std::uint8_t {
     WhiteBalance = 1,  // correction relative to stage one and the highlight clip
     CameraColor = 2,   // camera -> XYZ for the target white
@@ -266,6 +318,8 @@ enum class DevelopOperation : std::uint8_t {
     ChromaDenoise = 10,
     LocalAdjustments = 11,  // masks and their local controls
     Geometry = 12,          // straighten, crop, quarter turns, flip
+    // DevelopSettings v3 (ADR 0023).
+    LensCorrection = 13,  // lens-profile distortion, lateral chromatic aberration and vignetting
 };
 
 [[nodiscard]] std::string_view to_string(DevelopOperation operation) noexcept;  // "white_balance", ...
@@ -301,6 +355,10 @@ struct DevelopReport {
     double gain = 1.0;                                  // 2^(exposure_ev + baseline)
     double scene_white = 1.0;                           // clip_level * neutral_scale
     double white = 1.0;                                 // W = gain * scene_white
+    // The lens-profile corrections: the plan (profile, match, every correction's decision) and what
+    // the render did (always filled; its plan applies nothing for operation version 0, without a
+    // database or without a profile).
+    LensCorrectionRecord lens_correction;
     std::optional<ChromaDenoiseRecord> chroma_denoise;        // when applied
     std::optional<LocalToneRecord> local_tone;                // when applied
     std::optional<LocalAdjustmentsRecord> local_adjustments;  // when applied
@@ -343,7 +401,11 @@ struct DevelopMemoryEstimate {
     // strokes' extent, the geometry's output). Without settings: chroma denoising at
     // kMaxChromaDenoiseRadius and no brush raster.
     std::uint64_t stage_two_bytes = 0;
-    std::uint64_t export_peak = 0;  // render_develop: max(stage one, stage one kept + stage two)
+    // render_develop: max(stage one, stage one kept + stage two). A lens correction that resamples
+    // (the plan for the settings, the metadata and DevelopOptions::lens_database; without settings,
+    // any profile of the database may) cannot reuse stage one's buffer, so the RGB image is counted
+    // next to it.
+    std::uint64_t export_peak = 0;
 };
 
 // Size of a proxy whose long edge is `long_edge` (aspect ratio kept, each side rounded, at least
@@ -367,7 +429,9 @@ struct DevelopMemoryEstimate {
                                                                       const StageOneRequest& request,
                                                                       const DevelopOptions& options = {});
 // The same for known settings (their chroma-denoise radius, brush masks and highlight/shadow
-// masks), which callers with local adjustments should use.
+// masks, and the lens correction planned with options.lens_database: a correction that resamples
+// writes a new image and moves the masks' supports), which callers with local adjustments should
+// use. Errors also those of plan_lens_correction().
 [[nodiscard]] Expected<DevelopMemoryEstimate> estimate_develop_memory(const raw::RawMetadata& metadata,
                                                                       const StageOneRequest& request,
                                                                       const DevelopSettings& settings,
@@ -401,10 +465,29 @@ struct DevelopMemoryEstimate {
 // The geometry mapping stage two renders `settings` with on `image`: GeometryMapping::create() of
 // the settings' geometry for the image's size and the frame of their geometry version (version 2
 // and an image area: scale_area() of the area at the image's scale; otherwise the whole image).
+// This overload knows no lens database, so its mapping has no lens correction (stage two's renders
+// with DevelopOptions::lens_database may correct the lens: use the overload with options, or the
+// one with the render's report).
 // Errors: InvalidArgument (engine.develop.geometry) for an invalid geometry, or an image area on an
 // image that is not the whole frame at its scale (its size is not proxy_size() of full_size).
 [[nodiscard]] Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings,
                                                          const StageOneImage& image);
+
+// The same with the lens correction stage two plans for `settings` on `image` with
+// options.lens_database (none: as the overload above). Errors: those above and of
+// plan_lens_correction().
+[[nodiscard]] Expected<GeometryMapping> geometry_mapping(const DevelopSettings& settings, const StageOneImage& image,
+                                                         const DevelopOptions& options);
+
+// The mapping a stage-two render used, from its report: the settings, upright, full sizes, the
+// image area and the lens correction's geometry (report.lens_correction.plan.geometry).
+[[nodiscard]] Expected<GeometryMapping> geometry_mapping(const DevelopReport& report);
+
+// True when `image` is the whole frame at its scale (the full-resolution image or a proxy of all of
+// it, made by render_stage_one* or make_proxy): its size is proxy_size() of full_size for its long
+// edge and its scale is that long edge over full_size's. A lens correction needs the whole frame
+// (its model is centred on it): stage two applies none to a part (recorded as NotApplicable).
+[[nodiscard]] bool is_whole_frame(const StageOneImage& image) noexcept;
 
 // The same for an upright render of `render_size` pixels of an image whose full-resolution upright
 // size is `full_size` and whose image area (full-resolution upright pixels) is `area` (e.g. from a

@@ -468,6 +468,11 @@ struct ReceiptDetails {
     // database version it was assessed with (empty: none). std::nullopt in receipts written before.
     std::optional<SupportStatus> support;
     std::string camera_support_version;
+    // W13 (ADR 0023): the lens database the worker rendered with (app::lens_database_text(); empty:
+    // none) and the lens corrections it applied (app::lens_corrections_text(); empty: none). Empty in
+    // receipts written before.
+    std::string lens_database;
+    std::string lens_corrections;
 };
 
 enum class ReportOutcome : std::uint8_t {
@@ -515,6 +520,9 @@ struct ReportEntry {
     std::string reason;           // user-facing English: what happened
     std::string action;           // user-facing English: what to do (empty: nothing)
     std::vector<std::string> review;  // why a review is recommended (empty: not recommended)
+    // W13 (ADR 0023): the lens database and corrections of an exported photo (its receipt's).
+    std::string lens_database;
+    std::string lens_corrections;
     // W10 (ADR 0018): the photo's support status as the batch knew it (its receipt for exported
     // photos; Unsupported for photos skipped as unsupported); std::nullopt when not recorded.
     std::optional<SupportStatus> support;
@@ -631,6 +639,11 @@ struct BatchServiceOptions {
     // W10 (ADR 0018): the camera support database the photos a folder batch imports are assessed
     // against (null: none).
     CameraSupportRef camera_support;
+    // W13 (ADR 0023): the lens database this session renders with (lens_database_text(): asset id,
+    // version and manifest SHA-256; empty: none). It is part of every new batch's renderer_version,
+    // and so of every job's identity (blueprint section 7: "renderer and asset versions"): an output
+    // made with another database is not taken for this one's.
+    std::string lens_database;
     // Exporter temporaries ("~lucent-<hex>.tmp") older than this are removed by the leftover sweep.
     std::chrono::seconds stale_temporary_age{3600};
     std::function<catalog::Timestamp()> clock;  // empty: catalog::current_time

@@ -2,7 +2,7 @@
 
 // The geometry operation (DevelopSettings::geometry, kGeometryOperationVersion 2, and version 1)
 // and the point mapping between mask coordinates and output pixels (blueprint section 2, "crop,
-// rotate, straighten", and section 5, "Noise, masks, and geometry"; ADR 0015, ADR 0017).
+// rotate, straighten", and section 5, "Noise, masks, and geometry"; ADR 0015, ADR 0017, ADR 0023).
 //
 // Frames, in continuous pixel coordinates (image/geometry.hpp: pixel (i, j) covers [i, i + 1) x
 // [j, j + 1), its centre is (i + 0.5, j + 0.5)), all at the render scale (the full-resolution
@@ -10,15 +10,20 @@
 //   U  upright: stage one's image (DNG opcodes and the camera orientation applied), W x H. Masks
 //      are defined here, normalised per axis: a MaskPoint (x, y) is the pixel point (x W, y H),
 //      and a normalised length l is l x max(W, H) pixels. U is the masks' frame for every
-//      geometry version.
-//   F  the geometry's frame, a whole-pixel rectangle of U with origin (Fx, Fy) and size Fw x Fh:
-//      all of U for geometry version 1, the camera's image area for version 2 (image_area.hpp:
-//      the area stage one placed in full-resolution pixels, scale_area() at a proxy; all of U when
-//      the file declares none). F = U reduces every formula below to version 1's.
+//      geometry version and with or without a lens correction.
+//   U' corrected: the canvas a lens-profile correction renders (lens_correction.hpp), U's size; a
+//      corrected point p shows the content of U at LensGeometryMap::source_of(p) (green), and a
+//      point u of U appears at corrected_of(u). Without a lens correction U' = U.
+//   F  the geometry's frame, a whole-pixel rectangle of U' with origin (Fx, Fy) and size Fw x Fh:
+//      all of U' for geometry version 1, the camera's image area for version 2 (image_area.hpp:
+//      the area stage one placed in full-resolution pixels, scale_area() at a proxy; all of U' when
+//      the file declares none), the same pixel rectangle whether or not the lens is corrected (the
+//      area applies after the correction, as DNG's DefaultCrop after its warps). F = U' reduces
+//      every formula below to version 1's.
 //   S  straightened: F rotated by straighten_degrees about its centre c = (Fx + Fw / 2,
 //      Fy + Fh / 2) on a canvas of F's size whose origin is F's top-left corner; positive angles
 //      turn the content counter-clockwise as displayed:
-//          p_S = (Fw / 2, Fh / 2) + R (p_U - c),  R = [[cos a, sin a], [-sin a, cos a]]
+//          p_S = (Fw / 2, Fh / 2) + R (p_U' - c),  R = [[cos a, sin a], [-sin a, cos a]]
 //      (y grows downwards).
 //   C  cropped: the crop rectangle of S rounded to whole render pixels,
 //          [X0, X1) x [Y0, Y1),  X0 = round(left Fw), X1 = round(right Fw) (likewise Y with Fh),
@@ -31,11 +36,13 @@
 //      partially covered output pixel.
 //   O  output: C with the user orientation (user_orientation(): flip_horizontal, then the
 //      quarter turns clockwise), image::map_to_oriented(p_C, crop size, orientation).
-// Every step is affine, so straight lines stay straight, ellipses stay ellipses and lengths are
-// kept (the rotation and the orientation are isometries): a normalised length l is l x max(W, H)
-// output pixels.
+// Every step from U' on is affine, so straight lines stay straight, ellipses stay ellipses and
+// lengths are kept (the rotation and the orientation are isometries): a normalised length l is
+// l x max(W, H) output pixels. The lens correction (U -> U') is not affine: a mask's outline is
+// mapped point by point.
 //
-// Rendering (apply_geometry): every output pixel centre is mapped back to U and sampled there.
+// Rendering (apply_geometry): every output pixel centre is mapped back to U' and sampled there
+// (stage two corrected the lens before: the geometry never resamples twice for it).
 //   * No straightening: the crop is a whole-pixel rectangle of F, so the output is an exact copy
 //     of U's pixels, permuted by the orientation (bit-identical values).
 //   * Straightening: separable 4 x 4 Keys cubic convolution, a = -0.5 (Catmull-Rom), the same
@@ -63,6 +70,7 @@
 #include <lucent/core/error.hpp>
 #include <lucent/engine/camera_color.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/lens_correction.hpp>
 #include <lucent/image/geometry.hpp>
 #include <lucent/image/pixel_buffer.hpp>
 
@@ -81,10 +89,17 @@ public:
     [[nodiscard]] static Expected<GeometryMapping> create(const GeometrySetting& geometry,
                                                           image::Size upright_size,
                                                           const image::PixelRect& frame);
+    // With a lens correction's geometry `lens` (U -> U', defined at the full-resolution upright size
+    // `full_size`, of which the render of upright_size is the whole image at its scale: positions
+    // scale per axis). InvalidArgument as above or for an empty full size.
+    [[nodiscard]] static Expected<GeometryMapping> create(const GeometrySetting& geometry,
+                                                          image::Size upright_size,
+                                                          const image::PixelRect& frame,
+                                                          const LensGeometryMap& lens, image::Size full_size);
 
     [[nodiscard]] const GeometrySetting& setting() const noexcept { return setting_; }
     [[nodiscard]] image::Size upright_size() const noexcept { return upright_; }
-    // The frame F in U, whole render pixels; its size is what crop_inside_image() and
+    // The frame F in U', whole render pixels; its size is what crop_inside_image() and
     // largest_inside_crop() take.
     [[nodiscard]] const image::PixelRect& frame() const noexcept { return frame_; }
     [[nodiscard]] image::Size frame_size() const noexcept { return frame_.size(); }
@@ -92,21 +107,38 @@ public:
     [[nodiscard]] image::PixelRect crop_pixels() const noexcept { return crop_; }
     [[nodiscard]] image::Orientation orientation() const noexcept { return orientation_; }
     [[nodiscard]] image::Size output_size() const noexcept { return output_; }
-    // True when the output equals the upright image (F is all of U, and an identity geometry or a
-    // crop that rounds to the whole image with no straightening and no orientation change).
+    // True when the output equals the upright image (F is all of U', an identity geometry or a crop
+    // that rounds to the whole image with no straightening and no orientation change, and no lens
+    // correction moves points).
     [[nodiscard]] bool identity() const noexcept;
+    // True when the geometry operation copies U' unchanged (identity() without the lens part): stage
+    // two then skips it.
+    [[nodiscard]] bool affine_identity() const noexcept;
+    // The lens correction's geometry, when the mapping has one.
+    [[nodiscard]] const std::optional<LensGeometryMap>& lens() const noexcept { return lens_; }
     // True when straightening makes the output a resampling (false: an exact pixel copy).
     [[nodiscard]] bool resamples() const noexcept { return setting_.straighten_degrees != 0.0; }
-    // Identifies the mapping (geometry_revision() of the setting, the upright size and, when it is
-    // not all of U, the frame): overlays computed for one revision stay valid until it changes.
+    // Identifies the mapping (geometry_revision() of the setting, the upright size, when it is not
+    // all of U' the frame, and the lens correction's LensGeometryMap::revision()): overlays computed
+    // for one revision stay valid until it changes.
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
     // Output (and upright) pixels per normalised length: max(W, H).
     [[nodiscard]] double pixels_per_unit_length() const noexcept;
 
-    // Continuous upright pixel coordinates <-> continuous output pixel coordinates (inverse of
-    // each other to rounding; points outside the image or the crop map as the affine maps do).
+    // Continuous upright pixel coordinates (U, stage one's image) <-> continuous output pixel
+    // coordinates (inverse of each other to rounding; points outside the image or the crop map as
+    // the affine maps do). With a lens correction the upright point is the content's position in U
+    // (the green channel's source); a point beyond the lens model's monotone range (far outside the
+    // image) maps without the correction.
     [[nodiscard]] image::PointD output_from_upright(image::PointD upright) const noexcept;
     [[nodiscard]] image::PointD upright_from_output(image::PointD output) const noexcept;
+    // The same for the corrected canvas U' (the affine part alone; equal to the above without a lens
+    // correction).
+    [[nodiscard]] image::PointD output_from_corrected(image::PointD corrected) const noexcept;
+    [[nodiscard]] image::PointD corrected_from_output(image::PointD output) const noexcept;
+    // U <-> U' at the render scale (identity without a lens correction).
+    [[nodiscard]] image::PointD corrected_from_upright(image::PointD upright) const noexcept;
+    [[nodiscard]] image::PointD upright_from_corrected(image::PointD corrected) const noexcept;
     // Normalised mask coordinates <-> continuous output pixel coordinates.
     [[nodiscard]] image::PointD output_from_normalized(MaskPoint point) const noexcept;
     [[nodiscard]] MaskPoint normalized_from_output(image::PointD output) const noexcept;
@@ -116,6 +148,8 @@ public:
 private:
     GeometrySetting setting_;
     image::Size upright_;
+    image::Size full_;  // the lens map's full-resolution upright size (lens_ only)
+    std::optional<LensGeometryMap> lens_;
     image::PixelRect frame_;
     image::PixelRect crop_;
     image::Orientation orientation_ = image::Orientation::Normal;
@@ -153,9 +187,11 @@ struct GeometryRecord {
     std::uint64_t uncovered_pixels = 0;
 };
 
-// Replaces `image` (1 to 4 channels, any encoding, which is kept) by its geometry output: a new
-// buffer of mapping.output_size() allocated under `limits`; the input buffer is released on
-// success. The identity mapping leaves the image untouched (callers skip it).
+// Replaces `image` (1 to 4 channels, any encoding, which is kept; the corrected canvas U') by its
+// geometry output: a new buffer of mapping.output_size() allocated under `limits`; the input buffer
+// is released on success. A mapping whose affine part is the identity (affine_identity()) leaves
+// the image untouched (callers skip it); the lens part is not applied here (stage two corrected
+// the lens in its first pass).
 // Errors (engine.develop.geometry): InvalidArgument when the image is empty or its size is not
 // mapping.upright_size(); LimitExceeded / OutOfMemory; Cancelled (the image is unchanged).
 [[nodiscard]] Expected<GeometryRecord> apply_geometry(ColorImage& image, const GeometryMapping& mapping,

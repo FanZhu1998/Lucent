@@ -199,6 +199,18 @@ struct ImportOptions {
     QString copy_to;
 };
 
+// W13 (ADR 0023). The lens database the session's lens-profile corrections use (Help > About, the
+// Edit view's Lens corrections panel).
+struct LensDatabaseInfo {
+    bool available = false;  // a database is active
+    QString version;         // its asset version, e.g. "1.0.0"
+    QString library;         // "Lensfun 0.3.4"
+    QString location;        // its folder (native separators)
+    int cameras = 0;
+    int lenses = 0;
+    QString problem;  // user-facing: why no database is active (empty when one is)
+};
+
 // W10 (ADR 0018). The camera support database the session uses (Help > About).
 struct CameraSupportInfo {
     bool available = false;  // a database is active

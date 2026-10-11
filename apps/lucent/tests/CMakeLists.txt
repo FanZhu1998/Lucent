@@ -45,6 +45,7 @@ add_executable(lucent_ui_tests
     edit_session_tests.cpp
     fake_services_tests.cpp
     image_provider_tests.cpp
+    lens_corrections_tests.cpp
     library_model_tests.cpp
     presentation_tests.cpp
     qml_shell_tests.cpp

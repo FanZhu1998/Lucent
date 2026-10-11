@@ -270,5 +270,47 @@ TEST(CommandLine, ParsesTheGeometryAndMaskAutomation) {
     }
 }
 
+// W13 (ADR 0023): the lens-correction automation.
+TEST(CommandLine, ParsesTheLensAutomation) {
+    const CommandLine command_line = parse({"--open-first",
+                                            "--lens",
+                                            "off",
+                                            "--lens",
+                                            "distortion=ON",
+                                            "--lens",
+                                            "ca=off",
+                                            "--lens",
+                                            "vignetting=on",
+                                            "--lens",
+                                            "profile=Nikkor Z 24-70",
+                                            "--lens",
+                                            "auto",
+                                            "--lens",
+                                            "on",
+                                            "--lens",
+                                            "all",
+                                            "--lens",
+                                            "search=sigma 50",
+                                            "--show-panel",
+                                            "Lens"});
+    ASSERT_EQ(command_line.action, CommandLine::Action::Run) << command_line.message.toStdString();
+    const DeveloperOptions& options = command_line.options;
+    EXPECT_EQ(options.lens_edits,
+              (QStringList{"off", "distortion=ON", "ca=off", "vignetting=on", "profile=Nikkor Z 24-70",
+                           "auto", "on", "all", "search=sigma 50"}));
+    EXPECT_EQ(options.show_panel, QStringLiteral("lens"));
+    for (const QStringList& invalid : {
+             QStringList{"--open-first", "--lens", "maybe"},
+             QStringList{"--open-first", "--lens", "distortion=half"},
+             QStringList{"--open-first", "--lens", "profile="},
+             QStringList{"--open-first", "--lens", "search="},
+             QStringList{"--open-first", "--show-panel", "history"},
+             QStringList{"--lens", "off"},
+             QStringList{"--show-panel", "lens"},
+         }) {
+        EXPECT_EQ(parse(invalid).action, CommandLine::Action::Error) << invalid.join(' ').toStdString();
+    }
+}
+
 }  // namespace
 }  // namespace lucent::ui

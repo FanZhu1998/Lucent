@@ -1,16 +1,19 @@
 // DevelopPreviewService (develop_preview.hpp): latest-wins stage-two renders with stale-frame
 // suppression, the refine rule, full resolution on demand, histogram and clipping masks, memory
-// admission, lifetime; the W9 session caches (brush rasters, the denoised image) as retained
-// memory, frames' geometry and mask overlays, coalesced mask strokes; with a scripted renderer
-// (deterministic timing) and with the engine on synthetic DNGs. Also pins the application's export
-// render to engine::render_develop_file.
+// admission (the renderer's estimates, with its lens database since W13), lifetime; the W9 session
+// caches (brush rasters, the denoised image) as retained memory, frames' geometry and mask
+// overlays, coalesced mask strokes; with a scripted renderer (deterministic timing) and with the
+// engine on synthetic DNGs. Also pins the application's export render to
+// engine::render_develop_file.
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <memory>
-#include <cmath>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -170,6 +173,18 @@ TEST_F(DevelopPreviewTest, ClippingMaskMarksTheHistogramsEndBins) {
     EXPECT_EQ(highlights, 75u);
     EXPECT_EQ(shadows, 75u);
     EXPECT_EQ(frame.histogram.red[255], highlights);
+}
+
+// A stage-two render claims the renderer's estimate (SourceRenderer::estimate_stage_two(): with its
+// lens database, ADR 0023) plus the 8-bit image and the clipping mask (4 bytes per pixel).
+TEST_F(DevelopPreviewTest, AStageTwoRenderClaimsTheRenderersEstimate) {
+    constexpr std::uint64_t kEstimate = std::uint64_t{3} << 20;
+    renderer_->stage_two_estimate(kEstimate);
+    ASSERT_TRUE(service_->request(item_, view_of(settings_for(1), true)));
+    ASSERT_TRUE(events_.wait_for(1));
+    const DevelopEvent event = events_.values()[0];
+    ASSERT_EQ(event.kind, DevelopEvent::Kind::Frame) << (event.error ? event.error->describe() : "");
+    EXPECT_EQ(event.frame->summary.estimated_peak_bytes, kEstimate + 100u * 75u * 4u);
 }
 
 TEST_F(DevelopPreviewTest, RapidTransientEditsAreCoalescedAndStaleFramesNeverShow) {
@@ -688,6 +703,169 @@ TEST(EngineRenderer, TheExportRenderIsRenderDevelopFile) {
     other.width = 80;  // another size: another file version
     ts::write_dng(dir, L"parity.dng", other);
     EXPECT_EQ((*renderer)->render(item, settings, {}, {}).error().code, ErrorCode::SourceChanged);
+}
+
+// W13 (ADR 0023): the stage-two estimate plans the lens correction with the renderer's lens
+// database, as its stage two does (the interactive preview claims its renders with it): a shadows
+// brush in a corner is counted over its support mapped through the correction.
+TEST(EngineRenderer, TheStageTwoEstimatePlansTheLensCorrectionWithItsDatabase) {
+    // A camera and a zoom that distorts at 24 mm (from the engine tests' synthetic database).
+    constexpr std::string_view kDatabase = R"(<lensdatabase version="1">
+        <mount><name>Lucent Test Mount</name></mount>
+        <camera><maker>Lucent</maker><model>Test Camera</model><mount>Lucent Test Mount</mount>
+            <cropfactor>1</cropfactor></camera>
+        <lens><maker>Lucent</maker><model>Lucent 24-70mm f/2.8 Test</model><mount>Lucent Test Mount</mount>
+            <cropfactor>1</cropfactor>
+            <calibration>
+                <distortion model="ptlens" focal="24" a="0.012" b="-0.041" c="0.018"/>
+                <distortion model="ptlens" focal="70" a="-0.002" b="0.011" c="-0.004"/>
+            </calibration></lens>
+    </lensdatabase>)";
+    const std::array<engine::LensDatabaseFile, 1> files = {engine::LensDatabaseFile{"test.xml", kDatabase}};
+    auto database = engine::LensDatabase::load(
+        files, engine::LensDatabaseIdentity{"lens-database-test", "0.0.1", "synthetic"});
+    ASSERT_TRUE(database) << database.error().describe();
+    auto registry = ts::default_registry();
+    EngineRendererOptions options;
+    options.lens_database = *database;
+    auto corrected = create_engine_renderer(registry, options);
+    auto plain = create_engine_renderer(registry);
+    ASSERT_TRUE(corrected && plain);
+
+    ts::ScratchDir dir;
+    rts::SyntheticDngSpec spec;
+    spec.width = 1200;
+    spec.height = 800;
+    const std::filesystem::path path = ts::write_dng(dir, L"lens.dng", spec);
+    SessionLibrary library;
+    auto report = import_sources(library, *registry, ImportRequest{.files = {path}});
+    ASSERT_TRUE(report);
+    const SourceItem item = *library.find(report->added.at(0));
+    const engine::StageOneRequest request;  // interactive, at full resolution
+    auto one = (*plain)->render_stage_one(item, request, {});
+    ASSERT_TRUE(one) << one.error().describe();
+    // The camera and lens the synthetic file does not record.
+    one->metadata.camera.make = one->metadata.camera.normalized_make = "Lucent";
+    one->metadata.camera.model = one->metadata.camera.normalized_model = "Test Camera";
+    one->metadata.lens.model = "24-70mm F2.8 Test";
+    one->metadata.capture.focal_length_mm = 24.0f;
+    one->metadata.capture.f_number = 2.8f;
+
+    engine::DevelopSettings brushed;
+    engine::LocalAdjustment shadows;
+    shadows.id = 1;
+    shadows.shape =
+        engine::BrushMask{{engine::BrushStroke{engine::BrushMode::Add, 0.02, 0.5, 1.0, {{0.97, 0.96}}}}};
+    shadows.controls.shadows = 0.4;
+    brushed.local_adjustments = {shadows};
+    ASSERT_TRUE(brushed.validate());
+
+    engine::DevelopOptions engine_options;
+    engine_options.lens_database = *database;
+    auto expected = engine::estimate_develop_memory(one->metadata, request, brushed, engine_options);
+    auto with_database = (*corrected)->estimate_stage_two(*one, request, brushed);
+    auto without_database = (*plain)->estimate_stage_two(*one, request, brushed);
+    ASSERT_TRUE(expected && with_database && without_database);
+    EXPECT_EQ(with_database->stage_two_bytes, expected->stage_two_bytes);
+    EXPECT_NE(with_database->stage_two_bytes, without_database->stage_two_bytes);
+    // And its stage two corrects the lens.
+    auto rendered = (*corrected)->render_stage_two(*one, brushed, {});
+    ASSERT_TRUE(rendered) << rendered.error().describe();
+    EXPECT_TRUE(rendered->report.lens_correction.plan.geometry.has_value());
+}
+
+// W13 closure (APL-03, ADR 0023): an edit session keeps its proxy's lens-corrected image, so moving a
+// slider renders without resampling again; the frames are those of a session without caches.
+TEST(DevelopSessionLens, TheLensCorrectedProxyIsKeptWhileTheLensSettingsStay) {
+    // The synthetic DNG's camera ("Lucent Synthetic DNG") with a fixed lens: an exact match by the
+    // fixed-lens rule (the file names no lens), distortion at the prime's focal length.
+    constexpr std::string_view kDatabase = R"(<lensdatabase version="1">
+        <camera><maker>Lucent</maker><model>Synthetic DNG</model><mount>lucentSyntheticFixed</mount>
+            <cropfactor>1</cropfactor></camera>
+        <lens><maker>Lucent</maker><model>Synthetic fixed 28mm f/2.8</model><mount>lucentSyntheticFixed</mount>
+            <cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="28" k1="-0.04"/></calibration></lens>
+    </lensdatabase>)";
+    const std::array<engine::LensDatabaseFile, 1> files = {engine::LensDatabaseFile{"test.xml", kDatabase}};
+    auto database = engine::LensDatabase::load(
+        files, engine::LensDatabaseIdentity{"lens-database-test", "0.0.1", "synthetic"});
+    ASSERT_TRUE(database) << database.error().describe();
+    auto executor = TaskExecutor::create(ExecutorOptions{});
+    ASSERT_TRUE(executor);
+    auto registry = ts::default_registry();
+    EngineRendererOptions renderer_options;
+    renderer_options.lens_database = *database;
+    auto renderer = create_engine_renderer(registry, renderer_options);
+    ASSERT_TRUE(renderer);
+    ts::ScratchDir dir;
+    rts::SyntheticDngSpec spec;
+    spec.width = 256;
+    spec.height = 192;
+    const std::filesystem::path path = ts::write_dng(dir, L"lens.dng", spec);
+    SessionLibrary library;
+    auto imported = import_sources(library, *registry, ImportRequest{.files = {path}});
+    ASSERT_TRUE(imported);
+    const ItemId item = imported->added.at(0);
+
+    const auto final_of = [](ts::Collector<DevelopEvent>& events, std::uint64_t generation) {
+        std::shared_ptr<const DevelopFrame> found;
+        EXPECT_TRUE(eventually([&] {
+            for (const DevelopEvent& e : events.values()) {
+                if (e.kind == DevelopEvent::Kind::Failed && e.generation == generation) {
+                    ADD_FAILURE() << e.error->describe();
+                    return true;
+                }
+                if (e.kind == DevelopEvent::Kind::Frame && e.generation == generation &&
+                    e.frame->phase == DevelopPhase::Final) {
+                    found = e.frame;
+                    return true;
+                }
+            }
+            return false;
+        }));
+        return found;
+    };
+    DevelopPreviewOptions options;
+    options.proxy_long_edge = 128;
+    DevelopPreviewService service(library, **executor, *renderer, options);
+    ts::Collector<DevelopEvent> events;
+    ASSERT_TRUE(service.open(item, [&](const DevelopEvent& e) { events.add(e); }));
+    engine::DevelopSettings settings;  // automatic lens corrections
+    auto first = service.request(item, view_of(settings, true));
+    ASSERT_TRUE(first);
+    auto made = final_of(events, *first);
+    ASSERT_TRUE(made);
+    ASSERT_TRUE(made->report->lens_correction.plan.geometry.has_value())
+        << made->report->lens_correction.plan.decision(engine::LensCorrectionKind::Distortion).detail;
+    EXPECT_FALSE(made->report->lens_correction.reused);
+    settings.exposure_ev = -0.4;
+    settings.contrast = 0.2;
+    auto moved = service.request(item, view_of(settings, true));
+    ASSERT_TRUE(moved);
+    auto reused = final_of(events, *moved);
+    ASSERT_TRUE(reused);
+    EXPECT_TRUE(reused->report->lens_correction.reused);
+    auto stats = service.stats(item);
+    ASSERT_TRUE(stats);
+    EXPECT_GE(stats->lens_cache_hits, 1u);
+    EXPECT_GE(stats->cache_bytes, 128u * 96u * 3u * sizeof(float));  // the kept corrected proxy
+    EXPECT_EQ(stats->retained_bytes, stats->proxy_bytes + stats->cache_bytes);
+
+    // A session without caches renders the same frame.
+    DevelopPreviewOptions uncached = options;
+    uncached.stage_two_cache_bytes = 0;
+    uncached.mask_cache_bytes = 0;
+    service.close(item);
+    DevelopPreviewService other(library, **executor, *renderer, uncached);
+    ts::Collector<DevelopEvent> other_events;
+    ASSERT_TRUE(other.open(item, [&](const DevelopEvent& e) { other_events.add(e); }));
+    auto fresh_generation = other.request(item, view_of(settings, true));
+    ASSERT_TRUE(fresh_generation);
+    auto fresh = final_of(other_events, *fresh_generation);
+    ASSERT_TRUE(fresh);
+    EXPECT_FALSE(fresh->report->lens_correction.reused);
+    EXPECT_EQ(fresh->image.rgb, reused->image.rgb);
+    other.close(item);
 }
 
 }  // namespace

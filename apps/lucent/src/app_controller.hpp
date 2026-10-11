@@ -112,6 +112,9 @@ class AppController : public QObject {
     Q_PROPERTY(QString appVersion READ app_version CONSTANT FINAL)
     Q_PROPERTY(QVariantMap cameraSupport READ camera_support CONSTANT FINAL)
     Q_PROPERTY(QVariantList supportStates READ support_states CONSTANT FINAL)
+    // W13 (ADR 0023). Help > About: the lens database the lens corrections use
+    // (presentation::lens_database_map).
+    Q_PROPERTY(QVariantMap lensDatabase READ lens_database CONSTANT FINAL)
     // W12 (ADR 0022). Help > About's "Check for updates".
     Q_PROPERTY(lucent::ui::UpdateModel* updates READ updates CONSTANT FINAL)
 
@@ -285,6 +288,7 @@ public:
     [[nodiscard]] QString background_activity() const { return background_activity_; }
     [[nodiscard]] QString app_version() const;
     [[nodiscard]] QVariantMap camera_support() const;
+    [[nodiscard]] QVariantMap lens_database() const;
     [[nodiscard]] QVariantList support_states() const;
 
 signals:

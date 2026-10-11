@@ -1,6 +1,7 @@
 # ADR 0009: Windows packaging: installed layout, dependency audit and per-user Inno Setup installer
 
-- **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below, with its closing review)
+- **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below, with its closing review;
+  amended 2026-10-10 by the closing review of W13: "Amendment: the Lensfun dependencies' builder paths and recipes" below)
 - **Date:** 2026-10-03
 - **Workflow:** W5 (Installer slice)
 
@@ -520,3 +521,40 @@ no builder path: no leak exists today.
     streams and Inno Setup's LZMA header and payload in the scan, or building Lucent's own resources
     uncompressed and asserting that no compressed stream remains. Until then the scan's guarantee is
     about uncompressed bytes, as stated above.
+
+## Amendment: the Lensfun dependencies' builder paths and recipes (W13 closure, 2026-10-10)
+
+W13 added Lensfun and the GLib runtime it imports (ADR 0023). The package's builder-path scan
+(decision 12) then failed on two of the new DLLs, as the scan exists to make it fail: `glib-2.0-0.dll`
+held its meson install prefix's locale folder (below the vcpkg packages folder, GLib's
+`GLIB_LOCALE_DIR`), and `intl-8.dll` the first build tree's `vcpkg_installed` folder three times (its
+default catalog folder `LOCALEDIR`, and `INSTALLPREFIX` and `INSTALLDIR` of gnulib's relocation
+support). Decision 12 grants no exception, so the strings had to go where they are made, in the ports.
+
+17. **Overlay ports remove them at the source** (`cmake/ports`, LF only, ADR 0023's closure
+    amendment for the evidence):
+    - `glib` (new overlay, otherwise vcpkg's port byte for byte): `lucent-neutral-locale-dir.patch`
+      compiles, on Windows only, the part of `GLIB_LOCALE_DIR` that `glib/ggettext.c`
+      (`_glib_get_locale_dir`) uses there, from its second-to-last `/` on ("/share/locale"), which
+      it appends to the folder of the loaded DLL: the DLL finds its catalogs exactly where it did
+      (its 1,921 exports unchanged).
+    - `gettext-libintl`: `lucent-no-builder-paths.patch` gives the default catalog folder of text
+      domains nobody bound a name no Windows file can have, and turns gnulib's "costly" relocation
+      off for the library. Lucent binds no text domain; GLib binds its own below its DLL and reads
+      the default domain's header only to decide whether to translate, which it does for the
+      default domain "messages" whatever that lookup returns; `relocate()` is called only for the
+      `locale.alias` files of `LOCALE_ALIAS_PATH`, which is empty in this build (every compile
+      line). The exports are unchanged (the same 37 names before and after, `dumpbin /exports`).
+    Both patches mark the changed files ("Changed by the Lucent project, 2026-10-10"), as LGPL-2.1
+    section 2 asks of a modified library. `tools\Watch-Conftest.ps1` guards the long rebuild of
+    gettext that a change of these ports causes (`docs/development/setup.md`).
+18. **The recipe of a port Lucent overlays ships with Lucent.** It exists only in Lucent's source,
+    and for a shipped LGPL library it is part of what builds it. Before, `LGPL-NOTICE.txt` and the
+    SBOM pointed at the folder on Lucent's GitHub repository at the build's commit, a link that does
+    not resolve while the commit is unpublished (review finding APL-05). `New-LicenseBundle` now
+    copies the overlay port folder to `licenses\<port>\recipe\` (the portfile, vcpkg's patches and
+    Lucent's), `LGPL-NOTICE.txt` names that folder (and the commit, for reference), and the SBOM's
+    port package records `NOASSERTION` as its download location with a comment naming the shipped
+    folder; its recipe files keep their SHA-1 from that copy. The notice's introduction no longer
+    calls every LGPL library unmodified: it names the `lucent-*.patch` files as the Lucent project's
+    only source changes.

@@ -381,6 +381,53 @@ CameraSupportInfo to_camera_support_info(const app::CameraSupportRef& active,
     return info;
 }
 
+LensDatabaseInfo to_lens_database_info(const assets::LensDatabaseLookup& load) {
+    LensDatabaseInfo info;
+    if (!load.database) {
+        const ErrorCode code = load.problem ? load.problem->code : ErrorCode::NotFound;
+        switch (code) {
+            case ErrorCode::NotFound:
+                info.problem = tr_text(
+                    "Lucent's lens database is not installed, so lens corrections are unavailable. "
+                    "Reinstall Lucent to restore it.");
+                break;
+            case ErrorCode::VersionMismatch:
+                info.problem = tr_text(
+                    "The installed lens database needs another version of Lucent, so lens corrections "
+                    "are unavailable.");
+                break;
+            case ErrorCode::PermissionDenied:
+            case ErrorCode::IoError:
+            case ErrorCode::SourceChanged:
+            case ErrorCode::OutOfMemory:
+            case ErrorCode::LimitExceeded:
+            case ErrorCode::Timeout:
+                info.problem = tr_text(
+                                   "The installed lens database could not be read (%1), so lens corrections "
+                                   "are unavailable. Check that Lucent's installation folder is readable, or "
+                                   "reinstall Lucent.")
+                                   .arg(QString::fromStdString(std::string(to_string(code))));
+                break;
+            default:
+                info.problem = tr_text(
+                    "The installed lens database failed its integrity check and is not used, so lens "
+                    "corrections are unavailable. Reinstall Lucent to restore it.");
+                break;
+        }
+        return info;
+    }
+    const engine::LensDatabaseInfo& db = load.database->info();
+    info.available = true;
+    info.version = QString::fromStdString(db.identity.asset_version);
+    info.library = QString::fromStdString(db.library);
+    if (load.lookup.asset) {
+        info.location = QDir::toNativeSeparators(to_qstring(load.lookup.asset->folder));
+    }
+    info.cameras = static_cast<int>(db.cameras);
+    info.lenses = static_cast<int>(db.lenses);
+    return info;
+}
+
 ItemFlags source_flags(const app::SourceItem& source) noexcept {
     ItemFlags flags = 0;
     switch (source.source_state) {

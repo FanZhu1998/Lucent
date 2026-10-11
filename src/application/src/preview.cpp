@@ -1,5 +1,7 @@
 #include <format>
 #include <functional>
+#include <optional>
+#include <string>
 
 #include <lucent/application/preview.hpp>
 #include <lucent/application/preview_cache.hpp>
@@ -81,7 +83,37 @@ RenderSummary summarize_render(const engine::DevelopReport& report,
             summary.camera_color = operation.algorithm;
         }
     }
+    const engine::LensCorrectionPlan& lens = report.lens_correction.plan;
+    summary.lens_database = lens_database_text(lens.database);
+    summary.lens_corrections = lens_corrections_text(lens);
+    summary.lens_note = lens.missing_dependency.value_or(std::string{});
     return summary;
+}
+
+std::string lens_database_text(const std::optional<engine::LensDatabaseIdentity>& identity) {
+    if (!identity) {
+        return {};
+    }
+    return std::format("{} {} (manifest {})", identity->asset_id, identity->asset_version,
+                       identity->manifest_sha256.substr(0, 16));
+}
+
+std::string lens_corrections_text(const engine::LensCorrectionPlan& plan) {
+    std::string applied;
+    for (const engine::LensCorrectionDecision& d : plan.decisions) {
+        if (d.outcome == engine::LensCorrectionOutcome::Applied) {
+            applied += (applied.empty() ? "" : ", ");
+            applied += d.kind == engine::LensCorrectionKind::Distortion ? "distortion"
+                       : d.kind == engine::LensCorrectionKind::LateralChromaticAberration
+                           ? "lateral chromatic aberration"
+                           : "vignetting";
+        }
+    }
+    if (applied.empty() || !plan.profile) {
+        return applied;
+    }
+    return std::format("{}: {} / {} (crop factor {:.4g})", applied, plan.profile->maker, plan.profile->model,
+                       plan.profile->crop_factor);
 }
 
 std::size_t PreviewKeyHash::operator()(const PreviewKey& key) const noexcept {

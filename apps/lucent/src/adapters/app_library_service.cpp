@@ -338,6 +338,10 @@ CameraSupportInfo AppLibraryService::camera_support() const {
     return to_camera_support_info(backend_->camera_support(), backend_->camera_support_load());
 }
 
+LensDatabaseInfo AppLibraryService::lens_database() const {
+    return to_lens_database_info(backend_->lens_database_load());
+}
+
 RenderEventSink AppLibraryService::render_event_sink() {
     // `this` is only used by the posted function, which runs on the UI thread while it lives.
     return [this, dispatcher = dispatcher_](RenderEvent event) {

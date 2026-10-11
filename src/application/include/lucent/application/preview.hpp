@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,7 +80,24 @@ struct RenderSummary {
     std::uint64_t limited_display_pixels = 0;  // pixels the base look mapped to display white
     std::uint64_t estimated_peak_bytes = 0;    // the memory admitted for the render
     double render_seconds = 0.0;               // stage one + stage two
+    // Lens-profile corrections (ADR 0023): the lens database the render used (lens_database_text();
+    // empty: none), what it corrected (lens_corrections_text(); empty: nothing) and, when the
+    // settings asked for a correction that could not be planned for want of a dependency (no lens
+    // database, or a named profile the database does not hold: LensCorrectionPlan::
+    // missing_dependency), why (empty otherwise). Developer-facing English.
+    std::string lens_database;
+    std::string lens_corrections;
+    std::string lens_note;
 };
+
+// "lens-database 1.0.0 (manifest 0123456789abcdef)": a lens database's asset id, version and the
+// first 16 hex digits of its manifest's SHA-256; empty without a database.
+[[nodiscard]] std::string lens_database_text(const std::optional<engine::LensDatabaseIdentity>& identity);
+
+// What a lens-correction plan applied: "distortion, lateral chromatic aberration, vignetting:
+// <maker> / <model> (crop factor <x>)" with the applied corrections in that order; empty when
+// nothing is applied.
+[[nodiscard]] std::string lens_corrections_text(const engine::LensCorrectionPlan& plan);
 
 // The full-resolution size of a develop report's image: its output_size when the render was at full
 // resolution (upright_size == full_size), otherwise the settings' geometry mapped for full_size.

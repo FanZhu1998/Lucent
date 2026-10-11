@@ -1,0 +1,2335 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "auto-analysis",
+  "description": "lucent-auto --group-by none over every fixture (Natural v1 analysis: decode, source analysis, proxy search, native-crop recheck; no full-resolution final check, no export). analysis_seconds is the analysis\u0027 own total per image; extra.over_images summarises the per-image medians.",
+  "repetitions": 3,
+  "measured_at": "2026-10-10T21:45:49Z",
+  "summary": {
+    "lucent-auto": {
+      "runs": 3,
+      "failed_runs": 0,
+      "seconds": {
+        "n": 3,
+        "median": 71.685,
+        "p95": 72.469,
+        "min": 71.623,
+        "max": 72.469,
+        "mean": 71.926,
+        "stdev": 0.472,
+        "cv": 0.007
+      },
+      "resources.root.peak_commit_mib": {
+        "n": 3,
+        "median": 1151.535,
+        "p95": 1151.762,
+        "min": 1151.094,
+        "max": 1151.762,
+        "mean": 1151.464,
+        "stdev": 0.34,
+        "cv": 0
+      },
+      "resources.root.peak_working_set_mib": {
+        "n": 3,
+        "median": 1156.742,
+        "p95": 1157.281,
+        "min": 1156.703,
+        "max": 1157.281,
+        "mean": 1156.909,
+        "stdev": 0.323,
+        "cv": 0
+      },
+      "resources.cpu_percent_of_machine": {
+        "n": 3,
+        "median": 42.562,
+        "p95": 43.183,
+        "min": 41.868,
+        "max": 43.183,
+        "mean": 42.537,
+        "stdev": 0.658,
+        "cv": 0.015
+      },
+      "totals.analysis_seconds": {
+        "n": 3,
+        "median": 71.27,
+        "p95": 72.05,
+        "min": 71.187,
+        "max": 72.05,
+        "mean": 71.502,
+        "stdev": 0.476,
+        "cv": 0.007
+      }
+    }
+  },
+  "extra": {
+    "over_images": {
+      "analysis_seconds": {
+        "n": 38,
+        "median": 1.454,
+        "p95": 2.772,
+        "min": 0.78,
+        "max": 4.016,
+        "mean": 1.603,
+        "stdev": 0.573,
+        "cv": 0.357
+      },
+      "seconds_per_megapixel": {
+        "n": 38,
+        "median": 0.079,
+        "p95": 0.176,
+        "min": 0.027,
+        "max": 0.183,
+        "mean": 0.084,
+        "stdev": 0.039,
+        "cv": 0.463
+      },
+      "repetition_cv": {
+        "n": 38,
+        "median": 0.008,
+        "p95": 0.048,
+        "min": 0.002,
+        "max": 0.055,
+        "mean": 0.013,
+        "stdev": 0.014,
+        "cv": 1.032
+      }
+    },
+    "failed_images": ["nikon-z-8-nef-he","nikon-z-8-nef-he-star"],
+    "per_image": {
+      "adobe-dng-canon-eos-5d-mark-iii-linear-dng": {
+        "megapixels": 10.454,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.911,
+          "p95": 1.931,
+          "min": 1.895,
+          "max": 1.931,
+          "mean": 1.913,
+          "stdev": 0.018,
+          "cv": 0.009
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.183,
+          "p95": 0.185,
+          "min": 0.181,
+          "max": 0.185,
+          "mean": 0.183,
+          "stdev": 0.002,
+          "cv": 0.009
+        }
+      },
+      "bq-aquaris-u-plus-dng": {
+        "megapixels": 16.147,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.357,
+          "p95": 1.375,
+          "min": 1.351,
+          "max": 1.375,
+          "mean": 1.361,
+          "stdev": 0.012,
+          "cv": 0.009
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.084,
+          "p95": 0.085,
+          "min": 0.084,
+          "max": 0.085,
+          "mean": 0.084,
+          "stdev": 0.001,
+          "cv": 0.009
+        }
+      },
+      "canon-eos-350d-cr2": {
+        "megapixels": 8.039,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.415,
+          "p95": 1.417,
+          "min": 1.4,
+          "max": 1.417,
+          "mean": 1.411,
+          "stdev": 0.009,
+          "cv": 0.007
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.176,
+          "p95": 0.176,
+          "min": 0.174,
+          "max": 0.176,
+          "mean": 0.175,
+          "stdev": 0.001,
+          "cv": 0.007
+        }
+      },
+      "canon-eos-5d-mark-iv-cr2-raw": {
+        "megapixels": 30.361,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 2.157,
+          "p95": 2.161,
+          "min": 2.1,
+          "max": 2.161,
+          "mean": 2.139,
+          "stdev": 0.034,
+          "cv": 0.016
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.071,
+          "p95": 0.071,
+          "min": 0.069,
+          "max": 0.071,
+          "mean": 0.07,
+          "stdev": 0.001,
+          "cv": 0.016
+        }
+      },
+      "canon-eos-5d-mark-iv-cr2-sraw": {
+        "megapixels": 7.526,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.281,
+          "p95": 1.288,
+          "min": 1.269,
+          "max": 1.288,
+          "mean": 1.279,
+          "stdev": 0.009,
+          "cv": 0.007
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.17,
+          "p95": 0.171,
+          "min": 0.169,
+          "max": 0.171,
+          "mean": 0.17,
+          "stdev": 0.001,
+          "cv": 0.007
+        }
+      },
+      "canon-eos-7d-mark-ii-dng-jxl": {
+        "megapixels": 20.17,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.792,
+          "p95": 1.795,
+          "min": 1.786,
+          "max": 1.795,
+          "mean": 1.791,
+          "stdev": 0.005,
+          "cv": 0.003
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.089,
+          "p95": 0.089,
+          "min": 0.089,
+          "max": 0.089,
+          "mean": 0.089,
+          "stdev": 0,
+          "cv": 0.003
+        }
+      },
+      "canon-eos-r5-cr3-craw-crop-dualpixel": {
+        "megapixels": 17.25,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.311,
+          "p95": 1.318,
+          "min": 1.3,
+          "max": 1.318,
+          "mean": 1.31,
+          "stdev": 0.009,
+          "cv": 0.007
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.076,
+          "p95": 0.076,
+          "min": 0.075,
+          "max": 0.076,
+          "mean": 0.076,
+          "stdev": 0.001,
+          "cv": 0.007
+        }
+      },
+      "canon-eos-r5-cr3-craw": {
+        "megapixels": 44.747,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 2.022,
+          "p95": 2.026,
+          "min": 2.012,
+          "max": 2.026,
+          "mean": 2.02,
+          "stdev": 0.007,
+          "cv": 0.004
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.045,
+          "p95": 0.045,
+          "min": 0.045,
+          "max": 0.045,
+          "mean": 0.045,
+          "stdev": 0,
+          "cv": 0.004
+        }
+      },
+      "canon-eos-r5-cr3-raw-crop": {
+        "megapixels": 17.25,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.366,
+          "p95": 1.37,
+          "min": 1.36,
+          "max": 1.37,
+          "mean": 1.366,
+          "stdev": 0.005,
+          "cv": 0.004
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.079,
+          "p95": 0.079,
+          "min": 0.079,
+          "max": 0.079,
+          "mean": 0.079,
+          "stdev": 0,
+          "cv": 0.004
+        }
+      },
+      "canon-eos-r5-cr3-raw": {
+        "megapixels": 44.747,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.823,
+          "p95": 1.837,
+          "min": 1.816,
+          "max": 1.837,
+          "mean": 1.826,
+          "stdev": 0.011,
+          "cv": 0.006
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.041,
+          "p95": 0.041,
+          "min": 0.041,
+          "max": 0.041,
+          "mean": 0.041,
+          "stdev": 0,
+          "cv": 0.006
+        }
+      },
+      "dji-fc220-dng": {
+        "megapixels": 12,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.031,
+          "p95": 1.047,
+          "min": 1.009,
+          "max": 1.047,
+          "mean": 1.029,
+          "stdev": 0.019,
+          "cv": 0.019
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.086,
+          "p95": 0.087,
+          "min": 0.084,
+          "max": 0.087,
+          "mean": 0.086,
+          "stdev": 0.002,
+          "cv": 0.019
+        }
+      },
+      "dji-fc4382-dng": {
+        "megapixels": 12.193,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.521,
+          "p95": 1.54,
+          "min": 1.52,
+          "max": 1.54,
+          "mean": 1.527,
+          "stdev": 0.011,
+          "cv": 0.007
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.125,
+          "p95": 0.126,
+          "min": 0.125,
+          "max": 0.126,
+          "mean": 0.125,
+          "stdev": 0.001,
+          "cv": 0.007
+        }
+      },
+      "dji-fc7303-dng": {
+        "megapixels": 12,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.328,
+          "p95": 1.339,
+          "min": 1.321,
+          "max": 1.339,
+          "mean": 1.329,
+          "stdev": 0.009,
+          "cv": 0.007
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.111,
+          "p95": 0.112,
+          "min": 0.11,
+          "max": 0.112,
+          "mean": 0.111,
+          "stdev": 0.001,
+          "cv": 0.007
+        }
+      },
+      "fujifilm-gfx-50s-ii-raf-compressed": {
+        "megapixels": 51.402,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 4.016,
+          "p95": 4.019,
+          "min": 3.979,
+          "max": 4.019,
+          "mean": 4.005,
+          "stdev": 0.023,
+          "cv": 0.006
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.078,
+          "p95": 0.078,
+          "min": 0.077,
+          "max": 0.078,
+          "mean": 0.078,
+          "stdev": 0,
+          "cv": 0.006
+        }
+      },
+      "fujifilm-x-t4-raf-compressed": {
+        "megapixels": 26.046,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 2.772,
+          "p95": 2.782,
+          "min": 2.771,
+          "max": 2.782,
+          "mean": 2.775,
+          "stdev": 0.006,
+          "cv": 0.002
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.106,
+          "p95": 0.107,
+          "min": 0.106,
+          "max": 0.107,
+          "mean": 0.107,
+          "stdev": 0,
+          "cv": 0.002
+        }
+      },
+      "fujifilm-x-t4-raf-lossless": {
+        "megapixels": 26.046,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 2.706,
+          "p95": 2.712,
+          "min": 2.694,
+          "max": 2.712,
+          "mean": 2.704,
+          "stdev": 0.009,
+          "cv": 0.003
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.104,
+          "p95": 0.104,
+          "min": 0.103,
+          "max": 0.104,
+          "mean": 0.104,
+          "stdev": 0,
+          "cv": 0.003
+        }
+      },
+      "hasselblad-l2d-20c-dng": {
+        "megapixels": 20.888,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.649,
+          "p95": 1.658,
+          "min": 1.649,
+          "max": 1.658,
+          "mean": 1.652,
+          "stdev": 0.005,
+          "cv": 0.003
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.079,
+          "p95": 0.079,
+          "min": 0.079,
+          "max": 0.079,
+          "mean": 0.079,
+          "stdev": 0,
+          "cv": 0.003
+        }
+      },
+      "hasselblad-x1d-ii-50c-3fr": {
+        "megapixels": 51.39,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.363,
+          "p95": 1.463,
+          "min": 1.351,
+          "max": 1.463,
+          "mean": 1.393,
+          "stdev": 0.062,
+          "cv": 0.044
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.027,
+          "p95": 0.028,
+          "min": 0.026,
+          "max": 0.028,
+          "mean": 0.027,
+          "stdev": 0.001,
+          "cv": 0.044
+        }
+      },
+      "insta360-one-x-dng": {
+        "megapixels": 18.483,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 0.78,
+          "p95": 0.786,
+          "min": 0.78,
+          "max": 0.786,
+          "mean": 0.782,
+          "stdev": 0.003,
+          "cv": 0.004
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.042,
+          "p95": 0.043,
+          "min": 0.042,
+          "max": 0.043,
+          "mean": 0.042,
+          "stdev": 0,
+          "cv": 0.004
+        }
+      },
+      "leica-m-monochrom-typ-246-dng": {
+        "megapixels": 23.936,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.522,
+          "p95": 1.56,
+          "min": 1.522,
+          "max": 1.56,
+          "mean": 1.535,
+          "stdev": 0.022,
+          "cv": 0.014
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.064,
+          "p95": 0.065,
+          "min": 0.064,
+          "max": 0.065,
+          "mean": 0.064,
+          "stdev": 0.001,
+          "cv": 0.014
+        }
+      },
+      "leica-m10-dng": {
+        "megapixels": 23.888,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.634,
+          "p95": 1.667,
+          "min": 1.63,
+          "max": 1.667,
+          "mean": 1.644,
+          "stdev": 0.02,
+          "cv": 0.012
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.068,
+          "p95": 0.07,
+          "min": 0.068,
+          "max": 0.07,
+          "mean": 0.069,
+          "stdev": 0.001,
+          "cv": 0.012
+        }
+      },
+      "nikon-z-6-nef-compressed": {
+        "megapixels": 24.499,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.444,
+          "p95": 1.461,
+          "min": 1.434,
+          "max": 1.461,
+          "mean": 1.446,
+          "stdev": 0.014,
+          "cv": 0.01
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.059,
+          "p95": 0.06,
+          "min": 0.059,
+          "max": 0.06,
+          "mean": 0.059,
+          "stdev": 0.001,
+          "cv": 0.01
+        }
+      },
+      "nikon-z-6-nef-lossless": {
+        "megapixels": 24.499,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.463,
+          "p95": 1.471,
+          "min": 1.458,
+          "max": 1.471,
+          "mean": 1.464,
+          "stdev": 0.007,
+          "cv": 0.004
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.06,
+          "p95": 0.06,
+          "min": 0.06,
+          "max": 0.06,
+          "mean": 0.06,
+          "stdev": 0,
+          "cv": 0.004
+        }
+      },
+      "olympus-xz-10-orf": {
+        "megapixels": 11.912,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.272,
+          "p95": 1.295,
+          "min": 1.267,
+          "max": 1.295,
+          "mean": 1.278,
+          "stdev": 0.015,
+          "cv": 0.012
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.107,
+          "p95": 0.109,
+          "min": 0.106,
+          "max": 0.109,
+          "mean": 0.107,
+          "stdev": 0.001,
+          "cv": 0.012
+        }
+      },
+      "om-system-om-1-orf": {
+        "megapixels": 20.421,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.712,
+          "p95": 1.734,
+          "min": 1.688,
+          "max": 1.734,
+          "mean": 1.711,
+          "stdev": 0.023,
+          "cv": 0.013
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.084,
+          "p95": 0.085,
+          "min": 0.083,
+          "max": 0.085,
+          "mean": 0.084,
+          "stdev": 0.001,
+          "cv": 0.013
+        }
+      },
+      "oneplus-one-dng": {
+        "megapixels": 13.129,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.484,
+          "p95": 1.512,
+          "min": 1.479,
+          "max": 1.512,
+          "mean": 1.492,
+          "stdev": 0.018,
+          "cv": 0.012
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.113,
+          "p95": 0.115,
+          "min": 0.113,
+          "max": 0.115,
+          "mean": 0.114,
+          "stdev": 0.001,
+          "cv": 0.012
+        }
+      },
+      "panasonic-dc-s5m2-rw2": {
+        "megapixels": 24.08,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.366,
+          "p95": 1.381,
+          "min": 1.362,
+          "max": 1.381,
+          "mean": 1.37,
+          "stdev": 0.01,
+          "cv": 0.007
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.057,
+          "p95": 0.057,
+          "min": 0.057,
+          "max": 0.057,
+          "mean": 0.057,
+          "stdev": 0,
+          "cv": 0.007
+        }
+      },
+      "pentax-k-3-mark-iii-monochrome-dng": {
+        "megapixels": 25.892,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.52,
+          "p95": 1.53,
+          "min": 1.518,
+          "max": 1.53,
+          "mean": 1.523,
+          "stdev": 0.007,
+          "cv": 0.004
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.059,
+          "p95": 0.059,
+          "min": 0.059,
+          "max": 0.059,
+          "mean": 0.059,
+          "stdev": 0,
+          "cv": 0.004
+        }
+      },
+      "pentax-k-3-mark-iii-pef": {
+        "megapixels": 25.892,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.63,
+          "p95": 1.638,
+          "min": 1.621,
+          "max": 1.638,
+          "mean": 1.63,
+          "stdev": 0.008,
+          "cv": 0.005
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.063,
+          "p95": 0.063,
+          "min": 0.063,
+          "max": 0.063,
+          "mean": 0.063,
+          "stdev": 0,
+          "cv": 0.005
+        }
+      },
+      "ricoh-gxr-s10-dng": {
+        "megapixels": 10.091,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.359,
+          "p95": 1.365,
+          "min": 1.349,
+          "max": 1.365,
+          "mean": 1.357,
+          "stdev": 0.008,
+          "cv": 0.006
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.135,
+          "p95": 0.135,
+          "min": 0.134,
+          "max": 0.135,
+          "mean": 0.135,
+          "stdev": 0.001,
+          "cv": 0.006
+        }
+      },
+      "sony-dslr-a450-arw": {
+        "megapixels": 14.156,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.225,
+          "p95": 1.247,
+          "min": 1.224,
+          "max": 1.247,
+          "mean": 1.232,
+          "stdev": 0.013,
+          "cv": 0.011
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.087,
+          "p95": 0.088,
+          "min": 0.086,
+          "max": 0.088,
+          "mean": 0.087,
+          "stdev": 0.001,
+          "cv": 0.011
+        }
+      },
+      "sony-ilce-7m4-arw-compressed-apsc": {
+        "megapixels": 14.695,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.004,
+          "p95": 1.018,
+          "min": 1.004,
+          "max": 1.018,
+          "mean": 1.009,
+          "stdev": 0.008,
+          "cv": 0.008
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.068,
+          "p95": 0.069,
+          "min": 0.068,
+          "max": 0.069,
+          "mean": 0.069,
+          "stdev": 0.001,
+          "cv": 0.008
+        }
+      },
+      "sony-ilce-7m4-arw-compressed": {
+        "megapixels": 32.947,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.403,
+          "p95": 1.422,
+          "min": 1.393,
+          "max": 1.422,
+          "mean": 1.406,
+          "stdev": 0.015,
+          "cv": 0.011
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.043,
+          "p95": 0.043,
+          "min": 0.042,
+          "max": 0.043,
+          "mean": 0.043,
+          "stdev": 0,
+          "cv": 0.011
+        }
+      },
+      "sony-ilce-7m4-arw-lossless-l": {
+        "megapixels": 32.947,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 2.055,
+          "p95": 2.256,
+          "min": 2.051,
+          "max": 2.256,
+          "mean": 2.121,
+          "stdev": 0.117,
+          "cv": 0.055
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.062,
+          "p95": 0.068,
+          "min": 0.062,
+          "max": 0.068,
+          "mean": 0.064,
+          "stdev": 0.004,
+          "cv": 0.055
+        }
+      },
+      "sony-ilce-7m4-arw-lossless-m": {
+        "megapixels": 14.242,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.304,
+          "p95": 1.406,
+          "min": 1.298,
+          "max": 1.406,
+          "mean": 1.336,
+          "stdev": 0.06,
+          "cv": 0.045
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.092,
+          "p95": 0.099,
+          "min": 0.091,
+          "max": 0.099,
+          "mean": 0.094,
+          "stdev": 0.004,
+          "cv": 0.045
+        }
+      },
+      "sony-ilce-7m4-arw-lossless-s": {
+        "megapixels": 8.242,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.103,
+          "p95": 1.152,
+          "min": 1.096,
+          "max": 1.152,
+          "mean": 1.117,
+          "stdev": 0.031,
+          "cv": 0.027
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.134,
+          "p95": 0.14,
+          "min": 0.133,
+          "max": 0.14,
+          "mean": 0.136,
+          "stdev": 0.004,
+          "cv": 0.027
+        }
+      },
+      "sony-ilce-7m4-arw-uncompressed": {
+        "megapixels": 32.947,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.169,
+          "p95": 1.269,
+          "min": 1.168,
+          "max": 1.269,
+          "mean": 1.202,
+          "stdev": 0.058,
+          "cv": 0.048
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.035,
+          "p95": 0.039,
+          "min": 0.035,
+          "max": 0.039,
+          "mean": 0.036,
+          "stdev": 0.002,
+          "cv": 0.048
+        }
+      },
+      "sony-ilce-7rm5-arw-compressed": {
+        "megapixels": 60.98,
+        "analysis_seconds": {
+          "n": 3,
+          "median": 1.658,
+          "p95": 1.717,
+          "min": 1.618,
+          "max": 1.717,
+          "mean": 1.665,
+          "stdev": 0.05,
+          "cv": 0.03
+        },
+        "seconds_per_megapixel": {
+          "n": 3,
+          "median": 0.027,
+          "p95": 0.028,
+          "min": 0.027,
+          "max": 0.028,
+          "mean": 0.027,
+          "stdev": 0.001,
+          "cv": 0.03
+        }
+      }
+    },
+    "items": [
+      {
+        "name": "adobe-dng-canon-eos-5d-mark-iii-linear-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.911,
+        "seconds": 2.111,
+        "megapixels": 10.454,
+        "seconds_per_megapixel": 0.183
+      },
+      {
+        "name": "bq-aquaris-u-plus-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.375,
+        "seconds": 1.586,
+        "megapixels": 16.147,
+        "seconds_per_megapixel": 0.085
+      },
+      {
+        "name": "canon-eos-350d-cr2",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.415,
+        "seconds": 1.605,
+        "megapixels": 8.039,
+        "seconds_per_megapixel": 0.176
+      },
+      {
+        "name": "canon-eos-5d-mark-iv-cr2-raw",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.161,
+        "seconds": 2.353,
+        "megapixels": 30.361,
+        "seconds_per_megapixel": 0.071
+      },
+      {
+        "name": "canon-eos-5d-mark-iv-cr2-sraw",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.281,
+        "seconds": 1.467,
+        "megapixels": 7.526,
+        "seconds_per_megapixel": 0.17
+      },
+      {
+        "name": "canon-eos-7d-mark-ii-dng-jxl",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.786,
+        "seconds": 1.972,
+        "megapixels": 20.17,
+        "seconds_per_megapixel": 0.089
+      },
+      {
+        "name": "canon-eos-r5-cr3-craw-crop-dualpixel",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.318,
+        "seconds": 1.508,
+        "megapixels": 17.25,
+        "seconds_per_megapixel": 0.076
+      },
+      {
+        "name": "canon-eos-r5-cr3-craw",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.026,
+        "seconds": 2.214,
+        "megapixels": 44.747,
+        "seconds_per_megapixel": 0.045
+      },
+      {
+        "name": "canon-eos-r5-cr3-raw-crop",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.37,
+        "seconds": 1.558,
+        "megapixels": 17.25,
+        "seconds_per_megapixel": 0.079
+      },
+      {
+        "name": "canon-eos-r5-cr3-raw",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.837,
+        "seconds": 2.023,
+        "megapixels": 44.747,
+        "seconds_per_megapixel": 0.041
+      },
+      {
+        "name": "dji-fc220-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.031,
+        "seconds": 1.238,
+        "megapixels": 12,
+        "seconds_per_megapixel": 0.086
+      },
+      {
+        "name": "dji-fc4382-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.54,
+        "seconds": 1.755,
+        "megapixels": 12.193,
+        "seconds_per_megapixel": 0.126
+      },
+      {
+        "name": "dji-fc7303-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.321,
+        "seconds": 1.525,
+        "megapixels": 12,
+        "seconds_per_megapixel": 0.11
+      },
+      {
+        "name": "fujifilm-gfx-50s-ii-raf-compressed",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 4.016,
+        "seconds": 4.226,
+        "megapixels": 51.402,
+        "seconds_per_megapixel": 0.078
+      },
+      {
+        "name": "fujifilm-x-t4-raf-compressed",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.772,
+        "seconds": 2.977,
+        "megapixels": 26.046,
+        "seconds_per_megapixel": 0.106
+      },
+      {
+        "name": "fujifilm-x-t4-raf-lossless",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.706,
+        "seconds": 2.92,
+        "megapixels": 26.046,
+        "seconds_per_megapixel": 0.104
+      },
+      {
+        "name": "hasselblad-l2d-20c-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.649,
+        "seconds": 1.856,
+        "megapixels": 20.888,
+        "seconds_per_megapixel": 0.079
+      },
+      {
+        "name": "hasselblad-x1d-ii-50c-3fr",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.463,
+        "seconds": 1.67,
+        "megapixels": 51.39,
+        "seconds_per_megapixel": 0.028
+      },
+      {
+        "name": "insta360-one-x-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 0.78,
+        "seconds": 1.024,
+        "megapixels": 18.483,
+        "seconds_per_megapixel": 0.042
+      },
+      {
+        "name": "leica-m-monochrom-typ-246-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.522,
+        "seconds": 1.715,
+        "megapixels": 23.936,
+        "seconds_per_megapixel": 0.064
+      },
+      {
+        "name": "leica-m10-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.667,
+        "seconds": 1.854,
+        "megapixels": 23.888,
+        "seconds_per_megapixel": 0.07
+      },
+      {
+        "name": "nikon-z-6-nef-compressed",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.461,
+        "seconds": 1.646,
+        "megapixels": 24.499,
+        "seconds_per_megapixel": 0.06
+      },
+      {
+        "name": "nikon-z-6-nef-lossless",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.471,
+        "seconds": 1.657,
+        "megapixels": 24.499,
+        "seconds_per_megapixel": 0.06
+      },
+      {
+        "name": "nikon-z-8-nef-he-star",
+        "repetition": 1,
+        "warmup": false,
+        "status": "error",
+        "analysis_seconds": null,
+        "seconds": null,
+        "megapixels": null,
+        "seconds_per_megapixel": null
+      },
+      {
+        "name": "nikon-z-8-nef-he",
+        "repetition": 1,
+        "warmup": false,
+        "status": "error",
+        "analysis_seconds": null,
+        "seconds": null,
+        "megapixels": null,
+        "seconds_per_megapixel": null
+      },
+      {
+        "name": "olympus-xz-10-orf",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.295,
+        "seconds": 1.507,
+        "megapixels": 11.912,
+        "seconds_per_megapixel": 0.109
+      },
+      {
+        "name": "om-system-om-1-orf",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.712,
+        "seconds": 1.922,
+        "megapixels": 20.421,
+        "seconds_per_megapixel": 0.084
+      },
+      {
+        "name": "oneplus-one-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.512,
+        "seconds": 1.716,
+        "megapixels": 13.129,
+        "seconds_per_megapixel": 0.115
+      },
+      {
+        "name": "panasonic-dc-s5m2-rw2",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.381,
+        "seconds": 1.577,
+        "megapixels": 24.08,
+        "seconds_per_megapixel": 0.057
+      },
+      {
+        "name": "pentax-k-3-mark-iii-monochrome-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.518,
+        "seconds": 1.708,
+        "megapixels": 25.892,
+        "seconds_per_megapixel": 0.059
+      },
+      {
+        "name": "pentax-k-3-mark-iii-pef",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.63,
+        "seconds": 1.817,
+        "megapixels": 25.892,
+        "seconds_per_megapixel": 0.063
+      },
+      {
+        "name": "ricoh-gxr-s10-dng",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.365,
+        "seconds": 1.579,
+        "megapixels": 10.091,
+        "seconds_per_megapixel": 0.135
+      },
+      {
+        "name": "sony-dslr-a450-arw",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.247,
+        "seconds": 1.443,
+        "megapixels": 14.156,
+        "seconds_per_megapixel": 0.088
+      },
+      {
+        "name": "sony-ilce-7m4-arw-compressed-apsc",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.004,
+        "seconds": 1.19,
+        "megapixels": 14.695,
+        "seconds_per_megapixel": 0.068
+      },
+      {
+        "name": "sony-ilce-7m4-arw-compressed",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.422,
+        "seconds": 1.608,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.043
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-l",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.256,
+        "seconds": 2.444,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.068
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-m",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.406,
+        "seconds": 1.588,
+        "megapixels": 14.242,
+        "seconds_per_megapixel": 0.099
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-s",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.152,
+        "seconds": 1.338,
+        "megapixels": 8.242,
+        "seconds_per_megapixel": 0.14
+      },
+      {
+        "name": "sony-ilce-7m4-arw-uncompressed",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.269,
+        "seconds": 1.454,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.039
+      },
+      {
+        "name": "sony-ilce-7rm5-arw-compressed",
+        "repetition": 1,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.717,
+        "seconds": 1.903,
+        "megapixels": 60.98,
+        "seconds_per_megapixel": 0.028
+      },
+      {
+        "name": "adobe-dng-canon-eos-5d-mark-iii-linear-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.931,
+        "seconds": 2.122,
+        "megapixels": 10.454,
+        "seconds_per_megapixel": 0.185
+      },
+      {
+        "name": "bq-aquaris-u-plus-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.351,
+        "seconds": 1.563,
+        "megapixels": 16.147,
+        "seconds_per_megapixel": 0.084
+      },
+      {
+        "name": "canon-eos-350d-cr2",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.4,
+        "seconds": 1.594,
+        "megapixels": 8.039,
+        "seconds_per_megapixel": 0.174
+      },
+      {
+        "name": "canon-eos-5d-mark-iv-cr2-raw",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.1,
+        "seconds": 2.301,
+        "megapixels": 30.361,
+        "seconds_per_megapixel": 0.069
+      },
+      {
+        "name": "canon-eos-5d-mark-iv-cr2-sraw",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.288,
+        "seconds": 1.475,
+        "megapixels": 7.526,
+        "seconds_per_megapixel": 0.171
+      },
+      {
+        "name": "canon-eos-7d-mark-ii-dng-jxl",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.795,
+        "seconds": 1.982,
+        "megapixels": 20.17,
+        "seconds_per_megapixel": 0.089
+      },
+      {
+        "name": "canon-eos-r5-cr3-craw-crop-dualpixel",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.311,
+        "seconds": 1.501,
+        "megapixels": 17.25,
+        "seconds_per_megapixel": 0.076
+      },
+      {
+        "name": "canon-eos-r5-cr3-craw",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.012,
+        "seconds": 2.2,
+        "megapixels": 44.747,
+        "seconds_per_megapixel": 0.045
+      },
+      {
+        "name": "canon-eos-r5-cr3-raw-crop",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.366,
+        "seconds": 1.554,
+        "megapixels": 17.25,
+        "seconds_per_megapixel": 0.079
+      },
+      {
+        "name": "canon-eos-r5-cr3-raw",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.823,
+        "seconds": 2.011,
+        "megapixels": 44.747,
+        "seconds_per_megapixel": 0.041
+      },
+      {
+        "name": "dji-fc220-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.009,
+        "seconds": 1.215,
+        "megapixels": 12,
+        "seconds_per_megapixel": 0.084
+      },
+      {
+        "name": "dji-fc4382-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.52,
+        "seconds": 1.733,
+        "megapixels": 12.193,
+        "seconds_per_megapixel": 0.125
+      },
+      {
+        "name": "dji-fc7303-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.339,
+        "seconds": 1.546,
+        "megapixels": 12,
+        "seconds_per_megapixel": 0.112
+      },
+      {
+        "name": "fujifilm-gfx-50s-ii-raf-compressed",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 4.019,
+        "seconds": 4.228,
+        "megapixels": 51.402,
+        "seconds_per_megapixel": 0.078
+      },
+      {
+        "name": "fujifilm-x-t4-raf-compressed",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.771,
+        "seconds": 2.978,
+        "megapixels": 26.046,
+        "seconds_per_megapixel": 0.106
+      },
+      {
+        "name": "fujifilm-x-t4-raf-lossless",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.712,
+        "seconds": 2.918,
+        "megapixels": 26.046,
+        "seconds_per_megapixel": 0.104
+      },
+      {
+        "name": "hasselblad-l2d-20c-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.658,
+        "seconds": 1.881,
+        "megapixels": 20.888,
+        "seconds_per_megapixel": 0.079
+      },
+      {
+        "name": "hasselblad-x1d-ii-50c-3fr",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.363,
+        "seconds": 1.571,
+        "megapixels": 51.39,
+        "seconds_per_megapixel": 0.027
+      },
+      {
+        "name": "insta360-one-x-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 0.78,
+        "seconds": 1.022,
+        "megapixels": 18.483,
+        "seconds_per_megapixel": 0.042
+      },
+      {
+        "name": "leica-m-monochrom-typ-246-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.522,
+        "seconds": 1.708,
+        "megapixels": 23.936,
+        "seconds_per_megapixel": 0.064
+      },
+      {
+        "name": "leica-m10-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.634,
+        "seconds": 1.824,
+        "megapixels": 23.888,
+        "seconds_per_megapixel": 0.068
+      },
+      {
+        "name": "nikon-z-6-nef-compressed",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.434,
+        "seconds": 1.618,
+        "megapixels": 24.499,
+        "seconds_per_megapixel": 0.059
+      },
+      {
+        "name": "nikon-z-6-nef-lossless",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.458,
+        "seconds": 1.655,
+        "megapixels": 24.499,
+        "seconds_per_megapixel": 0.06
+      },
+      {
+        "name": "nikon-z-8-nef-he-star",
+        "repetition": 2,
+        "warmup": false,
+        "status": "error",
+        "analysis_seconds": null,
+        "seconds": null,
+        "megapixels": null,
+        "seconds_per_megapixel": null
+      },
+      {
+        "name": "nikon-z-8-nef-he",
+        "repetition": 2,
+        "warmup": false,
+        "status": "error",
+        "analysis_seconds": null,
+        "seconds": null,
+        "megapixels": null,
+        "seconds_per_megapixel": null
+      },
+      {
+        "name": "olympus-xz-10-orf",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.267,
+        "seconds": 1.48,
+        "megapixels": 11.912,
+        "seconds_per_megapixel": 0.106
+      },
+      {
+        "name": "om-system-om-1-orf",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.688,
+        "seconds": 1.893,
+        "megapixels": 20.421,
+        "seconds_per_megapixel": 0.083
+      },
+      {
+        "name": "oneplus-one-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.484,
+        "seconds": 1.691,
+        "megapixels": 13.129,
+        "seconds_per_megapixel": 0.113
+      },
+      {
+        "name": "panasonic-dc-s5m2-rw2",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.366,
+        "seconds": 1.559,
+        "megapixels": 24.08,
+        "seconds_per_megapixel": 0.057
+      },
+      {
+        "name": "pentax-k-3-mark-iii-monochrome-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.53,
+        "seconds": 1.722,
+        "megapixels": 25.892,
+        "seconds_per_megapixel": 0.059
+      },
+      {
+        "name": "pentax-k-3-mark-iii-pef",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.638,
+        "seconds": 1.824,
+        "megapixels": 25.892,
+        "seconds_per_megapixel": 0.063
+      },
+      {
+        "name": "ricoh-gxr-s10-dng",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.359,
+        "seconds": 1.576,
+        "megapixels": 10.091,
+        "seconds_per_megapixel": 0.135
+      },
+      {
+        "name": "sony-dslr-a450-arw",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.225,
+        "seconds": 1.422,
+        "megapixels": 14.156,
+        "seconds_per_megapixel": 0.087
+      },
+      {
+        "name": "sony-ilce-7m4-arw-compressed-apsc",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.018,
+        "seconds": 1.206,
+        "megapixels": 14.695,
+        "seconds_per_megapixel": 0.069
+      },
+      {
+        "name": "sony-ilce-7m4-arw-compressed",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.403,
+        "seconds": 1.588,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.043
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-l",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.055,
+        "seconds": 2.241,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.062
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-m",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.298,
+        "seconds": 1.482,
+        "megapixels": 14.242,
+        "seconds_per_megapixel": 0.091
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-s",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.096,
+        "seconds": 1.282,
+        "megapixels": 8.242,
+        "seconds_per_megapixel": 0.133
+      },
+      {
+        "name": "sony-ilce-7m4-arw-uncompressed",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.168,
+        "seconds": 1.357,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.035
+      },
+      {
+        "name": "sony-ilce-7rm5-arw-compressed",
+        "repetition": 2,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.658,
+        "seconds": 1.845,
+        "megapixels": 60.98,
+        "seconds_per_megapixel": 0.027
+      },
+      {
+        "name": "adobe-dng-canon-eos-5d-mark-iii-linear-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.895,
+        "seconds": 2.083,
+        "megapixels": 10.454,
+        "seconds_per_megapixel": 0.181
+      },
+      {
+        "name": "bq-aquaris-u-plus-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.357,
+        "seconds": 1.57,
+        "megapixels": 16.147,
+        "seconds_per_megapixel": 0.084
+      },
+      {
+        "name": "canon-eos-350d-cr2",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.417,
+        "seconds": 1.607,
+        "megapixels": 8.039,
+        "seconds_per_megapixel": 0.176
+      },
+      {
+        "name": "canon-eos-5d-mark-iv-cr2-raw",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.157,
+        "seconds": 2.349,
+        "megapixels": 30.361,
+        "seconds_per_megapixel": 0.071
+      },
+      {
+        "name": "canon-eos-5d-mark-iv-cr2-sraw",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.269,
+        "seconds": 1.457,
+        "megapixels": 7.526,
+        "seconds_per_megapixel": 0.169
+      },
+      {
+        "name": "canon-eos-7d-mark-ii-dng-jxl",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.792,
+        "seconds": 1.99,
+        "megapixels": 20.17,
+        "seconds_per_megapixel": 0.089
+      },
+      {
+        "name": "canon-eos-r5-cr3-craw-crop-dualpixel",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.3,
+        "seconds": 1.49,
+        "megapixels": 17.25,
+        "seconds_per_megapixel": 0.075
+      },
+      {
+        "name": "canon-eos-r5-cr3-craw",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.022,
+        "seconds": 2.209,
+        "megapixels": 44.747,
+        "seconds_per_megapixel": 0.045
+      },
+      {
+        "name": "canon-eos-r5-cr3-raw-crop",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.36,
+        "seconds": 1.548,
+        "megapixels": 17.25,
+        "seconds_per_megapixel": 0.079
+      },
+      {
+        "name": "canon-eos-r5-cr3-raw",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.816,
+        "seconds": 2.006,
+        "megapixels": 44.747,
+        "seconds_per_megapixel": 0.041
+      },
+      {
+        "name": "dji-fc220-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.047,
+        "seconds": 1.257,
+        "megapixels": 12,
+        "seconds_per_megapixel": 0.087
+      },
+      {
+        "name": "dji-fc4382-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.521,
+        "seconds": 1.739,
+        "megapixels": 12.193,
+        "seconds_per_megapixel": 0.125
+      },
+      {
+        "name": "dji-fc7303-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.328,
+        "seconds": 1.534,
+        "megapixels": 12,
+        "seconds_per_megapixel": 0.111
+      },
+      {
+        "name": "fujifilm-gfx-50s-ii-raf-compressed",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 3.979,
+        "seconds": 4.189,
+        "megapixels": 51.402,
+        "seconds_per_megapixel": 0.077
+      },
+      {
+        "name": "fujifilm-x-t4-raf-compressed",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.782,
+        "seconds": 2.985,
+        "megapixels": 26.046,
+        "seconds_per_megapixel": 0.107
+      },
+      {
+        "name": "fujifilm-x-t4-raf-lossless",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.694,
+        "seconds": 2.924,
+        "megapixels": 26.046,
+        "seconds_per_megapixel": 0.103
+      },
+      {
+        "name": "hasselblad-l2d-20c-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.649,
+        "seconds": 1.856,
+        "megapixels": 20.888,
+        "seconds_per_megapixel": 0.079
+      },
+      {
+        "name": "hasselblad-x1d-ii-50c-3fr",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.351,
+        "seconds": 1.555,
+        "megapixels": 51.39,
+        "seconds_per_megapixel": 0.026
+      },
+      {
+        "name": "insta360-one-x-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 0.786,
+        "seconds": 1.026,
+        "megapixels": 18.483,
+        "seconds_per_megapixel": 0.043
+      },
+      {
+        "name": "leica-m-monochrom-typ-246-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.56,
+        "seconds": 1.746,
+        "megapixels": 23.936,
+        "seconds_per_megapixel": 0.065
+      },
+      {
+        "name": "leica-m10-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.63,
+        "seconds": 1.816,
+        "megapixels": 23.888,
+        "seconds_per_megapixel": 0.068
+      },
+      {
+        "name": "nikon-z-6-nef-compressed",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.444,
+        "seconds": 1.628,
+        "megapixels": 24.499,
+        "seconds_per_megapixel": 0.059
+      },
+      {
+        "name": "nikon-z-6-nef-lossless",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.463,
+        "seconds": 1.647,
+        "megapixels": 24.499,
+        "seconds_per_megapixel": 0.06
+      },
+      {
+        "name": "nikon-z-8-nef-he-star",
+        "repetition": 3,
+        "warmup": false,
+        "status": "error",
+        "analysis_seconds": null,
+        "seconds": null,
+        "megapixels": null,
+        "seconds_per_megapixel": null
+      },
+      {
+        "name": "nikon-z-8-nef-he",
+        "repetition": 3,
+        "warmup": false,
+        "status": "error",
+        "analysis_seconds": null,
+        "seconds": null,
+        "megapixels": null,
+        "seconds_per_megapixel": null
+      },
+      {
+        "name": "olympus-xz-10-orf",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.272,
+        "seconds": 1.49,
+        "megapixels": 11.912,
+        "seconds_per_megapixel": 0.107
+      },
+      {
+        "name": "om-system-om-1-orf",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.734,
+        "seconds": 1.939,
+        "megapixels": 20.421,
+        "seconds_per_megapixel": 0.085
+      },
+      {
+        "name": "oneplus-one-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.479,
+        "seconds": 1.688,
+        "megapixels": 13.129,
+        "seconds_per_megapixel": 0.113
+      },
+      {
+        "name": "panasonic-dc-s5m2-rw2",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.362,
+        "seconds": 1.55,
+        "megapixels": 24.08,
+        "seconds_per_megapixel": 0.057
+      },
+      {
+        "name": "pentax-k-3-mark-iii-monochrome-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.52,
+        "seconds": 1.708,
+        "megapixels": 25.892,
+        "seconds_per_megapixel": 0.059
+      },
+      {
+        "name": "pentax-k-3-mark-iii-pef",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.621,
+        "seconds": 1.81,
+        "megapixels": 25.892,
+        "seconds_per_megapixel": 0.063
+      },
+      {
+        "name": "ricoh-gxr-s10-dng",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.349,
+        "seconds": 1.56,
+        "megapixels": 10.091,
+        "seconds_per_megapixel": 0.134
+      },
+      {
+        "name": "sony-dslr-a450-arw",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.224,
+        "seconds": 1.428,
+        "megapixels": 14.156,
+        "seconds_per_megapixel": 0.086
+      },
+      {
+        "name": "sony-ilce-7m4-arw-compressed-apsc",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.004,
+        "seconds": 1.191,
+        "megapixels": 14.695,
+        "seconds_per_megapixel": 0.068
+      },
+      {
+        "name": "sony-ilce-7m4-arw-compressed",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.393,
+        "seconds": 1.578,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.042
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-l",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 2.051,
+        "seconds": 2.238,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.062
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-m",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.304,
+        "seconds": 1.491,
+        "megapixels": 14.242,
+        "seconds_per_megapixel": 0.092
+      },
+      {
+        "name": "sony-ilce-7m4-arw-lossless-s",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.103,
+        "seconds": 1.288,
+        "megapixels": 8.242,
+        "seconds_per_megapixel": 0.134
+      },
+      {
+        "name": "sony-ilce-7m4-arw-uncompressed",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.169,
+        "seconds": 1.354,
+        "megapixels": 32.947,
+        "seconds_per_megapixel": 0.035
+      },
+      {
+        "name": "sony-ilce-7rm5-arw-compressed",
+        "repetition": 3,
+        "warmup": false,
+        "status": "ok",
+        "analysis_seconds": 1.618,
+        "seconds": 1.809,
+        "megapixels": 60.98,
+        "seconds_per_megapixel": 0.027
+      }
+    ]
+  },
+  "runs": [
+    {
+      "name": "lucent-auto",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 11.03,
+      "log": "build\\w13-rel-bench\\logs\\auto-analysis\\warmup.stderr.txt"
+    },
+    {
+      "name": "lucent-auto",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 72.469,
+      "log": "build\\w13-rel-bench\\logs\\auto-analysis\\run-r1.stderr.txt",
+      "totals": {
+        "items": 40,
+        "failed": 2,
+        "regularised": 0,
+        "reopened_sessions": 0,
+        "peak_session_bytes": 0,
+        "analysis_seconds": 72.0503944,
+        "seconds": 72.289249
+      },
+      "resources": {
+        "wall_s": 72.469,
+        "cpu_s": 364.094,
+        "cpu_percent_of_machine": 41.868,
+        "root": {
+          "name": "lucent-auto.exe",
+          "peak_commit_mib": 1151.762,
+          "peak_working_set_mib": 1156.703,
+          "cpu_s": 364.062
+        },
+        "descendants": [
+          {
+            "name": "conhost.exe",
+            "processes": 1,
+            "peak_commit_mib": 2.621,
+            "peak_working_set_mib": 9.492,
+            "cpu_s": 0.031,
+            "exit_codes": [0]
+          }
+        ],
+        "samples": 277,
+        "sampled": {
+          "root_private_max_mib": 1151.711,
+          "descendants_private_max_mib": 2.617,
+          "tree_private_max_mib": 1154.328,
+          "descendants_max_live": 1,
+          "system_cpu_percent_mean": 46.616,
+          "tree_cpu_percent_max": 98.593,
+          "system_available_min_mib": 1922.445
+        }
+      }
+    },
+    {
+      "name": "lucent-auto",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 71.685,
+      "log": "build\\w13-rel-bench\\logs\\auto-analysis\\run-r2.stderr.txt",
+      "totals": {
+        "items": 40,
+        "failed": 2,
+        "regularised": 0,
+        "reopened_sessions": 0,
+        "peak_session_bytes": 0,
+        "analysis_seconds": 71.2699664,
+        "seconds": 71.4969191
+      },
+      "resources": {
+        "wall_s": 71.685,
+        "cpu_s": 371.469,
+        "cpu_percent_of_machine": 43.183,
+        "root": {
+          "name": "lucent-auto.exe",
+          "peak_commit_mib": 1151.535,
+          "peak_working_set_mib": 1157.281,
+          "cpu_s": 371.453
+        },
+        "descendants": [
+          {
+            "name": "conhost.exe",
+            "processes": 1,
+            "peak_commit_mib": 2.621,
+            "peak_working_set_mib": 9.492,
+            "cpu_s": 0.016,
+            "exit_codes": [0]
+          }
+        ],
+        "samples": 274,
+        "sampled": {
+          "root_private_max_mib": 921.121,
+          "descendants_private_max_mib": 2.617,
+          "tree_private_max_mib": 923.738,
+          "descendants_max_live": 1,
+          "system_cpu_percent_mean": 47.998,
+          "tree_cpu_percent_max": 95.763,
+          "system_available_min_mib": 2052.258
+        }
+      }
+    },
+    {
+      "name": "lucent-auto",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 71.623,
+      "log": "build\\w13-rel-bench\\logs\\auto-analysis\\run-r3.stderr.txt",
+      "totals": {
+        "items": 40,
+        "failed": 2,
+        "regularised": 0,
+        "reopened_sessions": 0,
+        "peak_session_bytes": 0,
+        "analysis_seconds": 71.1867531,
+        "seconds": 71.426257
+      },
+      "resources": {
+        "wall_s": 71.623,
+        "cpu_s": 365.812,
+        "cpu_percent_of_machine": 42.562,
+        "root": {
+          "name": "lucent-auto.exe",
+          "peak_commit_mib": 1151.094,
+          "peak_working_set_mib": 1156.742,
+          "cpu_s": 365.797
+        },
+        "descendants": [
+          {
+            "name": "conhost.exe",
+            "processes": 1,
+            "peak_commit_mib": 2.621,
+            "peak_working_set_mib": 9.523,
+            "cpu_s": 0.016,
+            "exit_codes": [0]
+          }
+        ],
+        "samples": 274,
+        "sampled": {
+          "root_private_max_mib": 917.281,
+          "descendants_private_max_mib": 2.617,
+          "tree_private_max_mib": 919.898,
+          "descendants_max_live": 1,
+          "system_cpu_percent_mean": 47.28,
+          "tree_cpu_percent_max": 93.91,
+          "system_available_min_mib": 2115.918
+        }
+      }
+    }
+  ]
+}

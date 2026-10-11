@@ -37,10 +37,13 @@ std::uint64_t fallback_stage_two_bytes(image::Size size) {
 }
 
 // Working memory of a stage-two render of `source` with `settings` and its display products: the
-// engine's settings-aware stage-two estimate at the source's size (its RGB image and the largest
-// operation's working memory: local tone, chroma denoising, brush rasters and the masks' base
-// layer, the geometry's output), plus the 8-bit image and the clipping mask (4 bytes per pixel).
-std::uint64_t stage_two_claim(const engine::StageOneImage& source, const engine::DevelopSettings& settings) {
+// renderer's settings-aware stage-two estimate at the source's size (SourceRenderer::
+// estimate_stage_two(): its RGB image and the largest operation's working memory: local tone,
+// chroma denoising, brush rasters and the masks' base layer over their supports mapped through the
+// lens correction, the geometry's output), plus the 8-bit image and the clipping mask (4 bytes per
+// pixel).
+std::uint64_t stage_two_claim(const SourceRenderer& renderer, const engine::StageOneImage& source,
+                              const engine::DevelopSettings& settings) {
     const image::Size size = source.pixels.size();
     if (size.empty()) {
         return 0;
@@ -48,17 +51,24 @@ std::uint64_t stage_two_claim(const engine::StageOneImage& source, const engine:
     engine::StageOneRequest request;
     request.kind = source.kind;
     request.proxy_long_edge = source.scale < 1.0 ? std::max(size.width, size.height) : 0;
-    auto estimate = engine::estimate_develop_memory(source.metadata, request, settings);
+    auto estimate = renderer.estimate_stage_two(source, request, settings);
     if (!estimate || estimate->stage_two_bytes == 0) {
         return fallback_stage_two_bytes(size);
     }
     return estimate->stage_two_bytes + static_cast<std::uint64_t>(size.area()) * 4;
 }
 
-// True when a render of `settings` can fill a session cache: the denoised image is kept when
-// denoising is applied, brush rasters when a brush mask has an effect.
-bool uses_stage_two_cache(const engine::DevelopSettings& settings) {
-    return !settings.chroma_denoise.is_identity();
+// True when a render of `settings` can fill the session's stage-two cache: the denoised image is
+// kept when denoising is applied, the lens-corrected image when the renderer has a lens database
+// and the settings ask for a lens correction (whether the photograph's plan corrects anything is
+// known only when it renders, so the claim is made for any such settings).
+bool uses_stage_two_cache(const engine::DevelopSettings& settings, bool lens_database) {
+    if (!settings.chroma_denoise.is_identity()) {
+        return true;
+    }
+    const std::optional<engine::LensCorrectionSetting> lens = engine::effective_lens_correction(settings);
+    return lens_database && lens &&
+           (lens->distortion || lens->lateral_chromatic_aberration || lens->vignetting);
 }
 
 bool uses_mask_cache(const engine::DevelopSettings& settings) {
@@ -469,7 +479,8 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         std::uint64_t cache_room = 0;
         if (proxy) {
             const bool masks = caches.masks && uses_mask_cache(settings);
-            const bool denoised = caches.stage_two && uses_stage_two_cache(settings);
+            const bool denoised =
+                caches.stage_two && uses_stage_two_cache(settings, renderer->lens_database().has_value());
             if (masks || denoised) {
                 const std::uint64_t capacity = (caches.masks ? options.mask_cache_bytes : 0) +
                                                (caches.stage_two ? options.stage_two_cache_bytes : 0);
@@ -485,7 +496,7 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
         std::uint64_t bytes = 0;
         try {
             if (!cancel.is_cancelled() && source) {
-                bytes = stage_two_claim(*source, settings);
+                bytes = stage_two_claim(*renderer, *source, settings);
                 Expected<AdmissionLease> lease = kind == RenderKind::Full
                                                      ? context.admit(bytes)
                                                      : context.admission().retain(bytes + cache_room, cancel);
@@ -523,9 +534,18 @@ struct DevelopPreviewService::State : std::enable_shared_from_this<State> {
                                     summarize_render(rendered->report, source->metadata.interpretation);
                                 out->summary.estimated_peak_bytes = bytes;
                                 out->stage_two_seconds = rendered->report.stage_two_seconds;
-                                // The geometry's frame: the camera's image area for geometry
-                                // version 2 (ADR 0017), the whole upright image otherwise.
-                                if (auto mapping = engine::geometry_mapping(settings, *source)) {
+                                // The mapping stage two rendered with: the geometry's frame (the
+                                // camera's image area for geometry version 2, ADR 0017, the whole
+                                // upright image otherwise) and the lens correction's point mapping
+                                // (ADR 0023: engine::geometry_mapping() of the report), so the
+                                // outlines stay on the masks' content.
+                                auto mapping = engine::geometry_mapping(settings, *source);
+                                if (mapping && rendered->report.lens_correction.plan.geometry) {
+                                    mapping = engine::GeometryMapping::create(
+                                        settings.geometry, mapping->upright_size(), mapping->frame(),
+                                        *rendered->report.lens_correction.plan.geometry, source->full_size);
+                                }
+                                if (mapping) {
                                     out->masks = mask_overlays(settings, *mapping);
                                     out->geometry = std::move(*mapping);
                                 }
@@ -882,7 +902,9 @@ std::optional<DevelopSessionStats> DevelopPreviewService::stats(ItemId item) con
         stats.mask_cache_hits = s->mask_cache->stats().hits;
     }
     if (s->stage_two_cache) {
-        stats.stage_two_cache_hits = s->stage_two_cache->stats().hits;
+        const engine::StageTwoCache::Stats cache = s->stage_two_cache->stats();
+        stats.stage_two_cache_hits = cache.hits;
+        stats.lens_cache_hits = cache.lens_hits;
     }
     stats.retained_bytes = s->proxy_lease.bytes() + s->full_lease.bytes() + s->cache_claim.bytes();
     return stats;

@@ -87,8 +87,8 @@
 //
 // Never twice: an opcode the decoder applied (RequiredOperation::applied_by_decoder) is recorded
 // and not applied; an opcode superseded by an applied optional WarpRectilinear2 is skipped; and
-// carried_lens_corrections() tells a future lens-profile (Lensfun) stage which corrections the
-// file's opcodes already made, so that stage must leave them off (ADR 0014).
+// carried_lens_corrections() tells the lens-profile (Lensfun) stage which corrections the file's
+// opcodes already made, so that stage leaves them off (ADR 0014, ADR 0023: lens_correction.hpp).
 //
 // Thread-safety: a DngOpcodeProcessor is used by one thread at a time; pixel loops use the
 // parallel algorithms per row, and results do not depend on scheduling.
@@ -198,15 +198,20 @@ struct DngOpcodeReport {
     [[nodiscard]] bool any_applied() const noexcept;
 };
 
-// Optical corrections that a file's applied opcodes already made. A lens-profile correction
-// stage (Lensfun, not yet part of Lucent) must not apply a correction a second time: it must
-// leave distortion off when `distortion`, lateral chromatic aberration off when
-// `lateral_chromatic_aberration`, and vignetting off when `vignetting` (ADR 0014).
+// Optical corrections that a file's applied opcodes already made. The lens-profile correction
+// (lens_correction.hpp, ADR 0023) never applies a correction a second time: it leaves distortion
+// off when `distortion`, lateral chromatic aberration off when `lateral_chromatic_aberration`, and
+// vignetting off when `vignetting` (ADR 0014), and its automatic mode applies no profile at all to
+// a file that carries any of them.
 struct CarriedLensCorrections {
     bool distortion = false;                    // a WarpRectilinear/WarpRectilinear2 is applied
     bool lateral_chromatic_aberration = false;  // ... whose coefficient sets differ per plane
-    bool vignetting = false;  // FixVignetteRadial, or a GainMap of List 2 or 3 over the whole image
+    // FixVignetteRadial, or a GainMap of List 2 or 3 over the whole image (its area reaches every
+    // edge within its row and column pitches: per-Bayer-phase lens-shading maps count).
+    bool vignetting = false;
     std::vector<std::string> sources;  // "OpcodeList3[1] WarpRectilinear", ...
+
+    friend bool operator==(const CarriedLensCorrections&, const CarriedLensCorrections&) = default;
 };
 
 // From the metadata's supported opcodes (those the engine applies). Opcodes the decoder applied

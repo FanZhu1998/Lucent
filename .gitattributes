@@ -25,3 +25,6 @@
 *.onnx binary
 *.7z binary
 *.zip binary
+
+# vcpkg overlay ports are hashed byte for byte by vcpkg; keep LF everywhere so ABI hashes match on every machine.
+cmake/ports/** text eol=lf

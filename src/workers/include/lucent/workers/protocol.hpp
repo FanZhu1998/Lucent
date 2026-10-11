@@ -1,6 +1,6 @@
 #pragma once
 
-// The worker protocol "lucent.worker", version 2: the messages exchanged between a host
+// The worker protocol "lucent.worker", version 3: the messages exchanged between a host
 // (WorkerHost, worker_host.hpp, used by the application's batch service) and an isolated
 // lucent-worker.exe process (blueprint section 4: "The UI and worker negotiate a protocol version.
 // Package matching binaries together; fail clearly if incompatible components are mixed";
@@ -39,7 +39,7 @@
 // host's BuildIdentity to equal its own; the host checks the worker's answer the same way. A
 // mismatch is VersionMismatch with a message naming both builds.
 //
-// After the handshake (version 2):
+// After the handshake (version 3):
 //   host -> worker:  job, analyze, cancel, ping, shutdown
 //   worker -> host:  progress, heartbeat, result, analysis, error, pong
 // A worker runs one job at a time (an export "job" or an "analyze" job: both are jobs below); the
@@ -52,7 +52,10 @@
 // Version history: 1 (W7) job, cancel, ping, shutdown / progress, heartbeat, result, error, pong.
 // 2 (W8 application wiring) adds analyze / analysis (automatic settings in the worker: the
 // analysis, related-shot regularisation and the full-resolution final check of one photo) and the
-// progress stages Analysing and Checking. Every version-1 message is unchanged.
+// progress stages Analysing and Checking. Every version-1 message is unchanged. 3 (W13 closure) adds
+// the lens-profile corrections of a job's render to its result (RenderSummaryInfo::lens_database,
+// lens_corrections, lens_note: which lens database the worker rendered with, what it corrected and
+// what the recipe asked for that it could not apply, ADR 0023); every other message is unchanged.
 //
 // Analysis documents. An analyze job carries the application's request document and its analysis
 // answer carries the application's result document, each as one JSON text in a string member
@@ -93,8 +96,8 @@ namespace lucent::workers {
 inline constexpr std::string_view kProtocolName = "lucent.worker";
 // Protocol versions this build speaks. Bump kMaxProtocolVersion for an incompatible change of any
 // message after the handshake; the handshake itself never changes.
-inline constexpr std::uint32_t kMinProtocolVersion = 2;
-inline constexpr std::uint32_t kMaxProtocolVersion = 2;
+inline constexpr std::uint32_t kMinProtocolVersion = 3;
+inline constexpr std::uint32_t kMaxProtocolVersion = 3;
 
 inline constexpr std::size_t kFrameHeaderBytes = 4;
 // Largest JSON payload of one frame. The largest legitimate message is a job request with two
@@ -321,6 +324,15 @@ struct RenderSummaryInfo {
     std::uint64_t clipped_raw_samples = 0;
     std::uint64_t limited_display_pixels = 0;
     std::uint64_t estimated_peak_bytes = 0;  // the engine's estimate for this render
+    // Version 3 (ADR 0023). The lens database the render used (app::lens_database_text(): asset id,
+    // version and manifest SHA-256; empty: none), at most kMaxShortTextBytes; the corrections it
+    // applied (app::RenderSummary::lens_corrections; empty: none) and, when the recipe asked for a
+    // lens correction the worker could not plan for want of a dependency (no database, or a named
+    // profile it does not hold), why (with the worker's database load problem), each at most
+    // kMaxWarningBytes (longer text is truncated).
+    std::string lens_database;
+    std::string lens_corrections;
+    std::string lens_note;
 };
 
 struct JobTimings {

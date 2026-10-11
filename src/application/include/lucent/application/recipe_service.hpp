@@ -34,13 +34,14 @@
 // Notes. Revisions written by the service carry a note of ';'-separated key=value fields:
 // "changed=<controls>" (DevelopControl names, recipe.hpp, comma separated) and, for revert_to(),
 // "from=<revision number>"; "locks=<controls>" lists the controls whose lock changed and
-// "parts=<parts>" the version-2 parts that changed (RecipePart names: "chroma_denoise", "masks",
-// "geometry"; written only when one did). Readers ignore keys they do not know.
+// "parts=<parts>" the parts that changed (RecipePart names: "chroma_denoise", "masks", "geometry",
+// "lens_correction"; written only when one did). Readers ignore keys they do not know.
 //
 // Masks and geometry are edited like any control: a brush stroke or a crop drag is a gesture whose
 // positions are set_transient() calls (each adds points to the stroke or moves the crop) and whose
 // end is commit(), so a stroke or a drag is exactly one revision ("parts=masks" or
-// "parts=geometry").
+// "parts=geometry"). A lens-correction toggle or a profile choice is one apply() ("parts=
+// lens_correction").
 //
 // Locks. set_lock() records a lock change as a revision (locks are part of the settings, which are
 // immutable per revision). Locks are the optimiser's instructions (auto_develop.hpp): it changes only
@@ -73,6 +74,14 @@
 //     source and the target have the same upright aspect ratio (same_upright_aspect()); otherwise
 //     it is skipped (PasteSkip::part LocalAdjustments), since the masks would land on other content
 //     and their shapes would distort;
+//   * the LensCorrections category (version 3; not pasted unless chosen) belongs to one camera and
+//     lens: a named profile describes one lens, and the corrections chosen for it (or the automatic
+//     profile's) were judged on that lens's photos. It is pasted only to a target of the same camera
+//     make and model (CameraCapabilities::same_camera) AND the same lens (same_lens: the lens model
+//     both files record, equal); otherwise, also when either lens is unknown, it is skipped
+//     (PasteSkip::part LensCorrection) with the reason. Copied settings made before lens corrections
+//     existed (lens-correction operation version 0) hold none, so the category is skipped for every
+//     target with that reason instead of switching the target's corrections off (W13 closure);
 //   * the Geometry category (not pasted unless chosen: kDefaultRecipeCategories) is pasted when
 //     its crop is the whole image (a straighten angle and quarter turns fit any photo) or the
 //     upright aspect ratios are the same; otherwise it is skipped as a whole;
@@ -81,8 +90,8 @@
 // dropped silently; the locks of pasted controls travel with them. Kelvin edits by set_transient()
 // and apply() are refused (Unsupported) for an item whose calibration does not support Kelvin.
 //
-// Camera capabilities. Paste and the Kelvin check need the camera make/model, the upright image size
-// and whether Kelvin is available. They come from the item's probe (make, model, size) and from a
+// Camera capabilities. Paste and the Kelvin check need the camera make/model, the lens, the upright
+// image size and whether Kelvin is available. They come from the item's probe (make, model, size) and from a
 // probe of its file
 // (RecipeServiceOptions::registry) the first time they are needed, cached per item until its file
 // changes (LibraryChangeKind::Refreshed). An edit session that has decoded the file reports its
@@ -142,6 +151,8 @@ inline constexpr std::string_view kRecipeUnreadableWhere = "app.recipe.unreadabl
 struct CameraCapabilities {
     std::string make;   // normalised (ProbeSummary::camera_make); empty when unknown
     std::string model;  // normalised; empty when unknown
+    // The lens as the file records it ("<make> <model>", ProbeSummary::lens); empty when unknown.
+    std::string lens;
     // The probe of the file succeeded: kelvin_available and monochrome are known.
     bool probed = false;
     bool kelvin_available = false;
@@ -154,6 +165,10 @@ struct CameraCapabilities {
     // Same make and model, both known.
     [[nodiscard]] bool same_camera(const CameraCapabilities& other) const noexcept {
         return !make.empty() && !model.empty() && make == other.make && model == other.model;
+    }
+    // The same camera and the same lens, both recorded (the lens-correction paste rule).
+    [[nodiscard]] bool same_lens(const CameraCapabilities& other) const noexcept {
+        return same_camera(other) && !lens.empty() && lens == other.lens;
     }
 };
 
@@ -291,7 +306,7 @@ public:
 
     // ---- Editing (see the file comment) --------------------------------------------------------
 
-    // Version-1 settings are kept as their version-2 conversion (engine::upgrade_develop_settings).
+    // Older settings are kept as their version-3 conversion (engine::upgrade_develop_settings).
     // Errors: those of state(); the read-only reason; settings.validate()'s; Unsupported for Kelvin
     // white balance on a camera without a Kelvin calibration.
     [[nodiscard]] Expected<RecipeState> set_transient(ItemId item, const engine::DevelopSettings& settings);
@@ -374,7 +389,7 @@ private:
 };
 
 // Camera capabilities of decoded or probed metadata (make/model from the decoder's normalised
-// identity; Kelvin from engine::WhiteBalanceModel).
+// identity; the lens as summarize_probe() records it; Kelvin from engine::WhiteBalanceModel).
 [[nodiscard]] CameraCapabilities camera_capabilities(const raw::RawMetadata& metadata);
 
 }  // namespace lucent::app

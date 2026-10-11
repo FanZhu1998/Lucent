@@ -9,6 +9,8 @@
 #   camera_support.hpp   the camera support database "lucent.camera-support" v2: mode-key patterns to
 #                        the blueprint's four states, limitations, evidence, the qualified files' probe
 #                        facts (image area, DNG opcodes) and the qualification basis
+#   lens_database.hpp    the bundled Lensfun lens database "lens-database" (W13, ADR 0023): verified
+#                        like every asset, then parsed by the engine (engine::LensDatabase)
 #
 # The bundled assets themselves live in the source tree's assets/ folder (LUCENT_BUNDLED_ASSETS and
 # lucent_asset_files() in cmake/LucentPackaging.cmake). For each one this file records the SHA-256 of
@@ -47,10 +49,12 @@ lucent_add_library(assets
         include/lucent/assets/asset_store.hpp
         include/lucent/assets/bundled_assets.hpp
         include/lucent/assets/camera_support.hpp
+        include/lucent/assets/lens_database.hpp
         include/lucent/assets/mode_key.hpp
         src/asset_manifest.cpp
         src/asset_store.cpp
         src/camera_support.cpp
+        src/lens_database.cpp
         src/json_reader.hpp
         src/mode_key.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/generated/bundled_assets.cpp"
@@ -72,8 +76,10 @@ lucent_add_test(lucent_assets_tests
         tests/asset_store_test.cpp
         tests/camera_support_test.cpp
         tests/bundled_camera_support_test.cpp
+        tests/lens_database_test.cpp
     DEPS
         Lucent::assets
+        nlohmann_json::nlohmann_json
     LABELS
         assets unit
 )

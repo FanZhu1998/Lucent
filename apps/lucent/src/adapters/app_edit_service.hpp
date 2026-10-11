@@ -32,6 +32,13 @@
 // frame with it. Frames carry their render's geometry and mask outlines (DevelopFrame::geometry,
 // ::masks) for the overlays; the geometry helpers are the engine's.
 //
+// Lens corrections (W13, ADR 0023). Frames carry what their render did for the lens (EditFrame::lens,
+// from DevelopReport::lens_correction) and the correction's point mapping (EditFrame::lens_map, the
+// plan's LensGeometryMap); the mask overlay is mapped through the render's own mapping, the lens
+// correction included (engine::geometry_mapping() of the report). lens_database() describes the
+// Backend's database; search_lens_profiles() searches its profiles (engine::LensDatabase::profiles())
+// on the calling thread (about 1,600 entries: well under a millisecond).
+//
 // Busy. is_busy() holds while commands are queued, or a session's newest settings (or its wanted
 // as-shot frame) have not been rendered. The render part is also published to the Backend's
 // InteractiveActivity, so Lucent thumbnail renders wait for the photo being edited.
@@ -115,6 +122,8 @@ public:
     [[nodiscard]] EditGeometry turned(const EditGeometry& geometry, GeometryTurn turn) const override;
     [[nodiscard]] QList<QPolygonF> mask_outline(const EditMask& mask, QSize upright_size) const override;
     [[nodiscard]] QList<double> sample_tone_curve(const QList<QPointF>& points, int count) const override;
+    [[nodiscard]] LensDatabaseInfo lens_database() const override;
+    [[nodiscard]] QList<LensProfileEntry> search_lens_profiles(const QString& text, int limit) const override;
     [[nodiscard]] bool is_busy() const override { return busy_; }
 
     struct State;  // implementation detail, shared with the command and conversion threads

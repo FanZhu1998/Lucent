@@ -5,13 +5,20 @@
     "derives the shipped components from the audited layout and uses this file only for elections,",
     "required credit lines, licence texts missing from vcpkg's copyright files, and ports that must never",
     "ship. Each entry names the port version it was reviewed for: packaging fails when the build ships",
-    "another version, so a dependency upgrade is reviewed here (and in docs/legal/third-party-notices.md)."
+    "another version, so a dependency upgrade is reviewed here (and in docs/legal/third-party-notices.md).",
+    "\"assets\" names the bundled data assets (assets/<id>) that are third-party data under their own terms:",
+    "their licence text (a file of the verified asset) goes to licenses/<id>, their credit lines to",
+    "THIRD-PARTY-NOTICES.txt, and the SBOM gives their files that licence (ADR 0023). Every other asset is",
+    "Lucent's own (MIT)."
   ],
   "neverShipped": {
     "gtest": "Test-only (ADR 0003): GoogleTest and GoogleMock are never packaged.",
     "qtshadertools": "Build tool (qsb); Qt tools are GPL-3.0 with the Qt GPL Exception 1.0 (ADR 0003).",
     "qtlanguageserver": "Build-time dependency of the Qt Declarative tooling.",
     "vcpkg-tool-meson": "Build tool.",
+    "gettext": "Build tool of GLib (msgfmt and the other gettext programs, GPL-3.0); only GNU libintl ships, from the port gettext-libintl (ADR 0023).",
+    "vcpkg-make": "Build helper.",
+    "dirent": "Build-only header of GLib's Windows build (MIT); it installs no binary (ADR 0023).",
     "vcpkg-cmake": "Build helper.",
     "vcpkg-cmake-config": "Build helper.",
     "vcpkg-cmake-get-vars": "Build helper."
@@ -89,6 +96,49 @@
       "reviewedVersion": "3.4.0",
       "concluded": "BSD-3-Clause",
       "comment": "The port declares no licence; the installed copyright file is the upstream BSD-3-Clause LICENSE."
+    },
+    "lensfun": {
+      "reviewedVersion": "0.3.4",
+      "concluded": "LGPL-3.0-only",
+      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the other library sources carry no notice), so the library is used under LGPL-3.0-only; the port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built. Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see Data below; ADR 0023). Used unmodified as a replaceable DLL (ADR 0003).",
+      "lgpl": true
+    },
+    "glib": {
+      "reviewedVersion": "2.90.0",
+      "concluded": "LGPL-2.1-or-later",
+      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Built from Lucent's overlay port (cmake/ports/glib, shipped as licenses\\glib\\recipe) with one patch, lucent-neutral-locale-dir.patch, which keeps the build machine's install prefix out of the DLL and changes no behaviour of glib-2.0-0.dll. A replaceable DLL (ADR 0003, ADR 0023).",
+      "lgpl": true
+    },
+    "gettext-libintl": {
+      "reviewedVersion": "0.22.5",
+      "concluded": "LGPL-2.1-or-later",
+      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Built from Lucent's overlay port (cmake/ports/gettext-libintl, shipped as licenses\\gettext-libintl\\recipe) with one patch, lucent-no-builder-paths.patch, which keeps the build machine's folders out of the DLL (its default catalog folder and the relocation prefixes Lucent never uses). A replaceable DLL (ADR 0023).",
+      "lgpl": true
+    },
+    "libiconv": {
+      "reviewedVersion": "1.19",
+      "concluded": "LGPL-2.1-or-later",
+      "comment": "The port declares no licence. The libiconv and libcharset libraries are LGPL-2.1-or-later (COPYING.LIB); the iconv program and the documentation are GPL-3.0 (COPYING) and are not shipped. Imported by GNU libintl and GLib. Used unmodified as a replaceable DLL (ADR 0023).",
+      "lgpl": true
+    },
+    "libffi": {
+      "reviewedVersion": "3.8.0",
+      "concluded": "MIT",
+      "comment": "A dependency of GLib's GObject, which Lucent does not ship: glib-2.0-0.dll does not import it, so ffi-8.dll is not expected in the package (the audit decides). Reviewed in case it ships: MIT (the port's declaration and its installed copyright file), whose notice is that file (ADR 0023)."
+    }
+  },
+  "assets": {
+    "lens-database": {
+      "name": "Lensfun lens database",
+      "concluded": "CC-BY-SA-3.0",
+      "licenseFile": "COPYING.CC_BY-SA_3.0",
+      "lucentFiles": [ "provenance.json" ],
+      "homepage": "https://lensfun.github.io/",
+      "copyright": "Copyright (c) the Lensfun project and its contributors",
+      "notices": [
+        "The lens profiles in assets\\lens-database are the lens database of the Lensfun project (https://lensfun.github.io/), copyright the Lensfun project and its contributors, used unmodified under the Creative Commons Attribution-ShareAlike 3.0 Unported licence (licenses\\lens-database\\COPYING.CC_BY-SA_3.0; https://creativecommons.org/licenses/by-sa/3.0/). Its source and date are in assets\\lens-database\\provenance.json."
+      ],
+      "comment": "Data format version 1 (Lensfun 0.3), the XML files exactly as the Lensfun project publishes them (https://lensfun.github.io/db/version_1.tar.bz2, generated from lensfun commit 43f9e001ab66c4fcdd4f400463f13b72f94b2288 of 2026-10-08). Lucent does not adapt the database: it ships the files unchanged beside its own, so the share-alike terms apply to the database alone (ADR 0023)."
     }
   },
   "vcRedistributable": {

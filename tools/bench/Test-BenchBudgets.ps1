@@ -23,7 +23,8 @@
 .PARAMETER Create
     Write budgets from -BaselineDir.
 .PARAMETER BaselineDir
-    The baseline's data folder (default docs\performance\data\2026-10-09).
+    The baseline's data folder (default docs\performance\data\2026-10-10, the baseline budgets.json was
+    derived from; the first baseline, 2026-10-09, stays beside it).
 .PARAMETER DataDir
     The new run's data folder (check mode).
 .PARAMETER Budgets
@@ -40,7 +41,7 @@
 [CmdletBinding()]
 param(
     [switch]$Create,
-    [string]$BaselineDir = 'docs\performance\data\2026-10-09',
+    [string]$BaselineDir = 'docs\performance\data\2026-10-10',
     [string]$DataDir,
     [string]$Budgets = 'docs\performance\budgets.json'
 )

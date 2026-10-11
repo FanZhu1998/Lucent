@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <lucent/application/recipe_service.hpp>
+#include <lucent/application/source_item.hpp>
 #include <lucent/core/log.hpp>
 #include <lucent/core/text.hpp>
 #include <lucent/core/version.hpp>
@@ -173,6 +174,25 @@ std::string camera_name(const CameraCapabilities& camera) {
     return camera.make + " " + camera.model;
 }
 
+// Why the copied lens corrections do not belong on `target` (empty when they do: the same camera and
+// lens, both recorded).
+std::string lens_mismatch(const CameraCapabilities& source, const CameraCapabilities& target) {
+    if (source.same_lens(target)) {
+        return {};
+    }
+    if (!source.same_camera(target)) {
+        return std::format("the lens corrections belong to {}; the photo is from {}", camera_name(source),
+                           camera_name(target));
+    }
+    if (source.lens.empty() || target.lens.empty()) {
+        return std::format(
+            "the lens corrections belong to one lens, and the {} photo does not record its lens",
+            source.lens.empty() ? "copied" : "target");
+    }
+    return std::format("the lens corrections belong to the {}; the photo was taken with the {}", source.lens,
+                       target.lens);
+}
+
 std::string size_name(image::Size size) {
     return size.empty() ? std::string("unknown") : std::format("{} x {}", size.width, size.height);
 }
@@ -206,6 +226,7 @@ CameraCapabilities camera_capabilities(const raw::RawMetadata& metadata) {
         metadata.camera.normalized_make.empty() ? metadata.camera.make : metadata.camera.normalized_make;
     caps.model =
         metadata.camera.normalized_model.empty() ? metadata.camera.model : metadata.camera.normalized_model;
+    caps.lens = summarize_probe(metadata).lens;
     caps.upright_size =
         image::oriented_size(metadata.geometry.visible_area.size(), metadata.geometry.orientation);
     caps.probed = true;
@@ -470,6 +491,7 @@ struct RecipeService::State {
         if (item->probe) {
             caps.make = item->probe->camera_make;
             caps.model = item->probe->camera_model;
+            caps.lens = item->probe->lens;
             caps.upright_size = item->probe->upright_size;
         }
         bool cacheable = false;
@@ -486,6 +508,9 @@ struct RecipeService::State {
                 }
                 if (probed.model.empty()) {
                     probed.model = caps.model;
+                }
+                if (probed.lens.empty()) {
+                    probed.lens = caps.lens;
                 }
                 if (probed.upright_size.empty()) {
                     probed.upright_size = caps.upright_size;
@@ -1181,6 +1206,28 @@ Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& 
                                     mismatch)});
                     continue;
                 }
+                if (category == RecipeCategory::LensCorrections) {
+                    // Settings made before lens corrections existed (operation version 0) hold none:
+                    // pasting that "none" would switch the target's corrections off and make it look
+                    // edited before they existed (ADR 0023), so nothing is pasted.
+                    if (engine::lens_correction_operation_version(clipboard.settings) ==
+                        engine::kOldestLensCorrectionOperationVersion) {
+                        skipped_parts.insert(RecipePart::LensCorrection);
+                        outcome.skipped.push_back(PasteSkip{
+                            category, RecipePart::LensCorrection,
+                            "the lens corrections are not pasted: the copied photo was edited before Lucent had "
+                            "lens corrections, so it has none to paste"});
+                        continue;
+                    }
+                    // One camera's and lens's (see the header): never pasted across camera or lens
+                    // models, nor when either lens is unknown.
+                    if (const std::string lens = lens_mismatch(clipboard.camera, *caps); !lens.empty()) {
+                        skipped_parts.insert(RecipePart::LensCorrection);
+                        outcome.skipped.push_back(PasteSkip{category, RecipePart::LensCorrection,
+                                                            "the lens corrections are not pasted: " + lens});
+                        continue;
+                    }
+                }
                 if (category == RecipeCategory::WhiteBalance) {
                     if (mode == engine::WhiteBalanceMode::CameraNeutral &&
                         !clipboard.camera.same_camera(*caps)) {
@@ -1267,6 +1314,9 @@ void RecipeService::note_camera(ItemId item, const raw::RawMetadata& metadata) {
             }
             if (caps.model.empty()) {
                 caps.model = found->probe->camera_model;
+            }
+            if (caps.lens.empty()) {
+                caps.lens = found->probe->lens;
             }
             if (caps.upright_size.empty()) {
                 caps.upright_size = found->probe->upright_size;

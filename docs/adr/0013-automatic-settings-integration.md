@@ -2,7 +2,8 @@
 
 - **Status:** Accepted (amended 2026-10-04: "Amendment: W8 integration closure" below; amended
   2026-10-05: "Amendment: geometry, masks and chroma denoising" below; amended 2026-10-09: "Amendment:
-  the final check by bands (W12)" below)
+  the final check by bands (W12)" below; amended 2026-10-10 by the closing review of W13: "Amendment: Auto and
+  lens corrections" below)
 - **Date:** 2026-10-04
 - **Workflow:** W8 application wiring (services and UI), after the W8 core (ADR 0011) and W7 (ADR 0012)
 
@@ -515,3 +516,27 @@ X-T4 ran the full check (render and band measurement), the others the baseline's
 - The closure's remaining costs (its Consequences: `measure_render()`, the check's stage one and
   source pass, the 26 bytes per pixel) are resolved; local contrast at full resolution is no longer
   computed, since nothing in the check used it.
+
+## Amendment: Auto and lens corrections (W13 closure, 2026-10-10) - APL-10
+
+ADR 0010's W13 amendment keeps Auto's analysis and final check on the uncorrected image (native crops
+and band renders are parts of the frame, which stage two does not correct; a corrected candidate
+would be compared with uncorrected bands). The closing review asked that the consequence not stay
+silent: blueprint section 6, step 7 renders the selected recipe once at full resolution and applies
+the final checks to it, while an exact lens match's export also applies the profile's vignetting gain
+(2.3 to 3 at the corners wide open in the corpus), which can push bright corners past the output's
+white after Auto's check passed.
+
+- **Deviation recorded.** For files whose lens is corrected, Auto's final check is not a check of the
+  exported image: it measures the same recipe before the lens correction. Running the check on a
+  corrected whole-frame render was rejected for now: the bands that keep Auto under its memory budget
+  (W12 amendment above) would each need the correction's point mapping and a halo of source rows,
+  and the baseline's streamed bands would have to be corrected identically.
+- **Mitigation in batches.** An automatic export whose lens corrections include vignetting and whose
+  render maps more than 0.1 % of its pixels to the output's white gets the review note "Automatic
+  settings were checked before lens corrections; this export's vignetting correction brightens its
+  corners, and N % of its pixels are brighter than the output can show: check the corners."
+  (`Attempt::review_notes()`, a tenth of the general 1 % threshold that flags any export). The
+  editor shows the corrected frame after Auto, so the photographer sees the corners there.
+- Revisit together with ADR 0010's "Auto never changes the lens settings" item, when the analysis
+  learns lens corrections.

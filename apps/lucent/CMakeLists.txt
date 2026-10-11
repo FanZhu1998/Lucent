@@ -102,6 +102,7 @@ set(_lucent_qml_files
     qml/Histogram.qml
     qml/HistoryPanel.qml
     qml/ImportDialog.qml
+    qml/LensPanel.qml
     qml/LibraryEmptyState.qml
     qml/LibraryView.qml
     qml/LockButton.qml
@@ -167,6 +168,8 @@ qt_add_qml_module(lucent_ui
         src/models/edit_history_model.hpp
         src/models/edit_session.cpp
         src/models/edit_session.hpp
+        src/models/lens_corrections.cpp
+        src/models/lens_corrections.hpp
         src/models/export_job_model.cpp
         src/models/export_job_model.hpp
         src/models/library_model.cpp

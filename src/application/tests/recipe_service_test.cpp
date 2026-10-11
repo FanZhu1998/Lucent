@@ -1,8 +1,8 @@
 // RecipeService (recipe_service.hpp): gesture coalescing (also of mask strokes and crop drags),
-// undo/redo with branches, reset and revert, locks, paste rules across cameras and image shapes
-// (masks, geometry, denoising), read-only recipes, persistence across a restart (version-2 members
-// and version-1 revisions) and observers. Items are synthetic DNGs imported into a session library
-// (memory store) or a catalog.
+// undo/redo with branches, reset and revert, locks, paste rules across cameras, lenses and image
+// shapes (masks, geometry, denoising, lens corrections), read-only recipes, persistence across a
+// restart (version-2 and version-3 members, version-1 and version-2 revisions) and observers. Items
+// are synthetic DNGs imported into a session library (memory store) or a catalog.
 
 #include <algorithm>
 #include <filesystem>
@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <lucent/application/import.hpp>
 #include <lucent/application/recipe.hpp>
@@ -571,9 +572,11 @@ TEST_F(RecipeServiceTest, AMaskStrokeAndACropDragAreOneRevisionEach) {
 TEST_F(RecipeServiceTest, Version1SettingsAreKeptAsTheirConversion) {
     engine::DevelopSettings old = with_exposure(0.3);
     old.version = 1;
-    // Version 2 with geometry version 1: version-1 settings rendered the whole visible area (ADR 0017).
+    // Version 3 with geometry version 1 (version-1 settings rendered the whole visible area, ADR 0017)
+    // and no lens correction (ADR 0023).
     engine::DevelopSettings converted = with_exposure(0.3);
     converted.operations.geometry = engine::kOldestGeometryOperationVersion;
+    converted.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
     auto transient = service_->set_transient(a(), old);
     ASSERT_TRUE(transient) << transient.error().describe();
     EXPECT_EQ(transient->settings, converted);
@@ -581,19 +584,147 @@ TEST_F(RecipeServiceTest, Version1SettingsAreKeptAsTheirConversion) {
     ASSERT_TRUE(committed);
     EXPECT_EQ(committed->committed, converted);
     EXPECT_EQ(committed->committed_sha256, write_recipe(converted)->sha256);
-    // The same values as version 2 are no change.
+    // The same values as version 3 are no change.
     auto again = service_->apply(a(), converted);
     ASSERT_TRUE(again);
     EXPECT_EQ(again->revision, committed->revision);
     EXPECT_EQ(service_->history(a())->entries.size(), 1u);
-    // Moving to geometry version 2 (the camera's image area) is a geometry change of its own.
+    // Moving to geometry version 2 (the camera's image area) and to lens corrections are changes of
+    // their own parts.
     auto area = service_->apply(a(), with_exposure(0.3));
     ASSERT_TRUE(area) << area.error().describe();
     EXPECT_NE(area->revision, committed->revision);
     auto history = service_->history(a());
     ASSERT_TRUE(history);
     ASSERT_EQ(history->entries.size(), 2u);
-    EXPECT_EQ(history->entries[1].parts, std::vector<RecipePart>{RecipePart::Geometry});
+    EXPECT_EQ(history->entries[1].parts,
+              (std::vector<RecipePart>{RecipePart::Geometry, RecipePart::LensCorrection}));
+    EXPECT_NE(history->entries[1].info.note.find("lens_correction"), std::string::npos)
+        << history->entries[1].info.note;
+}
+
+TEST_F(RecipeServiceTest, LensCorrectionsArePastedOnlyToTheSameCameraAndLens) {
+    // The files record no lens; the edit session's decoded metadata names it (note_camera).
+    const auto note_lens = [&](ItemId item, const std::string& lens) {
+        const std::optional<SourceItem> found = library_.find(item);
+        ASSERT_TRUE(found);
+        raw::ProbeOptions probe;
+        probe.describe_subimages = false;
+        auto selection = registry_->select(found->path, probe, {});
+        ASSERT_TRUE(selection) << selection.error().describe();
+        raw::RawMetadata metadata = selection->probe.metadata;
+        metadata.lens.make = "Sony";
+        metadata.lens.model = lens;
+        service_->note_camera(item, metadata);
+    };
+    note_lens(a(), "FE 50mm F2.5 G");
+    note_lens(b(), "FE 50mm F2.5 G");
+    note_lens(c(), "FE 50mm F2.5 G");  // the same lens on another camera
+    EXPECT_EQ(service_->camera(a())->lens, "Sony FE 50mm F2.5 G");
+    EXPECT_TRUE(service_->camera(a())->same_lens(*service_->camera(b())));
+    EXPECT_FALSE(service_->camera(a())->same_lens(*service_->camera(c())));
+
+    engine::DevelopSettings source = with_exposure(0.2);
+    source.lens_correction.vignetting = false;
+    source.lens_correction.profile = engine::LensProfileId{"Sony", "FE 50mm f/2.5 G", 1.0};
+    ASSERT_TRUE(service_->apply(a(), source));
+
+    // Not a default category: copying the defaults never carries them.
+    const std::set<RecipeCategory> defaults(kDefaultRecipeCategories.begin(), kDefaultRecipeCategories.end());
+    EXPECT_FALSE(defaults.contains(RecipeCategory::LensCorrections));
+
+    // A fourth photo of the same camera whose lens is not known.
+    const std::vector<ItemId> more =
+        import_files(library_, *registry_, {ts::write_dng(dir_, L"d.dng", camera("Alpha"))});
+    ASSERT_EQ(more.size(), 1u);
+    const ItemId unknown_lens = more[0];
+
+    auto clipboard = service_->copy(a(), {RecipeCategory::LensCorrections, RecipeCategory::Exposure});
+    ASSERT_TRUE(clipboard) << clipboard.error().describe();
+    EXPECT_EQ(clipboard->camera.lens, "Sony FE 50mm F2.5 G");
+    const std::vector<ItemId> targets = {b(), c(), unknown_lens};
+    auto outcomes = service_->paste(*clipboard, targets);
+    ASSERT_TRUE(outcomes) << outcomes.error().describe();
+    ASSERT_EQ(outcomes->size(), 3u);
+    // The same camera and lens: pasted, with the operation version, as one revision.
+    const PasteOutcome& same = (*outcomes)[0];
+    EXPECT_TRUE(same.skipped.empty());
+    EXPECT_NE(std::find(same.applied.begin(), same.applied.end(), RecipeCategory::LensCorrections),
+              same.applied.end());
+    ASSERT_TRUE(same.revision);
+    EXPECT_EQ(state(b()).settings.lens_correction, source.lens_correction);
+    const HistoryEntry pasted = service_->history(b())->entries.back();
+    EXPECT_EQ(pasted.parts, std::vector<RecipePart>{RecipePart::LensCorrection});
+    EXPECT_NE(pasted.info.note.find(";parts=lens_correction"), std::string::npos) << pasted.info.note;
+    // Another camera (the same lens), and a photo whose lens is unknown: skipped with the reason, the
+    // other categories pasted.
+    for (const std::size_t i : {std::size_t{1}, std::size_t{2}}) {
+        const PasteOutcome& other = (*outcomes)[i];
+        EXPECT_FALSE(other.error);
+        ASSERT_EQ(other.skipped.size(), 1u) << i;
+        EXPECT_EQ(other.skipped[0].category, RecipeCategory::LensCorrections);
+        EXPECT_EQ(other.skipped[0].part, RecipePart::LensCorrection);
+        EXPECT_NE(other.skipped[0].reason.find("lens corrections are not pasted"), std::string::npos)
+            << other.skipped[0].reason;
+        EXPECT_EQ(other.applied, std::vector<RecipeCategory>{RecipeCategory::Exposure});
+        EXPECT_EQ(state(other.item).settings.lens_correction, engine::LensCorrectionSetting{});
+        EXPECT_EQ(state(other.item).settings.exposure_ev, 0.2);
+    }
+    EXPECT_NE((*outcomes)[1].skipped[0].reason.find("Beta"), std::string::npos)
+        << (*outcomes)[1].skipped[0].reason;
+    EXPECT_NE((*outcomes)[2].skipped[0].reason.find("does not record its lens"), std::string::npos)
+        << (*outcomes)[2].skipped[0].reason;
+
+    // Another lens on the same camera: skipped too.
+    note_lens(b(), "FE 24-70mm F2.8 GM");
+    auto again = service_->paste(*clipboard, std::vector<ItemId>{b()});
+    ASSERT_TRUE(again);
+    ASSERT_EQ((*again)[0].skipped.size(), 1u);
+    EXPECT_NE((*again)[0].skipped[0].reason.find("FE 24-70mm F2.8 GM"), std::string::npos)
+        << (*again)[0].skipped[0].reason;
+}
+
+// W13 closure (APL-12): settings made before lens corrections existed (operation version 0) hold
+// none; pasting them would switch the target's corrections off, so the category is skipped.
+TEST_F(RecipeServiceTest, LensCorrectionsOfARecipeMadeBeforeThemAreNotPasted) {
+    const auto note_lens = [&](ItemId item) {
+        const std::optional<SourceItem> found = library_.find(item);
+        ASSERT_TRUE(found);
+        raw::ProbeOptions probe;
+        probe.describe_subimages = false;
+        auto selection = registry_->select(found->path, probe, {});
+        ASSERT_TRUE(selection) << selection.error().describe();
+        raw::RawMetadata metadata = selection->probe.metadata;
+        metadata.lens.make = "Sony";
+        metadata.lens.model = "FE 50mm F2.5 G";
+        service_->note_camera(item, metadata);
+    };
+    note_lens(a());
+    note_lens(b());
+    ASSERT_TRUE(service_->camera(a())->same_lens(*service_->camera(b())));
+    // A photo edited before W13: its recipe reads with lens-correction operation version 0.
+    engine::DevelopSettings old = with_exposure(0.4);
+    old.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+    ASSERT_TRUE(old.validate()) << old.validate().error().describe();
+    ASSERT_TRUE(service_->apply(a(), old));
+    ASSERT_EQ(engine::lens_correction_operation_version(state(a()).settings),
+              engine::kOldestLensCorrectionOperationVersion);
+    auto clipboard = service_->copy(a(), {RecipeCategory::LensCorrections, RecipeCategory::Exposure});
+    ASSERT_TRUE(clipboard) << clipboard.error().describe();
+    auto outcomes = service_->paste(*clipboard, std::vector<ItemId>{b()});
+    ASSERT_TRUE(outcomes) << outcomes.error().describe();
+    const PasteOutcome& outcome = (*outcomes)[0];
+    ASSERT_EQ(outcome.skipped.size(), 1u);
+    EXPECT_EQ(outcome.skipped[0].category, RecipeCategory::LensCorrections);
+    EXPECT_EQ(outcome.skipped[0].part, RecipePart::LensCorrection);
+    EXPECT_NE(outcome.skipped[0].reason.find("before Lucent had lens corrections"), std::string::npos)
+        << outcome.skipped[0].reason;
+    EXPECT_EQ(outcome.applied, std::vector<RecipeCategory>{RecipeCategory::Exposure});
+    // The target keeps its own (automatic) lens corrections.
+    EXPECT_EQ(engine::lens_correction_operation_version(state(b()).settings),
+              engine::kLensCorrectionOperationVersion);
+    EXPECT_EQ(state(b()).settings.lens_correction, engine::LensCorrectionSetting{});
+    EXPECT_EQ(state(b()).settings.exposure_ev, 0.4);
 }
 
 TEST_F(RecipeServiceTest, WithoutCalibrationKnowledgeKelvinIsNotPasted) {
@@ -896,18 +1027,20 @@ TEST_F(CatalogRecipeTest, AVersion1RevisionIsReadAsItsUpgrade) {
     open();
     engine::DevelopSettings expected = with_exposure(0.5);
     expected.locks = {DevelopControl::Exposure};
-    // A version-1 recipe keeps rendering the whole visible area: geometry version 1 (ADR 0017).
+    // A version-1 recipe keeps rendering the whole visible area: geometry version 1 (ADR 0017), and
+    // corrects no lens: lens-correction operation version 0 (ADR 0023).
     expected.operations.geometry = engine::kOldestGeometryOperationVersion;
+    expected.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
     const RecipeState s = *service_->state(item);
     EXPECT_FALSE(s.read_only);
     EXPECT_EQ(s.settings, expected);
     EXPECT_EQ(s.settings.version, engine::kDevelopSettingsVersion);
-    // Its identity is the version-2 one of the same settings (previews and exports agree with it).
+    // Its identity is the version-3 one of the same settings (previews and exports agree with it).
     EXPECT_EQ(s.committed_sha256, write_recipe(expected)->sha256);
     auto current = service_->current_settings(item);
     ASSERT_TRUE(current);
-    EXPECT_NE(current->document.json.find(R"("version":2)"), std::string::npos);
-    // An edit on top of it is a version-2 revision with a mask.
+    EXPECT_NE(current->document.json.find(R"("version":3)"), std::string::npos);
+    // An edit on top of it is a version-3 revision with a mask.
     engine::DevelopSettings masked = expected;
     masked.local_adjustments = {radial_mask(1)};
     auto edited = service_->apply(item, masked);
@@ -916,8 +1049,74 @@ TEST_F(CatalogRecipeTest, AVersion1RevisionIsReadAsItsUpgrade) {
     ASSERT_TRUE(history);
     ASSERT_EQ(history->entries.size(), 2u);
     EXPECT_EQ(history->entries[0].info.schema_version, 1u);
-    EXPECT_EQ(history->entries[1].info.schema_version, 2u);
+    EXPECT_EQ(history->entries[1].info.schema_version, 3u);
     EXPECT_EQ(history->entries[1].parts, std::vector<RecipePart>{RecipePart::LocalAdjustments});
+    close();
+}
+
+TEST_F(CatalogRecipeTest, AVersion2RevisionKeepsRenderingWithoutLensCorrections) {
+    open();
+    const std::vector<ItemId> items =
+        import_files(*fixture_.library, *registry_, {ts::write_dng(dir_, L"photos\\a.dng")});
+    ASSERT_EQ(items.size(), 1u);
+    const ItemId item = items[0];
+    close();
+
+    // A revision a version-2 build (W9 to W12) wrote: its canonical version-2 text.
+    engine::DevelopSettings edit = local_edit();
+    std::string v2_text;
+    {
+        auto v3 = write_recipe(edit);
+        ASSERT_TRUE(v3);
+        auto doc = nlohmann::json::parse(v3->json);
+        doc["version"] = 2;
+        doc.erase("lens_correction");
+        doc["operations"].erase("lens_correction");
+        v2_text = doc.dump();  // a version-2 document of these settings
+        auto catalog = ts::open_catalog(catalog_path());
+        ASSERT_TRUE(catalog);
+        catalog::NewRevision revision;
+        revision.schema_name = "lucent.develop";
+        revision.schema_version = 2;
+        revision.settings_json = v2_text;
+        revision.engine_version = "0.12.0";
+        revision.created_at = catalog::current_time();
+        ASSERT_TRUE(catalog->write([&](catalog::WriteTransaction& tx) -> Status {
+            auto appended =
+                tx.append_revision(catalog::ItemId{static_cast<std::int64_t>(item.value)}, revision);
+            if (!appended) {
+                return Unexpected(appended.error());
+            }
+            return ok();
+        }));
+    }
+
+    open();
+    engine::DevelopSettings expected = edit;
+    expected.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+    const RecipeState s = *service_->state(item);
+    EXPECT_FALSE(s.read_only);
+    EXPECT_EQ(s.settings, expected);
+    EXPECT_FALSE(engine::effective_lens_correction(s.settings).has_value());
+    EXPECT_EQ(s.committed_sha256, write_recipe(expected)->sha256);
+
+    // Turning lens corrections on is one revision of the lens-correction part, version 3; it is kept
+    // across a restart, a named profile included.
+    engine::DevelopSettings corrected = expected;
+    corrected.operations.lens_correction = engine::kLensCorrectionOperationVersion;
+    corrected.lens_correction.lateral_chromatic_aberration = false;
+    corrected.lens_correction.profile = engine::LensProfileId{"Lucent", "Synthetic 35mm f/2", 1.0};
+    auto turned_on = service_->apply(item, corrected);
+    ASSERT_TRUE(turned_on) << turned_on.error().describe();
+    auto history = service_->history(item);
+    ASSERT_TRUE(history);
+    ASSERT_EQ(history->entries.size(), 2u);
+    EXPECT_EQ(history->entries[0].info.schema_version, 2u);
+    EXPECT_EQ(history->entries[1].info.schema_version, 3u);
+    EXPECT_EQ(history->entries[1].parts, std::vector<RecipePart>{RecipePart::LensCorrection});
+    close();
+    open();
+    EXPECT_EQ(service_->state(item)->settings, corrected);
     close();
 }
 

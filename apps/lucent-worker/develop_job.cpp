@@ -175,6 +175,19 @@ private:
 DevelopJobRunner::DevelopJobRunner(std::shared_ptr<const raw::DecoderRegistry> registry, DevelopJobOptions options)
     : registry_(std::move(registry)), options_(std::move(options)) {}
 
+WorkerLensDatabase DevelopJobRunner::lens_database() {
+    const std::lock_guard lock(lens_->mutex);
+    if (!lens_->loaded) {
+        lens_->loaded = true;
+        if (options_.lens_database) {
+            lens_->loaded_database = options_.lens_database();
+        } else {
+            lens_->loaded_database.problem = "the worker has no lens database";
+        }
+    }
+    return lens_->loaded_database;
+}
+
 Expected<workers::AnalysisResult> DevelopJobRunner::analyze(const workers::AnalysisRequest& request,
                                                             workers::JobContext& context) {
     if (!registry_) {
@@ -224,6 +237,8 @@ Expected<workers::JobResult> DevelopJobRunner::run(const workers::JobRequest& re
     app::EngineRendererOptions renderer_options;
     renderer_options.decode_limits = options_.decode_limits;
     renderer_options.parallel = options_.parallel;
+    const WorkerLensDatabase lens = lens_database();
+    renderer_options.lens_database = lens.database;
     if (request.memory_budget_bytes != 0) {
         renderer_options.memory_budget_bytes = request.memory_budget_bytes;
     }
@@ -318,6 +333,12 @@ Expected<workers::JobResult> DevelopJobRunner::run(const workers::JobRequest& re
         result.render.look_version = summary.look_version;
         result.render.clipped_raw_samples = summary.clipped_raw_samples;
         result.render.limited_display_pixels = summary.limited_display_pixels;
+        result.render.lens_database = summary.lens_database;
+        result.render.lens_corrections = summary.lens_corrections;
+        result.render.lens_note = summary.lens_note;
+        if (!result.render.lens_note.empty() && !lens.problem.empty()) {
+            result.render.lens_note += " (the worker's lens database: " + lens.problem + ")";
+        }
 
         context.progress(JobStage::Encoding, 0.72);
         const auto encode_start = Clock::now();

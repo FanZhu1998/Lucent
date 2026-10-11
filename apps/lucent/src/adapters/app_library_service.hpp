@@ -133,6 +133,7 @@ public:
     [[nodiscard]] QString backup_folder() const override;
     [[nodiscard]] QString library_notice() const override;
     [[nodiscard]] CameraSupportInfo camera_support() const override;
+    [[nodiscard]] LensDatabaseInfo lens_database() const override;
 
     // A sink for render events that is safe to call from any thread at any time.
     [[nodiscard]] RenderEventSink render_event_sink();

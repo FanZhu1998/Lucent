@@ -364,7 +364,8 @@ OrderedJson build_report(const std::vector<OrderedJson>& fixtures, const ReportI
                           {"decoder_capabilities", basis.decoder_capabilities},
                           {"develop_engine", basis.develop_engine},
                           {"neutral_look", basis.neutral_look},
-                          {"export", basis.export_version}};
+                          {"export", basis.export_version},
+                          {"lens_database", basis.lens_database}};
     const auto input = [](const std::filesystem::path& path, const std::filesystem::path& root) {
         std::error_code ec;
         const std::filesystem::path relative = std::filesystem::relative(path, root, ec);
@@ -520,7 +521,9 @@ std::string support_table_markdown(const OrderedJson& report) {
        << report.at("versions").value("image_area_placement", 0) << "; develop engine "
        << report.at("versions").value("develop_engine", OrderedJson::array()).dump() << ", neutral look "
        << report.at("versions").value("neutral_look", 0) << ", export "
-       << report.at("versions").value("export", 0) << " (ADR 0016, ADR 0017, ADR 0018).\n\n";
+       << report.at("versions").value("export", 0) << ", lens database "
+       << report.at("versions").value("lens_database", std::string("none recorded"))
+       << " (ADR 0016, ADR 0017, ADR 0018, ADR 0023).\n\n";
     md << "These states are **proposals from Lucent's qualification harness** for the exact camera model and "
           "capture "
           "mode of each corpus fixture. They are not a claim about other modes of the same camera, other "
@@ -528,11 +531,15 @@ std::string support_table_markdown(const OrderedJson& report) {
           "the same brand, or other files with the same extension. Every corpus mode is represented by a "
           "single "
           "daylight test file from raw.pixls.us; scene diversity (blueprint section 10) is not yet covered. "
-          "Lens-profile corrections (Lensfun) are not available for any camera yet; they are optional by the "
-          "blueprint and are not listed per mode. A Verified state holds for the decoder (and its codecs), "
-          "contract, pipeline, engine, look and export versions above, and only for files whose camera image "
-          "area and DNG opcodes are those of the qualified file. Lucent shows these states to the photographer "
-          "through the camera support database "
+          "Every develop render of the qualification corrects lenses as Lucent's exports do by default "
+          "(lens-profile corrections with the bundled Lensfun database above, ADR 0023: only for an exact "
+          "match of camera and lens, never a correction the file already makes): the section Lens corrections "
+          "says what was corrected for each qualified file. A Verified state therefore covers the default export with its "
+          "lens corrections; a correction is optional by the blueprint, so a mode whose lens has no exact "
+          "profile is verified without one. A Verified state holds for the decoder (and its codecs), "
+          "contract, pipeline, engine, look, export and lens database versions above, and only for files "
+          "whose camera image area and DNG opcodes are those of the qualified file. Lucent shows these states "
+          "to the photographer through the camera support database "
           "exported from this report (`assets/camera-support`, ADR 0018), combined with each file's own "
           "interpretation: a photo of a mode not listed here is Compatible, unverified at best.\n\n";
     md << "What the checks compare with: the camera's identity, compression, image area, orientation and "
@@ -659,6 +666,30 @@ std::string support_table_markdown(const OrderedJson& report) {
            << (area.is_object() ? escape_cell(area.value("source", std::string())) : std::string("-"))
            << " | " << (area.is_object() ? rect_text(area.at("declared")) : std::string("-")) << " | "
            << frame << " | " << output << " |\n";
+    }
+
+    md << "\n## Lens corrections\n\n";
+    md << "What the default develop render corrected for each file (ADR 0023): the lens database's match of "
+          "the file's camera and lens (*exact*: corrected automatically; *fuzzy* or *none*: not corrected, as "
+          "the blueprint allows for a profile miss), the profile and each correction's outcome (*applied*, or "
+          "why not: *no_profile*, *no_calibration*, *carried_by_file* (the file corrects it itself, never "
+          "twice), *withheld*, *not_applicable*).\n\n";
+    md << "| Fixture | Match | Profile | Distortion | Lateral CA | Vignetting |\n|---|---|---|---|---|---|\n";
+    for (const OrderedJson& f : report.at("fixtures")) {
+        const OrderedJson lens = f.contains("lens_correction") ? f.at("lens_correction") : OrderedJson(nullptr);
+        if (!lens.is_object()) {
+            md << "| `" << f.at("id").get<std::string>() << "` | - | - | - | - | - |\n";
+            continue;
+        }
+        const OrderedJson& corrections = lens.at("corrections");
+        const auto outcome = [&](const char* key) {
+            return corrections.contains(key) ? corrections.at(key).get<std::string>() : std::string("-");
+        };
+        md << "| `" << f.at("id").get<std::string>() << "` | " << escape_cell(lens.value("match", std::string()))
+           << " | "
+           << escape_cell(lens.at("profile").is_string() ? lens.at("profile").get<std::string>() : std::string("-"))
+           << " | " << outcome("distortion") << " | " << outcome("lateral_chromatic_aberration") << " | "
+           << outcome("vignetting") << " |\n";
     }
 
     md << "\n## Colour reference\n\n";

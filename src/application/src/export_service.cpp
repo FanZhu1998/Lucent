@@ -598,6 +598,8 @@ Expected<ExportRecord> export_through_batch(BatchService& batches, Library& libr
     render.limited_display_pixels = details.limited_display_pixels;
     render.estimated_peak_bytes = details.estimated_peak_bytes;
     render.render_seconds = details.render_seconds;
+    render.lens_database = details.lens_database;
+    render.lens_corrections = details.lens_corrections;
     record.render_seconds = details.render_seconds;
     record.encode_seconds = details.encode_seconds;
     record.write_seconds = details.write_seconds + details.verify_seconds;

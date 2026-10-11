@@ -1,6 +1,8 @@
 # ADR 0021: Performance baseline: a reproducible harness over the shipped programs, the first baseline, and regression budgets only where the variance allows
 
-- **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below)
+- **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below; amended
+  2026-10-10 by the closing review of W13: "Amendment: the lens-correction cost and the baseline of
+  2026-10-10" below)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), the performance report
 
@@ -259,3 +261,39 @@ decision 3 says every scenario has one (COR-5).
    again, with the over-images statistics gated on the repetition variability of the statistic
    itself rather than the median per-image CV, by the next baseline (the idle-machine baseline of
    the W12 licence and release phase).
+
+## Amendment: the lens-correction cost and the baseline of 2026-10-10 (W13 closure)
+
+W13 corrects the lenses of exactly matched photos by default (ADR 0023). Its closing review
+measured the W13 build against this ADR's budgets and found seven exceeded (finding APL-02): the
+Nikon Z 6's exposure drag (median, maximum and develop service) and shadows drag, the 100 % views
+of the Z 6 and the ILCE-7M4, and the five-photo JPEG batch's workers together; without the lens
+database the same binaries stayed within them.
+
+10. **A defect fixed, a cost recorded.** The drags paid the lens resampling on every frame: a defect,
+    fixed by the closure (the edit session keeps its proxy's lens-corrected image; ADR 0023's and ADR
+    0007 decision 16's closure revisions), after which the Z 6's drags are within the first
+    baseline's budgets again (exposure 79 ms, develop service 69 ms, shadows 100 ms in the new run).
+    What remains is the correction's own cost at full resolution, which the blueprint's correction
+    at that stage implies: a 100 % view and an export resample the whole image once (the Z 6's 100 %
+    view 1.62 s instead of about 1.0 s without the database; its JPEG export 3.04 s instead of 2.58
+    s), and a worker whose export resamples holds the corrected image beside stage one's during the
+    first pass (the workers together of the five-photo JPEG batch 1,176 MiB instead of 941 MiB, of
+    the full one 1,888 MiB instead of 1,557 MiB, within the aggregate limit). Measured again with the
+    machine idle (decision 5), four budgets of the 2026-10-09 baseline still fail for that cost:
+    `preview.z6.view_100`, `preview.a7iv.view_100`, `batch.smoke-jpeg.workers_together` and
+    `batch.all-jpeg.workers_together`.
+11. **The baseline of 2026-10-10.** [`docs/performance/baseline-2026-10-10.md`](../performance/baseline-2026-10-10.md),
+    with its data in `docs/performance/data/2026-10-10/`: release build of the W13 closure working
+    tree, all ten scenarios, three repetitions, the reference machine idle. Its preview scenario was
+    measured again ten minutes after the full run, whose 100 % views were 0.25 to 0.68 s slower in
+    every photo, the R5's included, which no lens correction touches (most likely the antivirus
+    scanning the cold starts' fresh copies of the installed layout); the baseline names both. The
+    budgets are derived from it (`Test-BenchBudgets.ps1 -Create`, the rules of decision 5 unchanged:
+    68 budgets, 11 tracked); `Test-BenchBudgets.ps1` defaults to it and `lucent_bench_harness_tests`
+    checks the gate on it. The 2026-10-09 baseline and its data stay as W12's record (that run fails
+    13 of the new budgets, measured on a loaded machine). Decision 9's re-derivation, with the
+    over-images statistics gated on their own repetition variability, remains with the idle-machine
+    baseline of the W12 licence and release phase. The 1,000-file resilience gate was not repeated:
+    W13 changes the worker protocol's result message (version 3, ADR 0012's closure amendment), which
+    the batch tests cover, not the batch machinery the gate exercises.

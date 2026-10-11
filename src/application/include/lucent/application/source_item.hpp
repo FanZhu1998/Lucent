@@ -286,8 +286,17 @@ struct SourceItem {
     std::vector<ItemId> content_duplicates;
 };
 
+// The oldest decoded-RAW contract whose probes are current (probe_outdated()). A contract change that
+// can change what a file requires, what Lucent supports or a mode key raises it to that contract: 1.3
+// (W9: DNG opcodes supported), 1.4 (W10: the camera's image area, part of the mode key, ADR 0017).
+// 1.5 (W13: the sensor crop a camera records, ADR 0023) changed none of them, and no stored record
+// uses it (lens planning reads it from the decode), so a library probed by contract 1.4 is not probed
+// again for it.
+inline constexpr core::ContractVersion kOldestCurrentProbeContract{1, 4};
+static_assert(!(raw::kDecodedRawContractVersion < kOldestCurrentProbeContract));
+
 // True when the item's support status came from an older interpretation than this build's: it
-// has a probe whose decoded-RAW contract is unknown or older than raw::kDecodedRawContractVersion
+// has a probe whose decoded-RAW contract is unknown or older than kOldestCurrentProbeContract
 // (a contract change can change what a file requires and what Lucent supports; W9 made DNG
 // opcodes supported), or a probe made with another version of the LibRaw decoder (AST-08: a decoder
 // upgrade can move the mode key), or its assessment has no camera support evaluation (made before

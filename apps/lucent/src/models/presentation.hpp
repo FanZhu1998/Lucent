@@ -60,6 +60,10 @@ namespace lucent::ui::presentation {
 // unsupported, verifiedEntriesHold, problem, notes, and summary: one sentence ("Version 1.0.0,
 // qualified 2026-10-08: 34 camera modes, 14 verified, ...") or the problem.
 [[nodiscard]] QVariantMap camera_support_map(const CameraSupportInfo& info);
+// Help > About's lens database (W13, ADR 0023) as QML reads it: available, version, library,
+// location, cameras, lenses, problem, and summary: one sentence ("Version 1.0.0 of the Lensfun lens
+// database (Lensfun 0.3.4): 1571 lenses of 1057 cameras.") or the problem.
+[[nodiscard]] QVariantMap lens_database_map(const LensDatabaseInfo& info);
 
 [[nodiscard]] QString processing_label(ProcessingStatus status);
 

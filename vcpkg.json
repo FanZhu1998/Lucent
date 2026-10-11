@@ -9,6 +9,7 @@
   "dependencies": [
     { "name": "libraw", "features": [ "dng-lossy" ] },
     "lcms",
+    "lensfun",
     "libjpeg-turbo",
     { "name": "tiff", "default-features": false, "features": [ "zip" ] },
     "sqlite3",

@@ -28,6 +28,9 @@
 // geometry (its full-resolution upright size, the geometry of its pixels, uncropped or not) gives
 // the tools their mapping (frame_map(): EditService::map_geometry(), the engine's GeometryMapping).
 // maskOverlay (O) tints the selected mask's weights over the image (EditService::set_mask_overlay).
+// W13 (ADR 0023): the newest frame's lens correction (frame_lens(), and its point mapping in
+// frame_map().lens, which the mask tool maps positions through) and the Lens corrections panel
+// (`lens`, LensCorrections: one revision per switch or profile choice).
 //
 // Gestures. beginGesture() ... setPosition()/setValue() ... endGesture() (a pointer press and its
 // release) is ONE revision: the positions in between are transient (EditService::set_transient) and
@@ -86,6 +89,7 @@
 #include "models/auto_settings_model.hpp"
 #include "models/crop_tool.hpp"
 #include "models/edit_history_model.hpp"
+#include "models/lens_corrections.hpp"
 #include "models/mask_editor.hpp"
 #include "services/edit_service.hpp"
 
@@ -152,6 +156,8 @@ class EditSession : public QObject {
     Q_PROPERTY(bool toolActive READ tool_active NOTIFY toolChanged FINAL)
     Q_PROPERTY(lucent::ui::CropTool* crop READ crop CONSTANT FINAL)
     Q_PROPERTY(lucent::ui::MaskEditor* masks READ masks CONSTANT FINAL)
+    // W13: the Lens corrections panel.
+    Q_PROPERTY(lucent::ui::LensCorrections* lens READ lens CONSTANT FINAL)
     // The full-resolution size of the newest frame's image (after its geometry); 0 without a frame.
     Q_PROPERTY(int frameOutputWidth READ frame_output_width NOTIFY frameChanged FINAL)
     Q_PROPERTY(int frameOutputHeight READ frame_output_height NOTIFY frameChanged FINAL)
@@ -290,6 +296,7 @@ public:
     [[nodiscard]] bool tool_active() const noexcept { return !tool_.isEmpty(); }
     [[nodiscard]] CropTool* crop() const noexcept { return crop_.get(); }
     [[nodiscard]] MaskEditor* masks() const noexcept { return masks_.get(); }
+    [[nodiscard]] LensCorrections* lens() const noexcept { return lens_.get(); }
     [[nodiscard]] int frame_output_width() const noexcept { return frame_map_.valid ? frame_map_.output_size.width() : 0; }
     [[nodiscard]] int frame_output_height() const noexcept {
         return frame_map_.valid ? frame_map_.output_size.height() : 0;
@@ -327,6 +334,8 @@ public:
     [[nodiscard]] const EditGeometry& frame_geometry() const noexcept { return frame_geometry_; }
     [[nodiscard]] const GeometryMap& frame_map() const noexcept { return frame_map_; }
     [[nodiscard]] const QList<FrameMaskOutline>& frame_masks() const noexcept { return frame_masks_; }
+    // What the newest frame's render did for the lens (null without a frame).
+    [[nodiscard]] const LensInfoPtr& frame_lens() const noexcept { return frame_lens_; }
     // The mask the local controls and the mask tool edit (0: none).
     [[nodiscard]] quint32 selected_mask() const noexcept { return selected_mask_; }
     void set_selected_mask(quint32 id);
@@ -419,6 +428,7 @@ private:
     std::unique_ptr<AutoSettingsModel> automatic_;
     std::unique_ptr<CropTool> crop_;
     std::unique_ptr<MaskEditor> masks_;
+    std::unique_ptr<LensCorrections> lens_;
     ItemId item_ = 0;
     std::optional<EditState> state_;
     EditSettings settings_;
@@ -452,6 +462,7 @@ private:
     GeometryMap frame_map_;
     bool frame_uncropped_ = false;
     QList<FrameMaskOutline> frame_masks_;
+    LensInfoPtr frame_lens_;
     QString mask_overlay_source_;
     bool mask_overlay_ = false;
     QString tool_;

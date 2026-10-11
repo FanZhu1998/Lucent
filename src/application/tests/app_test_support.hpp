@@ -167,6 +167,11 @@ public:
         std::lock_guard lock(mutex_);
         stage_one_gate_ = std::move(gate);
     }
+    // The stage_two_bytes estimate_stage_two() gives (unset: SourceRenderer's default estimate).
+    void stage_two_estimate(std::uint64_t bytes) {
+        std::lock_guard lock(mutex_);
+        stage_two_estimate_ = bytes;
+    }
 
     [[nodiscard]] int renders() const { return renders_.load(); }
     [[nodiscard]] int started() const { return started_.load(); }
@@ -197,6 +202,22 @@ public:
         estimate.stage_one_bytes = std::uint64_t{1} << 20;
         estimate.stage_two_bytes = std::uint64_t{1} << 20;
         estimate.export_peak = std::uint64_t{1} << 20;
+        return estimate;
+    }
+
+    Expected<engine::DevelopMemoryEstimate> estimate_stage_two(
+        const engine::StageOneImage& stage_one, const engine::StageOneRequest& request,
+        const engine::DevelopSettings& settings) const override {
+        std::optional<std::uint64_t> bytes;
+        {
+            std::lock_guard lock(mutex_);
+            bytes = stage_two_estimate_;
+        }
+        if (!bytes) {
+            return SourceRenderer::estimate_stage_two(stage_one, request, settings);
+        }
+        engine::DevelopMemoryEstimate estimate;
+        estimate.stage_two_bytes = *bytes;
         return estimate;
     }
 
@@ -317,6 +338,7 @@ private:
     mutable std::mutex mutex_;
     std::map<std::uint64_t, Script> scripts_;
     std::shared_ptr<Gate> stage_one_gate_;
+    std::optional<std::uint64_t> stage_two_estimate_;
     mutable std::vector<std::uint64_t> stage_two_revisions_;
     mutable std::atomic<int> renders_{0};
     mutable std::atomic<int> started_{0};

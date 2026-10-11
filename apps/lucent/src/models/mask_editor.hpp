@@ -18,7 +18,9 @@
 // frame_map(), EditService::map_geometry(); F is the camera's image area for a geometry-version-2
 // recipe, ADR 0017), so a handle sits where the engine puts that mask point whatever the crop,
 // straightening, quarter turns and camera area, and lengths (radii, the brush) are in the frame's
-// isometric output pixels.
+// isometric output pixels. A lens-profile correction of the frame (ADR 0023) lies between the two:
+// positions go through its point mapping (GeometryMap::lens, output_from_normalized() and
+// normalized_from_output()), so handles and brush strokes stay on the content the mask is on.
 //
 // Outlines (`outlines`, OverlayPaths) are the selected mask's: the frame's own (DevelopFrame::masks,
 // what was rendered) while nothing moves the mask, and during a handle drag the engine's

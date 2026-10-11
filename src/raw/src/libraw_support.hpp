@@ -20,15 +20,30 @@
 
 namespace lucent::raw::detail {
 
+// Canon's AspectInfo maker note (tag 0x009a, five LONGs; ExifTool Canon::AspectInfo): the aspect
+// ratio code and the cropped image's size and origin. LibRaw 0.22 reads the tag but folds the crop
+// codes 12 (APS-H crop) and 13 (APS-C crop) into "3:2" (src/metadata/canon.cpp), so the adapter
+// reads it itself through LibRaw's maker-note callback while LibRaw parses the maker notes.
+struct CanonAspectInfo {
+    std::uint32_t ratio_code = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t left = 0;
+    std::uint32_t top = 0;
+};
+
 // State shared with LibRaw's C callbacks during one call. Callbacks never throw.
 struct LibRawCallState {
     core::CancellationToken cancel;
     bool cancel_observed = false;
     std::uint32_t data_errors = 0;             // LibRaw data-error callback invocations
     std::int64_t first_data_error_offset = 0;  // -1: unexpected end of file
+    // The first maker-note tag 0x009a of five LONGs LibRaw parsed (any maker: only meaningful for
+    // Canon, which extract_metadata() checks).
+    std::optional<CanonAspectInfo> canon_aspect;
 };
 
-// Installs the progress (cancellation) and data-error callbacks for `state` on `raw`.
+// Installs the progress (cancellation), data-error and maker-note callbacks for `state` on `raw`.
 void install_callbacks(LibRaw& raw, LibRawCallState& state) noexcept;
 
 // Stage names used in Error::where ("raw.libraw.<stage>").
@@ -87,6 +102,9 @@ struct ExtractionContext {
     std::uint32_t open_raw_height = 0;
     // Fujifilm RAF: the crop the file declares, read by Lucent (read_raf_crop), or nothing.
     std::optional<InsetCrop> raf_crop;
+    // The maker-note tag 0x009a the callbacks captured while LibRaw opened the file
+    // (LibRawCallState::canon_aspect); used for Canon only.
+    std::optional<CanonAspectInfo> canon_aspect;
 };
 
 // Converts LibRaw's state (after open_datastream(), or after unpack() for stage AfterUnpack)
@@ -168,6 +186,14 @@ struct CanonCropFacts {
     std::int32_t sensor_right = -1;
     std::int32_t sensor_bottom = -1;
 };
+
+// Canon's in-camera sensor crop (contract 1.5, SensorCrop): AspectInfo's ratio code 12 (APS-H crop)
+// or 13 (APS-C crop) on a non-DNG Canon file whose visible area is the AspectInfo rectangle (within 2 %
+// or 8 pixels per side: the camera recorded the crop, as the EOS R5 does in its 1.6x crop mode, not a
+// whole-sensor image with a crop attached) is a sensor crop with Canon's factor for it (1.3, 1.6);
+// anything else is none.
+[[nodiscard]] std::optional<SensorCrop> canon_sensor_crop(bool canon_non_dng, const std::optional<CanonAspectInfo>& info,
+                                                          const image::PixelRect& visible);
 
 // Canon's in-camera aspect-ratio setting (QUA-01). LibRaw 0.22 stores Canon's AspectInfo rectangle
 // (maker note 0x009a; src/metadata/canon.cpp) in raw_inset_crops[0], offset by the SensorInfo origin

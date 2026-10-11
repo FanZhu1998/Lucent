@@ -234,12 +234,122 @@ QSize FakeEditService::full_size(ItemId id) const {
     return QSize(6000, 4000);
 }
 
+QList<LensProfileEntry> FakeEditService::simulated_profiles() {
+    const auto entry = [](QString maker, QString model, double crop, QString mounts, double from, double to,
+                          bool vignetting) {
+        LensProfileEntry e;
+        e.profile = EditLensProfile{std::move(maker), std::move(model), crop};
+        e.mounts = std::move(mounts);
+        e.lens_type = QStringLiteral("rectilinear");
+        e.min_focal_mm = from;
+        e.max_focal_mm = to;
+        e.min_f_number = 4.0;
+        e.distortion = true;
+        e.chromatic_aberration = true;
+        e.vignetting = vignetting;
+        return e;
+    };
+    return {entry(QStringLiteral("Simulated Optics"), QStringLiteral("Zoom 24-70mm f/4"), 1.0,
+                  QStringLiteral("Simulated Mount"), 24.0, 70.0, true),
+            entry(QStringLiteral("Simulated Optics"), QStringLiteral("Zoom 24-70mm f/4 II"), 1.0,
+                  QStringLiteral("Simulated Mount"), 24.0, 70.0, true),
+            entry(QStringLiteral("Other Optics"), QStringLiteral("Prime 50mm f/1.8"), 1.5,
+                  QStringLiteral("Other Mount"), 50.0, 50.0, false)};
+}
+
+LensDatabaseInfo FakeEditService::lens_database() const {
+    LensDatabaseInfo info;
+    info.available = lens_.database;
+    if (lens_.database) {
+        info.version = QStringLiteral("1.0.0");
+        info.library = QStringLiteral("Simulated lens database");
+        info.cameras = 1;
+        info.lenses = static_cast<int>(simulated_profiles().size());
+    } else {
+        info.problem =
+            tr_fake("Simulated: the lens database is not installed, so lens corrections are unavailable.");
+    }
+    return info;
+}
+
+QList<LensProfileEntry> FakeEditService::search_lens_profiles(const QString& text, int limit) const {
+    QList<LensProfileEntry> out;
+    if (!lens_.database) {
+        return out;
+    }
+    const QStringList words = text.toLower().remove(u'/').split(u' ', Qt::SkipEmptyParts);
+    for (const LensProfileEntry& entry : simulated_profiles()) {
+        const QString haystack = (entry.profile.maker + u' ' + entry.profile.model).toLower().remove(u'/');
+        if (std::all_of(words.cbegin(), words.cend(),
+                        [&](const QString& w) { return haystack.contains(w); }) &&
+            out.size() < limit) {
+            out << entry;
+        }
+    }
+    return out;
+}
+
 void FakeEditService::describe(EditFrame& frame, ItemId id, const EditSettings& settings,
                                const EditGeometry& geometry, quint32 mask_overlay) const {
     const QSize full = full_size(id);
     const GeometryMap map = adapters::geometry_map(geometry, full);
     frame.full_upright_size = full;
     frame.geometry = geometry;
+    // W13: what the simulated lens correction did (no point mapping: the simulation resamples nothing).
+    {
+        auto lens = std::make_shared<LensInfo>();
+        lens->database = lens_.database;
+        lens->database_version = lens_.database ? QStringLiteral("1.0.0") : QString();
+        lens->enabled = settings.lens.enabled;
+        lens->automatic = !settings.lens.profile.has_value();
+        lens->camera = QStringLiteral("Simulated Camera");
+        lens->lens = QStringLiteral("Zoom 24-70mm F4");
+        lens->focal_length_mm = 35.0;
+        lens->f_number = 5.6;
+        lens->match = lens_.match;
+        lens->database_camera = QStringLiteral("Simulated Camera");
+        lens->database_mount = QStringLiteral("Simulated Mount");
+        lens->compatible_mounts = {QStringLiteral("Simulated Mount")};
+        const QList<LensProfileEntry> profiles = simulated_profiles();
+        if (lens_.match == LensMatchQuality::Exact) {
+            lens->matched = profiles[0].profile;
+            lens->reasons << QStringLiteral("camera identified; one database lens has the file's lens name");
+        } else if (lens_.match == LensMatchQuality::Fuzzy) {
+            lens->candidates << profiles[0].profile << profiles[1].profile;
+            lens->reasons << QStringLiteral(
+                "2 database lenses contain the file's lens name; none has the same name");
+        } else {
+            lens->reasons << QStringLiteral("no database lens has the file's lens name");
+        }
+        lens->carried_distortion = lens_.carried_distortion;
+        lens->carried_vignetting = lens_.carried_vignetting;
+        const bool carries = lens_.carried_distortion || lens_.carried_vignetting;
+        const std::optional<EditLensProfile> used =
+            settings.lens.profile ? settings.lens.profile
+                                  : (lens_.match == LensMatchQuality::Exact ? lens->matched : std::nullopt);
+        if (lens->enabled && lens_.database) {
+            lens->profile = used;
+        }
+        const std::array<bool, 3> wanted = {settings.lens.distortion, settings.lens.chromatic_aberration,
+                                            settings.lens.vignetting};
+        const std::array<bool, 3> carried = {lens_.carried_distortion, false, lens_.carried_vignetting};
+        for (std::size_t i = 0; i < 3; ++i) {
+            LensOutcome outcome = LensOutcome::Applied;
+            if (!lens->enabled || !wanted[i]) {
+                outcome = LensOutcome::Disabled;
+            } else if (carried[i]) {
+                outcome = LensOutcome::CarriedByFile;
+            } else if (lens->automatic && carries) {
+                outcome = LensOutcome::Withheld;
+            } else if (!lens_.database || !used) {
+                outcome = LensOutcome::NoProfile;
+            } else if (i == 2 && !lens_.calibrated_vignetting) {
+                outcome = LensOutcome::NoCalibration;
+            }
+            lens->corrections[i] = LensCorrectionState{outcome, QStringLiteral("simulated")};
+        }
+        frame.lens = std::move(lens);
+    }
     if (!map.valid) {
         return;
     }
@@ -571,6 +681,15 @@ void FakeEditService::paste_settings(const QList<ItemId>& targets) {
             } else {
                 settings.geometry = from.geometry;
                 report.applied << SettingsCategory::Geometry;
+            }
+        }
+        if (has(SettingsCategory::LensCorrections)) {
+            // The simulation's "same camera and lens": photos of the same size.
+            if (full_size(id) != full_size(clipboard_->source)) {
+                report.skipped << tr_fake("Lens corrections: simulated photo from another camera and lens.");
+            } else {
+                settings.lens = from.lens;
+                report.applied << SettingsCategory::LensCorrections;
             }
         }
         if (settings != committed(items_[id])) {

@@ -1,0 +1,23 @@
+{
+ "schema": "lucent.lens-database-provenance",
+ "schema_version": 1,
+ "description": "The Lensfun lens database, data format version 1, as published by the Lensfun project for Lensfun 0.3.x (lensfun-update-data). The XML files are unmodified.",
+ "licence": "CC-BY-SA-3.0",
+ "licence_file": "COPYING.CC_BY-SA_3.0",
+ "attribution": "Lens database (c) the Lensfun project and its contributors (https://lensfun.github.io/), licensed under the Creative Commons Attribution-ShareAlike 3.0 Unported licence.",
+ "modifications": "none",
+ "source": {
+  "archive_url": "https://lensfun.github.io/db/version_1.tar.bz2",
+  "archive_sha256": "97c9f8059accae0128a413bc610a04a4548e8da2764a6d3d60d82bf917639457",
+  "archive_size": 434744,
+  "archive_timestamp": 1791482221,
+  "archive_timestamp_utc": "2026-10-08T17:57:01Z",
+  "retrieved": "2026-10-10",
+  "repository": "https://github.com/lensfun/lensfun",
+  "commit": "43f9e001ab66c4fcdd4f400463f13b72f94b2288",
+  "commit_date": "2026-10-08T19:57:01+02:00",
+  "generator": "tools/update_database/generate_db.py (lensfun master, same commit), from data/db",
+  "data_format_version": 1,
+  "licence_url": "https://raw.githubusercontent.com/lensfun/lensfun/43f9e001ab66c4fcdd4f400463f13b72f94b2288/data/COPYING.CC_BY-SA_3.0"
+ }
+}

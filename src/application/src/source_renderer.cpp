@@ -63,6 +63,12 @@ public:
         return engine::estimate_develop_memory(selection->probe.metadata, request, settings, develop_options());
     }
 
+    Expected<engine::DevelopMemoryEstimate> estimate_stage_two(
+        const engine::StageOneImage& stage_one, const engine::StageOneRequest& request,
+        const engine::DevelopSettings& settings) const override {
+        return engine::estimate_develop_memory(stage_one.metadata, request, settings, develop_options());
+    }
+
     Expected<engine::StageOneImage> render_stage_one(const SourceItem& item,
                                                      const engine::StageOneRequest& request,
                                                      const core::CancellationToken& cancel) const override {
@@ -125,12 +131,20 @@ public:
         return out;
     }
 
+    std::optional<engine::LensDatabaseIdentity> lens_database() const override {
+        if (!options_.lens_database) {
+            return std::nullopt;
+        }
+        return options_.lens_database->info().identity;
+    }
+
 private:
     engine::DevelopOptions develop_options() const {
         engine::DevelopOptions options;
         options.decode_limits = options_.decode_limits;
         options.memory_budget_bytes = options_.memory_budget_bytes;
         options.parallel = options_.parallel;
+        options.lens_database = options_.lens_database;
         return options;
     }
 

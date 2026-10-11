@@ -685,7 +685,7 @@ core::SemanticVersion semver(const char* text) {
 
 // A complete-run report with two modes, as build_report() writes it.
 OrderedJson export_report() {
-    return OrderedJson::parse(R"({
+    return OrderedJson::parse(R"json({
      "schema": "lucent.qualification-report", "schema_version": 1, "generated": "2026-10-08T03:13:58Z",
      "tool": {"name": "lucent-qualify", "lucent_version": "0.1.0", "git_commit": "abc123"},
      "decoder": "LibRaw 0.22.2-Release; decoded-RAW 1.4",
@@ -693,7 +693,7 @@ OrderedJson export_report() {
                   "render_pipeline": 3, "develop_pipeline": 3, "dng_opcode_processing": 1,
                   "geometry_operation": 2, "image_area_placement": 1,
                   "decoder_capabilities": ["jpeg", "zlib"], "develop_engine": [3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                  "neutral_look": 1, "export": 1},
+                  "neutral_look": 1, "export": 1, "lens_database": "lens-database (manifest 97c9)"},
      "selection": {"tier": "all", "ids": ["a", "b"], "isolated_processes": true},
      "summary": {"fixtures": 2, "by_state": {}, "expectation_mismatches": 0, "harness_errors": 0},
      "fixtures": [
@@ -712,7 +712,7 @@ OrderedJson export_report() {
        "model_key": "fujifilm|x-t4", "family": "fujifilm", "camera": "Fujifilm X-T4", "product": "",
        "mode_label": "RAF lossless", "fixtures": ["b"], "proposed_state": "limited",
        "evidence": "13 of 13 checks strong", "limitations": ["xtrans_baseline_demosaic"], "evidence_gaps": []}]
-    })");
+    })json");
 }
 
 SupportExportOptions export_options() {
@@ -731,6 +731,7 @@ TEST(SupportExport, MapsTheSupportTableToTheDatabase) {
     EXPECT_EQ(db.basis.decoder, "LibRaw 0.22.2-Release");
     EXPECT_EQ(db.basis.decoded_raw_contract, "1.4");
     EXPECT_EQ(db.basis.check_suite, 2u);
+    EXPECT_EQ(db.basis.lens_database, "lens-database (manifest 97c9)");
     EXPECT_EQ(db.summary.modes, 2u);
     EXPECT_EQ(db.summary.verified, 1u);
     EXPECT_EQ(db.summary.limited, 1u);

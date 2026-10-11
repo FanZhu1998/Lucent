@@ -4,7 +4,8 @@
 #
 # The float-TIFF dump, the side-file publication helpers and the JSON documents live in a small
 # static library so that the integration tests (tests/) exercise exactly the code the tool uses.
-# Recipes (--develop) are read with lucent_application's recipe reader (recipe.hpp).
+# Recipes (--develop) are read with lucent_application's recipe reader (recipe.hpp); the lens database
+# (ADR 0023) is the verified bundled asset (lucent_assets, lens_database.hpp).
 
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -37,4 +38,5 @@ lucent_add_executable(lucent-render
         lucent_render_tool
         lucent_probe_report
         Lucent::raw
+        Lucent::assets  # the bundled lens database (ADR 0023)
 )

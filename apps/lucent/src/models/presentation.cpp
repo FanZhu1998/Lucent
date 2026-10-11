@@ -248,6 +248,30 @@ QVariantMap camera_support_map(const CameraSupportInfo& info) {
     return map;
 }
 
+QVariantMap lens_database_map(const LensDatabaseInfo& info) {
+    QVariantMap map;
+    map.insert(QStringLiteral("available"), info.available);
+    map.insert(QStringLiteral("version"), info.version);
+    map.insert(QStringLiteral("library"), info.library);
+    map.insert(QStringLiteral("location"), info.location);
+    map.insert(QStringLiteral("cameras"), info.cameras);
+    map.insert(QStringLiteral("lenses"), info.lenses);
+    map.insert(QStringLiteral("problem"), info.problem);
+    QString summary;
+    if (info.available) {
+        summary = tr_text("Version %1 of the Lensfun lens database (%2): %3 lens profiles for %4 cameras.")
+                      .arg(info.version, info.library)
+                      .arg(info.lenses)
+                      .arg(info.cameras);
+    } else {
+        summary = info.problem.isEmpty()
+                      ? tr_text("No lens database is in use, so lens corrections are unavailable.")
+                      : info.problem;
+    }
+    map.insert(QStringLiteral("summary"), summary);
+    return map;
+}
+
 QString processing_label(ProcessingStatus status) {
     switch (status) {
     case ProcessingStatus::NotProcessed:

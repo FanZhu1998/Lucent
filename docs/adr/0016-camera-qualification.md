@@ -4,7 +4,8 @@
   ADR 0017 for the camera's image area (check suite 2), on 2026-10-08 by ADR 0018 for the
   camera support database: see "Amendment: support data (ADR 0018)" below, by the closing
   review of W10: see "Amendment: closing review", and on 2026-10-09 by ADR 0020 for the camera
-  correctness gate: see "Amendment: W12 camera correctness gate (ADR 0020)")
+  correctness gate: see "Amendment: W12 camera correctness gate (ADR 0020)", and on 2026-10-10 by the
+  closing review of W13: see "Amendment: qualification with lens corrections")
 - **Date:** 2026-10-05
 - **Workflow:** W10 (Multi-brand qualification), phase 1 of 3
 
@@ -317,3 +318,37 @@ cached fixture of any tier, in `lucent_qualification_fixture_tests`).
   files' own tags. Expectations give sizes in upright pixels (`expectations.hpp`).
 - The corpus has 40 fixtures; the committed report, support table and camera support database are
   regenerated from a clean build of this change.
+
+## Amendment: qualification with lens corrections (W13 closure, 2026-10-10) - APL-01
+
+Since W13 Lucent's exports correct exactly matched lenses by default (ADR 0023), but every develop
+render of `lucent-qualify` ran with the engine's default options, which hold no lens database: a mode
+would have been Verified from renders Lucent no longer makes (13 renderable exact matches in the
+corpus), and the report generator still printed that lens corrections were "not available for any
+camera yet".
+
+- **Decision: the qualification renders lenses as the exports do.** `lucent-qualify` loads the
+  bundled lens database next to it (`assets::load_lens_database()`: the build's pin, the asset's
+  hashes) in every process that renders, and refuses to run without it (exit 1, the reason on
+  stderr): a qualification without it would certify renders Lucent does not make. The develop
+  renders (`develop_1`, the determinism render, their memory estimate) and the colour reference's
+  stage one and two use it (`QualifyOptions::lens_database`). The alternative, qualifying with
+  corrections off and stating that Verified excludes them, was rejected: a Verified state would then
+  not cover the default export, which is what the photographer gets.
+- **The colour reference is unaffected by construction.** It measures operation 1's colour transform
+  on stage one's camera samples inside the chart's boxes (ADR 0020), before any lens correction, where
+  the boxes locate the patches; a lens correction moves samples and scales them by a
+  channel-independent gain, so it changes no colour transform. Its renders carry the database only so
+  that every develop render of a fixture plans the same correction.
+- **What each fixture records.** The result's `lens_correction`: the database, the match ("exact",
+  "fuzzy", "none"), the profile and each correction's outcome; the support table gains the section
+  "Lens corrections" with them per fixture, and its introduction says what a Verified state covers.
+- **The basis names the database** (`versions.lens_database` of the report, `QualificationBasis::
+  lens_database` of the camera support database, schema 3; ADR 0018's amendment). It is the bundled
+  asset's pinned manifest (`assets::lens_database_basis()`), so another database is another basis.
+- **Expectations unchanged.** A correction keeps the image's size and frame (the corrected canvas is
+  the uncorrected image's size, the camera's image area the same pixel rectangle of it, ADR 0023
+  decision 7), and the checks compare sizes, orientation, levels, colour and the export's round trip,
+  not pixel hashes of a reference: the expected states and check statuses of all 40 fixtures hold.
+  The committed report, support table and camera support database are regenerated from a clean build
+  of this change.

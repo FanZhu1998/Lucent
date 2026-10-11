@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <vector>
 
 #include <lucent/application/auto_service.hpp>
 #include <lucent/application/develop_preview.hpp>
@@ -23,6 +24,7 @@
 #include <lucent/core/error.hpp>
 #include <lucent/engine/develop_geometry.hpp>
 #include <lucent/engine/develop_settings.hpp>
+#include <lucent/engine/lens_correction.hpp>
 #include <lucent/raw/decoded_raw.hpp>
 
 #include "services/edit_service.hpp"
@@ -34,8 +36,9 @@ namespace lucent::ui::adapters {
 [[nodiscard]] EditSettings to_edit_settings(const engine::DevelopSettings& settings);
 
 // `settings` over `base`, which supplies what the editor does not change (the schema version, the
-// base look and the operation versions; the item's committed settings). Version-1 bases are
-// upgraded (the editor's settings are always version 2).
+// base look and the operation versions other than the lens correction's, which EditLensCorrection::
+// enabled gives; the item's committed settings). Older bases are upgraded (the editor's settings are
+// always version 3).
 [[nodiscard]] engine::DevelopSettings to_develop_settings(const EditSettings& settings,
                                                           const engine::DevelopSettings& base);
 
@@ -44,6 +47,10 @@ namespace lucent::ui::adapters {
 [[nodiscard]] engine::GeometrySetting to_geometry_setting(const EditGeometry& geometry);
 [[nodiscard]] EditMask to_edit_mask(const engine::LocalAdjustment& adjustment);
 [[nodiscard]] engine::LocalAdjustment to_local_adjustment(const EditMask& mask);
+// The lens correction of `settings` (its operation version and member) and back.
+[[nodiscard]] EditLensCorrection to_edit_lens_correction(const engine::DevelopSettings& settings);
+[[nodiscard]] EditLensProfile to_edit_lens_profile(const engine::LensProfileId& id);
+[[nodiscard]] engine::LensProfileId to_lens_profile_id(const EditLensProfile& profile);
 [[nodiscard]] image::Size to_image_size(QSize size) noexcept;
 
 [[nodiscard]] engine::DevelopControl to_develop_control(EditControl control) noexcept;
@@ -130,6 +137,22 @@ inline constexpr int kMaxMaskOverlayPlaneEdge = 2048;
                                         const engine::GeometrySetting& geometry, image::Size upright,
                                         int max_long_edge = 1024);
 
+// ---- Lens corrections (W13, ADR 0023) ----------------------------------------------------------------
+
+// What a render did for the lens (the record's plan) in the shell's terms.
+[[nodiscard]] LensInfoPtr to_lens_info(const engine::LensCorrectionRecord& record);
+
+// The point mapping of a render's lens correction (the plan's LensGeometryMap, full-resolution upright
+// pixels); null when the plan resampled nothing.
+[[nodiscard]] std::shared_ptr<const LensPointMap> lens_point_map(const engine::LensCorrectionPlan& plan);
+
+// The profiles of `profiles` (engine::LensDatabase::profiles(), in its order) whose maker and model
+// hold every word of `text` (case ignored, '/' ignored so "f4" finds "f/4"; no word: every profile),
+// at most `limit`: first those in which every word starts a word of the name, then the others (each
+// in the database's order).
+[[nodiscard]] QList<LensProfileEntry> lens_profile_search(
+    const std::vector<engine::LensProfileSummary>& profiles, const QString& text, int limit);
+
 // ---- Frames ------------------------------------------------------------------------------------------
 
 // The clipping overlay of `mask`: highlights (some channel at 255) red, shadows (some channel at 0)
@@ -138,9 +161,9 @@ inline constexpr int kMaxMaskOverlayPlaneEdge = 2048;
 [[nodiscard]] QImage clipping_overlay(const app::ClippingMask& mask);
 
 // The shell's frame of `frame` (pixels converted, histogram and render facts, the geometry and mask
-// outlines of its render), with its overlay when `clipping`; sequence, token, `before`, `uncropped`
-// and the mask overlay are left for the caller. Null when the pixels cannot be converted (out of
-// memory).
+// outlines of its render, its lens correction and point mapping), with its overlay when `clipping`;
+// sequence, token, `before`, `uncropped` and the mask overlay are left for the caller. Null when the
+// pixels cannot be converted (out of memory).
 [[nodiscard]] std::shared_ptr<EditFrame> to_edit_frame(const app::DevelopFrame& frame, bool clipping);
 
 }  // namespace lucent::ui::adapters

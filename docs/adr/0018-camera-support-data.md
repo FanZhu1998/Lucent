@@ -1,7 +1,8 @@
 # ADR 0018: Camera support data: versioned asset manifests, the camera support database and the four support states
 
 - **Status:** Accepted (amended on 2026-10-08 by the closing review of W10: database schema 2 and
-  support rules 2, see "Amendment: closing review" below)
+  support rules 2, see "Amendment: closing review" below; amended on 2026-10-10 by the closing review of
+  W13: database schema 3, see "Amendment: the lens database in the basis" below)
 - **Date:** 2026-10-08
 - **Workflow:** W10 (Multi-brand qualification), phase 3: support data
 - **Amends:** ADR 0016 (decision 1: the mode key moves to `lucent_assets`; decision 6: the report
@@ -327,3 +328,25 @@ Consequences: the run of the review fixes over all 34 fixtures gave the same out
 bundled database is 2.0.0. An independent colour reference (QUA-03) is not part of the basis: the
 colour check still compares with LibRaw's calibration, which the support table, the README and the
 Verified meaning now say (ADR 0016 amendment).
+
+## Amendment: the lens database in the basis (W13 closure, 2026-10-10)
+
+ADR 0016's W13 amendment makes the qualification render lenses as Lucent's exports do. A Verified
+state then holds for the lens database it was established with, as for the decoder and the engine.
+
+6. **Schema 3** (`kCameraSupportSchemaVersion` 3): the basis gains `lens_database`, the bundled lens
+   database's identity as `assets::lens_database_basis()` gives it, "lens-database (manifest <SHA-256
+   of its pinned manifest>)" ("none" for a build that bundles none). `running_basis()` fills it from
+   the build's pin (no load needed: the pin identifies every file through the manifest's hashes), and
+   `basis_differences()` names it ("lens database: qualified with ..., this build uses ..."), so a
+   Verified entry is Compatible, unverified for a build with another database until the mode is
+   qualified again. Version-2 documents (no member) are still read, with an empty lens database: a
+   database qualified before lens corrections never certifies a build that applies them, which is the
+   state of the committed 2.1.0 database until it is regenerated from a clean build. A version-3
+   document must name a lens database (strict reading, as every member; an empty name is Corrupt).
+   The version written follows the content (`camera_support_schema_version()`): 3 when the basis
+   names a lens database, 2 when it names none, so `lucent-qualify --export-support` exports a report
+   made before lens corrections (no `versions.lens_database`) as exactly the version-2 document it
+   always exported (`CommittedData.TheCameraSupportAssetIsTheExportOfTheReport` holds for the
+   committed report and database until both are regenerated), and its manifest's content version
+   is the document's.

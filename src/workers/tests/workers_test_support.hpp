@@ -83,6 +83,9 @@ inline JobResult sample_result(std::string job_id = "job-1") {
     result.render.clipped_raw_samples = 17;
     result.render.limited_display_pixels = 42;
     result.render.estimated_peak_bytes = 1'234'567'890;
+    result.render.lens_database = "lens-database 1.0.0 (manifest 0123456789abcdef)";
+    result.render.lens_corrections = "distortion, lateral chromatic aberration (Nikon / Nikkor Z 24-70mm f/4 S)";
+    result.render.lens_note = "";
     result.timings = JobTimings{0.125, 2.5, 0.75, 1.0, 0.0625, 4.4375};
     result.memory = MemorySnapshot{100, 200, 300, 400};
     return result;

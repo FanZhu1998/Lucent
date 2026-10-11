@@ -52,9 +52,10 @@
 // encoded as an sRGB JPEG (kRenderedThumbnailQuality) and cached in memory and, for an item whose
 // content hash is known, in the disk ThumbnailCache under rendered_thumbnail_key(): generator
 // LucentRender, keyed by the source hash, subimage and a variant digest of the settings SHA-256,
-// the develop pipeline version and the decoder build, so a changed recipe or engine never shows an
-// old thumbnail and the next session shows it without rendering. Interactive lane (a cache hit
-// costs no render); callers queue them one at a time behind the photo being edited, as the W3
+// the develop pipeline version, the decoder build and the lens database the renderer corrects
+// lenses with (SourceRenderer::lens_database(), ADR 0023), so a changed recipe, engine or lens
+// database never shows an old thumbnail and the next session shows it without rendering. Interactive lane (a
+// cache hit costs no render); callers queue them one at a time behind the photo being edited, as the W3
 // thumbnails are.
 //
 // Camera previews (request_camera_preview()): the file's embedded camera JPEG
@@ -91,6 +92,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -183,15 +185,21 @@ inline constexpr std::uint32_t kRenderedThumbnailGeneratorVersion = 1;
 
 // The disk-cache key of the Lucent-rendered thumbnail of image `subimage` of the file with content
 // `source_sha256`, rendered with the settings whose canonical document has `settings_sha256`, by
-// the decoder build `decoder_version` (ProbeSummary::decoder + " " + decoder_version). The variant
-// is the SHA-256 of "lucent.rendered-thumbnail", the settings SHA-256 (which covers the recipe's
-// operation and base-look versions), every engine::kDevelopEngineVersions entry (the engine's
-// other algorithm versions, so an engine change never shows an old thumbnail) and the decoder
-// text.
+// the decoder build `decoder_version` (ProbeSummary::decoder + " " + decoder_version) and the lens
+// database `lens_database` (lens_database_key()). The variant is the SHA-256 of
+// "lucent.rendered-thumbnail", the settings SHA-256 (which covers the recipe's operation and
+// base-look versions), every engine::kDevelopEngineVersions entry (the engine's other algorithm
+// versions, so an engine change never shows an old thumbnail), the decoder text and the lens
+// database text (the database is data that changes pixels, ADR 0023).
 [[nodiscard]] ThumbnailKey rendered_thumbnail_key(const core::Digest256& source_sha256,
                                                   std::uint32_t subimage,
                                                   const core::Digest256& settings_sha256,
-                                                  std::string_view decoder_version);
+                                                  std::string_view decoder_version,
+                                                  std::string_view lens_database);
+
+// The lens database's part of rendered_thumbnail_key(): "lens-database:<asset id> <version>
+// <manifest SHA-256>", or "lens-database:none" without a database.
+[[nodiscard]] std::string lens_database_key(const std::optional<engine::LensDatabaseIdentity>& identity);
 
 struct RenderedThumbnailRequest {
     ItemId item;

@@ -601,7 +601,10 @@ Expected<Json> encode_body(const JobResult& m) {
                 {"look_version", r.look_version},
                 {"clipped_raw_samples", r.clipped_raw_samples},
                 {"limited_display_pixels", r.limited_display_pixels},
-                {"estimated_peak_bytes", r.estimated_peak_bytes}};
+                {"estimated_peak_bytes", r.estimated_peak_bytes},
+                {"lens_database", truncate_utf8(core::sanitize_utf8(r.lens_database), kMaxShortTextBytes)},
+                {"lens_corrections", truncate_utf8(core::sanitize_utf8(r.lens_corrections), kMaxWarningBytes)},
+                {"lens_note", truncate_utf8(core::sanitize_utf8(r.lens_note), kMaxWarningBytes)}};
     const JobTimings& t = m.timings;
     for (const double seconds : {t.prepare_seconds, t.render_seconds, t.encode_seconds, t.write_seconds,
                                  t.verify_seconds, t.total_seconds}) {
@@ -975,6 +978,9 @@ Expected<Message> decode_result(ObjectReader& r) {
         LUCENT_READ(m.render.clipped_raw_samples, d.unsigned_integer("clipped_raw_samples"));
         LUCENT_READ(m.render.limited_display_pixels, d.unsigned_integer("limited_display_pixels"));
         LUCENT_READ(m.render.estimated_peak_bytes, d.unsigned_integer("estimated_peak_bytes"));
+        LUCENT_READ(m.render.lens_database, d.string("lens_database", kMaxShortTextBytes));
+        LUCENT_READ(m.render.lens_corrections, d.string("lens_corrections", kMaxWarningBytes));
+        LUCENT_READ(m.render.lens_note, d.string("lens_note", kMaxWarningBytes));
         LUCENT_CHECK(d.finish());
     }
     {

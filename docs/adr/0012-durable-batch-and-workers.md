@@ -1,6 +1,7 @@
 # ADR 0012: Durable batch export: worker processes, memory-budgeted scheduling, journaled publication and recovery
 
-- **Status:** Accepted (amended 2026-10-09: "Amendment: aggregate worker memory limit (W12)" below, with its closing review)
+- **Status:** Accepted (amended 2026-10-09: "Amendment: aggregate worker memory limit (W12)" below, with its closing review;
+  amended 2026-10-10 by the closing review of W13: "Amendment: lens corrections in job results" below, protocol version 3)
 - **Date:** 2026-10-04 (revised the same day by the closing review, phase 4: recovery that waits for
   an unreachable destination, interruptions bounded on their own, lease renewal during verification,
   a replaced output folder, lost receipts, report emission, single-export priority and the status
@@ -553,3 +554,31 @@ by a smaller allocation without a notification is no longer recognised and keeps
 class (an OutOfMemory is Transient anyway). Per-job evidence (the members' commit at the failure, or
 the Job Object's limit-violation information) is left for later work; notifications were delivered
 in every run measured.
+
+## Amendment: lens corrections in job results (W13 closure, 2026-10-10)
+
+W13 made exports correct lenses with the bundled Lensfun database (ADR 0023), which the worker loads
+with its first export job. The closing review found that nothing recorded which database a worker
+rendered with, and that a recipe asking for corrections the worker could not apply (no database, or a
+named profile it does not hold) exported uncorrected with the outcome "exported" and no note
+(APL-04, LNS-3): a replayed recipe changed its result silently, which blueprint section 8 forbids.
+
+23. **Protocol version 3.** `RenderSummaryInfo` gains `lens_database` (the database the render used:
+    asset id, version and the first 16 hex digits of its manifest's SHA-256, `app::lens_database_text()`;
+    empty without one), `lens_corrections` (what it corrected and with which profile,
+    `app::lens_corrections_text()`) and `lens_note` (empty, or why corrections the recipe asks for
+    were not applied: the plan's `missing_dependency`, with the worker's own database load problem
+    appended). Every other message is unchanged; host and worker are the same build, so the version
+    moves to 3 at both ends (`kMinProtocolVersion` = `kMaxProtocolVersion` = 3), and a version-2 peer
+    is refused at the handshake. Over-long text is truncated, never refused.
+24. **Receipts and reports carry the lens.** `ReceiptDetails` gains `lens_database` and
+    `lens_corrections` (receipt JSON member `lens`, optional: receipts of earlier builds have none),
+    and every report entry of an exported photo gives them (`lens`, JSON report). A non-empty
+    `lens_note` adds the review note "Lens corrections the recipe asks for were not applied: ..." and
+    a warning in `lucent.log` (the worker has no log of its own), so the photo counts toward "review
+    recommended" instead of passing as plainly exported.
+25. **The lens database is part of every job's identity.** The batch service's `renderer_version`
+    (part of every job identity, blueprint section 7: "renderer and asset versions") ends with
+    "lens database <lens_database_text()>" ("none" without one) from `BatchServiceOptions::
+    lens_database`, which the application sets from the database its session loaded: an output made
+    with another database is never taken for this one's ("already exported" detection).

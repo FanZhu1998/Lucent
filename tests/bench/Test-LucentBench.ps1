@@ -390,7 +390,8 @@ try {
 # --- The regression-budget gate fails closed (tools\bench\Test-BenchBudgets.ps1; COR-2, W12) -------
 
 $gate = Join-Path $repoRoot 'tools\bench\Test-BenchBudgets.ps1'
-$baselineDir = Join-Path $repoRoot 'docs\performance\data\2026-10-09'
+# The baseline budgets.json was derived from (ADR 0021; 2026-10-10 since the W13 closure).
+$baselineDir = Join-Path $repoRoot 'docs\performance\data\2026-10-10'
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $gateWork = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-bench-gate-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $gateWork | Out-Null

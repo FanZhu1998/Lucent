@@ -1,7 +1,9 @@
-// Recipe documents (recipe.hpp): RFC 8785 canonical form of "lucent.develop" v2, exact round trips
-// (masks, geometry and chroma denoising included), strict reading of version-1 documents (upgraded
-// on read) and version-2 documents, VersionMismatch for newer ones, paste categories and parts.
+// Recipe documents (recipe.hpp): RFC 8785 canonical form of "lucent.develop" v3, exact round trips
+// (masks, geometry, chroma denoising and lens corrections included), strict reading of version-1 and
+// version-2 documents (upgraded on read: no lens correction) and version-3 documents, VersionMismatch
+// for newer ones, paste categories and parts.
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -24,26 +26,45 @@ namespace {
 
 using Json = nlohmann::json;
 
-// The canonical text of default ("as shot") settings: every member of version 2, sorted, no
-// whitespace.
+// The canonical text of default ("as shot") settings: every member of version 3, sorted, no
+// whitespace (automatic lens corrections, ADR 0023).
 constexpr std::string_view kDefaultDocument =
     R"({"base_look":{"id":"neutral","version":1},"chroma_denoise":{"radius":8,"strength":0},"contrast":0,)"
     R"("exposure_ev":0,"geometry":{"crop":{"bottom":1,"left":0,"right":1,"top":0},"flip_horizontal":false,)"
-    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"local_adjustments":[],"locks":[],)"
-    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":2,"local_adjustments":1,)"
-    R"("local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop","shadows":0,)"
-    R"("tone_curve":[[0,0],[1,1]],"version":2,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
+    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"lens_correction":{"distortion":true,)"
+    R"("lateral_chromatic_aberration":true,"profile":null,"vignetting":true},"local_adjustments":[],"locks":[],)"
+    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":2,"lens_correction":1,)"
+    R"("local_adjustments":1,"local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop",)"
+    R"("shadows":0,"tone_curve":[[0,0],[1,1]],"version":3,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
 
-// The canonical text of default settings with geometry version 1 (the whole visible area): what W9
-// builds wrote for default settings, and what a version-1 recipe converts to (identity 3104dbcc...,
-// unchanged by ADR 0017).
+// The canonical text of default settings with geometry version 1 (the whole visible area).
 constexpr std::string_view kGeometry1DefaultDocument =
     R"({"base_look":{"id":"neutral","version":1},"chroma_denoise":{"radius":8,"strength":0},"contrast":0,)"
     R"("exposure_ev":0,"geometry":{"crop":{"bottom":1,"left":0,"right":1,"top":0},"flip_horizontal":false,)"
-    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"local_adjustments":[],"locks":[],)"
-    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":1,"local_adjustments":1,)"
-    R"("local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop","shadows":0,)"
-    R"("tone_curve":[[0,0],[1,1]],"version":2,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
+    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"lens_correction":{"distortion":true,)"
+    R"("lateral_chromatic_aberration":true,"profile":null,"vignetting":true},"local_adjustments":[],"locks":[],)"
+    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":1,"lens_correction":1,)"
+    R"("local_adjustments":1,"local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop",)"
+    R"("shadows":0,"tone_curve":[[0,0],[1,1]],"version":3,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
+
+// What the as-shot documents of version 1 (geometry 1) and version 2 (geometry 2 or 1) convert to:
+// the same settings with lens-correction operation version 0 (none), written as version 3.
+constexpr std::string_view kVersion2DefaultUpgradedDocument =
+    R"({"base_look":{"id":"neutral","version":1},"chroma_denoise":{"radius":8,"strength":0},"contrast":0,)"
+    R"("exposure_ev":0,"geometry":{"crop":{"bottom":1,"left":0,"right":1,"top":0},"flip_horizontal":false,)"
+    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"lens_correction":{"distortion":true,)"
+    R"("lateral_chromatic_aberration":true,"profile":null,"vignetting":true},"local_adjustments":[],"locks":[],)"
+    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":2,"lens_correction":0,)"
+    R"("local_adjustments":1,"local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop",)"
+    R"("shadows":0,"tone_curve":[[0,0],[1,1]],"version":3,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
+constexpr std::string_view kGeometry1UpgradedDocument =
+    R"({"base_look":{"id":"neutral","version":1},"chroma_denoise":{"radius":8,"strength":0},"contrast":0,)"
+    R"("exposure_ev":0,"geometry":{"crop":{"bottom":1,"left":0,"right":1,"top":0},"flip_horizontal":false,)"
+    R"("quarter_turns":0,"straighten_degrees":0},"highlights":0,"lens_correction":{"distortion":true,)"
+    R"("lateral_chromatic_aberration":true,"profile":null,"vignetting":true},"local_adjustments":[],"locks":[],)"
+    R"("operations":{"chroma_denoise":1,"color":1,"contrast":1,"exposure":1,"geometry":1,"lens_correction":0,)"
+    R"("local_adjustments":1,"local_tone":1,"tone_curve":1,"white_balance":1},"saturation":0,"schema":"lucent.develop",)"
+    R"("shadows":0,"tone_curve":[[0,0],[1,1]],"version":3,"vibrance":0,"white_balance":{"mode":"as_shot"}})";
 
 // The canonical text a version-1 build wrote for default settings (ADR 0010; identity 671dbaa8...).
 constexpr std::string_view kVersion1DefaultDocument =
@@ -101,6 +122,33 @@ engine::DevelopSettings edited_v2() {
     return s;
 }
 
+// Every member away from its default: edited_v2() and a named lens profile without vignetting.
+engine::DevelopSettings edited_v3() {
+    engine::DevelopSettings s = edited_v2();
+    s.lens_correction.vignetting = false;
+    s.lens_correction.profile = engine::LensProfileId{"Nikon", "Nikkor Z 24-70mm f/4 S", 1.0};
+    return s;
+}
+
+// The settings of a version-2 document of `settings` (no lens correction): what reading converts it to.
+engine::DevelopSettings without_lens(engine::DevelopSettings settings) {
+    settings.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+    settings.lens_correction = engine::LensCorrectionSetting{};
+    return settings;
+}
+
+// The version-2 document of version-2 `settings` (the canonical version-3 document without the lens
+// correction).
+Json version2_json(const engine::DevelopSettings& settings) {
+    auto document = write_recipe(settings);
+    EXPECT_TRUE(document);
+    Json doc = Json::parse(document ? document->json : std::string("{}"));
+    doc["version"] = 2;
+    doc.erase("lens_correction");
+    doc["operations"].erase("lens_correction");
+    return doc;
+}
+
 Json canonical_json(const engine::DevelopSettings& settings) {
     auto document = write_recipe(settings);
     EXPECT_TRUE(document) << (document ? std::string() : document.error().describe());
@@ -153,17 +201,28 @@ TEST(RecipeDocument, DefaultSettingsHaveAFixedCanonicalTextAndIdentity) {
     EXPECT_EQ(document->sha256, *digest);
     // Pinned: any change of the canonical form changes every recipe identity. Version 2 (ADR 0015)
     // writes its three new members for every recipe, so the identity of default settings moved from
-    // version 1's 671dbaa8... to 3104dbcc...; geometry version 2 (ADR 0017) moved the defaults'
-    // identity again, to this one. Settings with geometry version 1 keep 3104dbcc... (below).
+    // version 1's 671dbaa8... to 3104dbcc...; geometry version 2 (ADR 0017) moved it to 879de8b7...;
+    // version 3 (ADR 0023) writes the lens correction for every recipe, so it moved again, to this one.
     EXPECT_EQ(core::to_hex(document->sha256),
-              "879de8b79743a9d3cf2db780c0e0ccb09552dc3a35d5e6c538377dd97721c8f7");
+              "61cdfb80bcacdb66015aa79380be418dbad80c70fa07026760e56418ef2d4bc2");
 
     engine::DevelopSettings geometry1;
     geometry1.operations.geometry = 1;
     auto old = write_recipe(geometry1);
     ASSERT_TRUE(old);
     EXPECT_EQ(old->json, kGeometry1DefaultDocument);
-    EXPECT_EQ(core::to_hex(old->sha256), "3104dbcc769bcd546a0a9449ec561c9e25f7c27a4290dda55f5bb14803f86738");
+    EXPECT_EQ(core::to_hex(old->sha256), "282bed0a075ea6b5171b38a88bcdd8c9311186d453ab3535fd50e5343781d084");
+
+    // The as-shot documents earlier builds wrote, which batches they froze name (recipe.hpp): the
+    // version-2 ones keep their identities 879de8b7... (W10 to W12) and 3104dbcc... (W9).
+    const std::array<std::string_view, 2> earlier = {
+        "879de8b79743a9d3cf2db780c0e0ccb09552dc3a35d5e6c538377dd97721c8f7",
+        "3104dbcc769bcd546a0a9449ec561c9e25f7c27a4290dda55f5bb14803f86738"};
+    for (std::size_t i = 0; i < earlier.size(); ++i) {
+        const std::string_view text = kVersion2AsShotRecipes[i];
+        EXPECT_EQ(core::to_hex(*core::sha256(std::as_bytes(std::span(text.data(), text.size())))),
+                  earlier[i]);
+    }
 }
 
 TEST(RecipeDocument, GeometryVersionsOneAndTwoAreReadAndKept) {
@@ -231,8 +290,42 @@ TEST(RecipeDocument, Version2MembersHaveAFixedCanonicalForm) {
         << radial_document->json;
 }
 
+TEST(RecipeDocument, LensCorrectionHasAFixedCanonicalForm) {
+    // Automatic: "profile": null; a named profile: its maker, model and crop factor, sorted.
+    EXPECT_NE(std::string(kDefaultDocument)
+                  .find(R"("lens_correction":{"distortion":true,)"
+                        R"("lateral_chromatic_aberration":true,"profile":null,)"
+                        R"("vignetting":true})"),
+              std::string::npos);
+    auto named = write_recipe(edited_v3());
+    ASSERT_TRUE(named) << named.error().describe();
+    EXPECT_NE(
+        named->json.find(R"("lens_correction":{"distortion":true,"lateral_chromatic_aberration":true,)"
+                         R"("profile":{"crop_factor":1,"maker":"Nikon","model":"Nikkor Z 24-70mm f/4 S"},)"
+                         R"("vignetting":false})"),
+        std::string::npos)
+        << named->json;
+    // A crop factor from Lensfun's floats keeps its exact double; names keep every character (escaped
+    // as RFC 8785 requires).
+    engine::DevelopSettings odd;
+    odd.lens_correction.profile =
+        engine::LensProfileId{"Fujifilm", "XF16-55mmF2.8 \"R\" LM WR", 1.5290000438690186};
+    auto odd_document = write_recipe(odd);
+    ASSERT_TRUE(odd_document) << odd_document.error().describe();
+    EXPECT_NE(odd_document->json.find(R"("crop_factor":1.5290000438690186)"), std::string::npos);
+    EXPECT_NE(odd_document->json.find(R"("model":"XF16-55mmF2.8 \"R\" LM WR")"), std::string::npos);
+    auto read = read_recipe(odd_document->json);
+    ASSERT_TRUE(read) << read.error().describe();
+    EXPECT_EQ(*read, odd);
+    // Version 0 (none) is written with the default member.
+    auto none = write_recipe(without_lens(engine::DevelopSettings{}));
+    ASSERT_TRUE(none);
+    EXPECT_EQ(none->json, kVersion2DefaultUpgradedDocument);
+}
+
 TEST(RecipeDocument, RoundTripsEveryFieldExactly) {
-    std::vector<engine::DevelopSettings> cases = {engine::DevelopSettings{}, edited(), edited_v2()};
+    std::vector<engine::DevelopSettings> cases = {engine::DevelopSettings{}, edited(), edited_v2(),
+                                                  edited_v3(), without_lens(edited_v2())};
     engine::DevelopSettings neutral = edited();
     neutral.white_balance = engine::CameraNeutralWhiteBalance{2.0123456789, 1.0, 1.4999999999999998};
     neutral.locks.clear();
@@ -353,7 +446,7 @@ TEST(RecipeDocument, TheLargestRecipeStaysAFewMegabytes) {
 
 TEST(RecipeDocument, AcceptsAnyJsonNumberSpellingAndOrder) {
     // Whitespace, member order and number spelling are free on input; the identity is that of the
-    // canonical re-serialisation. A version-1 document reads as its version-2 conversion.
+    // canonical re-serialisation. Older documents read as their version-3 conversion.
     const std::string text = R"({ "version": 1, "schema": "lucent.develop",
         "white_balance": {"tint": 0.0, "temperature_k": 5.5e3, "mode": "kelvin"},
         "exposure_ev": 1.0, "contrast": 0, "highlights": -0.0, "shadows": 25e-2,
@@ -369,8 +462,9 @@ TEST(RecipeDocument, AcceptsAnyJsonNumberSpellingAndOrder) {
     expected.shadows = 0.25;
     expected.locks = {engine::DevelopControl::Exposure};
     expected.operations.geometry = 1;  // a version-1 recipe renders the whole visible area (ADR 0017)
+    expected.operations.lens_correction = 0;  // and corrects no lens (ADR 0023)
     EXPECT_EQ(*read, expected);
-    EXPECT_EQ(read->version, 2u);
+    EXPECT_EQ(read->version, 3u);
     EXPECT_EQ(write_recipe(*read)->sha256, write_recipe(expected)->sha256);
 
     // The same freedom for the version-2 members.
@@ -400,19 +494,48 @@ TEST(RecipeDocument, AcceptsAnyJsonNumberSpellingAndOrder) {
     linear.shape = engine::LinearGradientMask{{0.5, 0.0}, {0.5, 1.0}, 1.0};
     linear.controls.exposure_ev = -1.0;
     expected_v2.local_adjustments = {linear};
+    expected_v2.operations.lens_correction = 0;  // a version-2 recipe corrects no lens (ADR 0023)
     EXPECT_EQ(*read_v2, expected_v2);
+
+    // The same freedom for the version-3 member.
+    Json v3 = Json::parse(v2);
+    v3["version"] = 3;
+    v3["operations"]["lens_correction"] = 1.0e0;  // an unsigned integer is required: refused
+    EXPECT_EQ(read_error(v3), ErrorCode::InvalidArgument);
+    const std::string v3_text = R"({ "version": 3, "schema": "lucent.develop",
+        "white_balance": {"mode": "as_shot"}, "exposure_ev": 0, "contrast": 0, "highlights": 0,
+        "shadows": 0, "tone_curve": [[0, 0], [1, 1]], "saturation": 0, "vibrance": 0,
+        "base_look": {"id": "neutral", "version": 1}, "locks": [],
+        "geometry": {"straighten_degrees": 0, "flip_horizontal": false, "quarter_turns": 0,
+                     "crop": {"top": 0, "left": 0, "bottom": 1, "right": 1}},
+        "chroma_denoise": {"strength": 0, "radius": 8},
+        "local_adjustments": [],
+        "lens_correction": {"vignetting": false, "profile": {"model": "FE 50mm f/1.2 GM", "crop_factor": 1E0,
+                            "maker": "Sony"}, "lateral_chromatic_aberration": true, "distortion": true},
+        "operations": {"lens_correction": 1, "geometry": 2, "local_adjustments": 1, "chroma_denoise": 1,
+                       "white_balance": 1, "exposure": 1, "local_tone": 1, "contrast": 1, "tone_curve": 1,
+                       "color": 1}})";
+    auto read_v3 = read_recipe(v3_text);
+    ASSERT_TRUE(read_v3) << read_v3.error().describe();
+    engine::DevelopSettings expected_v3;
+    expected_v3.lens_correction.vignetting = false;
+    expected_v3.lens_correction.profile = engine::LensProfileId{"Sony", "FE 50mm f/1.2 GM", 1.0};
+    EXPECT_EQ(*read_v3, expected_v3);
 }
 
 TEST(RecipeDocument, Version1DocumentsAreUpgradedOnRead) {
-    // The version-1 default document reads as default settings of geometry version 1, with the
-    // identity of the version-2 document W9 wrote for them (3104dbcc..., kGeometry1DefaultDocument).
+    // The version-1 default document reads as default settings of geometry version 1 without lens
+    // corrections (kGeometry1UpgradedDocument).
     auto read = read_recipe(kVersion1DefaultDocument);
     ASSERT_TRUE(read) << read.error().describe();
     engine::DevelopSettings geometry1;
     geometry1.operations.geometry = 1;  // version-1 recipes keep rendering the whole visible area
+    geometry1 = without_lens(geometry1);  // and correct no lens
     EXPECT_EQ(*read, geometry1);
     EXPECT_EQ(read->version, engine::kDevelopSettingsVersion);
-    EXPECT_EQ(write_recipe(*read)->json, kGeometry1DefaultDocument);
+    EXPECT_EQ(write_recipe(*read)->json, kGeometry1UpgradedDocument);
+    EXPECT_EQ(core::to_hex(write_recipe(*read)->sha256),
+              "b7b0027785caf4d4e836765961653cc5f0762369cc67866dd0087b048e96bb46");
 
     // A version-1 recipe of every version-1 field: the upgrade changes nothing else.
     Json v1 = canonical_json(edited());
@@ -420,27 +543,30 @@ TEST(RecipeDocument, Version1DocumentsAreUpgradedOnRead) {
     v1.erase("chroma_denoise");
     v1.erase("local_adjustments");
     v1.erase("geometry");
+    v1.erase("lens_correction");
     v1["operations"].erase("chroma_denoise");
     v1["operations"].erase("local_adjustments");
     v1["operations"].erase("geometry");
+    v1["operations"].erase("lens_correction");
     auto upgraded = read_recipe(v1.dump());
     ASSERT_TRUE(upgraded) << upgraded.error().describe();
     engine::DevelopSettings expected = edited();
     expected.operations.geometry = 1;
+    expected = without_lens(expected);
     EXPECT_EQ(*upgraded, expected);
-    // It has the identity of the version-2 document of the same settings (geometry version 1).
+    // It has the identity of the version-3 document of the same settings.
     EXPECT_EQ(write_recipe(*upgraded)->sha256, write_recipe(expected)->sha256);
 
     // Version-1 settings (a value, not a document) are written as their conversion (geometry
-    // version 1).
+    // version 1, no lens correction).
     engine::DevelopSettings old = edited();
     old.version = 1;
     auto written = write_recipe(old);
     ASSERT_TRUE(written) << written.error().describe();
     EXPECT_EQ(written->sha256, write_recipe(expected)->sha256);
 
-    // A version-1 document never holds a version-2 member or operation.
-    for (const char* member : {"chroma_denoise", "local_adjustments", "geometry"}) {
+    // A version-1 document never holds a member or operation of a later version.
+    for (const char* member : {"chroma_denoise", "local_adjustments", "geometry", "lens_correction"}) {
         Json doc = v1;
         doc[member] = canonical_json(engine::DevelopSettings{})[member];
         EXPECT_EQ(read_error(doc), ErrorCode::InvalidArgument) << member;
@@ -448,6 +574,102 @@ TEST(RecipeDocument, Version1DocumentsAreUpgradedOnRead) {
         op["operations"][member] = 1;
         EXPECT_EQ(read_error(op), ErrorCode::InvalidArgument) << member;
     }
+}
+
+TEST(RecipeDocument, Version2DocumentsAreUpgradedOnRead) {
+    // The as-shot documents W9 to W12 wrote read as the same settings without lens corrections
+    // (lens-correction operation version 0): they render exactly as then (ADR 0023).
+    for (std::size_t i = 0; i < kVersion2AsShotRecipes.size(); ++i) {
+        auto read = read_recipe(kVersion2AsShotRecipes[i]);
+        ASSERT_TRUE(read) << read.error().describe();
+        engine::DevelopSettings expected;
+        expected.operations.geometry = i == 0 ? 2 : 1;
+        expected = without_lens(expected);
+        EXPECT_EQ(*read, expected);
+        EXPECT_EQ(read->version, engine::kDevelopSettingsVersion);
+        EXPECT_FALSE(engine::effective_lens_correction(*read).has_value());
+        EXPECT_TRUE(read->is_as_shot());  // operation version 0 is not an edit
+        EXPECT_EQ(write_recipe(*read)->json,
+                  i == 0 ? kVersion2DefaultUpgradedDocument : kGeometry1UpgradedDocument);
+    }
+    EXPECT_EQ(core::to_hex(write_recipe(*read_recipe(kVersion2AsShotRecipes[0]))->sha256),
+              "338dd4c1e250927ca54d9f17c549613dfea99f11634641e15054918f1b0ca7a5");
+
+    // A version-2 recipe of every version-2 member: the upgrade changes nothing else.
+    const Json v2 = version2_json(edited_v2());
+    auto upgraded = read_recipe(v2.dump());
+    ASSERT_TRUE(upgraded) << upgraded.error().describe();
+    EXPECT_EQ(*upgraded, without_lens(edited_v2()));
+    // Version-2 settings (a value) are written as their conversion.
+    engine::DevelopSettings old = edited_v2();
+    old.version = 2;
+    auto written = write_recipe(old);
+    ASSERT_TRUE(written) << written.error().describe();
+    EXPECT_EQ(written->sha256, write_recipe(without_lens(edited_v2()))->sha256);
+
+    // A version-2 document never holds the version-3 member or operation.
+    Json member = v2;
+    member["lens_correction"] = canonical_json(engine::DevelopSettings{})["lens_correction"];
+    EXPECT_EQ(read_error(member), ErrorCode::InvalidArgument);
+    Json operation = v2;
+    operation["operations"]["lens_correction"] = 1;
+    EXPECT_EQ(read_error(operation), ErrorCode::InvalidArgument);
+    // A version-2 value holding a version-3 member is not valid either.
+    engine::DevelopSettings mixed = edited_v2();
+    mixed.version = 2;
+    mixed.lens_correction.distortion = false;
+    EXPECT_EQ(write_recipe(mixed).error().code, ErrorCode::InvalidArgument);
+}
+
+TEST(RecipeDocument, RejectsBadLensCorrections) {
+    const Json base = canonical_json(edited_v3());
+    const auto expect_error = [&](const std::function<void(Json&)>& change, ErrorCode code,
+                                  const char* what) {
+        Json doc = base;
+        change(doc);
+        EXPECT_EQ(read_error(doc), code) << what;
+    };
+    expect_error([](Json& d) { d.erase("lens_correction"); }, ErrorCode::InvalidArgument,
+                 "no lens_correction");
+    expect_error([](Json& d) { d["operations"].erase("lens_correction"); }, ErrorCode::InvalidArgument,
+                 "no lens-correction operation");
+    expect_error([](Json& d) { d["lens_correction"]["defringe"] = true; }, ErrorCode::InvalidArgument,
+                 "an unknown lens member");
+    expect_error([](Json& d) { d["lens_correction"].erase("vignetting"); }, ErrorCode::InvalidArgument,
+                 "a missing switch");
+    expect_error([](Json& d) { d["lens_correction"]["distortion"] = 1; }, ErrorCode::InvalidArgument,
+                 "a number for a switch");
+    expect_error([](Json& d) { d["lens_correction"]["profile"] = "Nikon"; }, ErrorCode::InvalidArgument,
+                 "a profile that is a string");
+    expect_error([](Json& d) { d["lens_correction"]["profile"]["mount"] = "Z"; }, ErrorCode::InvalidArgument,
+                 "an unknown profile member");
+    expect_error([](Json& d) { d["lens_correction"]["profile"].erase("crop_factor"); },
+                 ErrorCode::InvalidArgument, "a profile without crop factor");
+    expect_error([](Json& d) { d["lens_correction"]["profile"]["maker"] = 7; }, ErrorCode::InvalidArgument,
+                 "a maker that is a number");
+    expect_error([](Json& d) { d["lens_correction"]["profile"]["model"] = ""; }, ErrorCode::InvalidArgument,
+                 "an empty model");
+    expect_error([](Json& d) { d["lens_correction"]["profile"]["model"] = std::string(257, 'x'); },
+                 ErrorCode::InvalidArgument, "a model of 257 bytes");
+    expect_error([](Json& d) { d["lens_correction"]["profile"]["crop_factor"] = 0.0; },
+                 ErrorCode::InvalidArgument, "a crop factor of 0");
+    expect_error([](Json& d) { d["lens_correction"]["profile"]["crop_factor"] = 101; },
+                 ErrorCode::InvalidArgument, "a crop factor above 100");
+    // Version 0 ("none") holds the default member only.
+    expect_error([](Json& d) { d["operations"]["lens_correction"] = 0; }, ErrorCode::InvalidArgument,
+                 "version 0 with a named profile");
+    {
+        Json doc = canonical_json(engine::DevelopSettings{});
+        doc["operations"]["lens_correction"] = 0;
+        auto read = read_recipe(doc.dump());
+        ASSERT_TRUE(read) << read.error().describe();
+        EXPECT_EQ(*read, without_lens(engine::DevelopSettings{}));
+    }
+    // A newer lens-correction operation is never treated as none.
+    expect_error([](Json& d) { d["operations"]["lens_correction"] = 2; }, ErrorCode::VersionMismatch,
+                 "lens-correction operation 2");
+    expect_error([](Json& d) { d["operations"]["lens_correction"] = -1; }, ErrorCode::InvalidArgument,
+                 "a negative operation version");
 }
 
 TEST(RecipeDocument, RejectsUnknownMissingAndMistypedMembers) {
@@ -538,17 +760,21 @@ TEST(RecipeDocument, NewerVersionsAreVersionMismatchNeverNoOps) {
     {
         // A newer schema is not interpreted at all, whatever it contains.
         Json doc = base;
-        doc["version"] = 3;
+        doc["version"] = 4;
         doc["perspective"] = Json::array({Json{{"kind", "keystone"}}});
         EXPECT_EQ(read_error(doc), ErrorCode::VersionMismatch);
     }
-    for (const char* operation : {"exposure", "chroma_denoise", "local_adjustments", "geometry"}) {
+    for (const char* operation :
+         {"exposure", "chroma_denoise", "local_adjustments", "geometry", "lens_correction"}) {
         Json doc = base;
-        // A newer definition of the operation (the geometry reads versions 1 and 2, ADR 0017).
+        // A newer definition of the operation (the geometry reads versions 1 and 2, ADR 0017; the lens
+        // correction 0 and 1, ADR 0023).
         doc["operations"][operation] = std::string_view(operation) == "geometry" ? 3 : 2;
         EXPECT_EQ(read_error(doc), ErrorCode::VersionMismatch) << operation;
-        doc["operations"][operation] = 0;
-        EXPECT_EQ(read_error(doc), ErrorCode::InvalidArgument) << operation;
+        if (std::string_view(operation) != "lens_correction") {  // 0 is the lens correction's "none"
+            doc["operations"][operation] = 0;
+            EXPECT_EQ(read_error(doc), ErrorCode::InvalidArgument) << operation;
+        }
     }
     {
         // A newer mask definition is VersionMismatch even when its shapes would also be new.
@@ -662,15 +888,20 @@ TEST(RecipeCategories, CoverEveryControlAndPartOnce) {
     EXPECT_EQ(parts_of(RecipeCategory::Detail), std::vector<RecipePart>{RecipePart::ChromaDenoise});
     EXPECT_EQ(parts_of(RecipeCategory::Geometry), std::vector<RecipePart>{RecipePart::Geometry});
     EXPECT_TRUE(controls_of(RecipeCategory::Geometry).empty());
+    EXPECT_EQ(parts_of(RecipeCategory::LensCorrections), std::vector<RecipePart>{RecipePart::LensCorrection});
+    EXPECT_TRUE(controls_of(RecipeCategory::LensCorrections).empty());
+    EXPECT_EQ(parse_recipe_category("lens_corrections"), RecipeCategory::LensCorrections);
+    EXPECT_EQ(to_string(RecipePart::LensCorrection), "lens_correction");
     EXPECT_EQ(parse_recipe_category("geometry"), RecipeCategory::Geometry);
     EXPECT_EQ(parse_recipe_category("detail"), RecipeCategory::Detail);
     EXPECT_EQ(parse_recipe_category("masks"), RecipeCategory::Masks);
     EXPECT_EQ(to_string(static_cast<RecipeCategory>(42)), "invalid");
-    // The masks and the geometry are the categories not pasted by default.
-    EXPECT_EQ(kDefaultRecipeCategories.size(), kAllRecipeCategories.size() - 2);
+    // The masks, the geometry and the lens corrections are the categories not pasted by default.
+    EXPECT_EQ(kDefaultRecipeCategories.size(), kAllRecipeCategories.size() - 3);
     for (const RecipeCategory category : kDefaultRecipeCategories) {
         EXPECT_NE(category, RecipeCategory::Geometry);
         EXPECT_NE(category, RecipeCategory::Masks);
+        EXPECT_NE(category, RecipeCategory::LensCorrections);
     }
     // Part names (revision notes).
     for (const RecipePart part : kAllRecipeParts) {
@@ -682,13 +913,14 @@ TEST(RecipeCategories, CoverEveryControlAndPartOnce) {
 
 TEST(RecipeCategories, ChangedControlsPartsAndCopy) {
     const engine::DevelopSettings a;
-    const engine::DevelopSettings b = edited_v2();
+    const engine::DevelopSettings b = edited_v3();
     EXPECT_TRUE(changed_controls(a, a).empty());
     EXPECT_TRUE(changed_parts(a, a).empty());
     const auto changed = changed_controls(a, b);
     EXPECT_EQ(changed.size(), 8u);  // everything but the base look
-    EXPECT_EQ(changed_parts(a, b), (std::vector<RecipePart>{RecipePart::ChromaDenoise, RecipePart::LocalAdjustments,
-                                                             RecipePart::Geometry}));
+    EXPECT_EQ(changed_parts(a, b),
+              (std::vector<RecipePart>{RecipePart::ChromaDenoise, RecipePart::LocalAdjustments,
+                                       RecipePart::Geometry, RecipePart::LensCorrection}));
     EXPECT_EQ(changed_locks(a, b), (std::vector<engine::DevelopControl>{engine::DevelopControl::WhiteBalance,
                                                                         engine::DevelopControl::Exposure}));
     engine::DevelopSettings c = a;
@@ -723,6 +955,28 @@ TEST(RecipeCategories, TheGeometryPartCarriesItsOperationVersion) {
     engine::DevelopSettings v1 = v2;
     v1.operations.geometry = 1;
     EXPECT_EQ(changed_parts(v1, v2), std::vector<RecipePart>{RecipePart::Geometry});
+}
+
+TEST(RecipeCategories, TheLensCorrectionPartCarriesItsOperationVersion) {
+    // Version 0 ("none": made before lens corrections) and the automatic defaults are different
+    // values; pasting the part pastes the version, and version 0 leaves the member at its default.
+    const engine::DevelopSettings automatic;
+    const engine::DevelopSettings none = without_lens(automatic);
+    EXPECT_FALSE(same_value(automatic, none, RecipePart::LensCorrection));
+    EXPECT_EQ(changed_parts(automatic, none), std::vector<RecipePart>{RecipePart::LensCorrection});
+    engine::DevelopSettings target = edited_v3();  // a named profile
+    copy_value(none, target, RecipePart::LensCorrection);
+    EXPECT_EQ(target.operations.lens_correction, 0u);
+    EXPECT_EQ(target.lens_correction, engine::LensCorrectionSetting{});
+    EXPECT_TRUE(target.validate());
+    EXPECT_TRUE(same_value(target, none, RecipePart::LensCorrection));
+    copy_value(edited_v3(), target, RecipePart::LensCorrection);
+    EXPECT_EQ(target.operations.lens_correction, 1u);
+    EXPECT_EQ(target.lens_correction, edited_v3().lens_correction);
+    // An unused member of version 0 is not a difference (only what renders is compared).
+    engine::DevelopSettings stale = none;
+    stale.lens_correction.vignetting = false;  // invalid as a value, but same_value looks at what renders
+    EXPECT_TRUE(same_value(stale, none, RecipePart::LensCorrection));
 }
 
 }  // namespace

@@ -14,8 +14,10 @@ so it names exactly the components that ship.
 - Qt compiles code from other projects into its own files (Unicode data, hash functions, the Public
   Suffix List and more). Each Qt component lists that code with its copyright holders, licence and
   source, as recorded by Qt's own software bill of materials.
-- LGPL-NOTICE.txt explains the LGPL libraries (Qt, LibRaw): your right to replace them and where
-  their corresponding source comes from.
+- LGPL-NOTICE.txt explains the LGPL libraries (Qt, LibRaw, Lensfun and the GLib libraries it uses):
+  your right to replace them and where their corresponding source comes from.
+- Data that Lucent ships under the terms of its authors (the Lensfun lens database, used unmodified
+  under CC BY-SA 3.0) is listed under "Data" with its licence text in the folder named after it.
 - Lucent.spdx.json is the software bill of materials (SPDX 2.3) of this installation.
 - The Microsoft Visual C++ Runtime is not part of this folder. If the computer needed it, Lucent
   Setup ran Microsoft's own redistributable installer, under Microsoft's licence terms.
@@ -29,3 +31,8 @@ Components
 ----------
 
 @COMPONENTS@
+
+Data
+----
+
+@DATA@

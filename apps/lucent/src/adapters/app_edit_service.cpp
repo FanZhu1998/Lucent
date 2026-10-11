@@ -94,9 +94,13 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         bool before_valid = false;
         bool before_failed = false;
         // The geometry of the current request's pixels: the as-shot frame for before/after is
-        // rendered with it (so the two line up), and again when it changes.
+        // rendered with it (so the two line up), and again when it changes. Likewise the lens
+        // correction (W13, ADR 0023: a distortion correction moves the content), as its operation
+        // version and setting (std::nullopt: version 0, nothing corrected).
         engine::GeometrySetting shown_geometry;
         engine::GeometrySetting before_geometry;
+        std::optional<engine::LensCorrectionSetting> shown_lens = engine::LensCorrectionSetting{};
+        std::optional<engine::LensCorrectionSetting> before_lens = engine::LensCorrectionSetting{};
         bool reported_final = false;
         // The newest current frame, for the clipping and mask overlay toggles.
         EditFramePtr last_frame;
@@ -433,7 +437,8 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         s.current_settled = view.settled;
         s.current_done = false;
         s.shown_geometry = view.settings.geometry;
-        if (s.before_valid && !(s.before_geometry == s.shown_geometry)) {
+        s.shown_lens = engine::effective_lens_correction(view.settings);
+        if (s.before_valid && (!(s.before_geometry == s.shown_geometry) || s.before_lens != s.shown_lens)) {
             s.before_valid = false;  // rendered again once the current settings are
         }
         update_busy_locked();
@@ -445,8 +450,14 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
             s.before_generation != 0 || !s.current_done) {
             return;
         }
-        app::DevelopView view;  // as shot, with the geometry shown (so before and after line up)
+        // As shot, with the geometry and the lens correction shown (so before and after line up).
+        app::DevelopView view;
         view.settings.geometry = s.shown_geometry;
+        if (s.shown_lens) {
+            view.settings.lens_correction = *s.shown_lens;
+        } else {
+            view.settings.operations.lens_correction = engine::kOldestLensCorrectionOperationVersion;
+        }
         view.settled = false;  // the proxy corrected in stage two: no refine
         view.quality = app::PreviewQuality::fit(app::kDefaultProxyLongEdge);
         auto generation = develop->request(app_id(item), view);
@@ -456,6 +467,7 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
         }
         s.before_generation = *generation;
         s.before_geometry = s.shown_geometry;
+        s.before_lens = s.shown_lens;
         s.tokens[*generation] = Request{0, false};
         update_busy_locked();
     }
@@ -719,16 +731,15 @@ struct AppEditService::State : std::enable_shared_from_this<State> {
     }
 
     // The weight overlay of mask `mask_id` for a frame rendered as `report` says, through the mapping
-    // stage two rendered it with (engine::geometry_mapping() of the report's sizes and area: the
-    // frame F is the camera's area for a geometry-version-2 recipe, QUA-05); null when the settings
-    // have no such mask.
+    // stage two rendered it with (engine::geometry_mapping() of the report: the frame F is the
+    // camera's area for a geometry-version-2 recipe, QUA-05, and the lens correction's point mapping
+    // keeps the weights on their content, ADR 0023); null when the settings have no such mask.
     static QImage mask_overlay_for(const engine::DevelopReport& report, quint32 mask_id) {
         for (const engine::LocalAdjustment& adjustment : report.settings.local_adjustments) {
             if (adjustment.id != mask_id) {
                 continue;
             }
-            auto mapping =
-                engine::geometry_mapping(report.settings, report.upright_size, report.full_size, report.image_area);
+            auto mapping = engine::geometry_mapping(report);
             return mapping ? mask_overlay_image(adjustment, *mapping) : QImage();
         }
         return {};
@@ -1276,6 +1287,18 @@ EditGeometry AppEditService::turned(const EditGeometry& geometry, GeometryTurn t
 
 QList<QPolygonF> AppEditService::mask_outline(const EditMask& mask, QSize upright_size) const {
     return mask_outline_of(mask, upright_size);
+}
+
+LensDatabaseInfo AppEditService::lens_database() const {
+    return to_lens_database_info(backend_->lens_database_load());
+}
+
+QList<LensProfileEntry> AppEditService::search_lens_profiles(const QString& text, int limit) const {
+    const std::shared_ptr<const engine::LensDatabase>& database = backend_->lens_database();
+    if (!database) {
+        return {};
+    }
+    return lens_profile_search(database->profiles(), text, limit);
 }
 
 QList<double> AppEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {

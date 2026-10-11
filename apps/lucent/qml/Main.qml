@@ -147,10 +147,11 @@ ApplicationWindow {
         onActivated: window.controller.showView(AppController.Exports)
     }
 
-    // In Edit, Esc first closes an open tool (EditView).
+    // In Edit, Esc first closes an open tool (EditView) or the lens profile choice (LensPanel).
     Shortcut {
         sequence: "Esc"
         enabled: window.controller.currentView !== AppController.Library && !window.controller.edit.toolActive
+                 && !window.controller.edit.lens.picking
         onActivated: window.controller.goBack()
     }
 
