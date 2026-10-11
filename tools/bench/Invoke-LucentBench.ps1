@@ -13,12 +13,10 @@
     process it starts (commit, working set, CPU time; system CPU and available memory) every
     -SampleMs, and keeps the exact CPU time of processes that have ended.
 
-    Scenarios (-Scenario, default all, run in this order; each starts with one discarded warm-up run,
-    auto-analysis with a warm-up pass over the smoke tier; the 2026-10-09 baseline's auto-cancel,
-    auto-analysis and batch-cancel ran before these three had theirs, see docs\performance):
-      startup        cold start: a fresh copy of the installed layout made with unbuffered I/O (none
-                     of Lucent's files is in the system file cache) and a new data root; then warm
-                     start: the same copy and data root again. -Repetitions pairs.
+    Scenarios (-Scenario, default all; always run in this order, whatever order -Scenario names them
+    in; each starts with one discarded warm-up run, auto-analysis with a warm-up pass over the smoke
+    tier; the 2026-10-09 baseline's auto-cancel, auto-analysis and batch-cancel ran before these three
+    had theirs, see docs\performance):
       thumbnails     first visible thumbnail after importing the smoke folder (5 photos), and every
                      fixture, into a new library (camera previews), then after a restart (disk cache).
       preview        first RAW preview (Fit) and the 100 % view of each smoke fixture, new library each time.
@@ -33,6 +31,17 @@
                      Every report is checked against the exported files (Test-BenchBatchReport).
       batch-cancel   a running batch cancelled: every fixture to JPEG after 2 photos, the smoke tier to
                      16-bit TIFF after 1.
+      startup        cold start: a fresh copy of the installed layout made with unbuffered I/O (none
+                     of Lucent's files is in the system file cache) and a new data root; then warm
+                     start: the same copy and data root again. -Repetitions pairs. Last since the W12
+                     release phase: the antivirus scans the fresh copies after the runs, which slowed
+                     the scenarios that followed (the W13 baseline's preview scenario ran right after
+                     it and was measured again; docs\performance\baseline-2026-10-10.md, ADR 0021).
+
+    A quiet machine first: before the first scenario the harness waits until the system's CPU use stays
+    at or below -QuietCpuPercent for three 2-second samples in a row (at most -QuietTimeoutSeconds), so
+    that background work (an antivirus still scanning a fresh build or an earlier run's copies, an
+    indexer, an update) does not land in the measurements; machine.json records the wait (quiet_before).
 
     Cache state: the fixtures are read (hashed) once before the first scenario, so inputs come from
     the file cache unless memory pressure evicted them; Lucent's binaries are warm except in the cold
@@ -53,7 +62,7 @@
 .PARAMETER OutputDir
     Where the JSON files go (default docs\performance\data\<today>).
 .PARAMETER Scenario
-    Scenarios to run, comma-separated (default all, in the order above).
+    Scenarios to run, comma-separated (default all); they run in the order above.
 .PARAMETER Repetitions
     Recorded repetitions of each measurement (default 3).
 .PARAMETER SampleMs
@@ -68,6 +77,12 @@
     so the full run's machine.json is kept.
 .PARAMETER Quick
     One repetition and the smoke fixtures only: a check of the harness, not a measurement.
+.PARAMETER QuietCpuPercent
+    The system CPU use (percent of all logical processors) at or below which the machine counts as
+    quiet before the first scenario (default 10).
+.PARAMETER QuietTimeoutSeconds
+    The longest wait for a quiet machine (default 300; 0: no wait). A run that starts on a busy machine
+    says so in machine.json (quiet_before.quiet false).
 
 .EXAMPLE
     powershell -NoProfile -File tools\bench\Invoke-LucentBench.ps1
@@ -84,13 +99,14 @@ param(
     [string]$AppDir,
     [string]$WorkDir,
     [string]$OutputDir,
-    [string[]]$Scenario = @('startup', 'thumbnails', 'preview', 'edit', 'auto-editor', 'auto-cancel', 'auto-analysis',
-        'export', 'batch', 'batch-cancel'),
+    [string[]]$Scenario,
     [ValidateRange(1, 50)][int]$Repetitions = 3,
     [ValidateRange(50, 5000)][int]$SampleMs = 250,
     [string[]]$Fixture,
     [string]$Tag,
-    [switch]$Quick
+    [switch]$Quick,
+    [ValidateRange(1, 100)][double]$QuietCpuPercent = 10,
+    [ValidateRange(0, 3600)][int]$QuietTimeoutSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,13 +114,10 @@ Set-StrictMode -Version 2.0
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Import-Module (Join-Path $PSScriptRoot 'LucentBench.psm1') -Force
 
-# -Scenario a,b also arrives as one string through powershell -File.
-$knownScenarios = @('startup', 'thumbnails', 'preview', 'edit', 'auto-editor', 'auto-cancel', 'auto-analysis', 'export',
-    'batch', 'batch-cancel')
-$Scenario = @($Scenario | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-foreach ($name in $Scenario) {
-    if ($knownScenarios -notcontains $name) { throw "Unknown scenario '$name': use $($knownScenarios -join ', ')." }
-}
+# The scenarios in their fixed order, "startup" last (Get-BenchScenarioOrder); -Scenario a,b also arrives
+# as one string through powershell -File.
+$knownScenarios = @(Get-BenchScenarioOrder)
+$Scenario = @(Get-BenchScenarioOrder -Requested $Scenario)
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -740,6 +753,15 @@ function Invoke-BatchCancelScenario {
             'being processed (--cancel-batch-after): stopped_after_ms runs from the request to the batch shown ' +
             'cancelled with nothing running (the interface applies batch events at most every 200 ms). The report is ' +
             'checked: exported photos have their files, cancelled ones none, no temporary file is left.')
+}
+
+# A quiet machine before the first measurement (see the description).
+if ($QuietTimeoutSeconds -gt 0) {
+    Write-Host ("Waiting for a quiet machine (CPU at most {0} % for 6 s, at most {1} s)..." -f $QuietCpuPercent, $QuietTimeoutSeconds)
+    $machine['quiet_before'] = Wait-BenchQuiet -MaxCpuPercent $QuietCpuPercent -TimeoutSeconds $QuietTimeoutSeconds
+    Write-Host ("  {0} after {1} s (CPU samples: {2} %)" -f $(if ($machine.quiet_before.quiet) { 'quiet' } else { 'STILL BUSY' }),
+        $machine.quiet_before.waited_s, ($machine.quiet_before.samples -join ', '))
+    Write-BenchJson -InputObject (ConvertTo-BenchRounded $machine) -Path (Join-Path $OutputDir $machineFile)
 }
 
 $started = Get-Date

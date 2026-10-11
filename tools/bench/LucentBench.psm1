@@ -21,6 +21,8 @@
     - Test-BenchBatchReport: checks a batch report ("lucent.batch-report" v1) against the outputs
       a watcher hashed while the batch ran.
     - Machine facts, fixture lists, hard-link corpora, unbuffered copies and JSON helpers.
+    - Get-BenchScenarioOrder: the scenarios in their fixed order ("startup" last), and
+      Wait-BenchQuiet: waits for a quiet machine before measuring (W12 release phase, W13 note).
 
     Windows PowerShell 5.1 and PowerShell 7. Keep this file ASCII.
 #>
@@ -1127,6 +1129,9 @@ function ConvertFrom-LucentLog {
             $m.window_loaded_ms = [double]$Matches[1]
         } elseif ($text -match '^measure: first frame presented (-?\d+) ms after the process started') {
             $m.first_frame_ms = [double]$Matches[1]
+        } elseif ($text -match '^measure: lens database loaded (\d+) ms after the process started') {
+            # W12 (APL-06): the lens database loads off the UI thread, beside the window's start.
+            $m.lens_database_loaded_ms = [double]$Matches[1]
         } elseif ($text -match '^measure: first thumbnail visible (\d+) ms after the import started') {
             $m.first_thumbnail_ms = [double]$Matches[1]
         } elseif ($text -match '^measure: first RAW preview shown (\d+) ms after the import started') {
@@ -1543,6 +1548,57 @@ function Measure-BenchIdleCpu {
     return [LucentBench.BenchProcess]::MeasureSystemCpu($Seconds * 1000)
 }
 
+# The scenarios of tools\bench\Invoke-LucentBench.ps1 in the order they always run (W13 note, W12
+# release phase; ADR 0021 amendment): "startup" last. Its cold starts copy the installed layout afresh
+# (about 390 files) for every repetition, and the antivirus scans those copies while the next scenarios
+# run: in the W13 baseline every 100 % view of the preview scenario, which ran right after, was 0.25
+# to 0.68 s slower than when measured again ten minutes later.
+$script:BenchScenarioOrder = @('thumbnails', 'preview', 'edit', 'auto-editor', 'auto-cancel', 'auto-analysis', 'export',
+    'batch', 'batch-cancel', 'startup')
+
+function Get-BenchScenarioOrder {
+    <#
+    .SYNOPSIS
+        The scenarios to run, in the harness's fixed order ($script:BenchScenarioOrder: "startup" last),
+        whatever order -Scenario names them in; each once. Accepts comma-separated strings (the way
+        powershell -File passes -Scenario a,b). Throws for an unknown scenario. Without -Requested: all.
+    #>
+    param([string[]]$Requested)
+    $names = @($Requested | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($names.Count -eq 0) { return $script:BenchScenarioOrder }
+    foreach ($name in $names) {
+        if ($script:BenchScenarioOrder -notcontains $name) { throw "Unknown scenario '$name': use $($script:BenchScenarioOrder -join ', ')." }
+    }
+    return @($script:BenchScenarioOrder | Where-Object { $names -contains $_ })
+}
+
+function Wait-BenchQuiet {
+    <#
+    .SYNOPSIS
+        Waits until the machine is quiet before measuring: until $Consecutive samples in a row of the
+        system's CPU use (every logical processor, $SampleMs each) are at most $MaxCpuPercent, or
+        $TimeoutSeconds have passed (W13 note: an antivirus still scanning freshly copied files, an
+        update or indexer at work). Returns what happened: waited_s, samples (the CPU percentages),
+        quiet (false when it timed out), and the limits. $Sampler replaces the measurement (tests: a
+        script block taking the sample's milliseconds and returning a percentage).
+    #>
+    param([double]$MaxCpuPercent = 10, [int]$Consecutive = 3, [int]$SampleMs = 2000, [int]$TimeoutSeconds = 300,
+        [scriptblock]$Sampler)
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $samples = New-Object System.Collections.ArrayList
+    $run = 0
+    $quiet = $false
+    while ($true) {
+        $cpu = if ($Sampler) { [double](& $Sampler $SampleMs) } else { [LucentBench.BenchProcess]::MeasureSystemCpu($SampleMs) }
+        [void]$samples.Add([math]::Round($cpu, 1))
+        if ($cpu -le $MaxCpuPercent) { $run++ } else { $run = 0 }
+        if ($run -ge $Consecutive) { $quiet = $true; break }
+        if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+    }
+    return [ordered]@{ quiet = $quiet; waited_s = [math]::Round($clock.Elapsed.TotalSeconds, 1); samples = @($samples)
+        max_cpu_percent = $MaxCpuPercent; consecutive = $Consecutive; sample_ms = $SampleMs; timeout_s = $TimeoutSeconds }
+}
+
 # ------------------------------------------------------------------------------------------------
 # Regression budgets (ADR 0021, decision 5)
 # ------------------------------------------------------------------------------------------------
@@ -1688,4 +1744,4 @@ Export-ModuleMember -Function ConvertTo-BenchArgumentString, ConvertTo-BenchNumb
     Get-BenchPercentile, Get-BenchStatistics, Write-BenchJson, Read-BenchJson, ConvertTo-BenchRounded, ConvertFrom-LucentLog,
     Invoke-BenchProcess, Get-BenchResourceSummary, Stop-BenchProcessesNamed, Get-BenchFixtures, New-BenchHardLink,
     Copy-BenchTreeUnbuffered, Get-BenchMachineFacts, Get-BenchBusyProcesses, Get-BenchAggregate, Get-BenchSignificantRound,
-    New-BenchBudget, Test-BenchBudgetValue, Measure-BenchIdleCpu, Test-BenchBatchReport
+    New-BenchBudget, Test-BenchBudgetValue, Measure-BenchIdleCpu, Test-BenchBatchReport, Get-BenchScenarioOrder, Wait-BenchQuiet

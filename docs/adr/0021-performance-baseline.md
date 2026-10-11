@@ -2,7 +2,8 @@
 
 - **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below; amended
   2026-10-10 by the closing review of W13: "Amendment: the lens-correction cost and the baseline of
-  2026-10-10" below)
+  2026-10-10" below; amended 2026-10-10 by the W12 release phase: "Amendment: the scenario order
+  and a quiet machine" below)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), the performance report
 
@@ -297,3 +298,33 @@ database the same binaries stayed within them.
     baseline of the W12 licence and release phase. The 1,000-file resilience gate was not repeated:
     W13 changes the worker protocol's result message (version 3, ADR 0012's closure amendment), which
     the batch tests cover, not the batch machinery the gate exercises.
+
+## Amendment: the scenario order and a quiet machine (W12 release phase, 2026-10-10)
+
+The W13 baseline measured its preview scenario twice: in the full run every 100 % view was 0.25 to
+0.68 s slower than ten minutes later, the R5's included, which no lens correction touches. The
+scenario ran right after the cold starts, which copy the installed layout afresh (about 390 files)
+for every repetition, and the antivirus scans those copies while the next scenarios run.
+
+12. **"startup" runs last.** `tools\bench\Invoke-LucentBench.ps1` always runs its scenarios in one
+    fixed order (`Get-BenchScenarioOrder`, `tools\bench\LucentBench.psm1`): thumbnails, preview,
+    edit, auto-editor, auto-cancel, auto-analysis, export, batch, batch-cancel, startup, whatever
+    order `-Scenario` names them in. Nothing the cold starts leave behind can land in another
+    scenario of the same run. The startup scenario itself is unchanged: its cold start is a first
+    start after installation, the antivirus's first look at the files included (decision 5 already
+    tracks it instead of budgeting it).
+13. **A quiet machine before the first scenario.** The harness waits until the system's CPU use is at
+    most `-QuietCpuPercent` (10 %) in three 2-second samples in a row, at most
+    `-QuietTimeoutSeconds` (300 s; 0 skips the wait), so that work left from before the run (an
+    antivirus scanning a fresh build or an earlier run's copies, an indexer, an update) is not
+    measured. `machine.json` records the wait (`quiet_before`: quiet or not, the seconds waited, the
+    samples); a run that started on a busy machine says so.
+14. **The lens database's load** (ADR 0023's W12 amendment) is recorded from `Lucent.exe --measure` as
+    `lens_database_loaded_ms`; it is not a budget.
+
+The budgets of the 2026-10-10 baseline stay: the reordering removes an inflation from the scenarios
+after the cold starts and adds none (the thumbnails scenario, now first, ran second, after the cold
+starts). `lucent_bench_harness_tests` checks the order (startup last, a requested order replaced by
+the fixed one, each scenario once, an unknown one refused), the quiet wait with a scripted sampler
+(three quiet samples in a row, the timeout) and the new measure line. The idle-machine baseline with
+the budgets derived again (COR-5) remains to be measured.

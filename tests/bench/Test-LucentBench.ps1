@@ -172,6 +172,7 @@ $log = @(
     'lucent: camera support database 2.1.0 (qualified 2026-10-09): 40 modes, 14 verified, from C:\x',
     'lucent: measure: window loaded 812 ms after the process started',
     'lucent: measure: first frame presented 1045 ms after the process started',
+    'lucent: measure: lens database loaded 260 ms after the process started',
     'lucent: import finished: 5 added (1 limited, 0 unsupported), 0 already in library, 0 found again, 0 ignored, 0 failed',
     'lucent: measure: first thumbnail visible 233 ms after the import started',
     'lucent: measure: fit preview visible 1061 ms after it was requested; latest render 1452 x 968 px: engine 0.93 s, preview 1.02 s (request to pixels)',
@@ -206,6 +207,7 @@ $log = @(
 $m = ConvertFrom-LucentLog -Lines $log
 Assert-Equal 812.0 $m.window_loaded_ms 'window loaded'
 Assert-Equal 1045.0 $m.first_frame_ms 'first frame presented'
+Assert-Equal 260.0 $m.lens_database_loaded_ms 'lens database loaded off the UI thread (W12, APL-06)'
 Assert-Equal 233.0 $m.first_thumbnail_ms 'first thumbnail'
 Assert-Equal 5.0 $m.import.added 'import added'
 Assert-Equal 1061.0 $m.fit_preview.visible_ms 'fit preview visible'
@@ -427,6 +429,32 @@ try {
 finally {
     Remove-Item -LiteralPath $gateWork -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# --- Scenario order and the quiet machine (W12 release phase, W13 note) -------------------------
+
+$all = @(Get-BenchScenarioOrder)
+Assert-Equal 10 $all.Count 'all ten scenarios'
+Assert-Equal 'startup' $all[-1] 'the cold starts run last (their fresh copies keep the antivirus busy)'
+Assert-Equal 'thumbnails' $all[0] 'thumbnails first'
+$picked = @(Get-BenchScenarioOrder -Requested @('startup,preview', 'edit'))
+Assert-Equal 'preview|edit|startup' ($picked -join '|') 'a requested order is the fixed order'
+$picked = @(Get-BenchScenarioOrder -Requested @('preview', 'preview'))
+Assert-Equal 'preview' ($picked -join '|') 'each scenario once'
+$threw = $false
+try { Get-BenchScenarioOrder -Requested @('warp') | Out-Null } catch { $threw = $_.Exception.Message -match "Unknown scenario 'warp'" }
+Assert-True $threw 'an unknown scenario is refused'
+Assert-True ((Get-Content -LiteralPath (Join-Path $repoRoot 'tools\bench\Invoke-LucentBench.ps1') -Raw) -match 'Get-BenchScenarioOrder -Requested \$Scenario') 'the harness runs the scenarios in the fixed order'
+
+# The quiet wait with a scripted sampler: busy, busy, then quiet three times in a row.
+$script:cpu = New-Object System.Collections.Queue
+foreach ($value in 80, 35, 4, 12, 3, 5, 2, 90) { $script:cpu.Enqueue([double]$value) }
+$quiet = Wait-BenchQuiet -MaxCpuPercent 10 -Consecutive 3 -SampleMs 1 -TimeoutSeconds 60 -Sampler { param($ms) $script:cpu.Dequeue() }
+Assert-True $quiet.quiet 'a quiet machine is found'
+Assert-Equal '80|35|4|12|3|5|2' ($quiet.samples -join '|') 'it waits for three quiet samples in a row (12 % breaks the run)'
+$busy = Wait-BenchQuiet -MaxCpuPercent 10 -Consecutive 3 -SampleMs 1 -TimeoutSeconds 1 -Sampler { param($ms) Start-Sleep -Milliseconds 50; 50 }
+Assert-True (-not $busy.quiet) 'a busy machine times out'
+Assert-True ($busy.waited_s -ge 1 -and $busy.waited_s -lt 10) "the wait ends at the timeout ($($busy.waited_s) s)"
+Assert-True ($busy.samples.Count -ge 2) 'the busy samples are recorded'
 
 Write-Host ("{0} checks, {1} failed" -f $script:checks, $script:failures)
 if ($script:failures -gt 0) { exit 1 }

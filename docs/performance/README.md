@@ -42,9 +42,15 @@ photo, so the 1,000-file run uses real copies and synthetic DNGs instead: see it
 
 ### Scenarios
 
+They run in this order whatever order `-Scenario` names them in, the cold starts last (ADR 0021,
+decision 12): their fresh copies of the installed layout keep the antivirus busy for a while, which
+slowed the scenarios that followed them in the W13 baseline. Before the first scenario the harness
+waits for a quiet machine (CPU at most 10 % in three 2-second samples in a row, at most 300 s;
+`-QuietCpuPercent`, `-QuietTimeoutSeconds`; decision 13) and records the wait in `machine.json`
+(`quiet_before`).
+
 | Scenario | Program and options | Measured |
 |---|---|---|
-| `startup` | `Lucent.exe --measure` | window created and first frame presented after process creation; cold (fresh unbuffered copy of the installed layout, new data root) and warm (the same again) |
 | `thumbnails` | `Lucent.exe --import <folder> --measure` | first thumbnail visible after the import request: new library (camera previews) and after a restart (disk cache) |
 | `preview` | `Lucent.exe --import <photo> --open-first --zoom 100 --measure` | first RAW preview (Fit) and the 100 % view |
 | `edit` | `--set exposure=1 --set contrast=20 --drag exposure`, `--drag shadows` | one-step edit to its frame on screen, slider position to frame (60 Hz synthetic drag), UI-thread gaps |
@@ -54,6 +60,7 @@ photo, so the 1,000-file run uses real copies and synthetic DNGs instead: see it
 | `export` | `lucent-render --format jpeg` / `tiff16 --report` | per-image export in one process: decode, render, encode, write, verify |
 | `batch` | `Lucent.exe --export-batch <folder> --preset jpeg/tiff [--automatic auto] --measure --quit-when-done` | photos per minute, submission time, the scheduler's figures (workers, peak commit of all workers together), Lucent.exe and worker memory, CPU use; every report checked against the files |
 | `batch-cancel` | the same with `--cancel-batch-after <n>` | cancel request to the batch stopped |
+| `startup` | `Lucent.exe --measure` | window created and first frame presented after process creation, and when the lens database had loaded (off the UI thread); cold (fresh unbuffered copy of the installed layout, new data root) and warm (the same again) |
 
 Lucent.exe's measurement hooks (`--measure` lines, `--cancel-batch-after`, `--pause-batch-after`,
 `--resume-after`, `--resume-batch`, `--cancel-auto-after`) are described in
@@ -84,7 +91,8 @@ may not fall below min(0.80 x median, 0.90 x the smallest value). Only measureme
 three values and a small variation (CV at most 10 %, memory 5 %) are budgets; the other 11 are
 tracked with their reason (ADR 0021, decision 5). They hold for the reference machine only: measure
 an exceeded budget again with the machine idle before treating it as a regression (the 2026-10-10
-baseline measured its preview scenario again for that reason), and keep the antivirus's scan of
-freshly copied files in mind: the cold starts make such copies just before the thumbnails and
-preview scenarios. A budget whose measurement is missing or not trustworthy fails too (ADR 0021,
-decision 8): a new run is judged only on what it measured.
+baseline measured its preview scenario again for that reason). The cold starts copy the installed
+layout afresh and the antivirus scans those copies afterwards: since the W12 release phase they run
+last, so no scenario of the same run follows them, but a second run started right after one with
+cold starts begins with the quiet wait for that reason. A budget whose measurement is missing or not
+trustworthy fails too (ADR 0021, decision 8): a new run is judged only on what it measured.
