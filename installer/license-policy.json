@@ -15,7 +15,13 @@
     "provision names. A port marked \"lgpl\" (or \"correspondingSource\", for another copyleft licence) has its",
     "upstream source archives, vcpkg recipe and build record in Lucent-<version>-corresponding-source.zip;",
     "packaging fails when a shipped port's licence leaves no choice but a copyleft licence and its entry",
-    "marks neither, or when a marked port is missing from the archive."
+    "marks neither, or when a marked port is missing from the archive. A LicenseRef- alternative (a vendor's",
+    "commercial licence) or an unknown identifier is no choice Lucent can take: \"concluded\" records an",
+    "election. GPL or AGPL code without an exception fails packaging even when marked, unless the entry's",
+    "\"strongCopyleftAdr\" names the ADR that accepted it (ADR 0003); copyleft code compiled into the programs",
+    "(a header-only port) fails too, a file-level copyleft (MPL, EPL, CDDL) unless \"fileLevelCopyleftReview\"",
+    "records its review (W12 review LIC-4). The patches a marked port's recipe applies are listed with their",
+    "files and dates in LGPL-NOTICE.txt and the archive (W12 review LIC-1)."
   ],
   "distribution": {
     "decided": "2026-10-10",
@@ -55,7 +61,7 @@
     "qtbase": {
       "reviewedVersion": "6.11.1",
       "concluded": "LGPL-3.0-only",
-      "comment": "Qt modules are used under LGPL-3.0-only, dynamically linked and unmodified (ADR 0003, decision 3). The third-party code compiled into the shipped Qt files is listed with its holders and licences from Qt's own SBOM; the licence texts are sections of the port's copyright file.",
+      "comment": "Qt modules are used under LGPL-3.0-only, dynamically linked (ADR 0003, decision 3). vcpkg's recipe patches Qt's source (W12 review LIC-1): mostly its CMake build files, and md4c.diff (src/gui/text/qtextmarkdownimporter.cpp, in Qt6Gui.dll); clang-cl_source_location.patch, clang-cl_QGADGET_fix.diff and QTBUG-145703.patch change headers for clang-cl or static builds only. Every patch is listed with its files and the registry commit's date in LGPL-NOTICE.txt and the corresponding-source archive. The third-party code compiled into the shipped Qt files is listed with its holders and licences from Qt's own SBOM; the licence texts are sections of the port's copyright file.",
       "lgpl": true,
       "extractSections": [
         { "section": "LGPL-3.0-only.txt", "as": "LGPL-3.0-only.txt" },
@@ -128,25 +134,25 @@
     "lensfun": {
       "reviewedVersion": "0.3.4",
       "concluded": "LGPL-3.0-only",
-      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the other library sources carry no notice), so the library is used under LGPL-3.0-only; the port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built. Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see Data below; ADR 0023). Used unmodified as a replaceable DLL (ADR 0003).",
+      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the other library sources carry no notice), so the library is used under LGPL-3.0-only; the port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built. Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see Data below; ADR 0023). A replaceable DLL (ADR 0003); vcpkg's recipe patches only its CMakeLists.txt (fix_build.patch), listed in LGPL-NOTICE.txt.",
       "lgpl": true
     },
     "glib": {
       "reviewedVersion": "2.90.0",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Built from Lucent's overlay port (cmake/ports/glib, shipped as licenses\\glib\\recipe) with one patch, lucent-neutral-locale-dir.patch, which keeps the build machine's install prefix out of the DLL and changes no behaviour of glib-2.0-0.dll. A replaceable DLL (ADR 0003, ADR 0023).",
+      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Built from Lucent's overlay port (cmake/ports/glib, shipped as licenses\\glib\\recipe), whose source is modified by three patches (W12 review LIC-1): vcpkg's use-libiconv-on-windows.patch (glib/gconvert.c converts with GNU libiconv instead of the bundled win_iconv; meson.build) and libintl.patch (meson.build), and Lucent's lucent-neutral-locale-dir.patch (meson.build), which keeps the build machine's install prefix out of the DLL. Each is listed with its files and date in LGPL-NOTICE.txt and the corresponding-source archive. A replaceable DLL (ADR 0003, ADR 0023).",
       "lgpl": true
     },
     "gettext-libintl": {
       "reviewedVersion": "0.22.5",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Built from Lucent's overlay port (cmake/ports/gettext-libintl, shipped as licenses\\gettext-libintl\\recipe) with one patch, lucent-no-builder-paths.patch, which keeps the build machine's folders out of the DLL (its default catalog folder and the relocation prefixes Lucent never uses). A replaceable DLL (ADR 0023).",
+      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Built from Lucent's overlay port (cmake/ports/gettext-libintl, shipped as licenses\\gettext-libintl\\recipe), whose source is modified by three patches (W12 review LIC-1): vcpkg's uwp.patch (gettext-runtime/intl/langprefs.c, gettext-runtime/intl/gnulib-lib/localcharset.c) and 0003-Fix-win-unicode-paths.patch (gettext-runtime/intl/loadmsgcat.c opens catalogs by UTF-8 file names), and Lucent's lucent-no-builder-paths.patch (gettext-runtime/intl/dcigettext.c, gettext-runtime/intl/gnulib-lib/relocatable.c), which keeps the build machine's folders out of the DLL (its default catalog folder and the relocation prefixes Lucent never uses). Each is listed with its files and date in LGPL-NOTICE.txt and the corresponding-source archive. A replaceable DLL (ADR 0023).",
       "lgpl": true
     },
     "libiconv": {
       "reviewedVersion": "1.19",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "The port declares no licence. The libiconv and libcharset libraries are LGPL-2.1-or-later (COPYING.LIB); the iconv program and the documentation are GPL-3.0 (COPYING) and are not shipped. Imported by GNU libintl and GLib. Used unmodified as a replaceable DLL (ADR 0023).",
+      "comment": "The port declares no licence. The libiconv and libcharset libraries are LGPL-2.1-or-later (COPYING.LIB); the iconv program and the documentation are GPL-3.0 (COPYING) and are not shipped. Imported by GNU libintl and GLib. A replaceable DLL (ADR 0023) built from the unmodified library sources: vcpkg's recipe patches srclib/fcntl.c and srclib/relocatable.c (the iconv program's helpers) and libcharset/include/libcharset.h.in (its export declarations), which iconv-2.dll's own sources (lib/iconv.c, libcharset/lib/localcharset.c) do not change (W12 review LIC-1); the patches are listed with their files and date in LGPL-NOTICE.txt and the corresponding-source archive.",
       "lgpl": true
     },
     "libffi": {

@@ -73,7 +73,8 @@ function Assert-Problem([object[]]$Errors, [string]$Pattern, [string]$What) {
 }
 function Get-BytesSha([byte[]]$Bytes, [string]$Algorithm) {
     $hasher = [System.Security.Cryptography.HashAlgorithm]::Create($Algorithm)
-    try { return [System.BitConverter]::ToString($hasher.ComputeHash($Bytes)).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+    # The cast picks ComputeHash(byte[]) for an empty array too.
+    try { return [System.BitConverter]::ToString($hasher.ComputeHash([byte[]]$Bytes)).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
 }
 
 # --- A real package against its manifest ---------------------------------------------------------
@@ -196,11 +197,26 @@ try {
     }
     Assert-Throws { Test-CopyleftLicence '(MIT OR GPL-2.0-only' } 'unbalanced parentheses are refused'
     Assert-Throws { Test-CopyleftLicence 'MIT OR' } 'an incomplete expression is refused'
+    # A LicenseRef- alternative (such as a vendor's commercial licence, which Lucent does not hold) or an
+    # unknown identifier is no alternative Lucent can take (W12 review LIC-4).
+    $kinds = [ordered]@{
+        'LicenseRef-Qt-Commercial OR LGPL-3.0-only' = 'copyleft'; 'LicenseRef-Qt-Commercial OR GPL-3.0-only' = 'strong-copyleft'
+        'GPL-3.0-or-later OR LicenseRef-Proprietary' = 'strong-copyleft'; 'Unknown-Licence-1.0 OR LGPL-2.1-only' = 'copyleft'
+        'LicenseRef-Qt-Commercial OR BSD-3-Clause' = 'permissive'; 'LicenseRef-Custom' = 'unknown'; 'Unknown-Licence-1.0' = 'unknown'
+        'GPL-2.0-only' = 'strong-copyleft'; 'GPL-2.0+' = 'strong-copyleft'; 'AGPL-3.0-only' = 'strong-copyleft'
+        'GPL-3.0-only WITH Qt-GPL-exception-1.0' = 'copyleft'; 'LGPL-2.1-only' = 'copyleft'; 'MPL-2.0 AND GPL-2.0-only' = 'strong-copyleft'
+        'FTL OR GPL-2.0-or-later' = 'permissive'; 'MIT AND LicenseRef-Custom' = 'unknown'; 'NOASSERTION' = 'unknown' }
+    foreach ($case in $kinds.GetEnumerator()) {
+        Assert-True ((Get-LicenceKind $case.Key) -ceq $case.Value) "Get-LicenceKind '$($case.Key)' is $($case.Value) ($(Get-LicenceKind $case.Key))"
+    }
+    foreach ($expression in 'LicenseRef-Qt-Commercial OR LGPL-3.0-only', 'LicenseRef-Qt-Commercial OR GPL-3.0-only', 'GPL-3.0-or-later OR LicenseRef-Proprietary') {
+        Assert-True (Test-CopyleftLicence $expression) "LIC-4: '$expression' leaves no choice but a copyleft licence"
+    }
 
     # 3. Which components need their corresponding source.
-    function New-TestComponent([string]$Port, [string]$Licence, [bool]$Lgpl, [object[]]$Statics = @(), [object[]]$Attributions = @()) {
+    function New-TestComponent([string]$Port, [string]$Licence, [bool]$Lgpl, [object[]]$Statics = @(), [object[]]$Attributions = @(), [string]$Linkage = 'dynamic') {
         $qt = if ($Attributions.Count -gt 0) { [pscustomobject]@{ Attributions = $Attributions } } else { $null }
-        return [pscustomobject]@{ Port = $Port; Version = '1.0'; LicenseConcluded = $Licence; Lgpl = $Lgpl; StaticLibraries = $Statics; QtSbom = $qt }
+        return [pscustomobject]@{ Port = $Port; Version = '1.0'; LicenseConcluded = $Licence; Lgpl = $Lgpl; StaticLibraries = $Statics; QtSbom = $qt; Linkage = $Linkage }
     }
     $policy = [pscustomobject]@{ ports = [pscustomobject]@{ 'mpl-data' = [pscustomobject]@{ reviewedVersion = '1.0'; correspondingSource = $true } } }
     $plan = Get-SourceProvisionPlan -Policy $policy -Components @(
@@ -218,6 +234,34 @@ try {
     Assert-Problem $plan.Errors 'qtlike .*Inner inside it \(MPL-2\.0\)' 'copyleft code inside an unmarked port is an error'
     Assert-Problem $plan.Errors 'linked .*Static part linked from it' 'a copyleft library linked statically from an unmarked port is an error'
     Assert-True (@($plan.Components).Count -eq 0) 'unmarked ports are not included'
+    # W12 review LIC-4: a commercial alternative is none; a mark is no remedy for GPL code or for copyleft
+    # code compiled into the programs.
+    $plan = Get-SourceProvisionPlan -Policy ([pscustomobject]@{ ports = [pscustomobject]@{ 'other' = [pscustomobject]@{ reviewedVersion = '1.0' } } }) -Components @(
+        (New-TestComponent 'dualref' 'LicenseRef-Vendor-Commercial OR LGPL-3.0-only' $false))
+    Assert-Problem $plan.Errors 'dualref .*does not provide its corresponding source' 'LIC-4: "LicenseRef-...-Commercial OR LGPL-3.0-only" unmarked is an error (Lucent holds no commercial licence)'
+    $policy = [pscustomobject]@{ ports = [pscustomobject]@{
+        'gpldll' = [pscustomobject]@{ reviewedVersion = '1.0'; correspondingSource = $true }
+        'gplok' = [pscustomobject]@{ reviewedVersion = '1.0'; correspondingSource = $true; strongCopyleftAdr = 'ADR 0026 (a test)' }
+        'headeronly' = [pscustomobject]@{ reviewedVersion = '1.0'; correspondingSource = $true }
+        'mplheaders' = [pscustomobject]@{ reviewedVersion = '1.0'; correspondingSource = $true; fileLevelCopyleftReview = 'Reviewed: MPL-2.0 covers its own files only.' }
+        'mplunreviewed' = [pscustomobject]@{ reviewedVersion = '1.0'; correspondingSource = $true } } }
+    $plan = Get-SourceProvisionPlan -Policy $policy -Components @(
+        (New-TestComponent 'gpldll' 'GPL-3.0-only' $false),
+        (New-TestComponent 'gplok' 'GPL-3.0-only' $false),
+        (New-TestComponent 'headeronly' 'LGPL-3.0-only' $true -Linkage 'compiled-in'),
+        (New-TestComponent 'mplheaders' 'MPL-2.0' $false -Linkage 'compiled-in'),
+        (New-TestComponent 'mplunreviewed' 'MPL-2.0' $false -Linkage 'compiled-in'),
+        (New-TestComponent 'qtlike2' 'LGPL-3.0-only' $true @() @([pscustomobject]@{ Name = 'GPL tool code'; License = 'LicenseRef-Qt-Commercial OR GPL-3.0-only' })))
+    Assert-Problem $plan.Errors 'gpldll .*GPL or AGPL licence without an exception.*strongCopyleftAdr' 'LIC-4: a GPL DLL marked correspondingSource is still an error (it needs an ADR)'
+    Assert-True (-not (@($plan.Errors) -match '^Port gplok ')) 'LIC-4: a GPL port whose policy names its ADR is accepted'
+    Assert-Problem $plan.Errors 'headeronly .*compiled into Lucent''s programs' 'LIC-4: LGPL code compiled into the programs (header-only) is an error, marked or not'
+    Assert-True (-not (@($plan.Errors) -match '^Port mplheaders ')) 'LIC-4: file-level copyleft compiled in passes with its review recorded'
+    Assert-Problem $plan.Errors 'mplunreviewed .*fileLevelCopyleftReview' 'LIC-4: file-level copyleft compiled in without a review is an error'
+    Assert-Problem $plan.Errors 'qtlike2 .*GPL tool code inside it' 'LIC-4: strong copyleft code inside a marked port is an error'
+    $plan = Get-SourceProvisionPlan -Policy ([pscustomobject]@{ ports = [pscustomobject]@{ 'other' = [pscustomobject]@{ reviewedVersion = '1.0' } } }) -Components @(
+        (New-TestComponent 'gplunmarked' 'LicenseRef-Vendor-Commercial OR GPL-3.0-only' $false))
+    Assert-Problem $plan.Errors 'gplunmarked .*GPL or AGPL licence without an exception' 'LIC-4: an unmarked GPL port (its commercial alternative unavailable) is refused as GPL'
+    Assert-True (@($plan.Errors | Where-Object { $_ -match 'set ports\.gplunmarked\.(lgpl|correspondingSource)' }).Count -eq 0) "LIC-4: the mark is not offered as the remedy for GPL code ($(@($plan.Errors) -join ' | '))"
 
     # 4. Synthetic packages.
     $archive = New-Object byte[] 4096
@@ -233,11 +277,14 @@ try {
     $version = '9.8.7'
     $rootName = "Lucent-$version-corresponding-source"
     function New-TestPackage([string]$Name, [string[]]$Omit = @(), [hashtable]$Replace = @{}, [string[]]$Components = @('liba'), [string]$Writer = 'deterministic',
-                             [switch]$Reverse, [switch]$BadSums) {
+                             [switch]$Reverse, [switch]$BadSums, [AllowNull()][string]$ManifestText = $null) {
+        # Assigned, not the value of an if: an empty array would become $null.
+        $manifestBytes = $utf8.GetBytes((ConvertTo-Json -Depth 5 -InputObject ([ordered]@{ schema = 'lucent.corresponding-source'; schemaVersion = 1; productVersion = $version
+            components = @($Components | ForEach-Object { [ordered]@{ port = $_ } }) })))
+        if ($PSBoundParameters.ContainsKey('ManifestText')) { $manifestBytes = $utf8.GetBytes([string]$ManifestText) }
         $files = [ordered]@{
             'README.txt' = $utf8.GetBytes("readme`r`n")
-            'MANIFEST.json' = $utf8.GetBytes((ConvertTo-Json -Depth 5 -InputObject ([ordered]@{ schema = 'lucent.corresponding-source'; schemaVersion = 1; productVersion = $version
-                components = @($Components | ForEach-Object { [ordered]@{ port = $_ } }) })))
+            'MANIFEST.json' = $manifestBytes
             'sources/example-liba-v1.0.tar.gz' = $archive
             'ports/liba/portfile.cmake' = $portfile
             'ports/liba/vcpkg.json' = $portJson
@@ -299,6 +346,28 @@ try {
     $notZip = Join-Path $work 'not-a.zip'
     [System.IO.File]::WriteAllBytes($notZip, $utf8.GetBytes('not a zip'))
     Assert-Problem (Test-CorrespondingSourcePackage -Path $notZip -Version $version -Expected $expected).Errors 'is not a readable ZIP archive' 'a file that is not a ZIP archive fails'
+    # W12 review LIC-3: a MANIFEST.json that is valid JSON but no object, or an object without members,
+    # fails, and the expected archive, recipe and build record are checked all the same (here the
+    # source archive is missing too).
+    $falsy = [ordered]@{ 'null' = 'null'; 'an empty array' = '[]'; 'zero' = '0'; 'false' = 'false'; 'an empty string' = '""'; 'an empty file' = '' }
+    $index = 0
+    foreach ($case in $falsy.GetEnumerator()) {
+        $index++
+        $threw = $null
+        $errors = @()
+        try { $errors = @((Test-CorrespondingSourcePackage -Path (New-TestPackage "falsy-$index" -ManifestText $case.Value -Omit 'sources/example-liba-v1.0.tar.gz') -Version $version -Expected $expected).Errors) }
+        catch { $threw = $_.Exception.Message }
+        Assert-True (-not $threw) "LIC-3: MANIFEST.json of $($case.Key) is checked without an exception ($threw)"
+        Assert-Problem $errors 'MANIFEST\.json is not a JSON object' "LIC-3: MANIFEST.json of $($case.Key) is no manifest"
+        Assert-Problem $errors 'source archive example/liba .* is not in sources/' "LIC-3: with MANIFEST.json of $($case.Key), a missing source archive is still found"
+    }
+    $threw = $null
+    $errors = @()
+    try { $errors = @((Test-CorrespondingSourcePackage -Path (New-TestPackage 'empty-object' -ManifestText '{}' -Omit 'ports/liba/vcpkg.json') -Version $version -Expected $expected).Errors) }
+    catch { $threw = $_.Exception.Message }
+    Assert-True (-not $threw) "LIC-3: MANIFEST.json of {} is checked without an exception ($threw)"
+    Assert-Problem $errors 'MANIFEST\.json is not a lucent\.corresponding-source version 1' 'LIC-3: MANIFEST.json of {} is no manifest of this schema'
+    Assert-Problem $errors 'recipe file ports/liba/vcpkg\.json is missing' 'LIC-3: with MANIFEST.json of {}, a missing recipe file is still found'
 
     # 5. A package manifest's record gives the same expectations as vcpkg's SPDX data.
     $spdxComponent = [pscustomobject]@{
@@ -342,6 +411,129 @@ try {
     $copy = @(Get-RecipeCopy -Port 'liba' -Folder $recipe -Describe 'the test recipe' -RecipeFiles $recorded -Errors $problems)
     Assert-Problem $problems.ToArray() 'detect/CMakeLists\.txt, which vcpkg built it with, is missing' 'a missing recipe file is refused'
     Assert-True ((Format-SourceDownload 'https://download.gnome.org/sources/glib/2.90/glib-2.90.0.tar.xz') -ceq 'https://download.gnome.org/sources/glib/2.90/glib-2.90.0.tar.xz') 'a download URL is shown as it is'
+
+    # 7. Orders that reach the archive and the notices do not depend on the regional format (W12 review
+    # LIC-7): Estonian sorts z between s and t, ordinal order does not.
+    $names = @('zlib', 'tiff', 'sqlite3', 'tl-expected', 'vcpkg-cmake', 'QTBUG-145703.patch', 'allow_outside_prefix.patch')
+    $components = @($names | ForEach-Object { New-TestComponent $_ 'MIT' $false })
+    $orders = @{}
+    foreach ($culture in 'en-US', 'et-EE') {
+        $orders[$culture] = & {
+            $saved = [System.Threading.Thread]::CurrentThread.CurrentCulture
+            try {
+                [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo($culture)
+                [pscustomobject]@{
+                    SortObject = (@($names | Sort-Object) -join '|')
+                    Ordinal = (@(ConvertTo-OrdinalOrder -Items $names) -join '|')
+                    Plan = (@((Get-SourceProvisionPlan -Policy ([pscustomobject]@{ ports = [pscustomobject]@{} }) -Components $components).Components) | ForEach-Object Port) -join '|'
+                    ByProperty = (@(ConvertTo-OrdinalOrder -Items $components -Property Port) | ForEach-Object Port) -join '|' }
+            }
+            finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
+        }
+    }
+    Assert-True ($orders['en-US'].SortObject -cne $orders['et-EE'].SortObject) "LIC-7: Sort-Object orders by the culture ($($orders['en-US'].SortObject) / $($orders['et-EE'].SortObject))"
+    Assert-True ($orders['en-US'].Ordinal -ceq $orders['et-EE'].Ordinal -and $orders['en-US'].Ordinal -ceq 'QTBUG-145703.patch|allow_outside_prefix.patch|sqlite3|tiff|tl-expected|vcpkg-cmake|zlib') "LIC-7: the ordinal order is the same under en-US and et-EE ($($orders['et-EE'].Ordinal))"
+    Assert-True ($orders['en-US'].ByProperty -ceq $orders['et-EE'].ByProperty -and $orders['en-US'].ByProperty -ceq $orders['en-US'].Ordinal) 'LIC-7: ordering records by a property is ordinal too'
+    $plan = Get-SourceProvisionPlan -Policy ([pscustomobject]@{ ports = [pscustomobject]@{ zlib = [pscustomobject]@{ correspondingSource = $true }; tiff = [pscustomobject]@{ correspondingSource = $true }; sqlite3 = [pscustomobject]@{ correspondingSource = $true } } }) -Components $components
+    $planned = & {
+        $saved = [System.Threading.Thread]::CurrentThread.CurrentCulture
+        try {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('et-EE')
+            (@((Get-SourceProvisionPlan -Policy ([pscustomobject]@{ ports = [pscustomobject]@{ zlib = [pscustomobject]@{ correspondingSource = $true }; tiff = [pscustomobject]@{ correspondingSource = $true }; sqlite3 = [pscustomobject]@{ correspondingSource = $true } } }) -Components $components).Components) | ForEach-Object Port) -join '|'
+        }
+        finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
+    }
+    Assert-True ((@($plan.Components | ForEach-Object Port) -join '|') -ceq 'sqlite3|tiff|zlib' -and $planned -ceq 'sqlite3|tiff|zlib') "LIC-7: the corresponding-source components come in the same order under et-EE ($planned)"
+    $unique = @(ConvertTo-OrdinalOrder -Items @('b', 'a', 'b', 'A') -Unique)
+    Assert-True (($unique -join '|') -ceq 'A|a|b') "LIC-7: -Unique keeps one of each name ($($unique -join '|'))"
+    # The other files packaging publishes: an Estonian machine wrote the archive's size in LGPL-NOTICE.txt
+    # as "132 480 210" and listed mil-zeiss.xml before mil-tamron.xml in the package manifest.
+    $inventoryRoot = Join-Path $work 'inventory'
+    New-Item -ItemType Directory -Path $inventoryRoot -Force | Out-Null
+    foreach ($name in 'mil-tamron.xml', 'mil-zeiss.xml', 'mil-tokina.xml', 'Lucent.exe') { [System.IO.File]::WriteAllText((Join-Path $inventoryRoot $name), $name) }
+    $published = @{}
+    foreach ($culture in 'en-US', 'et-EE') {
+        $noticeStage = Join-Path $work "notice-$culture"
+        $published[$culture] = & {
+            $saved = [System.Threading.Thread]::CurrentThread.CurrentCulture
+            try {
+                [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo($culture)
+                Write-LgplNotice -StageDir $noticeStage -Info ([pscustomobject]@{ version = '9.8.7'; homepage = 'https://example.org/lucent'; executable = 'Lucent.exe'; helperExecutables = @() }) `
+                    -Components @([pscustomobject]@{ Port = 'liba'; Lgpl = $false; StaticLibraries = @() }) -NoticesDir (Join-Path $repoRoot 'installer\notices') `
+                    -SourcePackage ([pscustomobject]@{ File = 'Lucent-9.8.7-corresponding-source.zip'; Size = [int64]132480210; Sha256 = ('ab' * 32); Components = @() }) `
+                    -Baseline ('e143402b' + '0' * 32) | Out-Null
+                [pscustomobject]@{
+                    Inventory = (@(Get-FileInventory -Root $inventoryRoot) | ForEach-Object { $_.path }) -join '|'
+                    Notice = [System.IO.File]::ReadAllText((Join-Path $noticeStage 'licenses\LGPL-NOTICE.txt')) }
+            }
+            finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
+        }
+    }
+    Assert-True ($published['en-US'].Inventory -ceq $published['et-EE'].Inventory -and $published['et-EE'].Inventory -ceq 'Lucent.exe|mil-tamron.xml|mil-tokina.xml|mil-zeiss.xml') `
+        "LIC-7: the package manifest's file list is ordinal under en-US and et-EE ($($published['et-EE'].Inventory))"
+    Assert-True ($published['en-US'].Notice -ceq $published['et-EE'].Notice -and $published['et-EE'].Notice.Contains('(132,480,210 bytes, SHA-256')) `
+        'LIC-7: LGPL-NOTICE.txt is the same under en-US and et-EE (the archive''s size grouped with commas)'
+
+    # 8. What a recipe changes in its library's source (W12 review LIC-1): the patches its portfile
+    # names, with the files each changes, who made it and when.
+    $recipeDir = Join-Path $work 'modified-recipe'
+    New-Item -ItemType Directory -Path (Join-Path $recipeDir 'patches') -Force | Out-Null
+    $vcpkgPatch = "From vcpkg`n--- a/glib/gconvert.c`n+++ b/glib/gconvert.c`n@@ -1 +1 @@`n-a`n+b`n--- a/meson.build`t2024-01-01`n+++ b/meson.build`t2024-01-02`n@@ -1 +1 @@`n-a`n+b`n"
+    $lucentPatch = "--- a/meson.build`n+++ b/meson.build`n@@ -1 +1,2 @@`n+# Changed by the Lucent project, 2026-10-10: the locale folder.`n a`n"
+    $removing = "--- a/old/file.c`n+++ /dev/null`n@@ -1 +0,0 @@`n-gone`n"
+    [System.IO.File]::WriteAllText((Join-Path $recipeDir 'use-libiconv-on-windows.patch'), $vcpkgPatch)
+    [System.IO.File]::WriteAllText((Join-Path $recipeDir 'lucent-neutral-locale-dir.patch'), $lucentPatch)
+    [System.IO.File]::WriteAllText((Join-Path $recipeDir 'patches\remove-old.diff'), $removing)
+    [System.IO.File]::WriteAllText((Join-Path $recipeDir 'unused.patch'), $vcpkgPatch)
+    [System.IO.File]::WriteAllText((Join-Path $recipeDir 'portfile.cmake'), "vcpkg_from_gitlab(`n    PATCHES`n        use-libiconv-on-windows.patch`n        lucent-neutral-locale-dir.patch`n        patches/remove-old.diff`n)`n")
+    $copyList = @(Get-ChildItem -LiteralPath $recipeDir -Recurse -File | ForEach-Object {
+        [pscustomobject]@{ Name = 'ports/glib/' + $_.FullName.Substring($recipeDir.Length + 1).Replace('\', '/'); SourcePath = $_.FullName } })
+    $comparison = [pscustomobject]@{ Files = @(
+        [pscustomobject]@{ File = 'use-libiconv-on-windows.patch'; Status = 'unchanged' }, [pscustomobject]@{ File = 'lucent-neutral-locale-dir.patch'; Status = 'added' },
+        [pscustomobject]@{ File = 'patches/remove-old.diff'; Status = 'line endings' }, [pscustomobject]@{ File = 'unused.patch'; Status = 'unchanged' },
+        [pscustomobject]@{ File = 'portfile.cmake'; Status = 'changed' }) }
+    Assert-True ((@(Get-PatchedFiles -Text $vcpkgPatch) -join '|') -ceq 'glib/gconvert.c|meson.build') "LIC-1: a patch's files (its +++ lines, a/ b/ and time stamps removed): $(@(Get-PatchedFiles -Text $vcpkgPatch) -join '|')"
+    Assert-True ((@(Get-PatchedFiles -Text $removing) -join '|') -ceq 'old/file.c') 'LIC-1: a deleted file is named by its --- line'
+    $modifications = @(Get-RecipeModifications -Port 'glib' -RecipeFiles $copyList -Comparison $comparison -Baseline ('e143402b' + '0' * 32) -BaselineDate '2026-09-24')
+    $summary = @($modifications | ForEach-Object { "$([System.IO.Path]::GetFileName($_.patch))=$($_.by)/$($_.date)/$(@($_.changes) -join ',')" }) -join '; '
+    Assert-True ($modifications.Count -eq 3) "LIC-1: the three patches the portfile names, not the unused one ($summary)"
+    Assert-True ($summary -cmatch 'use-libiconv-on-windows\.patch=vcpkg/2026-09-24/glib/gconvert\.c,meson\.build') "LIC-1: vcpkg's patch, dated by the registry commit ($summary)"
+    Assert-True ($summary -cmatch 'lucent-neutral-locale-dir\.patch=the Lucent project/2026-10-10/meson\.build') "LIC-1: Lucent's patch, dated as it states ($summary)"
+    Assert-True ($summary -cmatch 'remove-old\.diff=vcpkg/2026-09-24/old/file\.c') "LIC-1: a patch in a subfolder, its line endings only changed, is vcpkg's ($summary)"
+    $lines = @(Format-RecipeModifications -Modifications $modifications -Prefix '  Modified:   ' -Baseline ('e143402b' + '0' * 32))
+    Assert-True (($lines -join "`n") -match "lucent-neutral-locale-dir\.patch \(the Lucent project, 2026-10-10\) changes meson\.build" -and ($lines -join "`n") -match "registry at commit e143402b of 2026-09-24") ($lines -join ' / ')
+    Assert-True ((@(Format-RecipeModifications -Modifications @() -Prefix '  Modified:   ') -join '') -match 'no: built from the upstream source archive as released') 'LIC-1: a library without patches says so'
+    $registry = @(Get-RecipeModifications -Port 'glib' -RecipeFiles $copyList -Baseline ('e143402b' + '0' * 32) -BaselineDate '2026-09-24')
+    Assert-True (@($registry | Where-Object { $_.by -ne 'vcpkg' }).Count -eq 0) 'LIC-1: in a registry port (no overlay) every patch is vcpkg''s'
+
+    # 9. The code of these packages linked into Lucent's programs (W12 review LIC-5).
+    $info = [pscustomobject]@{ executable = 'Lucent.exe'; helperExecutables = @('lucent-worker.exe') }
+    $withEntry = [pscustomobject]@{ Port = 'qtbase'; StaticLibraries = @([pscustomobject]@{ Name = 'Qt Windows entry point (Qt6::EntryPoint)'; File = 'Qt6EntryPoint.lib'
+        LicenseConcluded = 'BSD-3-Clause'; Executables = @('Lucent.exe') }) }
+    $text = Format-StaticCodeText -Components @($withEntry, [pscustomobject]@{ Port = 'libraw'; StaticLibraries = @() }) -Info $info
+    Assert-True ($text -match 'Qt6EntryPoint\.lib, from qtbase\), linked statically into Lucent\.exe and used under BSD-3-Clause' -and $text -notmatch 'lucent-worker') "LIC-5: the README names the entry point, the one program that links it and its licence ($text)"
+    Assert-True ((Format-StaticCodeText -Components @([pscustomobject]@{ Port = 'libraw'; StaticLibraries = @() }) -Info $info) -match '^No code of them is linked into Lucent\.exe and lucent-worker\.exe\.$') 'LIC-5: without statically linked code it says none is linked'
+    $readme = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'installer\notices\CORRESPONDING-SOURCE-README.txt.in'))
+    Assert-True ($readme -match '@STATIC_CODE@' -and $readme -notmatch 'no code of them is linked into Lucent\.exe') 'LIC-5: the README template states the linked code from the build, not "no code"'
+
+    # 10. The Inno Setup compiler's licence (W12 review LIC-6): the whole banner, and a commercial
+    # distribution only with a licence the banner states as commercial.
+    $head = @('Inno Setup 6 Command-Line Compiler', 'Copyright (C) 1997-2026 Jordan Russell. All rights reserved.', 'Portions Copyright (C) 2000-2026 Martijn Laan. All rights reserved.', 'https://www.innosetup.com', '')
+    $banners = [ordered]@{
+        '6.7.3' = @($head + @('Compiler engine version: Inno Setup 6.7.3', 'Non-commercial use only', '', 'Preprocessing', 'Compiling [Setup] section'))
+        'licence line elsewhere' = @(@('Inno Setup 6 Command-Line Compiler', 'Non-commercial use only') + $head + @('Compiler engine version: Inno Setup 6.8.0', '', 'Preprocessing'))
+        'commercial' = @($head + @('Compiler engine version: Inno Setup 6.8.0', 'Commercial license: Example Ltd', '', 'Preprocessing'))
+        'none' = @($head + @('Compiler engine version: Inno Setup 6.8.0', '', 'Preprocessing', 'Reading file: Non-commercial-notes.iss'))
+        'translated' = @($head + @('Compiler engine version: Inno Setup 6.8.0', 'Nur zur nichtkommerziellen Nutzung', '', 'Preprocessing')) }
+    $expectedKinds = @{ '6.7.3' = 'non-commercial'; 'licence line elsewhere' = 'non-commercial'; 'commercial' = 'commercial'; 'none' = $null; 'translated' = $null }
+    foreach ($case in $banners.GetEnumerator()) {
+        $licence = Get-InnoSetupLicence -Output $case.Value
+        Assert-True ($licence.Kind -eq $expectedKinds[$case.Key]) "LIC-6: the banner '$($case.Key)' states a licence of kind $($expectedKinds[$case.Key]) ($($licence.Kind): $($licence.Line))"
+        $commercial = Test-InnoSetupLicence -Licence $licence -Commercial $true
+        Assert-True ((@($commercial.Errors).Count -eq 0) -eq ($expectedKinds[$case.Key] -eq 'commercial')) "LIC-6: a commercial distribution with the banner '$($case.Key)' is $(if ($expectedKinds[$case.Key] -eq 'commercial') { 'accepted' } else { 'refused' })"
+        $free = Test-InnoSetupLicence -Licence $licence -Commercial $false
+        Assert-True (@($free.Errors).Count -eq 0 -and ((@($free.Warnings).Count -gt 0) -eq ($null -eq $expectedKinds[$case.Key]))) "LIC-6: a free distribution with the banner '$($case.Key)' passes$(if ($null -eq $expectedKinds[$case.Key]) { ', with a warning' })"
+    }
 }
 finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

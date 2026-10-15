@@ -1,6 +1,7 @@
 # ADR 0024: Release and licensing: free MIT distribution, a corresponding-source archive beside every installer, unsigned releases, and the release checklist
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-15 by the W12 release review: "Amendment: the release review"
+  below)
 - **Date:** 2026-10-10
 - **Workflow:** W12 (Release hardening), licence and release phase
 - **Amends:** ADR 0003 (the corresponding-source provision and the copyleft guard), ADR 0009
@@ -253,3 +254,87 @@ preset, commit `f2faf0e` with this phase's uncommitted changes):
 - **Signing now with a self-signed certificate.** Gives users no trust (SmartScreen and Windows do not
   trust it) and would teach them to accept untrusted signatures; test signatures stay a rehearsal only
   (ADR 0009, decision 14).
+
+## Amendment: the release review (W12, 2026-10-15)
+
+The review of the release phase found the notices short of the facts and four checks weaker than
+this ADR says (findings LIC-1 and LIC-3 to LIC-7; the gate's findings are in ADR 0009's amendment of
+the same date):
+
+12. **The copyleft guard** (decision 3; LIC-4): an OR alternative under a `LicenseRef-` licence (a
+    vendor's commercial terms, which Lucent does not hold) or an unknown identifier is no choice,
+    GPL or AGPL code without an exception stops packaging even when the policy provides its source,
+    and so does copyleft code compiled into the programs (`Get-LicenceKind`; ADR 0003's amendment
+    of this date, decisions 13 and 14). The error no longer offers the policy's mark as the remedy
+    for GPL code.
+13. **The read-back check stands on its own** (decision 4; LIC-3). A `MANIFEST.json` that is valid
+    JSON but no object (`null`, `[]`, `0`, `false`, `""`) skipped every per-component check, and `{}`
+    stopped the check with a strict-mode exception (which also left the archive on disk). Now anything
+    but a JSON object is an error ("MANIFEST.json is not a JSON object"), members are read
+    strict-mode safely, and each expected library's source archives, recipe files and build record
+    are checked whatever `MANIFEST.json` holds; only "listed in MANIFEST.json" needs it.
+14. **The same bytes on any machine, whatever its regional format** (decision 4; LIC-7). The orders
+    that reach `MANIFEST.json` (the components, their recipe files and loading, the overlay
+    comparison, the triplet files, `notIncluded`), the README and the notices came from
+    `Sort-Object`, which compares by the thread's culture: under Estonian, which sorts z between s and
+    t, `notIncluded` (which holds `tiff` and `zlib`) and therefore the archive's SHA-256 differed.
+    Every such order is now ordinal (`ConvertTo-OrdinalOrder`); the ZIP entries and `SHA256SUMS.txt`
+    were already. The other files packaging writes for publication no longer depend on it either:
+    `LGPL-NOTICE.txt` wrote the archive's size as "132 480 210" under Estonian (it is grouped with
+    commas everywhere now), and the package manifest's file list and the SBOM's files are in ordinal
+    order. (The SBOM's creation time and namespace differ on every run, as SPDX intends.)
+15. **The archive's README says which library code is inside the programs** (decision 2; LIC-5). It
+    said that no code of the libraries is linked into `Lucent.exe` or `lucent-worker.exe`, but qtbase's
+    Windows entry point (`Qt6EntryPoint.lib`, BSD-3-Clause) is linked into `Lucent.exe`. The README
+    now states it from the build (`@STATIC_CODE@`: each statically linked library with its port, the
+    programs that link it and its licence), and `Get-StaticVcpkgLibraries` records which program links
+    each library, so `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` and the SBOM name `Lucent.exe` alone
+    instead of both programs.
+16. **The notices list every modification** (decision 5; LIC-1): `LGPL-NOTICE.txt` and the archive's
+    README give each library a "Modified" entry with every patch its recipe names, the files it
+    changes, who made it and when, and `MANIFEST.json` records them (`components[].modifications`;
+    ADR 0003's amendment, decision 12).
+17. **A commercial distribution needs a compiler that states a commercial licence** ("Alternatives
+    considered", "A commercial Inno Setup licence"; LIC-6). The licence line was read only from the
+    line after "Compiler engine version", and an unrecognised banner left it empty, which passed
+    whatever the policy said. `Get-InnoSetupLicence` reads the whole banner (a non-commercial line
+    first); `Test-InnoSetupLicence` refuses a commercial distribution unless the banner positively
+    states a commercial licence, so a non-commercial, reworded or translated banner fails loudly, and
+    warns for the free distribution when it recognises no licence line (the package manifest then
+    records none).
+
+### Verification (2026-10-15)
+
+- **The defects, shown with the committed module** (334d0bb): `Test-CopyleftLicence` returned false
+  for `LicenseRef-Qt-Commercial OR LGPL-3.0-only` and `LicenseRef-Qt-Commercial OR GPL-3.0-only`; a
+  GPL DLL marked `correspondingSource` passed the plan without an error; under `et-EE` the plan's
+  order was `sqlite3|zlib|tiff`.
+- **`Test-SourcePackage.ps1`** (CTest `lucent_source_package_tests`): 177 checks (94 at this ADR's
+  date). New: the licence kinds of 16 expressions; a `LicenseRef-` alternative leaves the copyleft
+  one; a GPL DLL marked `correspondingSource` is refused unless its entry names an ADR, LGPL code
+  compiled in is refused marked or not, file-level copyleft compiled in passes only with its review,
+  GPL code inside a marked port is refused, and the mark is not offered as the remedy; a
+  `MANIFEST.json` of `null`, `[]`, `0`, `false`, `""`, an empty file or `{}` is checked without an
+  exception, refused, and the missing source archive or recipe file is still found; ordinal orders
+  (the plan, records by a property, `-Unique`) are the same under `en-US` and `et-EE`, where
+  `Sort-Object` differs, and so are `LGPL-NOTICE.txt` and the package manifest's file list (both
+  differed with the committed code); a patch's files, the three patches of a test recipe with who
+  made them and when, "Modified: no"; the README's statement of the linked code; five compiler
+  banners (6.7.3's, the licence line elsewhere, a commercial one, none, a translated one) against a
+  commercial and a free distribution. `Test-ReleaseManifest.ps1` (41) and
+  `Test-UpdateChannelPolicy.ps1` (32) pass unchanged.
+- **The package** (`tools\package.ps1 -BuildDir build\wl-fix-scripts-rel -Jobs 5 -UpdateChannel none
+  -StageOnly`, the release preset with this review's changes uncommitted): the archive is
+  **132,480,210 bytes**, 110 files, SHA-256
+  `3c50c75d06f3b7c26d7de10a5907d76b89bf5cfab5c2e8db70c3a487edb7e082` (36,466 bytes more than on
+  2026-10-10: the "Modified" lines and records); `MANIFEST.json` lists 26 patches for qtbase, three
+  each for glib, gettext-libintl and libiconv, two for libraw, one for lensfun and none for
+  qtdeclarative and qtsvg; `LGPL-NOTICE.txt` and the README say the same, and the README names
+  `Qt6EntryPoint.lib`, linked into `Lucent.exe` under BSD-3-Clause. Four runs, two of them with the
+  thread's regional format set to Estonian (`et-EE`, `-SkipBuild -OutputDir`), wrote archives with
+  the same SHA-256. The first Estonian run also showed `LGPL-NOTICE.txt` and the order of the package
+  manifest's and the SBOM's files changing with the regional format; after their fix the Estonian
+  run's installation folder differed from the English one only in the SBOM's creation time and
+  namespace, and its package manifest only in its own creation time and the SBOM's SHA-256.
+  `Test-SourcePackage.ps1 -PackageManifest` (the release checklist's gate 7) passed against both
+  package manifests (139 checks each).

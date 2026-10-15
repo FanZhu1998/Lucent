@@ -83,3 +83,17 @@ gtest_discover_tests(lucent_ui_tests
     PROPERTIES
         LABELS "ui"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Lucent's logo in Help > About on whole device pixels at fractional scales (ADR 0025; review finding
+# BRD-08): the offscreen screen's own ratio is 1, so the test runs again at 125 and 175 %, where a whole
+# logical position can fall between device pixels. A renamed test fails these entries rather than
+# leaving them nothing to run.
+set(_lucent_logo_test QmlShellTest.TheWindowIconAndTheAboutLogoAreLucentsLogoAtEveryScale)
+foreach(_lucent_scale IN ITEMS 1.25 1.75)
+    string(REPLACE "." "" _lucent_percent "${_lucent_scale}")
+    add_test(NAME "${_lucent_logo_test}_at_${_lucent_percent}_percent"
+        COMMAND lucent_ui_tests "--gtest_filter=${_lucent_logo_test}" --gtest_fail_if_no_test_selected)
+    set_tests_properties("${_lucent_logo_test}_at_${_lucent_percent}_percent" PROPERTIES
+        LABELS "ui;branding"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=${_lucent_scale}")
+endforeach()

@@ -1,5 +1,7 @@
 # lucent-worker.exe: isolated processing worker (decode, render, encode, verify) driven by
 # lucent_workers (W7). A GUI-subsystem program without a window: starting it never shows a console.
+# Shipped beside Lucent.exe, it carries the same icon and version resources (Task Manager and
+# Explorer show it as Lucent's; ADR 0025).
 #
 # The jobs themselves (DevelopJobRunner: recipe, source identity, develop render, export metadata,
 # verified write into the host's temporary path; and the analyze job of automatic batches,
@@ -34,6 +36,7 @@ lucent_add_executable(lucent-worker WIN32
         lucent_worker_job
         shell32  # CommandLineToArgvW
 )
+lucent_add_program_resources(lucent-worker DESCRIPTION "Lucent processing worker")
 
 if(NOT LUCENT_BUILD_TESTS)
     return()

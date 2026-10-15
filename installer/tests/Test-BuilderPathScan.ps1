@@ -85,7 +85,15 @@ $found = @(
     @('C:\vb\tiff\src\v4.7.2.clean\libtiff\tif_dir.c', 'vcpkg buildtrees folder'),
     @('D:\vcpkg\packages\zlib_x64\bin\z.pdb', 'vcpkg packages folder'),
     @('D:\vcpkg\ports\zlib\portfile.cmake', 'vcpkg root'),
-    @('C:\Users\runneradmin\work\qt\qtbase.pdb', 'user profile folder (any user)'))
+    @('C:\Users\runneradmin\work\qt\qtbase.pdb', 'user profile folder (any user)'),
+    # Other users' names beyond Latin-1, built from character codes (this file stays ASCII): CJK, Cyrillic,
+    # Greek, and a character outside the Basic Multilingual Plane (a surrogate pair in UTF-16; W12 review
+    # SEC07-02: the UTF-16LE form once accepted only code units below U+0100).
+    @(('C:\Users\' + [string][char]0x5F20 + [char]0x4E09 + '\source\repos\x\y.pdb'), 'user profile folder (any user)'),
+    @(('C:\Users\' + [string][char]0x0418 + [char]0x0432 + [char]0x0430 + [char]0x043D + '\source\repos\x\y.pdb'), 'user profile folder (any user)'),
+    @(('C:\Users\' + [string][char]0x039D + [char]0x03AF + [char]0x03BA + [char]0x03BF + [char]0x03C2 + '\x\y.pdb'), 'user profile folder (any user)'),
+    @(('C:\Users\ana' + [string][char]0xD83D + [char]0xDE00 + '\x\y.pdb'), 'user profile folder (any user)'),
+    @(('C:\Users\Ren' + [string][char]0x00E9 + '\x\y.pdb'), 'user profile folder (any user)'))
 foreach ($case in $found) {
     foreach ($encoding in [System.Text.Encoding]::UTF8, [System.Text.Encoding]::Unicode) {
         $report = Find-In ("prefix $($case[0]) suffix") $encoding
@@ -238,6 +246,52 @@ try {
     $zstdReport = Invoke-BuilderPathAudit -Scanner $scanner -Blobs @([pscustomobject]@{ Name = 'zstd.bin'; Bytes = $zstd }) -Label 'zstd'
     Assert-That 'Compressed: a zstd frame is an error (it cannot be decompressed for the scan)' (@($zstdReport.Errors | Where-Object { $_ -match '^zstd\.bin at offset 0x[0-9A-F]{8}: zstd-compressed' }).Count -eq 1) `
         (@($zstdReport.Errors) -join '; ')
+
+    # One budget per scanned file (W12 review SEC07-01), shown with an 8 MiB budget instead of 1 GiB. The
+    # Adler-32 of these large streams is the module's (a loop here would take minutes).
+    Initialize-CompressedContentType
+    function ConvertTo-ZlibBytesQuickly([byte[]]$Data) {
+        $memory = New-Object System.IO.MemoryStream
+        $memory.WriteByte(0x78); $memory.WriteByte(0x9C)
+        $deflate = New-Object System.IO.Compression.DeflateStream($memory, [System.IO.Compression.CompressionMode]::Compress, $true)
+        $deflate.Write($Data, 0, $Data.Length)
+        $deflate.Dispose()
+        $adler = [LucentPackaging.Checksums]::Adler32($Data)
+        foreach ($shift in 24, 16, 8, 0) { $memory.WriteByte([byte](($adler -shr $shift) -band 0xFF)) }
+        return $memory.ToArray()
+    }
+    $threeMiB = New-Object byte[] (3MB)
+    $inner = Join-Bytes @($filler, (ConvertTo-ZlibBytesQuickly $threeMiB), $filler, (ConvertTo-ZlibBytesQuickly $threeMiB), $filler)
+    # Three streams of a few kilobytes, each holding two streams of 3 MiB: 18 MiB in all, never more than
+    # 6 MiB in one decompression of one level.
+    $bomb = Join-Bytes @($filler, (ConvertTo-ZlibBytesQuickly $inner), $filler, (ConvertTo-ZlibBytesQuickly $inner), $filler, (ConvertTo-ZlibBytesQuickly $inner), $filler)
+    $tally = New-CompressedContentTally
+    $budget = New-CompressedContentBudget -Bytes 8MB
+    $null = Find-BuilderPathsInContent -Scanner $scanner -Bytes $bomb -Name 'bomb.dll' -Tally $tally -Budget $budget
+    Assert-That 'Budget: nested streams of 18 MiB in all fail an 8 MiB budget, though no level decompresses more than 6 MiB' `
+        (@($tally.Problems | Where-Object { $_ -match 'decompresses to more than 8388608 bytes in all' }).Count -eq 1 -and $budget.Exhausted) (@($tally.Problems) -join '; ')
+    $tally = New-CompressedContentTally
+    $budget = New-CompressedContentBudget -Bytes 64MB
+    $null = Find-BuilderPathsInContent -Scanner $scanner -Bytes $bomb -Name 'bomb.dll' -Tally $tally -Budget $budget
+    Assert-That 'Budget: the same file within a 64 MiB budget is scanned in full (9 parts, 18 MiB and more counted)' `
+        ($tally.Problems.Count -eq 0 -and $tally.Streams -eq 9 -and $budget.Used -ge 18MB -and -not $budget.Exhausted) ("{0}; {1:N0} bytes used" -f (Format-CompressedContentTally $tally), $budget.Used)
+    # Streams that decode in full and then fail their checksum are not streams, but their decoding counts.
+    $oneMiB = New-Object byte[] (1MB)
+    $corrupt = ConvertTo-ZlibBytesQuickly $oneMiB
+    $corrupt[$corrupt.Length - 1] = $corrupt[$corrupt.Length - 1] -bxor 0xFF
+    $flood = Join-Bytes @(1..10 | ForEach-Object { $filler; $corrupt })
+    $tally = New-CompressedContentTally
+    $budget = New-CompressedContentBudget -Bytes 8MB
+    $null = Find-BuilderPathsInContent -Scanner $scanner -Bytes $flood -Name 'flood.dll' -Tally $tally -Budget $budget
+    Assert-That 'Budget: ten 1 MiB streams with a wrong checksum fail an 8 MiB budget (their decoding counts)' `
+        (@($tally.Problems | Where-Object { $_ -match 'decompresses to more than 8388608 bytes in all' }).Count -eq 1 -and $tally.Streams -eq 0) (@($tally.Problems) -join '; ')
+    $report = Invoke-BuilderPathAudit -Scanner $scanner -Blobs @([pscustomobject]@{ Name = 'flood.dll'; Bytes = $flood }) -Label 'Flood'
+    Assert-That 'Budget: within the audit''s own budget (1 GiB a file) the same file passes, with no part found' (@($report.Errors).Count -eq 0 -and $report.Compressed.Streams -eq 0) (@($report.Errors) -join '; ')
+    $budget = New-CompressedContentBudget -Bytes 1GB -Seconds 0.001
+    Start-Sleep -Milliseconds 20
+    $tally = New-CompressedContentTally
+    $null = Find-BuilderPathsInContent -Scanner $scanner -Bytes $bomb -Name 'slow.dll' -Tally $tally -Budget $budget
+    Assert-That 'Budget: a file whose decompression outlasts the time limit fails' (@($tally.Problems | Where-Object { $_ -match 'took more than 0.001 s' }).Count -eq 1) (@($tally.Problems) -join '; ')
 
     # Inno Setup: the setup data, the setup engine and the installed files are LZMA-compressed. The
     # synthetic executable (installer\tests\inno_setup_vector.py's output) holds a UTF-16 path in its

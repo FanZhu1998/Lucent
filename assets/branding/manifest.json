@@ -1,0 +1,203 @@
+{
+ "schema": "lucent.asset-manifest",
+ "schema_version": 1,
+ "id": "branding",
+ "version": "1.0.1",
+ "minimum_app_version": "0.1.0",
+ "content": {
+  "schema": "lucent.branding",
+  "schema_version": 1
+ },
+ "files": [
+  {
+   "path": "app/lucent-112.png",
+   "size": 8329,
+   "sha256": "3768150496776a80dde003acf7361a4d704a2f42b62e3ad648a4f307a08222cc"
+  },
+  {
+   "path": "app/lucent-128.png",
+   "size": 11114,
+   "sha256": "22f8218d20a0f0cc12c4b50e274fddfcd7a302f0f8fc2ed1e78d18c7c96c18e8"
+  },
+  {
+   "path": "app/lucent-144.png",
+   "size": 14411,
+   "sha256": "5f62b5fbade6da966cc65bbad8016c0b65c044b86c343a73ae8c50446f17e950"
+  },
+  {
+   "path": "app/lucent-16.png",
+   "size": 414,
+   "sha256": "6c3dc581793fc91cccf3ebe8ff36729d8374ed68c1dec9a81fdbc0356a8d43ea"
+  },
+  {
+   "path": "app/lucent-160.png",
+   "size": 18030,
+   "sha256": "2e834cfa236fe2cde051636dcfba01a4f444f84a8a7b00075d2ce1a0188458a9"
+  },
+  {
+   "path": "app/lucent-192.png",
+   "size": 26731,
+   "sha256": "a5a0e96275930bd635e3d7d00307afaae4aed58c6ae83b27d7436500493541ec"
+  },
+  {
+   "path": "app/lucent-20.png",
+   "size": 504,
+   "sha256": "99a8a1b7d84c42537315ce7c59df5e7390b0faf5ab6126595823bccb9c205ac1"
+  },
+  {
+   "path": "app/lucent-24.png",
+   "size": 614,
+   "sha256": "b5cde82543c0952c6c54c8edd896a776ef1297b5742bdf8bb27c492265772e5b"
+  },
+  {
+   "path": "app/lucent-256.png",
+   "size": 49787,
+   "sha256": "62a0fe30c38aac36d182689f77a04129435ba2935dd43b4ecde5192387fdfbf5"
+  },
+  {
+   "path": "app/lucent-28.png",
+   "size": 761,
+   "sha256": "a23d7957a92e6227310398e3ab7a7bbf28723be1168fdbd3431fb9ad33fdebb6"
+  },
+  {
+   "path": "app/lucent-32.png",
+   "size": 1003,
+   "sha256": "4d341efd8009637e2c42eee71b9b69295f00cce8702dfc4e83901b4bd2039373"
+  },
+  {
+   "path": "app/lucent-36.png",
+   "size": 1195,
+   "sha256": "e324104f6520e7011419bb31c09820b969a1476ff0ef4cbef556463cbd4c8273"
+  },
+  {
+   "path": "app/lucent-40.png",
+   "size": 1333,
+   "sha256": "0ecaf7d0953850edd6478bdb56196779722a67eaf4b6949845fb732b3165c48a"
+  },
+  {
+   "path": "app/lucent-48.png",
+   "size": 1849,
+   "sha256": "09d2f4d78bf3374f13fcd5adfe7dea8f68991bac525df3290a9c9d04e5b78ec5"
+  },
+  {
+   "path": "app/lucent-56.png",
+   "size": 2247,
+   "sha256": "8830eff11a630119d6b66d69aa080b1752912de41837b15d7f35a3d3d7376a16"
+  },
+  {
+   "path": "app/lucent-64.png",
+   "size": 2983,
+   "sha256": "5d7f9dce4b9be1cb88e6cd76ff9fd621dd1b6e0419e7fab6839b4dd6bee655a5"
+  },
+  {
+   "path": "app/lucent-72.png",
+   "size": 3547,
+   "sha256": "c2bcab2a56fe156dbd5ef9d135998efb152473f8a103e232c3b63b3565447098"
+  },
+  {
+   "path": "app/lucent-80.png",
+   "size": 4407,
+   "sha256": "679473c0bfdd48e0ff57e4f132f4653563099431f6e3cd508fe650286d03974c"
+  },
+  {
+   "path": "app/lucent-96.png",
+   "size": 6192,
+   "sha256": "195876c5f4ada8d303fce335c4749ed486fef876e1933f103c3fc6b042031aef"
+  },
+  {
+   "path": "branding.json",
+   "size": 10923,
+   "sha256": "93778ad724cd1693a3b6c061a5e1b038929ce25d565d69a0be1fc4ac36c9d0b7"
+  },
+  {
+   "path": "docs/lucent-logo.png",
+   "size": 60891,
+   "sha256": "9d0b74aefe5d7cf0c56f30fccdd542ce4560a70987d51c2e50dffcc9ac86c90e"
+  },
+  {
+   "path": "installer/wizard-image-202x386.png",
+   "size": 10899,
+   "sha256": "80d43c1a9fd5f1a6422ff2f559156faad9c6fb93102f012b563f7d9e0c607f8b"
+  },
+  {
+   "path": "installer/wizard-image-269x515.png",
+   "size": 20214,
+   "sha256": "c64b7d31c20d3e513db478e837bd6e6ed3a30b3acb270153af4a260517f404ae"
+  },
+  {
+   "path": "installer/wizard-image-336x643.png",
+   "size": 32158,
+   "sha256": "1569a8248a1d6431e6420f7e25b3478bd8dcb1e2b3f8c81e05303ff1514b644e"
+  },
+  {
+   "path": "installer/wizard-image-403x772.png",
+   "size": 47558,
+   "sha256": "5d7e390192009499268b2e3971ca9bc8b5d6050a39ecd6ee531efd06c8e6cb52"
+  },
+  {
+   "path": "installer/wizard-image-430x824.png",
+   "size": 54417,
+   "sha256": "d5d5cfdb9a5fb340b7c9e17043d54f958211712527d00b488e79ad180a384db6"
+  },
+  {
+   "path": "installer/wizard-image-498x953.png",
+   "size": 73798,
+   "sha256": "80645bf44e5a445f76a8d3e6aade2219bcb6a2f1ea996ce7ce3f20ba644f00b7"
+  },
+  {
+   "path": "installer/wizard-image-534x1022.png",
+   "size": 85713,
+   "sha256": "0287992f422882e5819b77a15b01dbc1df51aff0bc1321e18eb72f7ca4584e52"
+  },
+  {
+   "path": "installer/wizard-small-image-116.png",
+   "size": 9169,
+   "sha256": "efd285cdd46a70c142cde7399c8c37623413533da46389fb519401e1c580f716"
+  },
+  {
+   "path": "installer/wizard-small-image-124.png",
+   "size": 10234,
+   "sha256": "9e0197dc580332f25ce59a8b6d18323e9486b6eb9c49d6a70e83c589adf113a0"
+  },
+  {
+   "path": "installer/wizard-small-image-143.png",
+   "size": 13970,
+   "sha256": "eb0d936ba7dcf1aba52c70029620efc7733aab28bed74709e7e52034160f4401"
+  },
+  {
+   "path": "installer/wizard-small-image-159.png",
+   "size": 17678,
+   "sha256": "4283e32c8fea8cd1f14c017cb40a072f8aac6d8d68c0de52e8e00b2bd832387c"
+  },
+  {
+   "path": "installer/wizard-small-image-58.png",
+   "size": 2453,
+   "sha256": "1d1bb5beadfe48b2dd38fc91a628562fe65df399b20b55c9d7c273c80d8765e6"
+  },
+  {
+   "path": "installer/wizard-small-image-77.png",
+   "size": 4009,
+   "sha256": "0f6d2b4d9aba6aa909eef9ebd73eae436d0506ce570a487d89cbb74d793979b7"
+  },
+  {
+   "path": "installer/wizard-small-image-97.png",
+   "size": 6384,
+   "sha256": "247fe2350ef0f2a4496ccbba44053be275085452bfdf2e77ea522ee675920bce"
+  },
+  {
+   "path": "master/lucent-logo.png",
+   "size": 1013687,
+   "sha256": "106aaee47ba11568677fe96d509d903280be72227befc9d34edffa49437eab43"
+  },
+  {
+   "path": "provenance.json",
+   "size": 1709,
+   "sha256": "ea1b2506a55dc091782dc43bce001f88867b2f5967354eb6e6f7847e11249a13"
+  },
+  {
+   "path": "windows/lucent.ico",
+   "size": 198521,
+   "sha256": "836dcf59cbf1ed78c83373f32bdc7dd53e234b677d52ded3ddcd08adf8a25246"
+  }
+ ]
+}

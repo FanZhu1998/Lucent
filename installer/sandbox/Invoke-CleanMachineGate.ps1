@@ -16,12 +16,20 @@
     1. The machine (environment.json): Windows version; whether the Visual C++ runtime is registered
        (Microsoft's detection key, both registry views) or its DLLs are in System32; developer
        programs on PATH (python, py, git, cl, link, cmake, ninja, vcpkg, qmake, qmake6, windeployqt);
-       Qt variables; whether a network is available and a host name resolves. Clean: no runtime, no
-       such program or variable. Offline: no network.
+       Qt variables; whether a network is available and a host name resolves; and the gate's own
+       token and Windows' UAC settings (elevation: Administrators role, integrity level, elevation
+       type, EnableLUA, ConsentPromptBehaviorAdmin and -User, PromptOnSecureDesktop,
+       FilterAdministratorToken), which decide whether the runtime installer's elevation can show a
+       consent prompt at all (W12 review CMG-01). Clean: no runtime, no such program or variable.
+       Offline: no network.
     2. Setup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER (and /DIR=-InstallDir): exit code
        0, Lucent.exe where the uninstall registration says, every installed file as the package
        manifest records it (SHA-256). On a clean machine Setup installs Microsoft's Visual C++
-       runtime first, which asks for elevation once (answer Yes).
+       runtime first (ShellExec 'runas'). Windows Sandbox runs this logon script with an elevated
+       administrator token, so the runtime installs without a consent prompt; install.exit names
+       Setup's "User privileges" line, and gate.json's notes say that the consent path was not
+       exercised (the manual steps of docs\release\clean-machine.md cover it). Should a future
+       Windows show a prompt in the sandbox window, answer Yes.
     3. The installed Lucent.exe with PATH = %SystemRoot%\System32;%SystemRoot%, no Qt variables and a
        throwaway --data-root, through its developer automation (apps\lucent\src\developer_automation.hpp):
          run 1: --import <fixtures> --include-subfolders --open-first --auto --export-all <work>\jpeg
@@ -30,18 +38,25 @@
                 --quit-after-screenshot (the library run 1 left in the data root)
        Each must exit with 0 and save its screenshot, without Qt or QML loading errors, report the
        installed camera support and lens databases as active (from the installation folder), and
-       export every photo (a valid JPEG, a valid TIFF, one per photo); run 1 must finish Auto on the
-       first photo with a summary. The fixtures are unchanged afterwards (SHA-256).
+       export every photo, one file per photo: a JPEG (SOI and EOI markers), and a 16-bit RGB TIFF
+       (its first image file directory read: BitsPerSample 16, 16, 16, SamplesPerPixel 3, chunky
+       planar configuration); run 1 must finish Auto on the first photo with a summary. The fixtures
+       are unchanged afterwards (SHA-256). Lucent.exe's output is read as plain text lines
+       (Read-TextLines): a line of Get-Content carries PowerShell's provider properties, which
+       ConvertTo-Json writes out in full (W12 sandbox run SBX-1: a 109 MB gate.json).
     4. The uninstaller, silently: the program folder, the shortcuts and the registration are gone,
        the data root is kept.
     5. Unless -SkipInstallerTest: installer\tests\Test-InstalledPackage.ps1 -RuntimeOutcomes (with
        -NewerInstaller when input\rehearsal holds the version rehearsal: install, same-version repair,
        upgrade and a refused downgrade) in <Root>\work\installer-test; its result.json and logs are
        copied to results\installer-test.
-    6. results\gate.json: every check with a stable id, the environment, the runs' outputs; passed
-       when every check passed (in a -Rehearsal the environment's checks are recorded, not required).
-       results\progress.json says which step runs. With -Shutdown, Windows shuts down 15 seconds
-       later, which closes the sandbox.
+    6. results\gate.json: every check with a stable id, the environment, the runs' outputs (always
+       arrays), notes (what the run could not show, never failing); passed when every check passed (in
+       a -Rehearsal the environment's checks are recorded, not required). Every result file is written
+       complete under a temporary name (<name>.partial) and then renamed, so the host never reads a
+       half-written gate.json (W12 sandbox run SBX-2); a result larger than 1 MiB is refused (a
+       failed gate.json says why). results\progress.json says which step runs. With -Shutdown,
+       Windows shuts down 15 seconds later, which closes the sandbox.
 
     -Rehearsal runs the same steps on any computer (tools\Test-CleanMachine.ps1 -LocalRehearsal): Lucent
     must not be installed for the user, Setup installs into -InstallDir (a temporary profile-like
@@ -62,6 +77,9 @@
 
 .NOTES
     Needs no developer tools: Windows PowerShell 5.1 as Windows ships it. Keep this file ASCII.
+    installer\tests\Test-CleanMachineHarness.ps1 tests the helper functions (ConvertTo-GateJsonText,
+    Read-TextLines, Get-TiffLayout, Get-GateElevation) on their own: keep them free of the script's
+    variables.
 #>
 [CmdletBinding()]
 param(
@@ -83,18 +101,146 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 $appGuid = '{ADBA4913-BBBD-42D8-90EF-0E9C80412232}'   # AppId in installer\lucent.iss
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($appGuid)_is1"
 
+# --- Helpers (tested on their own by installer\tests\Test-CleanMachineHarness.ps1) -------------------
+
+function ConvertTo-GateJsonText($Value, [int]$Limit = 1048576) {
+    # The JSON of a result. A gate result is a few kilobytes; one beyond -Limit characters holds
+    # something that is not plain data (an object PowerShell serialises with its type information), so
+    # it is refused instead of written (W12 sandbox run SBX-1).
+    $text = ConvertTo-Json -InputObject $Value -Depth 8
+    if ($text.Length -gt $Limit) { throw "The result would be $($text.Length) characters of JSON (more than $Limit): it holds data that is not plain text and numbers." }
+    return $text
+}
+function Read-TextLines([string]$Path) {
+    # The lines of a UTF-8 text file as plain strings (Get-Content decorates each line with provider
+    # properties that ConvertTo-Json writes out); none when the file is missing.
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return ,([string[]]@()) }
+    return ,([System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8))
+}
+function Get-TiffLayout([byte[]]$Bytes) {
+    # The first image file directory of a classic TIFF (TIFF 6.0): byte order, BitsPerSample (tag
+    # 258), SamplesPerPixel (277) and PlanarConfiguration (284, 1 when absent). Problem says why the
+    # bytes are not such a file (BigTIFF included); the other fields are then not set.
+    $layout = [ordered]@{ ByteOrder = $null; BitsPerSample = @(); SamplesPerPixel = $null; PlanarConfiguration = 1; Problem = $null }
+    if ($null -eq $Bytes -or $Bytes.Length -lt 8) { $layout.Problem = 'shorter than a TIFF header'; return $layout }
+    if ($Bytes[0] -eq 0x49 -and $Bytes[1] -eq 0x49) { $little = $true } elseif ($Bytes[0] -eq 0x4D -and $Bytes[1] -eq 0x4D) { $little = $false }
+    else { $layout.Problem = 'no TIFF byte order mark'; return $layout }
+    $read16 = { param([int64]$At) if ($little) { [int]$Bytes[$At] + 256 * [int]$Bytes[$At + 1] } else { 256 * [int]$Bytes[$At] + [int]$Bytes[$At + 1] } }
+    $read32 = { param([int64]$At) if ($little) { [int64](& $read16 $At) + 65536 * [int64](& $read16 ($At + 2)) } else { 65536 * [int64](& $read16 $At) + [int64](& $read16 ($At + 2)) } }
+    $layout.ByteOrder = if ($little) { 'II' } else { 'MM' }
+    if ((& $read16 2) -ne 42) { $layout.Problem = "version $(& $read16 2), not 42 (a classic TIFF)"; return $layout }
+    $ifd = & $read32 4
+    if ($ifd -lt 8 -or $ifd + 2 -gt $Bytes.Length) { $layout.Problem = "its first directory offset $ifd lies outside the file"; return $layout }
+    $count = & $read16 $ifd
+    if ($ifd + 2 + 12 * $count + 4 -gt $Bytes.Length) { $layout.Problem = "its first directory ($count entries) runs past the end of the file"; return $layout }
+    for ($i = 0; $i -lt $count; $i++) {
+        $entry = $ifd + 2 + 12 * $i
+        $tag = & $read16 $entry
+        if ($tag -notin 258, 277, 284) { continue }
+        $type = & $read16 ($entry + 2)
+        $values = & $read32 ($entry + 4)
+        if ($type -ne 3) { $layout.Problem = "tag $tag has type $type, not SHORT"; return $layout }
+        # SHORT values: in the entry when they fit in 4 bytes, otherwise at the offset it holds.
+        $at = if ($values * 2 -le 4) { $entry + 8 } else { & $read32 ($entry + 8) }
+        if ($values -lt 1 -or $values -gt 64 -or $at + 2 * $values -gt $Bytes.Length) { $layout.Problem = "tag $tag's $values values lie outside the file"; return $layout }
+        $read = @(for ($k = 0; $k -lt $values; $k++) { & $read16 ($at + 2 * $k) })
+        switch ($tag) {
+            258 { $layout.BitsPerSample = $read }
+            277 { $layout.SamplesPerPixel = $read[0] }
+            284 { $layout.PlanarConfiguration = $read[0] }
+        }
+    }
+    return $layout
+}
+function Get-GateElevation {
+    # The gate's token and Windows' UAC settings (W12 review CMG-01): whether Setup's elevated runtime
+    # installer (ShellExec 'runas') can show a consent or credential prompt here at all. Runtime says
+    # what to expect and why.
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $administrator = (New-Object System.Security.Principal.WindowsPrincipal($identity)).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    $integritySid = $null
+    try {
+        foreach ($line in @(& (Join-Path $env:SystemRoot 'System32\whoami.exe') /groups /fo csv /nh)) {
+            if ([string]$line -match '"(S-1-16-\d+)"') { $integritySid = $Matches[1] }
+        }
+    }
+    catch { $integritySid = $null }
+    $levels = @{ 'S-1-16-0' = 'untrusted'; 'S-1-16-4096' = 'low'; 'S-1-16-8192' = 'medium'; 'S-1-16-8448' = 'medium plus'; 'S-1-16-12288' = 'high'; 'S-1-16-16384' = 'system' }
+    $integrity = if ($integritySid -and $levels.ContainsKey($integritySid)) { $levels[$integritySid] } else { $integritySid }
+    $elevationType = $null
+    try {
+        if (-not ('LucentGate.Token' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace LucentGate {
+    public static class Token {
+        [DllImport("advapi32.dll", SetLastError = true)]
+        static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returned);
+        // TOKEN_ELEVATION_TYPE (TokenElevationType, 18): 1 default (no split token: UAC off, or not an
+        // administrator), 2 full (elevated), 3 limited (an administrator's filtered token); 0 unknown.
+        public static int ElevationType(IntPtr token) {
+            int type, returned;
+            return GetTokenInformation(token, 18, out type, 4, out returned) ? type : 0;
+        }
+    }
+}
+'@
+        }
+        $elevationType = switch ([LucentGate.Token]::ElevationType($identity.Token)) { 1 { 'default' } 2 { 'full' } 3 { 'limited' } default { $null } }
+    }
+    catch { $elevationType = $null }
+    $uac = [ordered]@{}
+    foreach ($name in 'EnableLUA', 'ConsentPromptBehaviorAdmin', 'ConsentPromptBehaviorUser', 'PromptOnSecureDesktop', 'FilterAdministratorToken') {
+        $value = $null
+        try { $value = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name $name -ErrorAction Stop).$name } catch { $value = $null }
+        $uac[$name] = $(if ($null -eq $value) { $null } else { [int]$value })
+    }
+    $prompt = $null
+    $why = 'the token or the UAC settings could not be read'
+    if ($elevationType -eq 'full' -or $integrity -in 'high', 'system') { $prompt = $false; $why = 'the gate runs elevated: Setup and the runtime installer inherit its administrator token' }
+    elseif ($uac['EnableLUA'] -eq 0) { $prompt = $false; $why = 'UAC is off (EnableLUA 0)' }
+    elseif ($elevationType -eq 'limited') {
+        if ($uac['ConsentPromptBehaviorAdmin'] -eq 0) { $prompt = $false; $why = 'an administrator''s elevation needs no consent here (ConsentPromptBehaviorAdmin 0)' }
+        else { $prompt = $true; $why = 'an administrator''s filtered token: Windows asks for consent' }
+    }
+    elseif ($elevationType -eq 'default' -and -not $administrator) {
+        $prompt = $true; $why = 'a standard user: Windows asks for an administrator''s credentials'
+    }
+    return [ordered]@{
+        administratorsRole = $administrator; integrityLevel = $integrity; elevationType = $elevationType; uac = $uac
+        runtimePromptExpected = $prompt; runtimePrompt = $why }
+}
+
 function Write-Json([string]$Name, $Value) {
-    [System.IO.File]::WriteAllText((Join-Path $results $Name), (ConvertTo-Json -InputObject $Value -Depth 8), $utf8)
+    # Complete under a temporary name, then renamed: the host waits for the final name (SBX-2).
+    $text = ConvertTo-GateJsonText $Value
+    $path = Join-Path $results $Name
+    $partial = "$path.partial"
+    [System.IO.File]::WriteAllText($partial, $text, $utf8)
+    try {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        [System.IO.File]::Move($partial, $path)
+    }
+    catch {
+        [System.IO.File]::WriteAllText($path, $text, $utf8)
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+    }
 }
 function Set-GateProgress([string]$Step) {
     Write-Host "== $Step" -ForegroundColor Cyan
     Write-Json 'progress.json' ([ordered]@{ step = $Step; at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') })
 }
 $checks = New-Object System.Collections.Generic.List[object]
+$notes = New-Object System.Collections.Generic.List[string]
 function Add-Check([string]$Id, [string]$Name, [bool]$Passed, [string]$Detail = '') {
     $checks.Add([ordered]@{ id = $Id; name = $Name; passed = $Passed; detail = $Detail })
     Write-Host ("[{0}] {1}{2}" -f $(if ($Passed) { 'PASS' } else { 'FAIL' }), $Name, $(if ($Detail) { " - $Detail" } else { '' })) `
         -ForegroundColor $(if ($Passed) { 'Green' } else { 'Red' })
+}
+function Add-Note([string]$Text) {
+    $notes.Add($Text)
+    Write-Host "NOTE: $Text" -ForegroundColor Yellow
 }
 function Get-Sha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 # Runs the installed uninstaller silently and waits until it has removed the registration and itself
@@ -141,19 +287,21 @@ try {
     $runtimeDlls = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll' | Where-Object { Test-Path -LiteralPath (Join-Path $env:SystemRoot "System32\$_") -PathType Leaf })
     $tools = @('python', 'python3', 'py', 'git', 'cl', 'link', 'cmake', 'ninja', 'vcpkg', 'qmake', 'qmake6', 'windeployqt' | ForEach-Object {
         $found = Get-Command -Name "$_.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) { [ordered]@{ name = $_; path = $found.Source } } })
-    $qtVariables = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(QT_|QML2?_)' } | ForEach-Object { $_.Name })
+        if ($found) { [ordered]@{ name = $_; path = [string]$found.Source } } })
+    $qtVariables = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(QT_|QML2?_)' } | ForEach-Object { [string]$_.Name })
     $networkAvailable = [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()
     $resolves = $false
     try { $resolves = @([System.Net.Dns]::GetHostAddresses('www.microsoft.com')).Count -gt 0 } catch { $resolves = $false }
     $offline = (-not $networkAvailable) -and (-not $resolves)
     $clean = (-not $runtimeRegistered) -and @($tools).Count -eq 0 -and $qtVariables.Count -eq 0
+    $elevation = Get-GateElevation
     $environment = [ordered]@{
-        recorded = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); computer = $env:COMPUTERNAME; user = $env:USERNAME
-        windows = [ordered]@{ caption = $os.Caption; version = $os.Version; build = $os.BuildNumber }
+        recorded = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); computer = [string]$env:COMPUTERNAME; user = [string]$env:USERNAME
+        windows = [ordered]@{ caption = [string]$os.Caption; version = [string]$os.Version; build = [string]$os.BuildNumber }
         vcRuntime = [ordered]@{ registered = $runtimeRegistered; registrations = @($runtime); dllsInSystem32 = $runtimeDlls }
         developerPrograms = @($tools); qtVariables = $qtVariables
         network = [ordered]@{ available = $networkAvailable; resolvesHostNames = $resolves; offline = $offline }
+        elevation = $elevation
         clean = $clean }
     Write-Json 'environment.json' $environment
     $outcome['environment'] = $environment
@@ -161,6 +309,8 @@ try {
         ("runtime {0}; programs: {1}; Qt variables: {2}" -f $(if ($runtimeRegistered) { 'registered' } else { 'absent' }),
             $(if (@($tools).Count) { (@($tools) | ForEach-Object { $_.name }) -join ', ' } else { 'none' }), $(if ($qtVariables.Count) { $qtVariables -join ', ' } else { 'none' }))
     Add-Check 'environment.offline' 'The machine is offline: no network, no name resolves' $offline ("network available: $networkAvailable; resolves: $resolves")
+    Write-Host ("The gate's token: Administrators role {0}, integrity {1}, elevation type {2}; UAC: EnableLUA {3}, ConsentPromptBehaviorAdmin {4}. The runtime installer's elevation: {5}." -f
+        $elevation.administratorsRole, $elevation.integrityLevel, $elevation.elevationType, $elevation.uac['EnableLUA'], $elevation.uac['ConsentPromptBehaviorAdmin'], $elevation.runtimePrompt)
 
     # --- The package and the fixtures ----------------------------------------------------------------
     $installers = @(Get-ChildItem -LiteralPath $inputDir -File -Filter 'Lucent-Setup-*-x64.exe' | Where-Object { $_.Name -notmatch '-TEST-SIGNED|-VERSION-REHEARSAL' })
@@ -174,8 +324,8 @@ try {
     if ($fixtures.Count -eq 0) { throw "$inputDir\fixtures holds no photo." }
     $fixtureHashes = @{}
     foreach ($fixture in $fixtures) { $fixtureHashes[$fixture.FullName] = Get-Sha256 $fixture.FullName }
-    $outcome['installer'] = [ordered]@{ file = $installers[0].Name; sha256 = (Get-Sha256 $installer); version = $manifest.version; gitCommit = $manifest.gitCommit }
-    $outcome['fixtures'] = @($fixtures | ForEach-Object { [ordered]@{ file = $_.FullName.Substring($inputDir.Length + 1); bytes = $_.Length; sha256 = $fixtureHashes[$_.FullName] } })
+    $outcome['installer'] = [ordered]@{ file = [string]$installers[0].Name; sha256 = (Get-Sha256 $installer); version = [string]$manifest.version; gitCommit = [string]$manifest.gitCommit }
+    $outcome['fixtures'] = @($fixtures | ForEach-Object { [ordered]@{ file = [string]$_.FullName.Substring($inputDir.Length + 1); bytes = $_.Length; sha256 = $fixtureHashes[$_.FullName] } })
     if (Test-Path -LiteralPath $uninstallKey) {
         throw "Lucent is already installed for this user ($((Get-ItemProperty -LiteralPath $uninstallKey).InstallLocation)); the gate never touches a real installation."
     }
@@ -187,10 +337,15 @@ try {
     if ($InstallDir) { $arguments += "/DIR=`"$InstallDir`"" }
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     $setupProcess = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait
-    $installText = if (Test-Path -LiteralPath $installLog) { [System.IO.File]::ReadAllText($installLog) } else { '' }
-    $runtimeLines = @($installText -split "`r?`n" | Where-Object { $_ -match 'VC\+\+ runtime:' })
+    $installLines = Read-TextLines $installLog
+    $runtimeLines = @($installLines | Where-Object { $_ -match 'VC\+\+ runtime:' })
+    $privileges = @($installLines | Where-Object { $_ -match 'User privileges: ' } | ForEach-Object { ($_ -replace '^.*(User privileges: )', '$1').Trim() }) | Select-Object -First 1
     Add-Check 'install.exit' 'Setup installed silently (exit code 0)' ($setupProcess.ExitCode -eq 0) `
-        ("exit code {0}, {1:N0} s; {2}" -f $setupProcess.ExitCode, $timer.Elapsed.TotalSeconds, ($runtimeLines -join ' | '))
+        ("exit code {0}, {1:N0} s; Setup's {2}; {3}" -f $setupProcess.ExitCode, $timer.Elapsed.TotalSeconds, $(if ($privileges) { $privileges } else { 'user privileges not logged' }), ($runtimeLines -join ' | '))
+    if (@($runtimeLines | Where-Object { $_ -match 'running vc_redist' }).Count -gt 0 -and $elevation.runtimePromptExpected -eq $false) {
+        Add-Note ("Setup installed the Visual C++ runtime without a consent prompt ($($elevation.runtimePrompt); Setup's $(if ($privileges) { $privileges } else { 'privileges unknown' })): " +
+            'this run does not exercise the consent path (a prompt accepted or declined); the manual steps of docs\release\clean-machine.md do.')
+    }
     $registration = if (Test-Path -LiteralPath $uninstallKey) { Get-ItemProperty -LiteralPath $uninstallKey } else { $null }
     $appDir = if ($registration) { ([string]$registration.InstallLocation).TrimEnd('\') } else { '' }
     $script:appDir = $appDir
@@ -230,9 +385,8 @@ try {
         }
         $null = $process.Handle
         if (-not $process.WaitForExit($SettleTimeoutMs + 120000)) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue; $process.WaitForExit() }
-        # Lucent.exe writes UTF-8.
-        $lines = if (Test-Path -LiteralPath $stderr) { @(Get-Content -LiteralPath $stderr -Encoding UTF8) } else { @() }
-        return [pscustomobject]@{ ExitCode = $process.ExitCode; Seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); Lines = $lines }
+        # Lucent.exe writes UTF-8; plain strings, so the lines the result keeps serialise as text (SBX-1).
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); Lines = (Read-TextLines $stderr) }
     }
     function Test-Run([string]$Prefix, [string]$Label, $Run, [string]$Screenshot) {
         Add-Check "$Prefix.exit" "$($Label): Lucent.exe exited with 0 after its screenshot" ($Run.ExitCode -eq 0) ("exit code {0}, {1} s" -f $Run.ExitCode, $Run.Seconds)
@@ -249,17 +403,31 @@ try {
     }
     function Test-Outputs([string]$Prefix, [string]$Label, [string]$Folder, [string]$Kind, $Run) {
         $files = @(Get-ChildItem -LiteralPath $Folder -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '~lucent-*' } | Sort-Object Name)
-        $valid = @($files | Where-Object {
-            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
-            if ($Kind -eq 'jpeg') { $bytes.Length -gt 1000 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xD8 -and $bytes[2] -eq 0xFF -and $bytes[-2] -eq 0xFF -and $bytes[-1] -eq 0xD9 }
-            else { $bytes.Length -gt 1000 -and ((($bytes[0] -eq 0x49 -and $bytes[1] -eq 0x49 -and $bytes[2] -eq 0x2A -and $bytes[3] -eq 0) -or ($bytes[0] -eq 0x4D -and $bytes[1] -eq 0x4D -and $bytes[2] -eq 0 -and $bytes[3] -eq 0x2A))) } })
+        $invalid = New-Object System.Collections.Generic.List[string]
+        foreach ($file in $files) {
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            if ($Kind -eq 'jpeg') {
+                if (-not ($bytes.Length -gt 1000 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xD8 -and $bytes[2] -eq 0xFF -and $bytes[-2] -eq 0xFF -and $bytes[-1] -eq 0xD9)) {
+                    $invalid.Add("$($file.Name): not a JPEG (SOI and EOI markers)")
+                }
+                continue
+            }
+            # A 16-bit RGB TIFF, read from its first image file directory (W12 review CMG-04).
+            $layout = Get-TiffLayout $bytes
+            if ($layout.Problem) { $invalid.Add("$($file.Name): not a TIFF ($($layout.Problem))") }
+            elseif ($bytes.Length -le 1000 -or $layout.SamplesPerPixel -ne 3 -or (@($layout.BitsPerSample) -join ',') -ne '16,16,16' -or $layout.PlanarConfiguration -ne 1) {
+                $invalid.Add(("{0}: SamplesPerPixel {1}, BitsPerSample {2}, PlanarConfiguration {3}" -f $file.Name, $layout.SamplesPerPixel, (@($layout.BitsPerSample) -join ','), $layout.PlanarConfiguration))
+            }
+        }
         $completed = @($Run.Lines | Where-Object { $_ -match '^lucent: export completed: ' })
         $failed = @($Run.Lines | Where-Object { $_ -match '^lucent: export (failed|cancelled): ' })
-        Add-Check "$Prefix" ("{0}: every photo exported as a valid {1}" -f $Label, $(if ($Kind -eq 'jpeg') { 'JPEG' } else { '16-bit TIFF' })) `
-            ($files.Count -eq $fixtures.Count -and $valid.Count -eq $fixtures.Count -and $completed.Count -eq $fixtures.Count -and $failed.Count -eq 0) `
-            ("{0} photos, {1} files, {2} valid, {3} reported completed, {4} failed{5}" -f $fixtures.Count, $files.Count, $valid.Count, $completed.Count, $failed.Count,
-                $(if ($failed) { ': ' + (($failed | Select-Object -First 2) -join ' | ') } else { '' }))
-        return @($files | ForEach-Object { [ordered]@{ file = $_.Name; bytes = $_.Length; sha256 = (Get-Sha256 $_.FullName) } })
+        $valid = $files.Count - $invalid.Count
+        Add-Check "$Prefix" ("{0}: every photo exported as {1}" -f $Label, $(if ($Kind -eq 'jpeg') { 'a valid JPEG' } else { 'a 16-bit RGB TIFF (BitsPerSample 16, 16, 16 in its first image file directory)' })) `
+            ($files.Count -eq $fixtures.Count -and $valid -eq $fixtures.Count -and $completed.Count -eq $fixtures.Count -and $failed.Count -eq 0) `
+            ("{0} photos, {1} files, {2} valid, {3} reported completed, {4} failed{5}{6}" -f $fixtures.Count, $files.Count, $valid, $completed.Count, $failed.Count,
+                $(if ($failed) { ': ' + (($failed | Select-Object -First 2) -join ' | ') } else { '' }),
+                $(if ($invalid.Count) { '; ' + (($invalid | Select-Object -First 2) -join ' | ') } else { '' }))
+        return @($files | ForEach-Object { [ordered]@{ file = [string]$_.Name; bytes = $_.Length; sha256 = (Get-Sha256 $_.FullName) } })
     }
 
     Set-GateProgress 'run 1: import, Auto, JPEG export'
@@ -274,7 +442,9 @@ try {
     $autoSummary = @($run1.Lines | Where-Object { $_ -match '^lucent: auto: .*review recommended: (yes|no)$' }) | Select-Object -First 1
     Add-Check 'run1.auto' 'Run 1: Auto ran on the first photo and its automatic revision is current' ([bool]$autoStarted -and [bool]$autoFinished -and [bool]$autoSummary) `
         ((@($autoStarted, $autoFinished, $autoSummary) | Where-Object { $_ }) -join ' | ')
-    $jpegs = Test-Outputs 'run1.jpeg' 'Run 1' $jpegFolder 'jpeg' $run1
+    # @(): a function's array output is unrolled (none: nothing; one: the record itself), and the result
+    # must hold an array for every count (W12 review CMG-03).
+    $jpegs = @(Test-Outputs 'run1.jpeg' 'Run 1' $jpegFolder 'jpeg' $run1)
 
     Set-GateProgress 'run 2: TIFF export of the same library'
     $tiffFolder = Join-Path $work 'tiff'
@@ -283,11 +453,11 @@ try {
     $run2 = Invoke-Lucent 'run2' @('--data-root', $dataRoot, '--export-all', $tiffFolder, '--export-format', 'tiff16', '--screenshot', $shot2,
         '--quit-after-screenshot', '--settle-timeout', "$SettleTimeoutMs")
     Test-Run 'run2' 'Run 2 (TIFF)' $run2 $shot2
-    $tiffs = Test-Outputs 'run2.tiff' 'Run 2' $tiffFolder 'tiff' $run2
+    $tiffs = @(Test-Outputs 'run2.tiff' 'Run 2' $tiffFolder 'tiff' $run2)
     $changed = @($fixtures | Where-Object { (Get-Sha256 $_.FullName) -ne $fixtureHashes[$_.FullName] } | ForEach-Object Name)
     Add-Check 'fixtures.unchanged' 'The photos are unchanged (SHA-256)' ($changed.Count -eq 0) ($changed -join ', ')
     $outcome['runs'] = [ordered]@{
-        run1 = [ordered]@{ exitCode = $run1.ExitCode; seconds = $run1.Seconds; auto = $autoSummary; jpeg = $jpegs }
+        run1 = [ordered]@{ exitCode = $run1.ExitCode; seconds = $run1.Seconds; auto = $(if ($autoSummary) { [string]$autoSummary } else { $null }); jpeg = $jpegs }
         run2 = [ordered]@{ exitCode = $run2.ExitCode; seconds = $run2.Seconds; tiff = $tiffs } }
 
     # --- 4. Uninstall ---------------------------------------------------------------------------------
@@ -326,7 +496,7 @@ try {
             $resultPath = Join-Path $testWork 'result.json'
             if (Test-Path -LiteralPath $resultPath -PathType Leaf) { $testResult = [System.IO.File]::ReadAllText($resultPath) | ConvertFrom-Json }
         }
-        $failed = @(if ($testResult) { $testResult.checks | Where-Object { -not $_.passed } | ForEach-Object { $_.name } })
+        $failed = @(if ($testResult) { $testResult.checks | Where-Object { -not $_.passed } | ForEach-Object { [string]$_.name } })
         Add-Check 'installer-test' ("Test-InstalledPackage.ps1 -RuntimeOutcomes{0} passed" -f $(if ($rehearsalSetup.Count -gt 0) { ' -NewerInstaller' } else { '' })) `
             ($testExit -eq 0 -and $testResult -and [bool]$testResult.passed) `
             ("exit code {0}; {1} checks, {2} failed{3}" -f $testExit, $(if ($testResult) { @($testResult.checks).Count } else { 0 }), $failed.Count,
@@ -345,6 +515,7 @@ finally {
     $outcome['passed'] = ($checks.Count -gt 0 -and @($required | Where-Object { -not $_.passed }).Count -eq 0)
     $outcome['started'] = $started.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     $outcome['finished'] = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $outcome['notes'] = $notes.ToArray()
     $outcome['checks'] = $checks.ToArray()
     try {
         Write-Json 'gate.json' $outcome
@@ -352,9 +523,15 @@ finally {
     catch {
         # The host must always find a result: a failed one when the full record cannot be written.
         $outcome['passed'] = $false
-        [System.IO.File]::WriteAllText((Join-Path $results 'gate.json'), (ConvertTo-Json -InputObject ([ordered]@{
+        $failure = [ordered]@{
             gate = 'clean-machine'; format = 1; mode = $outcome['mode']; passed = $false
-            checks = @([ordered]@{ id = 'gate.error'; name = 'The gate wrote its result'; passed = $false; detail = $_.Exception.Message }) })), $utf8)
+            checks = @([ordered]@{ id = 'gate.error'; name = 'The gate wrote its result'; passed = $false; detail = [string]$_.Exception.Message }) }
+        $path = Join-Path $results 'gate.json'
+        try {
+            [System.IO.File]::WriteAllText("$path.partial", (ConvertTo-Json -InputObject $failure -Depth 4), $utf8)
+            [System.IO.File]::Move("$path.partial", $path)
+        }
+        catch { [System.IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject $failure -Depth 4), $utf8) }
     }
     Set-GateProgress 'done'
     Write-Host ''

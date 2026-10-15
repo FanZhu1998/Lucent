@@ -25,8 +25,12 @@ sources\            the upstream source archives, byte for byte as the build use
 ports\<port>\       the vcpkg build recipe ("port") of each library: portfile.cmake, the patches,
                     vcpkg.json. A recipe is either vcpkg's port at the registry commit named below,
                     unchanged, or the Lucent project's overlay of it; the libraries named below say
-                    which. The Lucent project's changes to a library's own source code are the
-                    patches named lucent-*.patch; each describes itself
+                    which. Every patch a recipe names (portfile.cmake applies it to the library's
+                    upstream source; a few only on other platforms or with other features, as the
+                    portfile says) is listed with that library ("Modified"): the files it changes,
+                    and who made it and when (vcpkg's patches as they are in its registry at that
+                    commit; the Lucent project's own, named lucent-*.patch, with the date each
+                    states; they also mark the files they change)
 triplets\           the vcpkg triplet @TRIPLET@ (the build settings): 64-bit x64, shared
                     libraries (DLLs), the dynamic Microsoft C runtime (/MD), release builds only,
                     and the linker and compiler options that keep the build machine's folders out of
@@ -54,11 +58,12 @@ How Lucent uses them
 --------------------
 
 Lucent loads every library above dynamically. Each one is a separate DLL in Lucent's installation
-folder (by default %LOCALAPPDATA%\Programs\Lucent), and no code of them is linked into Lucent.exe or
-lucent-worker.exe. When a program starts, Windows loads the DLLs it imports from that folder by file
-name, and then the DLLs those import, in the same way:
+folder (by default %LOCALAPPDATA%\Programs\Lucent). When a program starts, Windows loads the DLLs it
+imports from that folder by file name, and then the DLLs those import, in the same way:
 
 @LOADING@
+
+@STATIC_CODE@
 
 While Lucent runs, Qt also loads its plugins (plugins\) and the plugins of the QML modules Lucent
 uses (qml\) by file name. Lucent does not check signatures or hashes of these DLLs and does

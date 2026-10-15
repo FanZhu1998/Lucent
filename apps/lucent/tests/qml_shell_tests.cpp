@@ -1,13 +1,20 @@
 // The QML module end to end: Main.qml loads with its views and models and without a single QML or
 // Qt warning, imports fill the contact sheet, keyboard navigation works, previews load, export
-// jobs are listed, and the screenshot automation writes a PNG.
+// jobs are listed, the screenshot automation writes a PNG, and the window icon and the About
+// dialog's logo are Lucent's logo at every scale.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <memory>
+#include <set>
 
+#include <QColor>
 #include <QDir>
 #include <QFile>
+#include <QIcon>
 #include <QImage>
 #include <QKeyEvent>
 #include <QQmlApplicationEngine>
@@ -18,6 +25,7 @@
 #include <QTest>
 
 #include "app_controller.hpp"
+#include "branding.hpp"
 #include "developer_automation.hpp"
 #include "fakes/fake_services.hpp"
 #include "shell.hpp"
@@ -472,6 +480,150 @@ TEST_F(QmlShellTest, AboutShowsTheCameraSupportDatabaseAndWhatTheStatesMean) {
     const QString meaning = child("supportMeaning")->property("text").toString();
     EXPECT_TRUE(meaning.startsWith(QStringLiteral("What this means: "))) << meaning.toStdString();
     EXPECT_TRUE(meaning.contains(controller->current()->support_meaning()));
+    EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
+}
+
+// W12 release phase (ADR 0025): the window icon is Lucent's logo with every pre-rendered size, which
+// covers what Windows asks for at the display scales it offers up to 300 % (the small and the large
+// icon, 16 and 32 logical pixels), each image exactly as built; the "branding" provider serves the
+// pre-rendered image of each scale's size and scales down only between them; Help > About shows the
+// logo at 64 logical pixels, drawn 1:1 on whole device pixels, its plate lined up with the text column.
+// CTest runs it at this window's ratio 1 and again with QT_SCALE_FACTOR 1.25 and 1.75
+// (apps/lucent/tests/CMakeLists.txt; review finding BRD-08), where a whole logical position can fall
+// between device pixels.
+TEST_F(QmlShellTest, TheWindowIconAndTheAboutLogoAreLucentsLogoAtEveryScale) {
+    const QString role = QString::fromLatin1(kBrandingAppIconRole);
+    const QList<BrandingImage> images = branding_images(role);
+    ASSERT_FALSE(images.isEmpty());
+    std::set<int> sizes;
+    for (const BrandingImage& image : images) {
+        EXPECT_EQ(image.size.width(), image.size.height()) << image.path.toStdString();
+        sizes.insert(image.size.width());
+    }
+    for (const int logical : {16, 32, 64}) {
+        for (const int percent : {100, 125, 150, 175, 200, 225, 250, 300}) {
+            const int pixels = logical * percent / 100;
+            EXPECT_TRUE(sizes.contains(pixels))
+                << "no " << pixels << " px image for " << logical << " logical px at " << percent << " %";
+        }
+    }
+
+    // The window's icon: every image at its own size, each exactly as built (not rescaled). Both sides
+    // premultiplied, as a QPixmap holds them.
+    const QIcon icon = window->icon();
+    std::set<int> icon_sizes;
+    for (const QSize& size : icon.availableSizes()) {
+        EXPECT_EQ(size.width(), size.height());
+        icon_sizes.insert(size.width());
+    }
+    EXPECT_EQ(icon_sizes, sizes);
+    for (const BrandingImage& image : images) {
+        const QImage built = QImage(image.path).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        const QImage shown =
+            icon.pixmap(image.size, 1.0).toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        EXPECT_EQ(shown, built) << image.path.toStdString();
+    }
+
+    // The provider: the pre-rendered image for 64 logical pixels at each scale, a scaled-down larger
+    // one between them, never an enlarged one, nothing for an unknown role.
+    for (const int percent : {100, 125, 150, 175, 200, 225, 250, 300}) {
+        const int pixels = 64 * percent / 100;
+        const auto exact = std::find_if(images.begin(), images.end(), [pixels](const BrandingImage& image) {
+            return image.size.width() == pixels;
+        });
+        ASSERT_NE(exact, images.end());
+        EXPECT_EQ(branding_image(role, QSize(pixels, pixels)), QImage(exact->path)) << pixels;
+    }
+    EXPECT_EQ(branding_image(role, QSize(70, 70)).size(), QSize(70, 70));
+    EXPECT_EQ(branding_image(role, QSize(4096, 4096)).size(), images.back().size);
+    EXPECT_EQ(branding_image(role, QSize()).size(), images.back().size);
+    EXPECT_TRUE(branding_image(QStringLiteral("no-such-role"), QSize(64, 64)).isNull());
+    EXPECT_TRUE(branding_image(QStringLiteral("../app-icon"), QSize(64, 64)).isNull());
+
+    // Help > About: the logo loads through the provider at 64 x 64 logical pixels, which is the image of
+    // exactly 64 times the window's device pixel ratio.
+    auto* dialog = child("aboutDialog");
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("aboutButton"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return dialog->property("opened").toBool(); }, kWaitMs));
+    auto* logo = child<QQuickItem>("aboutLogo");
+    ASSERT_NE(logo, nullptr);
+    ASSERT_TRUE(
+        QTest::qWaitFor([logo] { return logo->property("status").toInt() == kImageStatusReady; }, kWaitMs));
+    EXPECT_EQ(logo->property("source").toUrl(), QUrl(QStringLiteral("image://branding/app-icon")));
+    EXPECT_EQ(logo->property("sourceSize").toSize(), QSize(64, 64));
+    EXPECT_EQ(logo->width(), 64.0);
+    EXPECT_EQ(logo->height(), 64.0);
+    EXPECT_EQ(logo->property("implicitWidth").toReal(), 64.0);  // its image's pixels at the window's ratio
+    const qreal ratio = window->devicePixelRatio();
+    const int pixels = qRound(64 * ratio);
+    ASSERT_NEAR(64 * ratio, pixels, 1e-9)
+        << "64 logical pixels are no whole number of device pixels at " << ratio;
+    const QImage expected =
+        branding_image(role, QSize(pixels, pixels)).convertToFormat(QImage::Format_ARGB32);
+    ASSERT_EQ(expected.size(), QSize(pixels, pixels)) << "no image of " << pixels << " pixels";
+
+    // On whole device pixels: anywhere else Lucent.exe's renderer samples the image between its pixels, and
+    // the logo blurs (the dialog is centred in device pixels; a whole logical position is half a device
+    // pixel off at 125 and 175 %). Checked here directly: the software renderer of these tests draws an
+    // image on the nearest whole pixel, so the grab below would not show it.
+    const QPointF origin = logo->mapToScene(QPointF(0, 0)) * ratio;
+    EXPECT_NEAR(origin.x(), std::round(origin.x()), 1e-6) << "at " << ratio;
+    EXPECT_NEAR(origin.y(), std::round(origin.y()), 1e-6) << "at " << ratio;
+    const int left = qRound(origin.x());
+    const int top = qRound(origin.y());
+
+    // The plate lines up with the text column below the logo (review finding BRD-11): the plate's edge is
+    // where the artwork's content box starts (alpha 128 and more; ADR 0025, decisions 6 and 21, so a faint
+    // rim in the margin does not count), and only the image's margin lies left of the column.
+    const auto outside_content = [&expected](int x) {
+        for (int y = 0; y < expected.height(); ++y) {
+            if (qAlpha(expected.pixel(x, y)) >= 128) {
+                return false;
+            }
+        }
+        return true;
+    };
+    int margin = 0;
+    while (margin < pixels && outside_content(margin)) {
+        ++margin;
+    }
+    EXPECT_GT(margin, 0);
+    auto* column = child<QQuickItem>("aboutCameraSupport");
+    ASSERT_NE(column, nullptr);
+    EXPECT_NEAR(left + margin, column->mapToScene(QPointF(0, 0)).x() * ratio, 1e-6) << "at " << ratio;
+
+    // Drawn 1:1: where the logo is, the grab of the window (in device pixels) shows the image of this ratio
+    // composited on the dialog's background, its anti-aliased edges included (another image scaled to
+    // this size, as a logo loaded at another screen's ratio would be, differs at the edges).
+    const QImage grab = window->grabWindow().convertToFormat(QImage::Format_ARGB32);
+    ASSERT_GE(grab.width(), left + pixels);
+    ASSERT_GE(grab.height(), top + pixels);
+    auto* background = dialog->property("background").value<QQuickItem*>();
+    ASSERT_NE(background, nullptr);
+    const QColor surface = background->property("color").value<QColor>();
+    int largest = 0;
+    int different = 0;
+    for (int y = 0; y < pixels; ++y) {
+        for (int x = 0; x < pixels; ++x) {
+            const QRgb image = expected.pixel(x, y);
+            const int alpha = qAlpha(image);
+            const auto over = [alpha](int colour, int under) {
+                return (colour * alpha + under * (255 - alpha) + 127) / 255;
+            };
+            const QRgb shown = grab.pixel(left + x, top + y);
+            const int difference = std::max({std::abs(qRed(shown) - over(qRed(image), surface.red())),
+                                             std::abs(qGreen(shown) - over(qGreen(image), surface.green())),
+                                             std::abs(qBlue(shown) - over(qBlue(image), surface.blue()))});
+            largest = std::max(largest, difference);
+            different += difference > 3 ? 1 : 0;
+        }
+    }
+    EXPECT_EQ(different, 0) << "of " << pixels * pixels << " pixels at " << ratio << " (largest difference "
+                            << largest << ")";
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(child("aboutCloseButton"), "clicked"));
+    ASSERT_TRUE(QTest::qWaitFor([dialog] { return !dialog->property("visible").toBool(); }, kWaitMs));
     EXPECT_TRUE(capture.warnings().isEmpty()) << warnings_text(capture.warnings()).toStdString();
 }
 

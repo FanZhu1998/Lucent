@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/branding/docs/lucent-logo.png" alt="Lucent's logo: a two-tone L on a dark rounded square" width="96" height="96"></p>
+
 # Lucent
 
 Offline, camera-independent RAW photo development for Windows.
@@ -122,8 +124,8 @@ A release publishes both, after the gates of the [release checklist](docs/releas
 
 > **The first release waits for its clean-machine test.** Installers are published only with their
 > corresponding-source archive and only after every gate of the release checklist has passed; the
-> test on a clean, offline Windows (in Windows Sandbox, which is not enabled on the development
-> machine yet) has not run, so do not hand out installers built today.
+> test on a clean, offline Windows (in Windows Sandbox: its first run, on 2026-10-11, failed on
+> defects since fixed) has not passed yet, so do not hand out installers built today.
 
 - **Per user, no administrator rights.** Lucent installs into `%LOCALAPPDATA%\Programs\Lucent`
   with a Start Menu shortcut and, optionally, a Desktop shortcut. Windows asks for permission only
@@ -251,6 +253,9 @@ with GLib, GNU libintl and GNU libiconv) are separate DLLs that Lucent loads dyn
 you may replace with your own builds; every release publishes their complete corresponding source,
 `Lucent-<version>-corresponding-source.zip`, beside its installer, with instructions to rebuild
 them. The bundled Lensfun lens database is used unmodified under CC BY-SA 3.0, and the installer is
-made with Inno Setup under its non-commercial terms. See
+made with Inno Setup under its non-commercial terms. Lucent's logo (`assets/branding`) is not
+covered by the MIT License: its licence terms are not decided yet, and the project owner records them
+in `assets/branding/provenance.json` and the asset's [README](assets/branding/README.md) before the
+first release. See
 [ADR 0003](docs/adr/0003-linking-and-licensing.md), [ADR 0024](docs/adr/0024-release-and-licensing.md)
 and the [licence ledger](docs/legal/third-party-notices.md).

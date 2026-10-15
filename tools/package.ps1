@@ -24,6 +24,9 @@
        which no import table shows, and Lucent must report the camera support database of the
        folder as active and the update channel it checks, which must be the one the build tree
        recorded (W12 review SEC-02; see -UpdateChannel). Any error stops the packaging.
+       Lucent.exe and lucent-worker.exe must carry Lucent's logo (ADR 0025): their first and only icon
+       group is IDI_ICON1 with exactly the images of the branding asset's Windows icon
+       (assets\branding, verified against its manifest first).
     4. Signs Lucent.exe and lucent-worker.exe when signing is configured (see NOTES; off by default),
        and verifies each signature: the configured certificate's thumbprint, an offline
        WinVerifyTrust result, the timestamp.
@@ -60,8 +63,11 @@
        scanned the same way.
     7. Compiles installer\lucent.iss with Inno Setup 6 (unless -StageOnly; Setup and the uninstaller
        are signed when signing is configured, and Setup's signature is verified; the compiler's
-       licence line is recorded, and a non-commercial compiler is refused for a distribution the
-       policy calls commercial) and writes the package manifest (schema 5: version, git commit,
+       licence line is recorded (Get-InnoSetupLicence: the whole banner), and a distribution the
+       policy calls commercial needs a compiler whose banner states a commercial licence: a
+       non-commercial or unrecognised one is refused), with the branding asset's Windows icon as
+       Setup's icon and its wizard images (ADR 0025; Setup's first icon group must then be that icon,
+       image for image), and writes the package manifest (schema 5: version, git commit,
        signing, the distribution decision, the update channel, every file with its SHA-256, the
        corresponding-source archive with every file in it, the installer's size and SHA-256, or no
        installer with -StageOnly).
@@ -182,6 +188,7 @@ Set-StrictMode -Version 3.0
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $installerDir = Join-Path $repoRoot 'installer'
 Import-Module (Join-Path $installerDir 'scripts\LucentPackaging.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'branding\LucentBranding.psm1') -Force
 
 function Write-Step([string]$Text) { Write-Host "==> $Text" -ForegroundColor Cyan }
 
@@ -306,6 +313,22 @@ if (-not $StageOnly) {
     }
 }
 
+# Lucent's logo (ADR 0025): the branding asset, its manifest and every file's size and SHA-256 verified
+# (Read-BrandingAsset), before the slow steps. The programs must carry its Windows icon, and Setup takes
+# that icon and the wizard images by role, as the build does. Inno Setup separates image files by
+# commas, so a path with a comma cannot be passed.
+$branding = Read-BrandingAsset -Root (Join-Path $repoRoot 'assets\branding')
+$brandingIcon = @(Get-BrandingFiles -Asset $branding -Role 'windows-icon')
+if ($brandingIcon.Count -ne 1) { throw "The branding asset has $($brandingIcon.Count) windows-icon derivatives; Setup needs exactly one." }
+$brandingIcon = $brandingIcon[0]
+$brandingWizardImages = @(Get-BrandingFiles -Asset $branding -Role 'setup-wizard-image')
+$brandingWizardSmallImages = @(Get-BrandingFiles -Asset $branding -Role 'setup-wizard-small-image')
+foreach ($file in @($brandingIcon) + $brandingWizardImages + $brandingWizardSmallImages) {
+    if ($file.Contains(',')) { throw "Inno Setup cannot take the branding file ${file}: its path holds a comma." }
+}
+Write-Host ("Branding {0}: {1}, {2} wizard images, {3} small wizard images (assets\branding, every file as its manifest lists)" -f $branding.Version,
+    (Split-Path -Leaf $brandingIcon), $brandingWizardImages.Count, $brandingWizardSmallImages.Count)
+
 # Never leave an earlier run's installer, checksum, manifest or SBOM copy next to this run's layout.
 # A test-signed package says so in its file names (SEC-03).
 $releaseBaseName = "Lucent-Setup-$($info.version)-x64"
@@ -381,9 +404,21 @@ if ($reportedChannel.Count -gt 0) {
 }
 Write-Host "    Update channel reported by $($info.executable): $(Format-UpdateChannel $smoke.UpdateChannel)"
 
+# Lucent's logo in the shipped programs (ADR 0025): the icon group Windows shows for each is IDI_ICON1,
+# image for image the branding asset's Windows icon.
+Write-Step "Checking Lucent's icon in $(Get-LucentExecutablesText $info) (branding $($branding.Version))"
+foreach ($name in @(@($info.executable) + @($info.helperExecutables) | Where-Object { $_ })) {
+    $iconCheck = Test-ProgramIcon -Path (Join-Path $stage $name) -Icon $brandingIcon -GroupName 'IDI_ICON1' -First
+    if ($iconCheck.Problems.Count -gt 0) {
+        foreach ($problem in $iconCheck.Problems) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
+        throw "$name does not carry Lucent's icon; rebuild it (the build takes the icon from assets\branding)."
+    }
+    Write-Host ("    {0}: icon group {1}, {2} images, {3}" -f $name, $iconCheck.Group.Name, $iconCheck.Group.Images.Count, $iconCheck.Match)
+}
+
 $fileIndex = Get-VcpkgFileIndex -InstalledDir ($info.vcpkgInstalledDir.Replace('/', '\')) -Triplet $info.vcpkgTriplet
 $staticLibraries = @(Get-StaticVcpkgLibraries -Info $info -FileIndex $fileIndex)
-Write-Host ("    Static vcpkg libraries linked into {0}: {1}" -f (Get-LucentExecutablesText $info), $(if ($staticLibraries.Count) { ($staticLibraries | ForEach-Object { "$($_.Path) ($($_.Port))" }) -join ', ' } else { 'none' }))
+Write-Host ("    Static vcpkg libraries in {0}: {1}" -f (Get-LucentExecutablesText $info), $(if ($staticLibraries.Count) { ($staticLibraries | ForEach-Object { "$($_.Path) ($($_.Port), linked into $(@($_.Executables) -join ', '))" }) -join '; ' } else { 'none' }))
 
 # --- 4. Optional signing of Lucent.exe and lucent-worker.exe -----------------------------------
 
@@ -562,6 +597,11 @@ if (-not $StageOnly) {
     Write-TextFile -Path $associationsPath -Text (($associations -join "`n") + "`n")
 
     Write-Step "Compiling the installer with $($isccInfo.Path) (found via $($isccInfo.From))"
+    # Lucent's logo (ADR 0025): Setup's icon and the wizard images, every image-area size of each.
+    $brandingArgs = @(
+        "/DBrandingIcon=$brandingIcon",
+        "/DBrandingWizardImages=$($brandingWizardImages -join ',')",
+        "/DBrandingWizardSmallImages=$($brandingWizardSmallImages -join ',')")
     $isccArgs = @(
         "/DAppVersion=$($info.version)",
         "/DAppVersionQuad=$($info.version).0",
@@ -571,7 +611,7 @@ if (-not $StageOnly) {
         "/DVCRedistMinor=$($vc.Minor)",
         "/DVCRedistBuild=$($vc.Build)",
         "/DVCRuntimeDlls=$($report.VcRuntimeImports -join ',')",
-        "/DAssociationsInclude=$associationsPath",
+        "/DAssociationsInclude=$associationsPath") + $brandingArgs + @(
         "/O$OutputDir",
         "/F$baseName")
     if ($signCommand) { $isccArgs += @("/Slucent=$signCommand", '/DLucentSign') }
@@ -583,21 +623,30 @@ if (-not $StageOnly) {
     }
     $engine = @($compile.Output | ForEach-Object { if ($_ -match '^Compiler engine version: (.+)$') { $Matches[1] } }) | Select-Object -First 1
     if ($engine) { $isccInfo | Add-Member -NotePropertyName Version -NotePropertyValue $engine.Trim() }
-    # The compiler states its licence on the line after its version ("Non-commercial use only" for
-    # the free edition). Its non-commercial terms cover Lucent's free distribution (ADR 0024), not a
-    # commercial one.
-    $compileLines = [string[]]@($compile.Output)
-    $isccLicence = $null
-    for ($i = 0; $i -lt $compileLines.Count - 1; $i++) {
-        if ($compileLines[$i] -match '^Compiler engine version: ' -and $compileLines[$i + 1] -match 'commercial') { $isccLicence = $compileLines[$i + 1].Trim(); break }
-    }
+    # The compiler states its licence in its banner ("Non-commercial use only" for the free edition).
+    # Its non-commercial terms cover Lucent's free distribution (ADR 0024), not a commercial one, which
+    # needs a licence the banner positively states as commercial (W12 review LIC-6: an unrecognised
+    # banner fails a commercial distribution instead of passing it).
+    $isccLicenceRecord = Get-InnoSetupLicence -Output ([string[]]@($compile.Output))
+    $isccLicence = $isccLicenceRecord.Line
     $isccInfo | Add-Member -NotePropertyName Licence -NotePropertyValue $isccLicence
-    if ($isccLicence -match 'non-commercial' -and $distribution.commercial) {
+    $licenceCheck = Test-InnoSetupLicence -Licence $isccLicenceRecord -Commercial ([bool]$distribution.commercial)
+    foreach ($warning in $licenceCheck.Warnings) { Write-Warning $warning }
+    if (@($licenceCheck.Errors).Count -gt 0) {
         Remove-Item -LiteralPath $installerPath -Force
-        throw "This Inno Setup compiler reports '$isccLicence', but installer\license-policy.json records a commercial distribution: use a commercially licensed Inno Setup (ADR 0024)."
+        throw (@($licenceCheck.Errors) -join ' ')
     }
     Write-Host "    Compiler: $(if ($engine) { $engine.Trim() } else { 'Inno Setup 6' })$(if ($isccLicence) { ", $isccLicence" }) (Lucent's distribution: $(if ($distribution.commercial) { 'commercial' } else { 'free, non-commercial' }))"
     # A Setup that failed a check is deleted, so no unchecked installer is left next to the folder.
+    # Setup's own icon (Explorer, the download, the uninstaller) is Lucent's: its first icon group holds
+    # exactly the images of the branding asset's Windows icon (ADR 0025).
+    $setupIcon = Test-ProgramIcon -Path $installerPath -Icon $brandingIcon -First
+    if ($setupIcon.Problems.Count -gt 0) {
+        foreach ($problem in $setupIcon.Problems) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
+        Remove-Item -LiteralPath $installerPath -Force
+        throw "Setup does not carry Lucent's icon; see $(Join-Path $OutputDir 'iscc.log')."
+    }
+    Write-Host ("    Setup's icon: group {0}, {1} images of {2}, {3}" -f $setupIcon.Group.Name, $setupIcon.Group.Images.Count, (Split-Path -Leaf $brandingIcon), $setupIcon.Match)
     if ($signing) {
         $check = Test-AuthenticodeFile -Path $installerPath -Thumbprint $signing.Certificate.Thumbprint -AllowUntrustedRoot:$signing.Test -RequireTimestamp:([bool]$signing.TimestampUrl)
         if (-not $check.Accepted) { Remove-Item -LiteralPath $installerPath -Force; throw "$baseName.exe $($check.Problem); see $(Join-Path $OutputDir 'iscc.log')." }
@@ -639,7 +688,7 @@ if (-not $StageOnly) {
             "/DAppVersion=$rehearsalVersion", "/DAppVersionQuad=$rehearsalVersion.0", "/DVersionRehearsalOf=$($info.version)",
             "/DStagingDir=$stage", "/DVCRedistFile=$($vc.Path)", "/DVCRedistMajor=$($vc.Major)", "/DVCRedistMinor=$($vc.Minor)",
             "/DVCRedistBuild=$($vc.Build)", "/DVCRuntimeDlls=$($report.VcRuntimeImports -join ',')",
-            "/DAssociationsInclude=$associationsPath", "/O$rehearsalDir", "/F$rehearsalBase", (Join-Path $installerDir 'lucent.iss'))
+            "/DAssociationsInclude=$associationsPath") + $brandingArgs + @("/O$rehearsalDir", "/F$rehearsalBase", (Join-Path $installerDir 'lucent.iss'))
         $rehearsalCompile = Invoke-NativeCommand -FilePath $isccInfo.Path -Arguments $rehearsalArgs -LogPath (Join-Path $rehearsalDir 'iscc.log')
         $rehearsalPath = Join-Path $rehearsalDir "$rehearsalBase.exe"
         if ($rehearsalCompile.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $rehearsalPath)) {

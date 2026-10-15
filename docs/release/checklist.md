@@ -25,12 +25,12 @@ machine of [setup](../development/setup.md)). `<v>` is the version being release
 | 2 | Version | `Select-String` on `CMakeLists.txt` and `vcpkg.json` | Both say `<v>`; `<v>` follows the version rules and was never released before |
 | 3 | Tests from a clean build | `tools\build.ps1 -Preset dev-core -Fresh -Test`, `-Preset dev -Fresh -Test`, fixture tier `all` | Exit code 0; no test failed |
 | 4 | Qualification data | `lucent-qualify --tier all` from the clean build; compare with the committed table | 0 expectation mismatches; the same outcomes as the committed report, which a clean build of the release's code produced |
-| 5 | Performance (regression) | `tools\bench\Invoke-LucentBench.ps1`, `Test-BenchBudgets.ps1` | `Test-BenchBudgets.ps1` exits 0, or each exceedance is explained in the release notes |
+| 5 | Performance (regression) | `tools\bench\Invoke-LucentBench.ps1`, `Test-BenchBudgets.ps1` | `Test-BenchBudgets.ps1` exits 0 (every scenario started on a quiet machine), or each exceedance is explained in the release notes |
 | 6 | Package | `tools\package.ps1 -Fresh -RunTests -UpdateChannel none` | Exit code 0; manifest `gitDirty` false, `gitCommit` the release commit, audit and builder-path errors 0 |
 | 7 | Corresponding source | `installer\tests\Test-SourcePackage.ps1 -PackageManifest ...` | Exit code 0 (every LGPL library's archives and recipe present, every hash as recorded) |
-| 8 | Licence review | Read `THIRD-PARTY-NOTICES.txt`, `LGPL-NOTICE.txt`, the ledger | No component, version or licence differs from the [ledger](../legal/third-party-notices.md); the LGPL notice names the archive |
+| 8 | Licence review | Read `THIRD-PARTY-NOTICES.txt`, `LGPL-NOTICE.txt`, the ledger, `assets\branding\provenance.json` | No component, version or licence differs from the [ledger](../legal/third-party-notices.md); the LGPL notice names the archive and lists each library's modifications; the logo's licence terms are recorded |
 | 9 | Installer on the release machine | `installer\tests\Test-InstalledPackage.ps1 ... -RuntimeOutcomes -NewerInstaller` (and `-PreviousInstaller`) | Exit code 0, every check passed (install, same-version repair, upgrade, refused downgrade) |
-| 10 | Clean machine, offline | Windows Sandbox: `tools\Test-CleanMachine.ps1`, then the manual steps ([clean-machine.md](clean-machine.md)) | The script exits with 0 (`host-check.json` passed); every manual step as described |
+| 10 | Clean machine, offline | Windows Sandbox: `tools\Test-CleanMachine.ps1`, then the manual steps ([clean-machine.md](clean-machine.md)) | The script exits with 0 (`<gate>\host-check.json` passed); every manual step as described, the declined and the accepted elevation prompt on a Windows that asks for consent |
 | 11 | Signing | Only when a certificate exists (until then: skipped, release unsigned) | Every signature verified by `tools\package.ps1` and `Test-InstalledPackage.ps1 -SignerThumbprint` |
 | 12 | Update channel | Only for a signed release on a configured channel (until then: `-UpdateChannel none`) | `Test-LucentReleaseManifest` passes |
 | 13 | Publish | Upload the files of "What is published" | Checksums on the page equal the package manifest's |
@@ -145,7 +145,11 @@ powershell -NoProfile -File tools\bench\Test-BenchBudgets.ps1 -DataDir build\rel
 
 **Pass:** `Test-BenchBudgets.ps1` exits with 0. A budget that fails because of a measured, wanted
 change is accepted only with a new baseline ([ADR 0021](../adr/0021-performance-baseline.md)) or a
-line in the release notes. Run it on an idle machine; the measurements take about an hour.
+line in the release notes. Run it on an idle machine; the measurements take about an hour. The
+harness waits for a quiet machine before every scenario (no other process above a quarter of one
+processor) and records each wait; `Test-BenchBudgets.ps1` refuses a run in which a scenario started
+busy, skipped the wait or recorded none (exit code 3): measure again on an idle machine, never pass
+it with `-AllowBusyMachine` for a release.
 
 ## 6. Package
 
@@ -191,21 +195,39 @@ leaves no choice but a copyleft one is unmarked; the archive's form (sorted, sto
 **Pass:** exit code 0. Then open `README.txt` in the archive: the version, the registry commit, the
 libraries and the rebuild command are this release's. Optional: package again into another folder,
 `tools\package.ps1 -BuildDir build\rel-<v> -SkipBuild -StageOnly -OutputDir build\rel-<v>\package-again`;
-its archive must have the same SHA-256 (the archive is deterministic). Never package again into the
-release's own folder: that replaces the files step 6 recorded.
+its archive must have the same SHA-256 (the archive is deterministic: the same inputs give the same
+bytes on any machine, whatever its regional format; ADR 0024, decision 14). Never package again into
+the release's own folder: that replaces the files step 6 recorded.
 
 ## 8. Licence review ("Distribution")
 
-Packaging already refuses an unreviewed dependency version, an unknown licence, a statically linked
-LGPL or GPL library, a copyleft licence without a source provision, a missing licence text and a
-non-commercial Inno Setup for a commercial distribution. What remains is a reading:
+Packaging already refuses an unreviewed dependency version, an unknown licence, LGPL or GPL code
+linked statically or compiled into the programs, a copyleft licence without a source provision (an
+alternative under a `LicenseRef-` licence, such as a vendor's commercial terms, is no choice Lucent
+has), GPL or AGPL code without an exception even with a source provision (unless an ADR accepted it),
+a missing licence text and, for a commercial distribution, an Inno Setup whose banner does not state
+a commercial licence (ADR 0003 and ADR 0024, amendments of 2026-10-15). What remains is a reading:
 
 - `build\rel-<v>\package\stage\licenses\THIRD-PARTY-NOTICES.txt` lists the same components, versions
   and licences as the [ledger](../legal/third-party-notices.md)'s release table, and the credit lines
   (FreeType, IJG, libtiff's LZW code, the Lensfun lens database, Inno Setup).
-- `LGPL-NOTICE.txt` names `Lucent-<v>-corresponding-source.zip` with the size and SHA-256 of step 6.
+- `LGPL-NOTICE.txt` names `Lucent-<v>-corresponding-source.zip` with the size and SHA-256 of step 6,
+  and gives every library a "Modified" entry: each patch its recipe applies to the upstream source,
+  with the files it changes and who made it when (vcpkg's dated by the registry commit, Lucent's
+  `lucent-*.patch` by their own text), or "Modified: no". The ledger's release table says the same.
 - No model weights, datasets or other assets without a recorded licence ship
-  (`assets\` holds only `camera-support` and `lens-database`; [ADR 0019](../adr/0019-learned-appearance-research.md)).
+  ([ADR 0019](../adr/0019-learned-appearance-research.md)): `assets\` holds `camera-support` and
+  `lens-database`, which ship as files, and `branding`, Lucent's logo, which is built into the programs
+  and Setup ([ADR 0025](../adr/0025-branding.md)).
+- The logo's licence terms are decided by the project owner and recorded: `licence` in
+  `assets\branding\provenance.json` is no longer `null`, and the asset's README states the terms. (The
+  logo was supplied by the owner on 2026-10-11 and made with an image generator; its provenance is
+  recorded there. Until the owner decides, no terms are claimed for it, it is not covered by the MIT
+  License, and no release is published.) Recording them changes the asset: edit `provenance.json`
+  (`licence`, `licence_status`) and the asset's README, run
+  `powershell -NoProfile -File tools\branding\Update-Branding.ps1 -Version <the next PATCH version>`
+  (the manifest lists `provenance.json`, so `-Check`, the build and packaging refuse the folder until
+  then), commit, and start again at step 1 with that commit.
 - `installer\license-policy.json` "distribution" still describes the release: free, MIT, not sold
   (`commercial: false`), unsigned or signed as built.
 
@@ -240,9 +262,10 @@ a development `PATH` or the Visual C++ runtime installs Lucent, which then impor
 offline. [The clean-machine gate](clean-machine.md) describes it in full: how to enable Windows
 Sandbox once, what the gate checks, the options and what it cannot show.
 
-**Status:** Windows Sandbox is not enabled on the reference machine yet. Its owner enables it once
-(administrator, then a restart; [clean-machine.md](clean-machine.md#enabling-windows-sandbox-once)).
-Until this gate has passed for a release, that release is not published.
+**Status:** Windows Sandbox is enabled on the reference machine. The first run (2026-10-11, a release
+candidate) went through every step and failed; the defects it showed are fixed (2026-10-15,
+[clean-machine.md](clean-machine.md)), and the gate has not passed yet. Until it has passed for a
+release, that release is not published.
 
 **The automatic run:**
 
@@ -253,21 +276,29 @@ powershell -NoProfile -File tools\Test-CleanMachine.ps1 -PackageDir build\rel-<v
 It copies Setup, its manifest, its version rehearsal (step 6 with `-VersionRehearsal`) and three
 smoke fixtures into a gate folder mapped read-only into the sandbox, with a writable results folder;
 the sandbox has no network, GPU, clipboard or printers (the configuration is validated against
-`installer\sandbox\wsb-configuration.xsd` first). At logon `installer\sandbox\Invoke-CleanMachineGate.ps1`
-records that the machine is clean and offline, installs Setup silently (it installs Microsoft's
-redistributable for real and asks for elevation once: **answer Yes**), runs the installed `Lucent.exe`
-to import the fixtures, run Auto on one, export them as JPEG and as 16-bit TIFF and save screenshots,
-uninstalls, runs `Test-InstalledPackage.ps1 -RuntimeOutcomes -NewerInstaller`, writes `gate.json` and
-shuts the sandbox down. The host checks the result itself.
+`installer\sandbox\wsb-configuration.xsd` first). Windows Sandbox runs one sandbox at a time: the
+script refuses to start while one is open, and stops with a diagnosis when the gate has not started
+within five minutes. At logon `installer\sandbox\Invoke-CleanMachineGate.ps1` records that the
+machine is clean and offline, and its own token and UAC settings, installs Setup silently (it installs
+Microsoft's redistributable for real; the sandbox runs the gate elevated, so no elevation prompt is
+expected), runs the installed `Lucent.exe` to import the fixtures, run Auto on one, export them as
+JPEG and as 16-bit TIFF and save screenshots, uninstalls, runs `Test-InstalledPackage.ps1
+-RuntimeOutcomes -NewerInstaller`, writes `gate.json` and shuts the sandbox down. The host checks the
+result itself and writes its verdict beside the gate folder's `gate-request.json`.
 
-**The manual run**, in a second sandbox:
-`tools\Test-CleanMachine.ps1 -PackageDir build\rel-<v>\package -Manual`, then the four steps of
-[clean-machine.md](clean-machine.md#the-manual-steps) (a declined elevation prompt, the wizard, an
-import, edit, Auto and export through the user interface, uninstalling from Settings).
+**The manual run:** the four steps of [clean-machine.md](clean-machine.md#the-manual-steps) (a declined
+elevation prompt, the wizard, an import, edit, Auto and export through the user interface,
+uninstalling from Settings). The sandbox elevates without asking, so steps 1 and 2 run on a Windows
+with UAC at its default and without the Visual C++ runtime (a virtual machine installed from Windows'
+own media, or a spare computer), offline; steps 3 and 4 may run there too, or in a sandbox opened with
+`tools\Test-CleanMachine.ps1 -PackageDir build\rel-<v>\package -Manual`.
 
 **Pass:** the automatic run prints `Clean-machine gate: PASSED` and exits with 0
-(`results\host-check.json` says `"passed": true`), and the manual steps behave as described. Keep both
-gate folders' results, with the date and the host's Windows build, in the release archive.
+(`<gate>\host-check.json`, beside `gate-request.json`, says `"passed": true`; a `host-check.json` in
+`results\` is not the host's verdict), and the manual steps behave as described. Keep the gate folder's
+`results`, `gate-request.json` and `host-check.json` (with the date, the host's Windows build and the
+Windows Sandbox version), and the record of the manual run with the machine it used (Windows edition,
+version and build, virtual or physical, its UAC setting), in the release archive.
 
 ## 11. Signing (when a certificate exists)
 
@@ -386,6 +417,6 @@ Where each gate of the blueprint (section 10, "Required release gates") is check
 | Original preservation | Step 3 (source-hash tests), step 5 (the harness compares the fixtures' SHA-256 after every run) | Checked every release |
 | Batch resilience | `tools\bench\Invoke-BatchResilience.ps1` (the 1,000-file run, ADR 0021) | Run when the batch, worker or catalog code changed since the last pass; recorded in the release archive |
 | Restart/publication | Step 3 (worker and publication tests), the resilience run | As above |
-| Offline installation | Step 10 | **Pending:** Windows Sandbox is not enabled yet |
+| Offline installation | Step 10 | **Pending:** the gate has not passed yet (its first run, 2026-10-11, failed on defects since fixed) |
 | Update compatibility | Step 3 (catalog fixtures of every schema), step 9 (the update rehearsal) | Checked every release (the rehearsal from the second release on) |
 | Distribution | Steps 6, 7 and 8 | Checked every release |

@@ -13,8 +13,12 @@
        tasks given (default: desktop shortcut and "Open with Lucent"), then checks the files (against
        the package manifest when given), shortcuts, uninstall registration and associations:
        Applications\Lucent.exe\SupportedTypes lists every RAW extension, OpenWithProgids names Lucent
-       exactly for the extensions that already had a default program, and no extension's default
-       value or effective program changed.
+       exactly for the extensions that already had a default program (the rule of
+       ExtensionHasDefaultProgram in lucent.iss: the program Windows opens the type with is the
+       user's choice or the type's own default; a choice of a program that is not installed, as in
+       Windows Sandbox, is none: W12 sandbox run SBX-3), and no extension's default value, Explorer
+       state (UserChoice, FileExts) or effective program changed. The same holds after every later
+       installation (repair, upgrades) and after the uninstallation.
     3. Runs <work>\app\Lucent.exe with PATH=%SystemRoot%\System32;%SystemRoot%, without Qt variables,
        using its developer options: --data-root <work>\data --import <fixture> --open-first
        --screenshot <work>\lucent.png --quit-after-screenshot. Records every module the process loads
@@ -61,8 +65,11 @@
        and files checked, against -NewerManifest when given), and -Installer must refuse to install
        over it: exit code 1, "Downgrade refused" in its log, the runtime installer not started, the
        registration, every installed file (size, time, SHA-256) and the shortcuts unchanged. A
-       refused downgrade is checked the same way after the update rehearsal (8). Step 5 then
-       uninstalls whatever version is installed.
+       refused downgrade is checked the same way after the update rehearsal (8). Then the registered
+       version is made unreadable three times (DisplayVersion deleted, rewritten as a REG_DWORD, and
+       as a REG_MULTI_SZ naming a higher version): -Installer must refuse each the same way, leaving
+       the tampered value as it was (W12 review SEC04-01), after which the value is restored. Step 5
+       then uninstalls whatever version is installed.
 
     A signed uninstaller keeps its messages in unins000.msg (Inno Setup cannot add them to a signed
     EXE): unins000.exe, .dat and .msg are Inno Setup's own files, not the package's.
@@ -206,6 +213,11 @@ public static class LucentTestAssoc {
     public static string Describe(string extension) {
         return Query(extension, 1) + " | " + Query(extension, 4) + " | " + Query(extension, 20);
     }
+    // The ProgID Windows opens the type with now, as lucent.iss asks (EffectiveProgId); null when none.
+    public static string ProgId(string extension) {
+        string progId = Query(extension, 20);
+        return progId.StartsWith("0x") ? null : progId;
+    }
     static string Query(string extension, int what) {
         uint length = 4096; var text = new StringBuilder((int)length);
         int hr = AssocQueryStringW(0x400, what, extension, null, text, ref length);
@@ -301,17 +313,18 @@ function Get-KeyText([string]$Path) {
     return "[$values]$children"
 }
 function Test-HasDefaultProgram([string]$Extension) {
+    # ExtensionHasDefaultProgram in lucent.iss: the ProgID Windows opens the type with now
+    # (AssocQueryString) is the user's choice (UserChoice, UserChoiceLatest) or the type's own default
+    # (not Lucent's). A choice Windows does not resolve (a program that is not installed) is none.
+    $effective = [LucentTestAssoc]::ProgId($Extension)
+    if (-not $effective) { return $false }
     foreach ($choice in "$fileExtsKey\$Extension\UserChoice", "$fileExtsKey\$Extension\UserChoiceLatest\ProgId") {
-        if ((Test-Path -LiteralPath $choice) -and (Get-Item -LiteralPath $choice).GetValue('ProgId')) { return $true }
+        if ((Test-Path -LiteralPath $choice) -and [string](Get-Item -LiteralPath $choice).GetValue('ProgId') -ieq $effective) { return $true }
     }
-    $root = [Microsoft.Win32.Registry]::ClassesRoot
-    $key = $root.OpenSubKey($Extension)
+    $key = [Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey($Extension)
     if (-not $key) { return $false }
-    try { $default = $key.GetValue('') } finally { $key.Close() }
-    if (-not $default -or $default -eq $progId) { return $false }
-    $target = $root.OpenSubKey([string]$default)
-    if ($target) { $target.Close(); return $true }
-    return $false
+    try { $default = [string]$key.GetValue('') } finally { $key.Close() }
+    return [bool]($default -and $default -ieq $effective -and $default -ine $progId)
 }
 $rawExtensions = @()
 if ($manifestData -and ($manifestData.PSObject.Properties.Name -contains 'fileAssociations')) { $rawExtensions = @($manifestData.fileAssociations.extensions) }
@@ -477,6 +490,24 @@ if ($Tasks -match 'openwith') {
 $changedEffective = @($rawExtensions | Where-Object { $effectiveBefore.ContainsKey($_) -and [LucentTestAssoc]::Describe($_) -ne $effectiveBefore[$_] } |
     ForEach-Object { "$_ : $($effectiveBefore[$_]) -> $([LucentTestAssoc]::Describe($_))" })
 Add-Check 'What Windows opens each RAW type with is unchanged (AssocQueryString)' ($changedEffective.Count -eq 0) (($changedEffective | Select-Object -First 3) -join ' / ')
+$changedExplorer = @($rawExtensions | Where-Object { $explorerBefore.ContainsKey($_) -and (Get-KeyText "$fileExtsKey\$_") -ne $explorerBefore[$_] })
+Add-Check 'Lucent wrote no user choice: the Explorer state (FileExts: UserChoice) of every RAW type is unchanged' ($changedExplorer.Count -eq 0) ($changedExplorer -join ', ')
+
+# After every later installation (repair, upgrades): Lucent still wrote no extension's default value or
+# user choice, and Windows opens every RAW type as before (W12 sandbox run SBX-3).
+function Test-AssociationsAsBefore([string]$When) {
+    $problems = @()
+    foreach ($extension in (Get-ExtensionNames)) {
+        if ((Get-ExtensionState $extension).Default -ne (Get-BeforeState $extension).Default) { $problems += ".$extension default value" }
+    }
+    foreach ($extension in $rawExtensions) {
+        if ($explorerBefore.ContainsKey($extension) -and (Get-KeyText "$fileExtsKey\$extension") -ne $explorerBefore[$extension]) { $problems += "$extension FileExts" }
+        if ($effectiveBefore.ContainsKey($extension) -and [LucentTestAssoc]::Describe($extension) -ne $effectiveBefore[$extension]) {
+            $problems += "$extension opens with $([LucentTestAssoc]::Describe($extension)), before $($effectiveBefore[$extension])"
+        }
+    }
+    Add-Check "$($When): no extension default value, user choice or effective program changed" ($problems.Count -eq 0) (($problems | Select-Object -First 3) -join ' / ')
+}
 
 # --- 2. Run the installed Lucent.exe --------------------------------------------------------------
 
@@ -604,6 +635,7 @@ foreach ($folder in 'qml\ObsoleteTest', 'qml\OtherApp', 'plugins\otherapp') {
     if ((Test-Path -LiteralPath $path) -and -not (Get-ChildItem -LiteralPath $path -Recurse -File)) { Remove-Item -LiteralPath $path -Recurse -Force }
 }
 Test-InstalledFiles 'Files after the upgrade match the package manifest (SHA-256)'
+Test-AssociationsAsBefore "After the $(if ($PreviousInstaller) { 'upgrade from the previous version' } else { 'same-version repair' })"
 
 if ($PreviousInstaller) {
     # --- The update rehearsal: the new version on the previous version's library -----------------
@@ -704,6 +736,7 @@ if ($PreviousInstaller) {
     Add-Check 'Same-version repair after the upgrade: Setup exit code 0, version unchanged' `
         ($exitCode -eq 0 -and (Get-RegisteredVersion) -eq $current -and $repairText -match 'Downgrade check: .* this Setup repairs it') "exit code $exitCode, registered $(Get-RegisteredVersion)"
     Test-InstalledFiles 'Files after the repair match the package manifest (SHA-256)'
+    Test-AssociationsAsBefore 'After the same-version repair that follows the upgrade'
     $versionSteps.upgradedTo = $current
 }
 
@@ -717,8 +750,48 @@ if ($NewerInstaller) {
         ($exitCode -eq 0 -and $newer -and $newer -ne $versionBefore -and $newerText -match 'Downgrade check: .* this Setup upgrades it') "exit code $exitCode; registered $newer"
     Test-InstalledFiles 'Files after the upgrade to the newer Setup match its package manifest (SHA-256)' $newerManifestData
     Test-InstalledFileListMatches "After the upgrade to the newer Setup $fileListName lists exactly the installed files"
+    Test-AssociationsAsBefore 'After the upgrade to the newer Setup'
     Test-RefusedDowngrade -Setup $Installer -Label "Downgrade from $newer to the package's Setup" -LogName 'downgrade.log'
     $versionSteps.newer = $newer
+}
+
+# A registration whose version Setup cannot read (W12 review SEC04-01): its uninstall registration
+# exists, but DisplayVersion is missing or not text (a registry cleaner, a hand edit). Setup must refuse
+# as for a newer version, never take it for "not installed" and install over it.
+function Get-RegistrationText {
+    # Every value of the uninstall registration but DisplayVersion: what a refused Setup must leave.
+    $item = Get-Item -LiteralPath $uninstallKey
+    return (@($item.GetValueNames() | Where-Object { $_ -ne 'DisplayVersion' } | Sort-Object | ForEach-Object { "$_=$($item.GetValue($_))" }) -join '|')
+}
+if (Test-Path -LiteralPath $uninstallKey) {
+    $registeredVersion = Get-RegisteredVersion
+    foreach ($mode in 'missing', 'REG_DWORD', 'REG_MULTI_SZ') {
+        $snapshot = Get-InstallationSnapshot
+        $registrationBefore = Get-RegistrationText
+        Remove-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -ErrorAction SilentlyContinue
+        if ($mode -eq 'REG_DWORD') { New-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -PropertyType DWord -Value 1 | Out-Null }
+        if ($mode -eq 'REG_MULTI_SZ') { New-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -PropertyType MultiString -Value @('999.0.0') | Out-Null }
+        $tampered = (Get-Item -LiteralPath $uninstallKey).GetValueNames() -contains 'DisplayVersion'
+        $kind = if ($tampered) { [string](Get-Item -LiteralPath $uninstallKey).GetValueKind('DisplayVersion') } else { 'none' }
+        try {
+            $log = Join-Path $WorkDir "downgrade-unreadable-$($mode.ToLowerInvariant()).log"
+            $code = Invoke-Setup -Directory $appDir -LogPath $log -Setup $Installer
+            $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
+            $line = @($text -split "`r?`n" | Where-Object { $_ -match 'Downgrade refused: ' }) | Select-Object -First 1
+            $label = "A registration of version $registeredVersion whose DisplayVersion is $(if ($mode -eq 'missing') { 'missing' } else { "a $mode" })"
+            Add-Check "$($label): Setup refuses with exit code 1 and says why in its log" ($code -eq 1 -and [bool]$line -and $line -match 'DisplayVersion') "exit code $code; $line"
+            $kindAfter = if ((Get-Item -LiteralPath $uninstallKey).GetValueNames() -contains 'DisplayVersion') { [string](Get-Item -LiteralPath $uninstallKey).GetValueKind('DisplayVersion') } else { 'none' }
+            Add-Check "$($label): nothing changed (every installed file, the shortcuts, the registration and its DisplayVersion)" `
+                ((Get-InstallationSnapshot) -eq $snapshot -and (Get-RegistrationText) -eq $registrationBefore -and $kindAfter -eq $kind) "DisplayVersion: $kind before, $kindAfter after"
+            Add-Check "$($label): the runtime check and installer did not run" ($text -notmatch 'VC\+\+ runtime:') ''
+        }
+        finally {
+            Remove-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -ErrorAction SilentlyContinue
+            New-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -PropertyType String -Value $registeredVersion | Out-Null
+        }
+    }
+    # An array goes into the ordered dictionary through the indexer (Windows PowerShell 5.1).
+    $versionSteps['unreadableVersionsRefused'] = @('missing', 'REG_DWORD', 'REG_MULTI_SZ')
 }
 
 # --- 3. Uninstall --------------------------------------------------------------------------------

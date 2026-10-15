@@ -13,10 +13,14 @@
 //
 // The decoders are written from the format specifications (RFC 1951; the LZMA SDK's specification,
 // lzma-specification.txt, public domain) and check everything they can: a stream that does not decode
-// completely, or whose checksum differs, is not a stream. Sizes are bounded (DecodeLimitException).
+// completely, or whose checksum differs, is not a stream. Sizes are bounded (DecodeLimitException): each
+// stream by its own limit, and everything one scanned file decompresses, at every depth and including
+// what a decoding produced before it proved not to be a stream, by one DecodeBudget, which also bounds
+// the time (W12 review SEC07-01).
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -25,6 +29,60 @@ namespace LucentPackaging
     public sealed class DecodeLimitException : Exception
     {
         public DecodeLimitException(string message) : base(message) { }
+    }
+
+    // What one scanned file may decompress in all: bytes, at every depth (the caller passes the same
+    // budget to the parts' own scans), counting every decoding that produced data, stream or not; and
+    // seconds. A part is decoded with Limit(its stream limit), so one that would overrun the budget
+    // stops while it is decoded instead of after it was allocated in full.
+    public sealed class DecodeBudget
+    {
+        private readonly long total;
+        private long remaining;
+        private readonly double seconds;
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+
+        public DecodeBudget(long totalBytes, double seconds)
+        {
+            if (totalBytes < 0 || seconds <= 0) { throw new ArgumentOutOfRangeException("totalBytes"); }
+            total = totalBytes;
+            remaining = totalBytes;
+            this.seconds = seconds;
+        }
+
+        public long Total { get { return total; } }
+        public long Used { get { return total - Math.Max(0, remaining); } }
+        public double Seconds { get { return seconds; } }
+        public bool Exhausted { get { return remaining < 0; } }
+
+        public void CheckTime()
+        {
+            if (clock.Elapsed.TotalSeconds > seconds)
+            {
+                remaining = -1;
+                throw new DecodeLimitException("decompressing it took more than " + seconds + " s, the scan's time limit for one file");
+            }
+        }
+
+        // The most the next decoding may produce: its own limit, or what is left of the budget.
+        public long Limit(long streamLimit)
+        {
+            CheckTime();
+            return Math.Min(streamLimit, Math.Max(0, remaining));
+        }
+
+        // Counts what a decoding produced; throws when the budget is spent.
+        public void Spend(long bytes)
+        {
+            remaining -= bytes;
+            if (remaining < 0) { throw Overrun(); }
+        }
+
+        public DecodeLimitException Overrun()
+        {
+            remaining = -1;
+            return new DecodeLimitException("its compressed content decompresses to more than " + total + " bytes in all (every part at every depth, and what decoding produced before it proved not to be a stream), the scan's limit for one file");
+        }
     }
 
     // A decompressed part of a file: what it was, where its compressed bytes are, its content.
@@ -303,8 +361,9 @@ namespace LucentPackaging
         }
 
         // Decodes the deflate data at input[start, end). True with the output and the byte position after
-        // the data; false when it is not complete, valid deflate data. DecodeLimitException beyond `limit`.
-        public static bool TryInflate(byte[] input, int start, int end, long limit, out byte[] output, out int after)
+        // the data; false when it is not complete, valid deflate data. `produced` is what was decoded either
+        // way (a budget counts the work of a decoding that failed too). DecodeLimitException beyond `limit`.
+        public static bool TryInflate(byte[] input, int start, int end, long limit, out byte[] output, out int after, out long produced)
         {
             output = null;
             after = start;
@@ -320,19 +379,22 @@ namespace LucentPackaging
                     if (type == 0) { state.Stored(); }
                     else if (type == 1) { state.Codes(fixedLengths, fixedDistances); }
                     else if (type == 2) { state.Dynamic(); }
-                    else { return false; }
+                    else { produced = state.output.Length; return false; }
                 } while (last == 0);
             }
             catch (InflateException)
             {
+                produced = state.output.Length;
                 return false;
             }
             catch (IndexOutOfRangeException)
             {
+                produced = state.output.Length;
                 return false;
             }
             output = state.output.ToArray();
             after = state.BytePosition;
+            produced = output.Length;
             return true;
         }
     }
@@ -404,35 +466,37 @@ namespace LucentPackaging
 
         // Every zlib and gzip stream of `data` that decodes completely and matches its checksum, in order
         // of position; a found stream's compressed bytes are not searched again. Each stream's output is
-        // at most `streamLimit` bytes and all of them together at most `totalLimit`
+        // at most `streamLimit` bytes, and everything decoded (streams, and what candidates produced
+        // before they proved not to be streams) is spent from `budget`, the scanned file's
         // (DecodeLimitException: the caller cannot scan what it cannot decompress).
-        public static List<DecodedPart> FindDeflateStreams(byte[] data, long streamLimit, long totalLimit)
+        public static List<DecodedPart> FindDeflateStreams(byte[] data, long streamLimit, DecodeBudget budget)
         {
             List<DecodedPart> parts = new List<DecodedPart>();
-            long total = 0;
             int i = 0;
             while (i + 2 < data.Length)
             {
                 byte cmf = data[i];
                 byte flg = data[i + 1];
                 DecodedPart part = null;
-                if ((cmf & 0x0F) == 8 && (cmf >> 4) <= 7 && (flg & 0x20) == 0 && ((cmf << 8) | flg) % 31 == 0)
+                bool zlib = (cmf & 0x0F) == 8 && (cmf >> 4) <= 7 && (flg & 0x20) == 0 && ((cmf << 8) | flg) % 31 == 0;
+                bool gzip = !zlib && cmf == 0x1F && flg == 0x8B && data[i + 2] == 8;
+                if (zlib || gzip)
                 {
-                    part = TryZlib(data, i, streamLimit);
-                }
-                else if (cmf == 0x1F && flg == 0x8B && data[i + 2] == 8)
-                {
-                    part = TryGzip(data, i, streamLimit);
+                    long limit = budget.Limit(streamLimit);
+                    try
+                    {
+                        part = zlib ? TryZlib(data, i, limit, budget) : TryGzip(data, i, limit, budget);
+                    }
+                    catch (DecodeLimitException)
+                    {
+                        if (limit < streamLimit || budget.Exhausted) { throw budget.Overrun(); }
+                        throw new DecodeLimitException("a stream at offset " + i + " decompresses to more than " + streamLimit + " bytes, the scan's limit for one stream");
+                    }
                 }
                 if (part == null)
                 {
                     i++;
                     continue;
-                }
-                total += part.Data.Length;
-                if (total > totalLimit)
-                {
-                    throw new DecodeLimitException("the compressed streams decompress to more than " + totalLimit + " bytes");
                 }
                 parts.Add(part);
                 i = (int)(part.Offset + part.CompressedLength);
@@ -440,11 +504,20 @@ namespace LucentPackaging
             return parts;
         }
 
-        private static DecodedPart TryZlib(byte[] data, int at, long limit)
+        // The same with a budget of `totalLimit` bytes and an hour for `data` alone.
+        public static List<DecodedPart> FindDeflateStreams(byte[] data, long streamLimit, long totalLimit)
+        {
+            return FindDeflateStreams(data, streamLimit, new DecodeBudget(totalLimit, 3600));
+        }
+
+        private static DecodedPart TryZlib(byte[] data, int at, long limit, DecodeBudget budget)
         {
             byte[] output;
             int after;
-            if (!Inflater.TryInflate(data, at + 2, data.Length, limit, out output, out after)) { return null; }
+            long produced;
+            bool decoded = Inflater.TryInflate(data, at + 2, data.Length, limit, out output, out after, out produced);
+            budget.Spend(produced);
+            if (!decoded) { return null; }
             if (after + 4 > data.Length || BigEndian32(data, after) != Checksums.Adler32(output)) { return null; }
             if (output.Length == 0) { return null; }
             DecodedPart part = new DecodedPart();
@@ -455,7 +528,7 @@ namespace LucentPackaging
             return part;
         }
 
-        private static DecodedPart TryGzip(byte[] data, int at, long limit)
+        private static DecodedPart TryGzip(byte[] data, int at, long limit, DecodeBudget budget)
         {
             int p = at + 3;
             if (p >= data.Length) { return null; }
@@ -482,7 +555,10 @@ namespace LucentPackaging
             if (p >= data.Length) { return null; }
             byte[] output;
             int after;
-            if (!Inflater.TryInflate(data, p, data.Length, limit, out output, out after)) { return null; }
+            long produced;
+            bool decoded = Inflater.TryInflate(data, p, data.Length, limit, out output, out after, out produced);
+            budget.Spend(produced);
+            if (!decoded) { return null; }
             if (after + 8 > data.Length) { return null; }
             if (LittleEndian32(data, after) != Checksums.Crc32(output) || LittleEndian32(data, after + 4) != (uint)output.Length) { return null; }
             if (output.Length == 0) { return null; }
@@ -1013,10 +1089,28 @@ namespace LucentPackaging
             }
         }
 
-        // The compressed parts of an Inno Setup executable (see the file comment). InvalidDataException
-        // when `exe` is not one whose layout this reader knows (then its compressed content cannot be
-        // scanned, and the caller fails).
+        // The same with a budget of `limit` bytes and an hour for `exe` alone.
         public static List<DecodedPart> Extract(byte[] exe, long limit)
+        {
+            return Extract(exe, new DecodeBudget(limit, 3600));
+        }
+
+        // A part decoded within what is left of the budget (`decode` takes that limit), and spent from it.
+        private static byte[] Within(DecodeBudget budget, Func<long, byte[]> decode)
+        {
+            long limit = budget.Limit(long.MaxValue);
+            byte[] decoded;
+            try { decoded = decode(limit); }
+            catch (DecodeLimitException) { throw budget.Overrun(); }
+            budget.Spend(decoded.Length);
+            return decoded;
+        }
+
+        // The compressed parts of an Inno Setup executable (see the file comment), each decoded within
+        // what is left of `budget` (the scanned file's) and spent from it. InvalidDataException when
+        // `exe` is not one whose layout this reader knows (then its compressed content cannot be
+        // scanned, and the caller fails); DecodeLimitException when the budget runs out.
+        public static List<DecodedPart> Extract(byte[] exe, DecodeBudget budget)
         {
             int table = Find(exe, OffsetTableId, 0);
             if (table < 0 || table + 64 > exe.Length) { throw new InvalidDataException("Inno Setup: no loader offset table"); }
@@ -1062,8 +1156,10 @@ namespace LucentPackaging
             while (p < offsetExe)
             {
                 int start = p;
-                long stored;
-                byte[] block = ReadBlock(exe, p, limit, out p, out stored);
+                int next = p;
+                long stored = 0;
+                byte[] block = Within(budget, limit => ReadBlock(exe, start, limit, out next, out stored));
+                p = next;
                 DecodedPart part = new DecodedPart();
                 part.Kind = "Inno Setup setup data, block " + index;
                 part.Offset = start;
@@ -1075,9 +1171,9 @@ namespace LucentPackaging
             }
             if (p != offsetExe) { throw new InvalidDataException("Inno Setup: the setup data blocks do not end at the setup engine"); }
             // The setup engine (Setup.e32): its size and CRC-32 are in the offset table.
-            int engineEnd;
-            long engineStored;
-            byte[] engine = ReadBlock(exe, offsetExe, limit, out engineEnd, out engineStored);
+            int engineEnd = offsetExe;
+            long engineStored = 0;
+            byte[] engine = Within(budget, limit => ReadBlock(exe, offsetExe, limit, out engineEnd, out engineStored));
             UndoCallTransform(engine);
             if (engine.Length != engineSize || Checksums.Crc32(engine) != engineCrc) { throw new InvalidDataException("Inno Setup: the setup engine does not match its size and CRC-32"); }
             DecodedPart enginePart = new DecodedPart();
@@ -1094,16 +1190,18 @@ namespace LucentPackaging
                    exe[q + 3] == FilesId[3])
             {
                 int start = q + 4;
-                int after;
-                byte[] files;
-                try
+                int after = start;
+                byte[] files = Within(budget, limit =>
                 {
-                    files = Lzma.DecodeLzma2(exe, start, filesEnd, limit, out after);
-                }
-                catch (InvalidDataException)
-                {
-                    files = Lzma.DecodeWithProperties(exe, start, filesEnd, limit, out after);
-                }
+                    try
+                    {
+                        return Lzma.DecodeLzma2(exe, start, filesEnd, limit, out after);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        return Lzma.DecodeWithProperties(exe, start, filesEnd, limit, out after);
+                    }
+                });
                 DecodedPart filesPart = new DecodedPart();
                 filesPart.Kind = "Inno Setup installed files, chunk " + chunk;
                 filesPart.Offset = q;

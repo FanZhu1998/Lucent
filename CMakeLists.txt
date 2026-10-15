@@ -45,6 +45,9 @@ include(LucentCompilerOptions)
 include(LucentVersion)
 include(LucentTargets)
 include(LucentPackaging)
+# Lucent's logo (ADR 0025): the branding asset's derivatives by role, and the icon and version
+# resources of the shipped programs.
+include(LucentBranding)
 
 if(LUCENT_BUILD_TESTS)
     enable_testing()

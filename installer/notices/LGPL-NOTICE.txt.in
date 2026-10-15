@@ -43,10 +43,16 @@ the SHA-512 value shown. A recipe is identified by the git tree hash of its port
 vcpkg registry (https://github.com/microsoft/vcpkg) and, when the registry commit Lucent builds
 against (@VCPKG_BASELINE@) holds exactly that tree, by a link to the port folder at that commit.
 A port that Lucent overlays (vcpkg's recipe with Lucent's build changes) is installed with Lucent
-in the folder named for it (licenses\<port>\recipe): its patches named lucent-*.patch are the
-Lucent project's only changes to the library's source, each described in the patch and in the
-recipe's portfile.cmake. Every other library is built without changes by the Lucent project. The
-same information is available in machine-readable form in Lucent.spdx.json (SPDX 2.3), and in
-MANIFEST.json inside the archive above.
+in the folder named for it (licenses\<port>\recipe).
+
+Modified libraries: where a library's recipe patches its upstream source, the library is a
+modified version of it. Every patch its recipe names (portfile.cmake; a few apply only on other
+platforms or with features Lucent does not use, as the portfile says) is listed below with the
+library ("Modified"), with the files it changes and who made the change and when: vcpkg's patches
+as they are in its registry at the commit above (dated by that commit), and the Lucent project's
+own patches, named lucent-*.patch, with the date each states (it also marks the files it changes).
+A library whose entry says "Modified: no" is built from its upstream source archive as released.
+The archives and recipes are also listed in machine-readable form in Lucent.spdx.json (SPDX 2.3),
+and, with these patches, in MANIFEST.json inside the archive above.
 
 @COMPONENTS@

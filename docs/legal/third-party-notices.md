@@ -13,11 +13,15 @@
 - **Lucent's own code:** MIT (`LICENSE` at the repository root).
 - **Policy:** [ADR 0003: linking model and third-party licensing](../adr/0003-linking-and-licensing.md).
   In short, every third-party library is a DLL; LGPL libraries (LibRaw, Qt, and since W13 Lensfun
-  with GLib, libintl and libiconv) are shipped as replaceable DLLs, unmodified except GLib and
-  libintl, whose overlay ports carry one small patch each that keeps the build machine's folders out
-  of the DLL (the recipes ship in `licenses\<port>\recipe`); LibRaw is used under LGPL-2.1; GPL
-  applications are visual references only. Third-party data (the Lensfun lens
-  database, CC BY-SA 3.0) ships unmodified as a verified asset with its licence text
+  with GLib, libintl and libiconv) are shipped as replaceable DLLs. Their vcpkg recipes patch the
+  upstream source of several of them (W12 review LIC-1): vcpkg's own patches (for example GLib's
+  `use-libiconv-on-windows.patch`, which makes `glib/gconvert.c` convert with GNU libiconv, libintl's
+  `0003-Fix-win-unicode-paths.patch` in `intl/loadmsgcat.c`, Qt's `md4c.diff`) and, in the overlay
+  ports of GLib and libintl, one Lucent patch each that keeps the build machine's folders out of the
+  DLL (the overlay recipes ship in `licenses\<port>\recipe`). `LGPL-NOTICE.txt` and the
+  corresponding-source archive list every patch with the files it changes and its date ("Modified").
+  LibRaw is used under LGPL-2.1; GPL applications are visual references only. Third-party data (the
+  Lensfun lens database, CC BY-SA 3.0) ships unmodified as a verified asset with its licence text
   ([ADR 0023](../adr/0023-lens-profile-corrections.md)).
 - **Dependency pinning:** vcpkg registry baseline `e143402b5545bab137cc465225a82da63cb2148f`,
   triplet `x64-windows-lucent` (shared, dynamic CRT, release-only). See
@@ -39,13 +43,16 @@ The user decided, before the first public release:
   triplet, Lucent's vcpkg manifest and a README on rebuilding each library and replacing its DLL.
   `licenses\LGPL-NOTICE.txt` names the archive with its size and SHA-256. Packaging fails when a
   shipped component's licence leaves no choice but a copyleft licence and
-  `installer\license-policy.json` provides no source for it, or when a provided library is missing
-  from the archive.
+  `installer\license-policy.json` provides no source for it (a `LicenseRef-` alternative, such as a
+  vendor's commercial licence, is no choice Lucent has), when a provided library is missing from the
+  archive, and, whatever the policy provides, for GPL or AGPL code without an exception (unless an ADR
+  accepted it) and for copyleft code compiled into the programs (W12 review LIC-4).
 - **Inno Setup** (Setup and its uninstaller) is used under its non-commercial terms, which cover a
   free distribution. The compiler on the reference machine (6.7.3) reports "Non-commercial use only";
-  packaging records that line in the package manifest and refuses it if the policy ever says
-  `commercial: true`. `THIRD-PARTY-NOTICES.txt` credits Inno Setup, whose own notices stay in its
-  binaries.
+  packaging records that line in the package manifest, and if the policy ever says
+  `commercial: true` it refuses any compiler whose banner does not state a commercial licence (a
+  non-commercial one, or a banner it does not recognise; W12 review LIC-6). `THIRD-PARTY-NOTICES.txt`
+  credits Inno Setup, whose own notices stay in its binaries.
 - **Releases are unsigned** until a code-signing certificate exists (the signing pipeline stays
   ready, ADR 0009 decision 13). Unsigned packages are not offered on an update channel.
 
@@ -86,30 +93,40 @@ phase's changes): 23 shipped components (21 with DLLs, 2 compiled in), 8 of them
 assets, and the corresponding-source archive written and read back for the 8 LGPL libraries (the
 [Release status](#release-status) table).
 
+Re-verified on 2026-10-15 (W12 release review) against the `-StageOnly` package of the `release`
+preset (`build\wl-fix-scripts-rel`, commit `334d0bb` with the review's changes): the same 23
+components and 8 LGPL libraries; `LGPL-NOTICE.txt` and the archive list every patch of each LGPL
+library's recipe with the files it changes and its date ("modifications listed" in the table below),
+and the archive's README names `Qt6EntryPoint.lib` as the only library code linked into a program
+(`Lucent.exe`).
+
 To refresh the ledger after changing `vcpkg.json`, the baseline or the triplet, repeat the steps
 above, update `installer\license-policy.json` and this file in the same change (ADR 0003,
 decision 7).
 
 ## Release status
 
-How the 0.1.0 package (the `-StageOnly` run of 2026-10-10 above) meets each shipped component's
+How the 0.1.0 package (the `-StageOnly` run of 2026-10-10 above; the modifications as the run of
+2026-10-15 lists them) meets each shipped component's
 obligations. "Notice" means the component's copyright file (and any further text named) is in
 `licenses\<port>\` and the component is listed in `THIRD-PARTY-NOTICES.txt`; "source" means its
 upstream archives and recipe are in `Lucent-0.1.0-corresponding-source.zip` and `LGPL-NOTICE.txt`
-names them; "replaceable" means a separate, unmodified (or, for GLib and GNU libintl, patched with the
-patch in the source) DLL that Lucent loads dynamically and never checks.
+names them; "replaceable" means a separate DLL that Lucent loads dynamically and never checks;
+"modifications listed" means `LGPL-NOTICE.txt` and the archive name every patch the library's recipe
+applies to its upstream source, with the files it changes, who made it and its date (W12 review LIC-1;
+until that review the status "Met" below did not cover vcpkg's own patches).
 
 | Component | Version | Licence as used | Ships as | Obligations | Status |
 |---|---|---|---|---|---|
 | Lucent | 0.1.0 | MIT | `Lucent.exe`, `lucent-worker.exe`, assets, `qt.conf` | Keep the notice | Met: `licenses\Lucent-LICENSE.txt`; source public at the release tag |
-| Qt Base (`qtbase`) | 6.11.1 | LGPL-3.0-only; its entry point `Qt6EntryPoint.lib` BSD-3-Clause | 4 DLLs, 4 plugins; the entry point linked statically | Replaceable, texts (LGPL-3.0, GPL-3.0), source, notices of the third-party code inside, terms allowing modification and reverse engineering | Met: replaceable (`--no-patchqt`), notice and texts, source, Qt's SBOM attributions (MPL-2.0 Public Suffix List among them, its source inside the qtbase archive) |
-| Qt Declarative (`qtdeclarative`) | 6.11.1 | LGPL-3.0-only | 19 DLLs, 18 QML plugin DLLs, QML module files | As Qt Base | Met: replaceable, notice, source |
-| Qt SVG (`qtsvg`) | 6.11.1 | LGPL-3.0-only | `Qt6Svg.dll`, 2 plugins | As Qt Base | Met: replaceable, notice, source |
-| LibRaw (`libraw`) | 0.22.2 | LGPL-2.1-only (elected over CDDL-1.0), with the BSD-style and MIT notices of its parts | `raw_r.dll` | Replaceable, LGPL-2.1 text, notices, source (LibRaw and LibRaw-cmake archives, port patches) | Met: replaceable, notice, source (2 archives) |
-| Lensfun (`lensfun`) | 0.3.4 | LGPL-3.0-only | `lensfun.dll` | As Qt Base | Met: replaceable, notice, source |
-| GLib (`glib`) | 2.90.0 | LGPL-2.1-or-later | `glib-2.0-0.dll` | Replaceable, text, source of the modified library, changed files marked | Met: patched by Lucent's overlay (`lucent-neutral-locale-dir.patch`, dated in the files it changes); source with the overlay recipe, also in `licenses\glib\recipe` |
-| GNU libintl (`gettext-libintl`) | 0.22.5 | LGPL-2.1-or-later | `intl-8.dll` | As GLib | Met: patched by Lucent's overlay (`lucent-no-builder-paths.patch`); source with the overlay recipe, also in `licenses\gettext-libintl\recipe` |
-| GNU libiconv (`libiconv`) | 1.19 | LGPL-2.1-or-later | `iconv-2.dll` | As LibRaw | Met: replaceable, notice, source |
+| Qt Base (`qtbase`) | 6.11.1 | LGPL-3.0-only; its entry point `Qt6EntryPoint.lib` BSD-3-Clause | 4 DLLs, 4 plugins; the entry point linked statically into `Lucent.exe` | Replaceable, texts (LGPL-3.0, GPL-3.0), source, a dated notice of the modifications (GPL-3.0 section 5(a), which LGPL-3.0 incorporates), notices of the third-party code inside, terms allowing modification and reverse engineering | Met: replaceable (`--no-patchqt`), notice and texts, source, modifications listed (vcpkg's recipe: mostly CMake build files, `md4c.diff` in `qtextmarkdownimporter.cpp` of `Qt6Gui.dll`, header patches for clang-cl or static builds only), Qt's SBOM attributions (MPL-2.0 Public Suffix List among them, its source inside the qtbase archive) |
+| Qt Declarative (`qtdeclarative`) | 6.11.1 | LGPL-3.0-only | 19 DLLs, 18 QML plugin DLLs, QML module files | As Qt Base | Met: replaceable, notice, source; no patch ("Modified: no") |
+| Qt SVG (`qtsvg`) | 6.11.1 | LGPL-3.0-only | `Qt6Svg.dll`, 2 plugins | As Qt Base | Met: replaceable, notice, source; no patch |
+| LibRaw (`libraw`) | 0.22.2 | LGPL-2.1-only (elected over CDDL-1.0), with the BSD-style and MIT notices of its parts | `raw_r.dll` | Replaceable, LGPL-2.1 text, notices, source (LibRaw and LibRaw-cmake archives, port patches), changed files marked (LGPL-2.1 section 2) | Met: replaceable, notice, source (2 archives), modifications listed (vcpkg's `dependencies.patch` and `fix-install.patch`: CMake build files only) |
+| Lensfun (`lensfun`) | 0.3.4 | LGPL-3.0-only | `lensfun.dll` | As Qt Base | Met: replaceable, notice, source, modifications listed (vcpkg's `fix_build.patch`: `CMakeLists.txt` only) |
+| GLib (`glib`) | 2.90.0 | LGPL-2.1-or-later | `glib-2.0-0.dll` | Replaceable, text, source of the modified library, changed files marked with the date (LGPL-2.1 section 2) | Met since the W12 release review: modifications listed with their dates in `LGPL-NOTICE.txt` and the archive: vcpkg's `use-libiconv-on-windows.patch` (`glib/gconvert.c`, `meson.build`) and `libintl.patch` (`meson.build`), and Lucent's `lucent-neutral-locale-dir.patch` (`meson.build`, which it also marks); source with the overlay recipe, also in `licenses\glib\recipe`. (Before the review the notice named only Lucent's patch.) |
+| GNU libintl (`gettext-libintl`) | 0.22.5 | LGPL-2.1-or-later | `intl-8.dll` | As GLib | Met since the W12 release review: modifications listed: vcpkg's `uwp.patch` (`gettext-runtime/intl/langprefs.c`, `gettext-runtime/intl/gnulib-lib/localcharset.c`) and `0003-Fix-win-unicode-paths.patch` (`gettext-runtime/intl/loadmsgcat.c`), and Lucent's `lucent-no-builder-paths.patch` (`gettext-runtime/intl/dcigettext.c`, `gettext-runtime/intl/gnulib-lib/relocatable.c`); source with the overlay recipe, also in `licenses\gettext-libintl\recipe` |
+| GNU libiconv (`libiconv`) | 1.19 | LGPL-2.1-or-later | `iconv-2.dll` | As LibRaw | Met: replaceable, notice, source; `iconv-2.dll`'s own sources are unmodified: vcpkg's three patches change the `iconv` program's helpers (`srclib/fcntl.c`, `srclib/relocatable.c`) and `libcharset.h.in`, which the DLL does not compile; they are listed all the same |
 | FreeType (`freetype`) | 2.14.3 | FTL (elected over GPL-2.0-or-later) | `freetype.dll` | Credit in the documentation | Met: notice; credit line under "Required notices" |
 | libjpeg-turbo | 3.2.0 | BSD-3-Clause AND IJG | `jpeg8.dll` | IJG credit, its README.ijg | Met: notice with `README.ijg` from the verified archive; credit line |
 | libtiff (`tiff`) | 4.7.2 | libtiff | `tiff.dll` | Notices; LZW acknowledgement | Met: notice; credit line |
@@ -178,7 +195,8 @@ Lucent uses LibRaw under **LGPL-2.1** (ADR 0003, decision 2). The installed LibR
 - provide the corresponding source: LibRaw 0.22.2 (tag `0.22.2`, pinned by SHA-512 in the port),
   the LibRaw-cmake build files (commit `eb98e4325aef2ce85d2eb031c2ff18640ca616d3`) and the vcpkg
   port patches (`dependencies.patch`, `fix-install.patch`, and the `LIBRAW_NODLL` edit to
-  `libraw_types.h`). Lucent itself does not modify LibRaw. All of it is in
+  `libraw_types.h`). Lucent itself does not modify LibRaw; vcpkg's patches are listed with their files
+  and date in `LGPL-NOTICE.txt` (W12 review LIC-1). All of it is in
   `Lucent-<version>-corresponding-source.zip` beside the installer (ADR 0024);
 - not forbid, in Lucent's end-user terms, modification of the library for the user's own use or
   reverse engineering for debugging such modifications.
@@ -198,9 +216,9 @@ package; `installer\license-policy.json` records the reviewed versions and concl
 
 | Component (port) | Version | Licence | Usage | Main obligations when distributed | Licence text source |
 |---|---|---|---|---|---|
-| Lensfun (`lensfun`) | 0.3.4, port 2 | **LGPL-3.0-only**: the README licenses the libraries under "the GNU Lesser General Public License, version 3" (the public header `lensfun.h` additionally says LGPL-2.0-or-later; the other library sources carry no notice). Its applications are GPL-3.0 and are not built (`BUILD_LENSTOOL=OFF`); the port manifest declares no licence | Shipped DLL `lensfun.dll`, imported by `Lucent.exe` and `lucent-worker.exe` through `lucent_engine` (a private dependency: no Lensfun type in Lucent's headers) | As for the other LGPL libraries (ADR 0003): unmodified, replaceable DLL; licence texts; corresponding source (`lensfun/lensfun` tag `v0.3.4`, pinned by SHA-512 in the port, with the port's `fix_build.patch`); end-user terms that permit modification and reverse engineering for debugging. The database is not part of the port (row below) | `share/lensfun/copyright` (the README's licence section, GPL-3.0 and LGPL-3.0 texts) |
-| GLib (`glib`) | 2.90.0 | LGPL-2.1-or-later (the port declares `LGPL-2.1-or-later AND (LGPL-2.1-only OR MPL-1.1)` for its whole tree) | Shipped DLL `glib-2.0-0.dll`, imported by `lensfun.dll` (Lensfun's data structures, XML parsing). GObject, GIO, GModule and GThread are not imported and do not ship (the packaging audit of the W13 stage, 2026-10-10). Built from Lucent's overlay of the port (`cmake/ports/glib`, W13 closure): vcpkg's recipe plus `lucent-neutral-locale-dir.patch`, which compiles only the part of `GLIB_LOCALE_DIR` that `glib/ggettext.c` uses on Windows ("/share/locale", appended to the DLL's own folder), so the DLL no longer names the build machine's install prefix; no behaviour of the DLL changes | As for LGPL libraries; the modified library's recipe and patch ship in `licenses\glib\recipe` and are named in `LGPL-NOTICE.txt` and the SBOM | `share/glib/copyright` (`LICENSES/LGPL-2.1-or-later.txt`, `LGPL-2.1-only.txt`, `MPL-1.1.txt`) |
-| GNU libintl (`gettext-libintl`) | 0.22.5, port 4 | LGPL-2.1-or-later | Shipped DLL `intl-8.dll`, imported by GLib. Built from Lucent's overlay of the port (`cmake/ports/gettext-libintl`): a configure-time locale probe preset, and since the W13 closure `lucent-no-builder-paths.patch`, which gives the default catalog folder of unbound text domains a name no file can have and turns off gnulib's "costly" relocation (both compiled the build machine's folders into the DLL; Lucent binds no text domain and never calls the relocation, `docs/adr/0023`) | As for LGPL libraries; the modified library's recipe and patch ship in `licenses\gettext-libintl\recipe` and are named in `LGPL-NOTICE.txt` and the SBOM | `share/gettext-libintl/copyright` (`gettext-runtime/intl/COPYING.LIB`) |
+| Lensfun (`lensfun`) | 0.3.4, port 2 | **LGPL-3.0-only**: the README licenses the libraries under "the GNU Lesser General Public License, version 3" (the public header `lensfun.h` additionally says LGPL-2.0-or-later; the other library sources carry no notice). Its applications are GPL-3.0 and are not built (`BUILD_LENSTOOL=OFF`); the port manifest declares no licence | Shipped DLL `lensfun.dll`, imported by `Lucent.exe` and `lucent-worker.exe` through `lucent_engine` (a private dependency: no Lensfun type in Lucent's headers) | As for the other LGPL libraries (ADR 0003): replaceable DLL; licence texts; corresponding source (`lensfun/lensfun` tag `v0.3.4`, pinned by SHA-512 in the port, with the port's `fix_build.patch`, which changes only `CMakeLists.txt` and is listed with its date in `LGPL-NOTICE.txt`, W12 review LIC-1); end-user terms that permit modification and reverse engineering for debugging. The database is not part of the port (row below) | `share/lensfun/copyright` (the README's licence section, GPL-3.0 and LGPL-3.0 texts) |
+| GLib (`glib`) | 2.90.0 | LGPL-2.1-or-later (the port declares `LGPL-2.1-or-later AND (LGPL-2.1-only OR MPL-1.1)` for its whole tree) | Shipped DLL `glib-2.0-0.dll`, imported by `lensfun.dll` (Lensfun's data structures, XML parsing). GObject, GIO, GModule and GThread are not imported and do not ship (the packaging audit of the W13 stage, 2026-10-10). Built from Lucent's overlay of the port (`cmake/ports/glib`, W13 closure): vcpkg's recipe (its `use-libiconv-on-windows.patch` makes `glib/gconvert.c` convert with GNU libiconv instead of the bundled win_iconv, and its `libintl.patch` changes `meson.build`) plus `lucent-neutral-locale-dir.patch`, which compiles only the part of `GLIB_LOCALE_DIR` that `glib/ggettext.c` uses on Windows ("/share/locale", appended to the DLL's own folder), so the DLL no longer names the build machine's install prefix; no behaviour of the DLL changes | As for LGPL libraries; the modified library's recipe and patches ship in `licenses\glib\recipe`, and `LGPL-NOTICE.txt` lists every patch with the files it changes and its date (W12 review LIC-1); the SBOM names the recipe | `share/glib/copyright` (`LICENSES/LGPL-2.1-or-later.txt`, `LGPL-2.1-only.txt`, `MPL-1.1.txt`) |
+| GNU libintl (`gettext-libintl`) | 0.22.5, port 4 | LGPL-2.1-or-later | Shipped DLL `intl-8.dll`, imported by GLib. Built from Lucent's overlay of the port (`cmake/ports/gettext-libintl`): vcpkg's recipe (its `uwp.patch` and `0003-Fix-win-unicode-paths.patch` change `gettext-runtime/intl/langprefs.c`, `gnulib-lib/localcharset.c` and `loadmsgcat.c`), a configure-time locale probe preset, and since the W13 closure `lucent-no-builder-paths.patch`, which gives the default catalog folder of unbound text domains a name no file can have and turns off gnulib's "costly" relocation (both compiled the build machine's folders into the DLL; Lucent binds no text domain and never calls the relocation, `docs/adr/0023`) | As for LGPL libraries; the modified library's recipe and patches ship in `licenses\gettext-libintl\recipe`, and `LGPL-NOTICE.txt` lists every patch with the files it changes and its date (W12 review LIC-1); the SBOM names the recipe | `share/gettext-libintl/copyright` (`gettext-runtime/intl/COPYING.LIB`) |
 | GNU libiconv (`libiconv`) | 1.19 | LGPL-2.1-or-later (libiconv and libcharset); the `iconv` program and the documentation are GPL-3.0 and are not shipped. The port manifest declares no licence | Shipped DLL `iconv-2.dll`, imported by GNU libintl and GLib; `charset-1.dll` is not imported and does not ship (the packaging audit, 2026-10-10) | As for LGPL libraries | `share/libiconv/copyright` (read 2026-10-10: the port's note "The libiconv and libcharset libraries and their header files are under LGPL ... The iconv program and the documentation are under GPL", then `COPYING.LIB` and `COPYING`) |
 | PCRE2 (`pcre2`) | 10.47, port 1 | As in the Qt section | The 8-bit library, imported by GLib, ships in addition to Qt's 16-bit one | As in the Qt section | As in the Qt section |
 | libffi (`libffi`) | 3.8.0 | MIT | Dependency of GLib's GObject; does not ship (`glib-2.0-0.dll` does not import it, confirmed by the packaging audit of 2026-10-10; `installer/license-policy.json` reviews it in case `ffi-8.dll` ever ships) | Reproduce the MIT notice if it ships | `share/libffi/copyright` (read 2026-10-10: the MIT permission notice, "Copyright (c) 1996-2026 Anthony Green, Red Hat, Inc and others") |
@@ -301,3 +319,8 @@ the files the packaging audit found in the installation folder.
 9. **Static linking** (closed in W5): packaging detects vcpkg libraries linked statically into
    `Lucent.exe` and requires a reviewed entry for each (today `Qt6EntryPoint.lib`, BSD-3-Clause);
    one under an LGPL or GPL licence stops packaging.
+10. **Modified LGPL libraries** (closed in the W12 release review, ADR 0003's amendment of
+    2026-10-15): the notices named only Lucent's two `lucent-*.patch` files as changes, although
+    vcpkg's recipes patch the source of GLib, libintl, Qt, LibRaw, Lensfun and libiconv too.
+    Packaging now lists every patch a library's recipe names, with the files it changes, who made it
+    and when, in `LGPL-NOTICE.txt` and the corresponding-source archive.

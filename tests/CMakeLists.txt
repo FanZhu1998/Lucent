@@ -20,8 +20,13 @@
 #
 # installer/ holds the self-tests of the update channel's release tooling (W12, ADR 0022; label
 # "installer").
+#
+# branding/ holds the checks of Lucent's logo: the branding asset and its generator, the icon and
+# version resources of the built programs, and the icon and wizard images of a Setup compiled from
+# installer/lucent.iss (W12 release phase, ADR 0025; label "branding").
 
 add_subdirectory(bench)
+add_subdirectory(branding)
 add_subdirectory(qualification)
 # catalog_fixtures/ holds the generator of the committed catalog fixtures of every schema version
 # (W12, ADR 0022), a tool the fixtures' tests do not need.
