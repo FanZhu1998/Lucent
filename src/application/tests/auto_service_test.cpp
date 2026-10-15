@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <mutex>
 #include <format>
@@ -177,9 +178,11 @@ TEST_F(AutoServiceTest, AutoCreatesAnEditableRevisionWithItsAnalysisRecord) {
     AutoService& auto_service = service();
     std::vector<AutoEvent> events;
     std::mutex mutex;
+    std::condition_variable arrived;
     Subscription subscription = auto_service.subscribe([&](const AutoEvent& event) {
         std::lock_guard lock(mutex);
         events.push_back(event);
+        arrived.notify_all();
     });
     EXPECT_EQ(auto_service.runs_in_progress(), 0u);
     const AutoTaskResult result = run(auto_service);
@@ -233,9 +236,14 @@ TEST_F(AutoServiceTest, AutoCreatesAnEditableRevisionWithItsAnalysisRecord) {
     ASSERT_TRUE(flags.is_array());
     EXPECT_EQ(flags.size(), run.flags.size());
 
-    // Progress was observed, then completion.
+    // Progress was observed, then completion. The observers are told on the executor thread after
+    // wait() has the result (auto_service.hpp promises no order between the two), so the completion
+    // is waited for.
     {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
+        EXPECT_TRUE(arrived.wait_for(lock, 60s, [&] {
+            return !events.empty() && events.back().kind == AutoEvent::Kind::Finished;
+        })) << "no completion after the result";
         ASSERT_FALSE(events.empty());
         EXPECT_EQ(events.back().kind, AutoEvent::Kind::Finished);
         bool checking = false;
