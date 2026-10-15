@@ -66,21 +66,28 @@ assets::CameraSupportLoad load_camera_support(const BackendOptions& options) {
 }
 
 // W13 (ADR 0023): logs what loading the lens database found and refused (on the loading thread,
-// W12). Never a failure: without one the session corrects no lens.
-void log_lens_database(const assets::LensDatabaseLookup& load) {
-    for (const assets::AssetCandidate& candidate : load.lookup.candidates) {
-        if (candidate.present && candidate.refused && candidate.origin == assets::AssetOrigin::UserDataPack) {
-            core::log_warn(kLog, "lens database data pack refused: {}", candidate.refused->describe());
+// W12). Never a failure: without one the session corrects no lens. Never throws: a line whose text
+// cannot be made (no memory) is dropped, never the outcome.
+void log_lens_database(const assets::LensDatabaseLookup& load) noexcept {
+    try {
+        for (const assets::AssetCandidate& candidate : load.lookup.candidates) {
+            if (candidate.present && candidate.refused &&
+                candidate.origin == assets::AssetOrigin::UserDataPack) {
+                core::log_warn(kLog, "lens database data pack refused: {}", candidate.refused->describe());
+            }
         }
-    }
-    if (load.database) {
-        const engine::LensDatabaseInfo& info = load.database->info();
-        core::log_info(kLog, "lens database {} {} active ({}, {} files: {} cameras, {} lenses, {} mounts)",
-                       info.identity.asset_id, info.identity.asset_version, info.library, info.files,
-                       info.cameras, info.lenses, info.mounts);
-    } else {
-        core::log_error(kLog, "no lens database is active, so no lens correction is applied: {}",
-                        load.problem ? load.problem->describe() : std::string("unknown reason"));
+        if (load.database) {
+            const engine::LensDatabaseInfo& info = load.database->info();
+            core::log_info(kLog,
+                           "lens database {} {} active ({}, {} files: {} cameras, {} lenses, {} mounts)",
+                           info.identity.asset_id, info.identity.asset_version, info.library, info.files,
+                           info.cameras, info.lenses, info.mounts);
+        } else {
+            core::log_error(kLog, "no lens database is active, so no lens correction is applied: {}",
+                            load.problem ? load.problem->describe() : std::string("unknown reason"));
+        }
+    } catch (...) {
+        // std::bad_alloc while describing a problem: the outcome stands without its log line.
     }
 }
 
@@ -91,8 +98,10 @@ std::shared_ptr<app::LensDatabaseSource> start_lens_database(const BackendOption
     if (!loader) {
         loader = [locations = asset_locations_of(options)] { return assets::load_lens_database(locations); };
     }
+    // Every outcome is logged, a loader's exception included (run() makes it an outcome, as the source
+    // would), and logging never changes the outcome.
     auto load = [loader = std::move(loader)] {
-        assets::LensDatabaseLookup lookup = loader();
+        assets::LensDatabaseLookup lookup = app::LensDatabaseSource::run(loader);
         log_lens_database(lookup);
         return lookup;
     };

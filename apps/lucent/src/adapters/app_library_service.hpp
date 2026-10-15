@@ -63,7 +63,9 @@
 // Lifetime and threading: lives on the UI thread; the destructor closes the dispatcher, detaches
 // from the maintenance events, ends the library subscription (waiting for an observer running on
 // another thread) and cancels a running import, so nothing reaches the object afterwards. It
-// emits no signals from its destructor.
+// emits no signals from its destructor. A constructor that throws leaves nothing that could reach the
+// object either: the library's and the recipes' observers and the lens database's listener are held
+// by subscription members, and the maintenance sink, which has no subscription, is set last.
 
 #include <QHash>
 #include <QList>
@@ -166,6 +168,7 @@ private:
     std::shared_ptr<UiDispatcher> dispatcher_;
     app::Subscription subscription_;  // after dispatcher_: reset first on destruction
     app::Subscription recipe_subscription_;
+    app::Subscription lens_database_subscription_;  // W12 (APL-06): lens_database_changed
     // Identity (settings SHA-256) of the recipe each item's thumbnail shows, once known.
     QHash<ItemId, QByteArray> recipe_identity_;
 

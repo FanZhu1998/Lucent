@@ -102,8 +102,9 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
     : LibraryService(parent),
       backend_(std::move(backend)),
       dispatcher_(std::make_shared<UiDispatcher>(this)) {
-    // W12 (APL-06): the lens database loads off the UI thread; Help > About is told when it has.
-    backend_->lens_database_source()->on_ready(
+    // W12 (APL-06): the lens database loads off the UI thread; Help > About is told when it has. The
+    // listener ends with its subscription member, also when a statement below throws.
+    lens_database_subscription_ = backend_->lens_database_source()->on_ready(
         [this, dispatcher = dispatcher_] { dispatcher->post([this] { emit lens_database_changed(); }); });
     app::Library* library = &backend_->library();
     // The session's camera support database (fixed for the session; kept alive by the backend).
@@ -144,9 +145,6 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
         initial_order_.push_back(item.id);
         items_.insert(item.id, std::move(item));
     }
-    backend_->set_maintenance_sink([this, dispatcher = dispatcher_](const app::MaintenanceEvent& event) {
-        dispatcher->post([this, event] { on_maintenance(event); });
-    });
     // Committed recipes (an edit, undo/redo, a paste) change what the thumbnail must show. Runs on
     // the thread that made the change; `this` is only used by the posted function.
     recipe_subscription_ = backend_->recipes().subscribe(
@@ -166,11 +164,17 @@ AppLibraryService::AppLibraryService(std::shared_ptr<Backend> backend, QObject* 
                 apply_recipe(item, edited, identity, readable, review);
             });
         });
+    // Last: the sink has no subscription that would end it if a statement after it threw. No event is
+    // missed meanwhile (the maintenance service runs nothing before start()).
+    backend_->set_maintenance_sink([this, dispatcher = dispatcher_](const app::MaintenanceEvent& event) {
+        dispatcher->post([this, event] { on_maintenance(event); });
+    });
 }
 
 AppLibraryService::~AppLibraryService() {
     dispatcher_->close();
     backend_->set_maintenance_sink({});
+    lens_database_subscription_.reset();
     recipe_subscription_.reset();
     subscription_.reset();
     running_task_.cancel();

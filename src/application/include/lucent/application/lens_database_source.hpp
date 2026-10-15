@@ -19,17 +19,23 @@
 //     (Help > About, the Lens corrections panel) until on_ready() tells it the outcome.
 //
 // A database that cannot be loaded is an outcome like any other (assets::LensDatabaseLookup::problem):
-// wait() returns it, and the session runs without lens corrections, as before.
+// wait() returns it, and the session runs without lens corrections, as before. The source logs nothing
+// about the outcome; its loader does (Lucent.exe's Backend logs every outcome, a loader's exception
+// included).
 //
 // Thread-safety: every member is thread-safe. The destructor waits for the loading thread, so the loader
-// must finish on its own (assets::load_lens_database reads files of the installation folder only); the
-// loading thread never owns the source, so the destructor never runs on it.
+// must finish on its own. assets::load_lens_database reads the installation's assets folder, and it also
+// probes the per-user data-pack folder (<user data>\assets\lens-database: a directory check, and its
+// manifest is read when the folder exists), which is local by default and any folder with --data-root.
+// A read that stalls in either place delays every wait() and the destructor (in Lucent.exe, the UI
+// thread at exit). The loading thread never owns the source, so the destructor never runs on it.
 
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <thread>
 
+#include <lucent/application/library.hpp>
 #include <lucent/assets/lens_database.hpp>
 #include <lucent/core/error.hpp>
 #include <lucent/engine/lens_correction.hpp>
@@ -40,12 +46,17 @@ class LensDatabaseSource {
 public:
     using Loader = std::function<assets::LensDatabaseLookup()>;
 
-    // Runs `loader` on a new thread and returns at once. A loader that throws (or is empty) gives an
-    // outcome without a database whose problem says so (Internal, or OutOfMemory for std::bad_alloc).
+    // Runs `loader` on a new thread and returns at once; the outcome is run(loader)'s.
     // Errors: OutOfMemory, and Internal when no thread can be started.
     [[nodiscard]] static Expected<std::shared_ptr<LensDatabaseSource>> start(Loader loader);
     // A source whose outcome is known already (tools, tests, sessions that load synchronously).
     [[nodiscard]] static std::shared_ptr<LensDatabaseSource> ready(assets::LensDatabaseLookup lookup);
+    // Runs `loader` on the calling thread, as start() runs it on its own: the loader's outcome, or, when
+    // it throws (or is empty), an outcome without a database whose problem says so (Internal, or
+    // OutOfMemory for std::bad_alloc; without a message when not even that can be allocated). Logs
+    // nothing: a loader that logs its outcome loads through run() itself, so that an exception is logged
+    // like any other outcome (the Backend's loader does).
+    [[nodiscard]] static assets::LensDatabaseLookup run(const Loader& loader) noexcept;
 
     ~LensDatabaseSource();
     LensDatabaseSource(const LensDatabaseSource&) = delete;
@@ -61,11 +72,18 @@ public:
     // When the load finished (std::chrono::steady_clock), once loaded(); the clock's epoch before.
     [[nodiscard]] std::chrono::steady_clock::time_point finished_at() const noexcept;
 
-    // Calls `listener` once, when the load has finished: on the loading thread, or at once on the calling
-    // thread when it has finished already. Listeners run in the order added, outside the source's lock;
-    // a listener may call wait(), try_get() and database(), but not on_ready(). Exceptions a listener
-    // throws are logged and dropped.
-    void on_ready(std::function<void()> listener);
+    // Calls `listener` once the outcome is known, unless its subscription ends first. A listener added
+    // while the database loads runs on the loading thread once the outcome is published; those run one
+    // after another, in the order added. A listener added once the outcome is set runs at once, on the
+    // calling thread, before on_ready() returns (the subscription is then empty): it can run before, or
+    // at the same time as, listeners added earlier that the loading thread has not called yet.
+    // Ending the subscription (reset() or its destructor) removes a listener that has not run and waits
+    // for one running on another thread (a listener may end its own subscription); afterwards it is
+    // never called, and the source has released it. Owners keep the subscription as a member, so that
+    // the listener ends with them, also when their constructor throws after adding it.
+    // Listeners run outside the source's lock; they may call wait(), try_get() and database(), but not
+    // on_ready(). Exceptions a listener throws are logged and dropped. An empty `listener` is never called.
+    [[nodiscard]] Subscription on_ready(std::function<void()> listener);
 
 private:
     struct Shared;

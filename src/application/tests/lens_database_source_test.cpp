@@ -1,8 +1,8 @@
 // The lens database loaded off the UI thread (lens_database_source.hpp; W12, review finding APL-06 of
-// W13; ADR 0023 amendment): the source's outcome, its listeners and its lifetime; a renderer created
-// while the database loads waits for it and corrects exactly as one created with the database; the
-// recipe service asks for its engine version once, outside its lock, and records the database in the
-// first revision.
+// W13; ADR 0023 amendment): the source's outcome, its listeners and their subscriptions, and its
+// lifetime; a renderer created while the database loads waits for it and corrects exactly as one created
+// with the database; the recipe service asks for its engine version once, outside its lock, and records
+// the database in the first revision.
 
 #include <array>
 #include <atomic>
@@ -162,16 +162,19 @@ TEST(LensDatabaseSource, ListenersRunOnceInOrderAndALateOneAtOnce) {
     std::mutex mutex;
     std::vector<int> calls;
     std::atomic<bool> outcome_known_in_listener{false};
-    (*source)->on_ready([&] {
+    const Subscription first = (*source)->on_ready([&] {
         const std::lock_guard lock(mutex);
         calls.push_back(1);
     });
-    (*source)->on_ready([&, s = source->get()] {
+    const Subscription second = (*source)->on_ready([&, s = source->get()] {
         outcome_known_in_listener = s->try_get() != nullptr;  // the outcome is published first
         const std::lock_guard lock(mutex);
         calls.push_back(2);
     });
-    (*source)->on_ready([] { throw std::runtime_error("a listener that throws is logged and dropped"); });
+    const Subscription throwing =
+        (*source)->on_ready([] { throw std::runtime_error("a listener that throws is logged and dropped"); });
+    EXPECT_TRUE(first.active());
+    EXPECT_FALSE((*source)->on_ready({}).active()) << "an empty listener is never added";
     {
         const std::lock_guard lock(mutex);
         EXPECT_TRUE(calls.empty());
@@ -183,14 +186,98 @@ TEST(LensDatabaseSource, ListenersRunOnceInOrderAndALateOneAtOnce) {
         return calls.size() == 2;
     }));
     EXPECT_TRUE(outcome_known_in_listener.load());
-    // A listener added once the outcome is known runs at once, on this thread.
+    // A listener added once the outcome is known runs at once, on this thread, and needs no subscription.
     const std::thread::id here = std::this_thread::get_id();
     std::thread::id ran_on;
-    (*source)->on_ready([&] { ran_on = std::this_thread::get_id(); });
+    const Subscription late = (*source)->on_ready([&] { ran_on = std::this_thread::get_id(); });
     EXPECT_EQ(ran_on, here);
+    EXPECT_FALSE(late.active());
     std::this_thread::sleep_for(50ms);
     const std::lock_guard lock(mutex);
     EXPECT_EQ(calls, (std::vector<int>{1, 2})) << "each listener once, in the order added";
+}
+
+// Review finding APL06-R2 (W12): a listener's owner can take it back. A listener whose subscription ends
+// before the outcome is known is never called, and the source releases it (and what it captured) at once,
+// as an owner whose constructor throws after adding its listener needs.
+TEST(LensDatabaseSource, AListenerWhoseSubscriptionEndsFirstIsNeverCalledAndIsReleased) {
+    Gate gate;
+    auto source = LensDatabaseSource::start([&] {
+        gate.pass();
+        return lookup_of(nullptr);
+    });
+    ASSERT_TRUE(source);
+    const bool loading = gate.wait_arrival();
+    if (!loading) {
+        gate.open();  // the source's destructor joins the loading thread
+    }
+    ASSERT_TRUE(loading);
+    std::atomic<int> ended_calls{0};
+    std::atomic<int> kept_calls{0};
+    auto owner = std::make_shared<int>(0);  // stands for what a listener captures (a dispatcher, `this`)
+    Subscription ended = (*source)->on_ready([&, owner] { ++ended_calls; });
+    const Subscription kept = (*source)->on_ready([&] { ++kept_calls; });
+    EXPECT_EQ(owner.use_count(), 2);
+    ended.reset();
+    EXPECT_FALSE(ended.active());
+    EXPECT_EQ(owner.use_count(), 1) << "the source still holds the listener of an ended subscription";
+    gate.open();
+    static_cast<void>((*source)->wait());
+    ASSERT_TRUE(eventually([&] { return kept_calls.load() == 1; }));
+    std::this_thread::sleep_for(50ms);
+    EXPECT_EQ(ended_calls.load(), 0);
+    EXPECT_EQ(kept_calls.load(), 1);
+}
+
+// Ending a subscription waits while the loading thread runs its listener, and afterwards the listener is
+// never called again; a listener may end its own subscription.
+TEST(LensDatabaseSource, EndingASubscriptionWaitsForItsRunningListener) {
+    Gate loader_gate;
+    Gate listener_gate;
+    auto source = LensDatabaseSource::start([&] {
+        loader_gate.pass();
+        return lookup_of(nullptr);
+    });
+    ASSERT_TRUE(source);
+    const bool loading = loader_gate.wait_arrival();
+    if (!loading) {
+        loader_gate.open();
+        listener_gate.open();
+    }
+    ASSERT_TRUE(loading);
+    std::atomic<bool> listener_returned{false};
+    auto running = std::make_shared<Subscription>();
+    *running = (*source)->on_ready([&] {
+        listener_gate.pass();
+        listener_returned = true;
+    });
+    auto own = std::make_shared<Subscription>();
+    std::atomic<bool> ended_itself{false};
+    *own = (*source)->on_ready([&, own] {
+        own->reset();  // from inside: does not wait for this call
+        ended_itself = true;
+    });
+    loader_gate.open();
+    // The first listener runs on the loading thread and waits at its gate.
+    const bool running_listener = listener_gate.wait_arrival();
+    if (!running_listener) {
+        listener_gate.open();  // the source's destructor joins the loading thread
+    }
+    ASSERT_TRUE(running_listener);
+
+    std::atomic<bool> reset_returned{false};
+    std::thread ender([&] {
+        running->reset();
+        reset_returned = true;
+    });
+    std::this_thread::sleep_for(200ms);
+    EXPECT_FALSE(reset_returned.load()) << "reset() returned while its listener was still running";
+    listener_gate.open();
+    ender.join();
+    EXPECT_TRUE(reset_returned.load());
+    EXPECT_TRUE(listener_returned.load()) << "reset() returned before the listener did";
+    ASSERT_TRUE(eventually([&] { return ended_itself.load(); }));
+    EXPECT_FALSE(own->active());
 }
 
 TEST(LensDatabaseSource, ALoaderThatFailsGivesAnOutcomeWithItsProblem) {
@@ -223,6 +310,21 @@ TEST(LensDatabaseSource, ALoaderThatFailsGivesAnOutcomeWithItsProblem) {
     ASSERT_TRUE(missing);
     ASSERT_TRUE((*missing)->wait().problem);
     EXPECT_EQ((*missing)->wait().problem->code, ErrorCode::NotFound);
+
+    // run() gives the same outcomes on the calling thread (the Backend's loader logs them).
+    const assets::LensDatabaseLookup ran = LensDatabaseSource::run(
+        []() -> assets::LensDatabaseLookup { throw std::runtime_error("the disk went away"); });
+    ASSERT_TRUE(ran.problem);
+    EXPECT_EQ(ran.problem->code, ErrorCode::Internal);
+    EXPECT_EQ(ran.problem->message, thrown.problem->message);
+    EXPECT_EQ(ran.problem->where, thrown.problem->where);
+    const assets::LensDatabaseLookup ran_out =
+        LensDatabaseSource::run([]() -> assets::LensDatabaseLookup { throw std::bad_alloc(); });
+    ASSERT_TRUE(ran_out.problem);
+    EXPECT_EQ(ran_out.problem->code, ErrorCode::OutOfMemory);
+    EXPECT_TRUE(LensDatabaseSource::run({}).problem);
+    const auto database = synthetic_database();
+    EXPECT_EQ(LensDatabaseSource::run([&] { return lookup_of(database); }).database, database);
 }
 
 TEST(LensDatabaseSource, TheDestructorWaitsForTheLoadingThread) {
@@ -244,8 +346,9 @@ TEST(LensDatabaseSource, AReadySourceIsLoadedAtOnce) {
     ASSERT_NE(source->try_get(), nullptr);
     EXPECT_EQ(source->database(), database);
     bool told = false;
-    source->on_ready([&] { told = true; });
+    const Subscription subscription = source->on_ready([&] { told = true; });
     EXPECT_TRUE(told);
+    EXPECT_FALSE(subscription.active());
 }
 
 // A renderer created while the lens database loads (Lucent.exe's, W12) renders nothing until it has

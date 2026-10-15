@@ -29,15 +29,27 @@ assets::LensDatabaseLookup failed_load(ErrorCode code, std::string message) {
 
 // The state the loading thread shares with the source. The thread owns only this, never the source.
 struct LensDatabaseSource::Shared {
+    // A listener of on_ready() added before the outcome was known. Its subscription and the source share
+    // it; the listener itself is taken out (and released) by whichever runs it or ends it first.
+    struct Listener {
+        explicit Listener(std::function<void()> f) noexcept : function(std::move(f)) {}
+
+        std::mutex mutex;
+        std::condition_variable idle;           // the listener has returned
+        std::function<void()> function;         // (mutex) until it is called or its subscription ends
+        bool ended = false;                     // (mutex) its subscription ended: never called
+        std::optional<std::thread::id> caller;  // (mutex) the thread calling it, while it runs
+    };
+
     mutable std::mutex mutex;
     mutable std::condition_variable loaded_cv;
     std::optional<assets::LensDatabaseLookup> outcome;          // (mutex) set once
     std::atomic<const assets::LensDatabaseLookup*> published{};  // &*outcome once set
     std::chrono::steady_clock::time_point finished{};             // set before `published`
-    std::vector<std::function<void()>> listeners;                // (mutex) until the outcome is set
+    std::vector<std::shared_ptr<Listener>> listeners;             // (mutex) until the outcome is set
 
-    void finish(assets::LensDatabaseLookup lookup) {
-        std::vector<std::function<void()>> waiting;
+    void finish(assets::LensDatabaseLookup&& lookup) {
+        std::vector<std::shared_ptr<Listener>> waiting;
         {
             const std::lock_guard lock(mutex);
             outcome.emplace(std::move(lookup));
@@ -46,8 +58,40 @@ struct LensDatabaseSource::Shared {
             waiting.swap(listeners);
         }
         loaded_cv.notify_all();
-        for (std::function<void()>& listener : waiting) {
-            call(listener);
+        const std::thread::id self = std::this_thread::get_id();
+        for (const std::shared_ptr<Listener>& listener : waiting) {
+            std::function<void()> function;
+            {
+                const std::lock_guard lock(listener->mutex);
+                if (listener->ended) {
+                    continue;
+                }
+                function.swap(listener->function);
+                listener->caller = self;
+            }
+            call(function);
+            function = nullptr;  // its captures are released before its subscription can end
+            {
+                const std::lock_guard lock(listener->mutex);
+                listener->caller.reset();
+            }
+            listener->idle.notify_all();
+        }
+    }
+
+    // Ends a listener's subscription: it is never called afterwards. Waits while another thread calls it.
+    static void end(const std::weak_ptr<Shared>& weak, const std::shared_ptr<Listener>& listener) noexcept {
+        std::function<void()> function;  // a listener that never ran is released here, on this thread
+        {
+            std::unique_lock lock(listener->mutex);
+            listener->ended = true;
+            const std::thread::id self = std::this_thread::get_id();
+            listener->idle.wait(lock, [&] { return !listener->caller || *listener->caller == self; });
+            function.swap(listener->function);
+        }
+        if (const std::shared_ptr<Shared> shared = weak.lock()) {
+            const std::lock_guard lock(shared->mutex);
+            std::erase(shared->listeners, listener);  // still waiting for the outcome
         }
     }
 
@@ -71,16 +115,7 @@ Expected<std::shared_ptr<LensDatabaseSource>> LensDatabaseSource::start(Loader l
         auto shared = std::make_shared<Shared>();
         std::shared_ptr<LensDatabaseSource> source(new LensDatabaseSource(shared));
         source->thread_ = std::thread([shared, loader = std::move(loader)]() mutable {
-            assets::LensDatabaseLookup lookup;
-            try {
-                lookup = loader ? loader() : failed_load(ErrorCode::Internal, "no lens database loader was given");
-            } catch (const std::bad_alloc&) {
-                lookup = failed_load(ErrorCode::OutOfMemory, "out of memory while loading the lens database");
-            } catch (const std::exception& e) {
-                lookup = failed_load(ErrorCode::Internal, std::string("loading the lens database failed: ") + e.what());
-            } catch (...) {
-                lookup = failed_load(ErrorCode::Internal, "loading the lens database failed");
-            }
+            assets::LensDatabaseLookup lookup = run(loader);
             // The loader is destroyed here, on its own thread, before anyone is told.
             loader = nullptr;
             shared->finish(std::move(lookup));
@@ -98,6 +133,30 @@ std::shared_ptr<LensDatabaseSource> LensDatabaseSource::ready(assets::LensDataba
     auto shared = std::make_shared<Shared>();
     shared->finish(std::move(lookup));
     return std::shared_ptr<LensDatabaseSource>(new LensDatabaseSource(std::move(shared)));
+}
+
+assets::LensDatabaseLookup LensDatabaseSource::run(const Loader& loader) noexcept {
+    try {
+        try {
+            if (!loader) {
+                return failed_load(ErrorCode::Internal, "no lens database loader was given");
+            }
+            return loader();
+        } catch (const std::bad_alloc&) {
+            return failed_load(ErrorCode::OutOfMemory, "out of memory while loading the lens database");
+        } catch (const std::exception& e) {
+            return failed_load(ErrorCode::Internal,
+                               std::string("loading the lens database failed: ") + e.what());
+        } catch (...) {
+            return failed_load(ErrorCode::Internal, "loading the lens database failed");
+        }
+    } catch (...) {
+        // Not even the problem's text could be allocated.
+        assets::LensDatabaseLookup lookup;
+        lookup.problem.emplace();
+        lookup.problem->code = ErrorCode::OutOfMemory;
+        return lookup;
+    }
 }
 
 LensDatabaseSource::~LensDatabaseSource() {
@@ -124,15 +183,24 @@ std::chrono::steady_clock::time_point LensDatabaseSource::finished_at() const no
     return try_get() != nullptr ? shared_->finished : std::chrono::steady_clock::time_point{};
 }
 
-void LensDatabaseSource::on_ready(std::function<void()> listener) {
+Subscription LensDatabaseSource::on_ready(std::function<void()> listener) {
+    if (!listener) {
+        return Subscription{};
+    }
+    auto pending = std::make_shared<Shared::Listener>(std::move(listener));
+    // Made before the listener is added, so that an added listener always has its subscription.
+    Subscription subscription(
+        [weak = std::weak_ptr<Shared>(shared_), pending] { Shared::end(weak, pending); });
     {
         const std::lock_guard lock(shared_->mutex);
         if (!shared_->outcome) {
-            shared_->listeners.push_back(std::move(listener));
-            return;
+            shared_->listeners.push_back(pending);
+            return subscription;
         }
     }
-    Shared::call(listener);
+    // The outcome is known: at once, on this thread (`subscription` then ends with nothing to remove).
+    Shared::call(pending->function);
+    return Subscription{};
 }
 
 }  // namespace lucent::app
