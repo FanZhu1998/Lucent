@@ -1,0 +1,1076 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "thumbnails",
+  "description": "First visible thumbnail in the contact sheet, measured from the start of the automation (the import request). new-library: the folder is imported into a new library (camera previews read from the files); restart: the same library started again (thumbnails from the disk cache).",
+  "repetitions": 3,
+  "measured_at": "2026-10-15T18:17:48Z",
+  "quiet_before": {
+    "quiet": true,
+    "waited_s": 6.2,
+    "samples": [2.1,1.9,6.4],
+    "busiest_process_percent": [2,2,9],
+    "max_cpu_percent": 10,
+    "max_process_percent": 25,
+    "consecutive": 3,
+    "sample_ms": 2000,
+    "timeout_s": 300
+  },
+  "summary": {
+    "smoke-new-library": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_thumbnail_ms": {
+        "n": 3,
+        "median": 132,
+        "p95": 139,
+        "min": 132,
+        "max": 139,
+        "mean": 134.333,
+        "stdev": 4.041,
+        "cv": 0.03
+      },
+      "metrics.window_loaded_ms": {
+        "n": 3,
+        "median": 802,
+        "p95": 864,
+        "min": 793,
+        "max": 864,
+        "mean": 819.667,
+        "stdev": 38.657,
+        "cv": 0.047
+      },
+      "metrics.first_frame_ms": {
+        "n": 3,
+        "median": 904,
+        "p95": 967,
+        "min": 894,
+        "max": 967,
+        "mean": 921.667,
+        "stdev": 39.577,
+        "cv": 0.043
+      },
+      "metrics.import.added": {
+        "n": 3,
+        "median": 5,
+        "p95": 5,
+        "min": 5,
+        "max": 5,
+        "mean": 5,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 214.1,
+        "p95": 215.4,
+        "min": 210.2,
+        "max": 215.4,
+        "mean": 213.233,
+        "stdev": 2.706,
+        "cv": 0.013
+      },
+      "seconds": {
+        "n": 3,
+        "median": 4.011,
+        "p95": 4.381,
+        "min": 3.346,
+        "max": 4.381,
+        "mean": 3.913,
+        "stdev": 0.524,
+        "cv": 0.134
+      }
+    },
+    "smoke-restart": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_thumbnail_ms": {
+        "n": 3,
+        "median": 113,
+        "p95": 116,
+        "min": 110,
+        "max": 116,
+        "mean": 113,
+        "stdev": 3,
+        "cv": 0.027
+      },
+      "metrics.window_loaded_ms": {
+        "n": 3,
+        "median": 791,
+        "p95": 806,
+        "min": 787,
+        "max": 806,
+        "mean": 794.667,
+        "stdev": 10.017,
+        "cv": 0.013
+      },
+      "metrics.first_frame_ms": {
+        "n": 3,
+        "median": 905,
+        "p95": 923,
+        "min": 897,
+        "max": 923,
+        "mean": 908.333,
+        "stdev": 13.317,
+        "cv": 0.015
+      },
+      "metrics.import.added": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "stdev": null,
+        "cv": null
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 206.3,
+        "p95": 206.8,
+        "min": 205.3,
+        "max": 206.8,
+        "mean": 206.133,
+        "stdev": 0.764,
+        "cv": 0.004
+      },
+      "seconds": {
+        "n": 3,
+        "median": 3.446,
+        "p95": 3.487,
+        "min": 3.415,
+        "max": 3.487,
+        "mean": 3.449,
+        "stdev": 0.036,
+        "cv": 0.01
+      }
+    },
+    "all-new-library": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_thumbnail_ms": {
+        "n": 3,
+        "median": 154,
+        "p95": 160,
+        "min": 148,
+        "max": 160,
+        "mean": 154,
+        "stdev": 6,
+        "cv": 0.039
+      },
+      "metrics.window_loaded_ms": {
+        "n": 3,
+        "median": 813,
+        "p95": 849,
+        "min": 798,
+        "max": 849,
+        "mean": 820,
+        "stdev": 26.211,
+        "cv": 0.032
+      },
+      "metrics.first_frame_ms": {
+        "n": 3,
+        "median": 919,
+        "p95": 958,
+        "min": 898,
+        "max": 958,
+        "mean": 925,
+        "stdev": 30.447,
+        "cv": 0.033
+      },
+      "metrics.import.added": {
+        "n": 3,
+        "median": 40,
+        "p95": 40,
+        "min": 40,
+        "max": 40,
+        "mean": 40,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 592.8,
+        "p95": 592.9,
+        "min": 592,
+        "max": 592.9,
+        "mean": 592.567,
+        "stdev": 0.493,
+        "cv": 0.001
+      },
+      "seconds": {
+        "n": 3,
+        "median": 6.733,
+        "p95": 6.756,
+        "min": 6.72,
+        "max": 6.756,
+        "mean": 6.736,
+        "stdev": 0.018,
+        "cv": 0.003
+      }
+    },
+    "all-restart": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.first_thumbnail_ms": {
+        "n": 3,
+        "median": 154,
+        "p95": 172,
+        "min": 151,
+        "max": 172,
+        "mean": 159,
+        "stdev": 11.358,
+        "cv": 0.071
+      },
+      "metrics.window_loaded_ms": {
+        "n": 3,
+        "median": 801,
+        "p95": 827,
+        "min": 801,
+        "max": 827,
+        "mean": 809.667,
+        "stdev": 15.011,
+        "cv": 0.019
+      },
+      "metrics.first_frame_ms": {
+        "n": 3,
+        "median": 956,
+        "p95": 1000,
+        "min": 951,
+        "max": 1000,
+        "mean": 969,
+        "stdev": 26.963,
+        "cv": 0.028
+      },
+      "metrics.import.added": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "stdev": null,
+        "cv": null
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 288,
+        "p95": 289.1,
+        "min": 285.8,
+        "max": 289.1,
+        "mean": 287.633,
+        "stdev": 1.68,
+        "cv": 0.006
+      },
+      "seconds": {
+        "n": 3,
+        "median": 4.485,
+        "p95": 4.546,
+        "min": 4.476,
+        "max": 4.546,
+        "mean": 4.502,
+        "stdev": 0.038,
+        "cv": 0.008
+      }
+    }
+  },
+  "extra": null,
+  "runs": [
+    {
+      "name": "smoke-new-library",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.15,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-new-library-warmup.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 838,
+        "window_loaded_ms": 1368,
+        "first_frame_ms": 1548,
+        "import": {
+          "added": 5,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 211,
+        "ui": {
+          "seconds": 2.4,
+          "ticks": 186,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 171,
+          "over_50": 1,
+          "over_100": 1
+        },
+        "process": {
+          "peak_working_set_mib": 219.1,
+          "peak_commit_mib": 196,
+          "commit_mib": 168.8,
+          "cpu_s": 1.58,
+          "user_s": 0.92,
+          "kernel_s": 0.66,
+          "wall_s": 3.75
+        }
+      },
+      "resources": {
+        "wall_s": 4.15,
+        "cpu_s": 1.906,
+        "cpu_percent_of_machine": 3.827,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 196.035,
+          "peak_working_set_mib": 219.137,
+          "cpu_s": 1.906
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2894.223
+        }
+      }
+    },
+    {
+      "name": "smoke-new-library",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.381,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-new-library-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 225,
+        "window_loaded_ms": 802,
+        "first_frame_ms": 904,
+        "import": {
+          "added": 5,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 132,
+        "ui": {
+          "seconds": 2.9,
+          "ticks": 167,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 22,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 210.2,
+          "peak_commit_mib": 193,
+          "commit_mib": 165.8,
+          "cpu_s": 1.5,
+          "user_s": 0.84,
+          "kernel_s": 0.66,
+          "wall_s": 3.7
+        }
+      },
+      "resources": {
+        "wall_s": 4.381,
+        "cpu_s": 1.812,
+        "cpu_percent_of_machine": 3.448,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 192.957,
+          "peak_working_set_mib": 210.223,
+          "cpu_s": 1.812
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2901.797
+        }
+      }
+    },
+    {
+      "name": "smoke-restart",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.446,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-restart-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 245,
+        "window_loaded_ms": 791,
+        "first_frame_ms": 905,
+        "first_thumbnail_ms": 113,
+        "ui": {
+          "seconds": 2.3,
+          "ticks": 113,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 205.3,
+          "peak_commit_mib": 188.9,
+          "commit_mib": 161.7,
+          "cpu_s": 1.16,
+          "user_s": 0.81,
+          "kernel_s": 0.34,
+          "wall_s": 3.13
+        }
+      },
+      "resources": {
+        "wall_s": 3.446,
+        "cpu_s": 1.453,
+        "cpu_percent_of_machine": 3.514,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 188.898,
+          "peak_working_set_mib": 205.25,
+          "cpu_s": 1.453
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2924.785
+        }
+      }
+    },
+    {
+      "name": "all-new-library",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.756,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\all-new-library-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 233,
+        "window_loaded_ms": 813,
+        "first_frame_ms": 919,
+        "import": {
+          "added": 40,
+          "limited": 7,
+          "unsupported": 3,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 154,
+        "ui": {
+          "seconds": 5.2,
+          "ticks": 756,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 37,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 592,
+          "peak_commit_mib": 602.4,
+          "commit_mib": 309.2,
+          "cpu_s": 10.97,
+          "user_s": 8.66,
+          "kernel_s": 2.31,
+          "wall_s": 6.02
+        }
+      },
+      "resources": {
+        "wall_s": 6.756,
+        "cpu_s": 11.672,
+        "cpu_percent_of_machine": 14.397,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 602.441,
+          "peak_working_set_mib": 591.973,
+          "cpu_s": 11.672
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2944.84
+        }
+      }
+    },
+    {
+      "name": "all-restart",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.485,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\all-restart-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 245,
+        "window_loaded_ms": 801,
+        "first_frame_ms": 951,
+        "first_thumbnail_ms": 151,
+        "ui": {
+          "seconds": 3,
+          "ticks": 245,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 12,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 288,
+          "peak_commit_mib": 346.3,
+          "commit_mib": 319.1,
+          "cpu_s": 1.39,
+          "user_s": 0.86,
+          "kernel_s": 0.53,
+          "wall_s": 3.77
+        }
+      },
+      "resources": {
+        "wall_s": 4.485,
+        "cpu_s": 2.062,
+        "cpu_percent_of_machine": 3.832,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 346.297,
+          "peak_working_set_mib": 288.023,
+          "cpu_s": 2.062
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2940.738
+        }
+      }
+    },
+    {
+      "name": "smoke-new-library",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.346,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-new-library-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 229,
+        "window_loaded_ms": 793,
+        "first_frame_ms": 894,
+        "import": {
+          "added": 5,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 132,
+        "ui": {
+          "seconds": 2.2,
+          "ticks": 187,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 22,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 214.1,
+          "peak_commit_mib": 195.3,
+          "commit_mib": 168.1,
+          "cpu_s": 1.58,
+          "user_s": 0.98,
+          "kernel_s": 0.59,
+          "wall_s": 2.99
+        }
+      },
+      "resources": {
+        "wall_s": 3.346,
+        "cpu_s": 1.906,
+        "cpu_percent_of_machine": 4.748,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 195.301,
+          "peak_working_set_mib": 214.07,
+          "cpu_s": 1.906
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2945.176
+        }
+      }
+    },
+    {
+      "name": "smoke-restart",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.415,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-restart-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 231,
+        "window_loaded_ms": 787,
+        "first_frame_ms": 897,
+        "first_thumbnail_ms": 110,
+        "ui": {
+          "seconds": 2.3,
+          "ticks": 112,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 206.3,
+          "peak_commit_mib": 188.5,
+          "commit_mib": 161.2,
+          "cpu_s": 1.09,
+          "user_s": 0.7,
+          "kernel_s": 0.39,
+          "wall_s": 3.1
+        }
+      },
+      "resources": {
+        "wall_s": 3.415,
+        "cpu_s": 1.375,
+        "cpu_percent_of_machine": 3.355,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 188.461,
+          "peak_working_set_mib": 206.348,
+          "cpu_s": 1.375
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2951.133
+        }
+      }
+    },
+    {
+      "name": "all-new-library",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.72,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\all-new-library-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 231,
+        "window_loaded_ms": 798,
+        "first_frame_ms": 898,
+        "import": {
+          "added": 40,
+          "limited": 7,
+          "unsupported": 3,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 148,
+        "ui": {
+          "seconds": 5.1,
+          "ticks": 747,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 37,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 592.9,
+          "peak_commit_mib": 603.6,
+          "commit_mib": 310.2,
+          "cpu_s": 11.3,
+          "user_s": 9.22,
+          "kernel_s": 2.08,
+          "wall_s": 5.93
+        }
+      },
+      "resources": {
+        "wall_s": 6.72,
+        "cpu_s": 12.031,
+        "cpu_percent_of_machine": 14.92,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 603.59,
+          "peak_working_set_mib": 592.883,
+          "cpu_s": 12.031
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2967.719
+        }
+      }
+    },
+    {
+      "name": "all-restart",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.476,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\all-restart-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 229,
+        "window_loaded_ms": 801,
+        "first_frame_ms": 956,
+        "first_thumbnail_ms": 154,
+        "ui": {
+          "seconds": 2.9,
+          "ticks": 227,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 15,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 285.8,
+          "peak_commit_mib": 347.1,
+          "commit_mib": 319.9,
+          "cpu_s": 1.48,
+          "user_s": 0.98,
+          "kernel_s": 0.5,
+          "wall_s": 3.72
+        }
+      },
+      "resources": {
+        "wall_s": 4.476,
+        "cpu_s": 2.219,
+        "cpu_percent_of_machine": 4.131,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 347.066,
+          "peak_working_set_mib": 285.793,
+          "cpu_s": 2.219
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 2917.594
+        }
+      }
+    },
+    {
+      "name": "smoke-new-library",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.011,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-new-library-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 240,
+        "window_loaded_ms": 864,
+        "first_frame_ms": 967,
+        "import": {
+          "added": 5,
+          "limited": 1,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 139,
+        "ui": {
+          "seconds": 2.8,
+          "ticks": 185,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 25,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 215.4,
+          "peak_commit_mib": 195.5,
+          "commit_mib": 168.3,
+          "cpu_s": 1.63,
+          "user_s": 1.13,
+          "kernel_s": 0.5,
+          "wall_s": 3.68
+        }
+      },
+      "resources": {
+        "wall_s": 4.011,
+        "cpu_s": 1.938,
+        "cpu_percent_of_machine": 4.025,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 195.535,
+          "peak_working_set_mib": 215.379,
+          "cpu_s": 1.938
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3132.086
+        }
+      }
+    },
+    {
+      "name": "smoke-restart",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.487,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\smoke-restart-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 224,
+        "window_loaded_ms": 806,
+        "first_frame_ms": 923,
+        "first_thumbnail_ms": 116,
+        "ui": {
+          "seconds": 2.4,
+          "ticks": 117,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 206.8,
+          "peak_commit_mib": 189.9,
+          "commit_mib": 162.7,
+          "cpu_s": 0.98,
+          "user_s": 0.56,
+          "kernel_s": 0.42,
+          "wall_s": 3.16
+        }
+      },
+      "resources": {
+        "wall_s": 3.487,
+        "cpu_s": 1.297,
+        "cpu_percent_of_machine": 3.099,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 189.91,
+          "peak_working_set_mib": 206.766,
+          "cpu_s": 1.297
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3131.93
+        }
+      }
+    },
+    {
+      "name": "all-new-library",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.733,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\all-new-library-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 233,
+        "window_loaded_ms": 849,
+        "first_frame_ms": 958,
+        "import": {
+          "added": 40,
+          "limited": 7,
+          "unsupported": 3,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 160,
+        "ui": {
+          "seconds": 5.1,
+          "ticks": 750,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 39,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 592.8,
+          "peak_commit_mib": 604.1,
+          "commit_mib": 310.1,
+          "cpu_s": 10.72,
+          "user_s": 8.41,
+          "kernel_s": 2.31,
+          "wall_s": 5.98
+        }
+      },
+      "resources": {
+        "wall_s": 6.733,
+        "cpu_s": 11.406,
+        "cpu_percent_of_machine": 14.117,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 604.09,
+          "peak_working_set_mib": 592.77,
+          "cpu_s": 11.406
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3134.648
+        }
+      }
+    },
+    {
+      "name": "all-restart",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 4.546,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\thumbnails\\all-restart-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 231,
+        "window_loaded_ms": 827,
+        "first_frame_ms": 1000,
+        "first_thumbnail_ms": 172,
+        "ui": {
+          "seconds": 3,
+          "ticks": 233,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 289.1,
+          "peak_commit_mib": 347.5,
+          "commit_mib": 320.3,
+          "cpu_s": 1.69,
+          "user_s": 1.03,
+          "kernel_s": 0.66,
+          "wall_s": 3.79
+        }
+      },
+      "resources": {
+        "wall_s": 4.546,
+        "cpu_s": 2.406,
+        "cpu_percent_of_machine": 4.411,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 347.52,
+          "peak_working_set_mib": 289.141,
+          "cpu_s": 2.406
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3121.355
+        }
+      }
+    }
+  ]
+}
