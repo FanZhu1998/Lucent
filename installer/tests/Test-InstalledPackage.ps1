@@ -13,8 +13,12 @@
        tasks given (default: desktop shortcut and "Open with Lucent"), then checks the files (against
        the package manifest when given), shortcuts, uninstall registration and associations:
        Applications\Lucent.exe\SupportedTypes lists every RAW extension, OpenWithProgids names Lucent
-       exactly for the extensions that already had a default program, and no extension's default
-       value or effective program changed.
+       exactly for the extensions that already had a default program (the rule of
+       ExtensionHasDefaultProgram in lucent.iss: the program Windows opens the type with is the
+       user's choice or the type's own default; a choice of a program that is not installed, as in
+       Windows Sandbox, is none: W12 sandbox run SBX-3), and no extension's default value, Explorer
+       state (UserChoice, FileExts) or effective program changed. The same holds after every later
+       installation (repair, upgrades) and after the uninstallation.
     3. Runs <work>\app\Lucent.exe with PATH=%SystemRoot%\System32;%SystemRoot%, without Qt variables,
        using its developer options: --data-root <work>\data --import <fixture> --open-first
        --screenshot <work>\lucent.png --quit-after-screenshot. Records every module the process loads
@@ -50,7 +54,22 @@
        running Lucent; the signature checks of 7 apply to the upgraded files. After the upgrade the
        new Lucent.exe runs on the previous version's data root: it must open the catalog (migrating
        it, after a pre-migration backup, when its schema is older), find the imported photo and
-       exit with 0. -PreviousManifest checks the previous installation's files.
+       exit with 0. -PreviousManifest checks the previous installation's files. Then the previous
+       Setup must refuse to go back (see 9), and -Installer repairs the installation (same version).
+    9. Versions (W12 review SEC-04, part 2; installer\lucent.iss): before anything is installed,
+       Setup's test hook /LucentTestCompareVersions orders Semantic Versioning 2.0.0's examples,
+       refuses malformed versions and stops Setup (exit code 1) without installing anything. Without
+       -PreviousInstaller, step 4 is a same-version repair (the installed version stays). With
+       -NewerInstaller (a Setup of a higher version, such as the version rehearsal of
+       tools\package.ps1 -VersionRehearsal), the installation is then upgraded to it (registration
+       and files checked, against -NewerManifest when given), and -Installer must refuse to install
+       over it: exit code 1, "Downgrade refused" in its log, the runtime installer not started, the
+       registration, every installed file (size, time, SHA-256) and the shortcuts unchanged. A
+       refused downgrade is checked the same way after the update rehearsal (8). Then the registered
+       version is made unreadable three times (DisplayVersion deleted, rewritten as a REG_DWORD, and
+       as a REG_MULTI_SZ naming a higher version): -Installer must refuse each the same way, leaving
+       the tampered value as it was (W12 review SEC04-01), after which the value is restored. Step 5
+       then uninstalls whatever version is installed.
 
     A signed uninstaller keeps its messages in unins000.msg (Inno Setup cannot add them to a signed
     EXE): unins000.exe, .dat and .msg are Inno Setup's own files, not the package's.
@@ -83,12 +102,27 @@
     The previous version's Setup: installed first and upgraded with -Installer (see DESCRIPTION, 8).
 .PARAMETER PreviousManifest
     With -PreviousInstaller: the previous package's manifest, to check its installation's files.
+.PARAMETER NewerInstaller
+    A Setup of a higher version than -Installer's: upgraded to after the repair, then -Installer must
+    refuse to go back (see DESCRIPTION, 9).
+.PARAMETER NewerManifest
+    With -NewerInstaller: its package manifest (default: -Manifest; a version rehearsal installs the
+    same files).
 
 .EXAMPLE
     powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
         -Installer build\release\package\Lucent-Setup-0.1.0-x64.exe `
         -Manifest build\release\package\Lucent-Setup-0.1.0-x64.manifest.json `
         -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3 -RuntimeOutcomes
+
+.EXAMPLE
+    # Install, same-version repair, upgrade and a refused downgrade (W12 review SEC-04), with the
+    # version rehearsal Setup that tools\package.ps1 -VersionRehearsal writes beside the package.
+    powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
+        -Installer build\release\package\Lucent-Setup-0.1.0-x64.exe `
+        -Manifest build\release\package\Lucent-Setup-0.1.0-x64.manifest.json `
+        -NewerInstaller build\release\package\rehearsal\Lucent-Setup-0.1.1-x64-VERSION-REHEARSAL.exe `
+        -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3
 
 .EXAMPLE
     # The update rehearsal: the previous version's installation upgraded in place (W12, ADR 0022).
@@ -114,7 +148,9 @@ param(
     [string]$SignerThumbprint,
     [switch]$AllowUntrustedRoot,
     [string]$PreviousInstaller,
-    [string]$PreviousManifest
+    [string]$PreviousManifest,
+    [string]$NewerInstaller,
+    [string]$NewerManifest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,6 +167,8 @@ $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $Fixture = (Resolve-Path -LiteralPath $Fixture).Path
 if ($PreviousInstaller) { $PreviousInstaller = (Resolve-Path -LiteralPath $PreviousInstaller).Path }
 elseif ($PreviousManifest) { throw '-PreviousManifest needs -PreviousInstaller.' }
+if ($NewerInstaller) { $NewerInstaller = (Resolve-Path -LiteralPath $NewerInstaller).Path }
+elseif ($NewerManifest) { throw '-NewerManifest needs -NewerInstaller.' }
 # The Setup installed first: the previous version's for the update rehearsal.
 $firstInstaller = if ($PreviousInstaller) { $PreviousInstaller } else { $Installer }
 if ($SignerThumbprint) {
@@ -150,6 +188,7 @@ $dataRoot = Join-Path $WorkDir 'data'
 New-Item -ItemType Directory -Path $dataRoot | Out-Null
 $manifestData = if ($Manifest) { Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json } else { $null }
 $previousManifestData = if ($PreviousManifest) { Get-Content -LiteralPath $PreviousManifest -Raw | ConvertFrom-Json } else { $null }
+$newerManifestData = if ($NewerManifest) { Get-Content -LiteralPath $NewerManifest -Raw | ConvertFrom-Json } else { $manifestData }
 
 $checks = New-Object System.Collections.Generic.List[object]
 $notes = New-Object System.Collections.Generic.List[string]
@@ -173,6 +212,11 @@ public static class LucentTestAssoc {
     // ASSOCSTR_PROGID (20), with ASSOCF_INIT_IGNOREUNKNOWN; an HRESULT when there is none.
     public static string Describe(string extension) {
         return Query(extension, 1) + " | " + Query(extension, 4) + " | " + Query(extension, 20);
+    }
+    // The ProgID Windows opens the type with now, as lucent.iss asks (EffectiveProgId); null when none.
+    public static string ProgId(string extension) {
+        string progId = Query(extension, 20);
+        return progId.StartsWith("0x") ? null : progId;
     }
     static string Query(string extension, int what) {
         uint length = 4096; var text = new StringBuilder((int)length);
@@ -269,17 +313,18 @@ function Get-KeyText([string]$Path) {
     return "[$values]$children"
 }
 function Test-HasDefaultProgram([string]$Extension) {
+    # ExtensionHasDefaultProgram in lucent.iss: the ProgID Windows opens the type with now
+    # (AssocQueryString) is the user's choice (UserChoice, UserChoiceLatest) or the type's own default
+    # (not Lucent's). A choice Windows does not resolve (a program that is not installed) is none.
+    $effective = [LucentTestAssoc]::ProgId($Extension)
+    if (-not $effective) { return $false }
     foreach ($choice in "$fileExtsKey\$Extension\UserChoice", "$fileExtsKey\$Extension\UserChoiceLatest\ProgId") {
-        if ((Test-Path -LiteralPath $choice) -and (Get-Item -LiteralPath $choice).GetValue('ProgId')) { return $true }
+        if ((Test-Path -LiteralPath $choice) -and [string](Get-Item -LiteralPath $choice).GetValue('ProgId') -ieq $effective) { return $true }
     }
-    $root = [Microsoft.Win32.Registry]::ClassesRoot
-    $key = $root.OpenSubKey($Extension)
+    $key = [Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey($Extension)
     if (-not $key) { return $false }
-    try { $default = $key.GetValue('') } finally { $key.Close() }
-    if (-not $default -or $default -eq $progId) { return $false }
-    $target = $root.OpenSubKey([string]$default)
-    if ($target) { $target.Close(); return $true }
-    return $false
+    try { $default = [string]$key.GetValue('') } finally { $key.Close() }
+    return [bool]($default -and $default -ieq $effective -and $default -ine $progId)
 }
 $rawExtensions = @()
 if ($manifestData -and ($manifestData.PSObject.Properties.Name -contains 'fileAssociations')) { $rawExtensions = @($manifestData.fileAssociations.extensions) }
@@ -328,9 +373,30 @@ function Invoke-Uninstall([string]$Directory, [string]$LogPath) {
     return $finished
 }
 
-# --- 1. Install ----------------------------------------------------------------------------------
+# --- Setup's version precedence (W12 review SEC-04), through its test hook -------------------------
 
 Write-Host "Work folder: $WorkDir"
+# Semantic Versioning 2.0.0's own examples and the cases Lucent's guard must refuse to read.
+$comparisons = [ordered]@{
+    '1.0.0,2.0.0' = '<'; '2.0.0,2.1.0' = '<'; '2.1.0,2.1.1' = '<'; '0.10.0,0.9.0' = '>'; '123456789012345678901.0.0,2.0.0' = '>'
+    '1.0.0-alpha,1.0.0-alpha.1' = '<'; '1.0.0-alpha.1,1.0.0-alpha.beta' = '<'; '1.0.0-alpha.beta,1.0.0-beta' = '<'
+    '1.0.0-beta,1.0.0-beta.2' = '<'; '1.0.0-beta.2,1.0.0-beta.11' = '<'; '1.0.0-beta.11,1.0.0-rc.1' = '<'; '1.0.0-rc.1,1.0.0' = '<'
+    '1.0.0+build.7,1.0.0' = '='; '0.1.0,0.1.0' = '='
+    '1.0,1.0.0' = 'invalid'; '01.0.0,1.0.0' = 'invalid'; '1.0.0-01,1.0.0' = 'invalid'; '1.0.0-,1.0.0' = 'invalid'; '1.0.0-a_b,1.0.0' = 'invalid' }
+$hookLog = Join-Path $WorkDir 'version-precedence.log'
+$hookDir = Join-Path $WorkDir 'app-version-precedence'
+$exitCode = Invoke-Setup -Directory $hookDir -LogPath $hookLog -Setup $Installer -Extra @("/LucentTestCompareVersions=$(@($comparisons.Keys) -join ';')")
+$hookLines = if (Test-Path -LiteralPath $hookLog) { @(Get-Content -LiteralPath $hookLog | Where-Object { $_ -match 'Version comparison: ' }) } else { @() }
+$wrongOrder = @($comparisons.Keys | Where-Object {
+    $pair = $_ -split ','
+    $expected = 'Version comparison: {0} {1} {2}$' -f [regex]::Escape($pair[0]), [regex]::Escape($comparisons[$_]), [regex]::Escape($pair[1])
+    -not ($hookLines | Where-Object { $_ -match $expected }) })
+Add-Check "Setup orders versions by Semantic Versioning precedence ($($comparisons.Count) pairs through its test hook) and the hook installs nothing" `
+    ($exitCode -eq 1 -and $wrongOrder.Count -eq 0 -and -not (Test-Path -LiteralPath $hookDir) -and -not (Test-Path -LiteralPath $uninstallKey)) `
+    ("exit code {0}{1}" -f $exitCode, $(if ($wrongOrder) { '; wrong: ' + ($wrongOrder -join ' ') } else { '' }))
+
+# --- 1. Install ----------------------------------------------------------------------------------
+
 $installLog = Join-Path $WorkDir 'install.log'
 $installTimer = [System.Diagnostics.Stopwatch]::StartNew()
 $exitCode = Invoke-Setup -Directory $appDir -LogPath $installLog -Setup $firstInstaller
@@ -424,6 +490,24 @@ if ($Tasks -match 'openwith') {
 $changedEffective = @($rawExtensions | Where-Object { $effectiveBefore.ContainsKey($_) -and [LucentTestAssoc]::Describe($_) -ne $effectiveBefore[$_] } |
     ForEach-Object { "$_ : $($effectiveBefore[$_]) -> $([LucentTestAssoc]::Describe($_))" })
 Add-Check 'What Windows opens each RAW type with is unchanged (AssocQueryString)' ($changedEffective.Count -eq 0) (($changedEffective | Select-Object -First 3) -join ' / ')
+$changedExplorer = @($rawExtensions | Where-Object { $explorerBefore.ContainsKey($_) -and (Get-KeyText "$fileExtsKey\$_") -ne $explorerBefore[$_] })
+Add-Check 'Lucent wrote no user choice: the Explorer state (FileExts: UserChoice) of every RAW type is unchanged' ($changedExplorer.Count -eq 0) ($changedExplorer -join ', ')
+
+# After every later installation (repair, upgrades): Lucent still wrote no extension's default value or
+# user choice, and Windows opens every RAW type as before (W12 sandbox run SBX-3).
+function Test-AssociationsAsBefore([string]$When) {
+    $problems = @()
+    foreach ($extension in (Get-ExtensionNames)) {
+        if ((Get-ExtensionState $extension).Default -ne (Get-BeforeState $extension).Default) { $problems += ".$extension default value" }
+    }
+    foreach ($extension in $rawExtensions) {
+        if ($explorerBefore.ContainsKey($extension) -and (Get-KeyText "$fileExtsKey\$extension") -ne $explorerBefore[$extension]) { $problems += "$extension FileExts" }
+        if ($effectiveBefore.ContainsKey($extension) -and [LucentTestAssoc]::Describe($extension) -ne $effectiveBefore[$extension]) {
+            $problems += "$extension opens with $([LucentTestAssoc]::Describe($extension)), before $($effectiveBefore[$extension])"
+        }
+    }
+    Add-Check "$($When): no extension default value, user choice or effective program changed" ($problems.Count -eq 0) (($problems | Select-Object -First 3) -join ' / ')
+}
 
 # --- 2. Run the installed Lucent.exe --------------------------------------------------------------
 
@@ -528,7 +612,15 @@ function Get-LineIndex([string]$Pattern) {
 }
 $shutdownAt = Get-LineIndex 'Shutting down applications using our files'
 $cleanupAt = Get-LineIndex 'Upgrade: removed \d+ files'
-Add-Check 'Upgrade over the running installation: Setup exit code 0' ($exitCode -eq 0) "exit code $exitCode"
+# Without -PreviousInstaller this is a same-version repair (W12 review SEC-04): the version stays.
+$stepName = if ($PreviousInstaller) { 'Upgrade from the previous version over the running installation' } else { 'Same-version repair over the running installation' }
+Add-Check "$($stepName): Setup exit code 0" ($exitCode -eq 0) "exit code $exitCode"
+if (-not $PreviousInstaller) {
+    $repaired = if (Test-Path -LiteralPath $uninstallKey) { [string](Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion } else { '' }
+    $checkLine = @($reinstallLines | Where-Object { $_ -match 'Downgrade check: ' }) | Select-Object -First 1
+    Add-Check "$($stepName): the registered version stays $previousVersion, and Setup says it repairs" ($repaired -eq $previousVersion -and [bool]$checkLine -and $checkLine -match 'repairs it') `
+        "registered $repaired; $checkLine"
+}
 Add-Check 'Restart Manager closed the running Lucent before the upgrade cleanup' ($wasRunning -and $closed -and $shutdownAt -ge 0 -and $cleanupAt -gt $shutdownAt) `
     ("running before: {0}; closed: {1}; log lines: shutdown {2}, cleanup {3}" -f $wasRunning, $closed, $shutdownAt, $cleanupAt)
 $left = @($stale | Where-Object { Test-Path -LiteralPath (Join-Path $appDir $_) })
@@ -543,6 +635,7 @@ foreach ($folder in 'qml\ObsoleteTest', 'qml\OtherApp', 'plugins\otherapp') {
     if ((Test-Path -LiteralPath $path) -and -not (Get-ChildItem -LiteralPath $path -Recurse -File)) { Remove-Item -LiteralPath $path -Recurse -Force }
 }
 Test-InstalledFiles 'Files after the upgrade match the package manifest (SHA-256)'
+Test-AssociationsAsBefore "After the $(if ($PreviousInstaller) { 'upgrade from the previous version' } else { 'same-version repair' })"
 
 if ($PreviousInstaller) {
     # --- The update rehearsal: the new version on the previous version's library -----------------
@@ -594,6 +687,111 @@ if ($PreviousInstaller) {
         ((@($opened | Select-Object -First 1) + @($unavailable | Select-Object -First 1)) -join ' | ')
     Add-Check 'A schema migration, if any, came after a verified pre-migration backup' ($migrated.Count -eq 0 -or $backups.Count -gt 0) `
         ("{0} migration line(s), {1} pre-migration backup(s)" -f $migrated.Count, $backups.Count)
+}
+
+# --- Versions: repair, upgrade and refused downgrades (W12 review SEC-04, part 2) -----------------
+
+function Get-RegisteredVersion {
+    if (Test-Path -LiteralPath $uninstallKey) { return [string](Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion }
+    return ''
+}
+# Every installed file (size, time, SHA-256) and the shortcuts: what a refused Setup must leave as it was.
+function Get-InstallationSnapshot {
+    $lines = @(Get-ChildItem -LiteralPath $appDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
+        '{0}|{1}|{2}|{3}' -f $_.FullName.Substring($appDir.Length + 1), $_.Length, $_.LastWriteTimeUtc.Ticks,
+            (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash })
+    foreach ($link in $startMenuLink, $desktopLink) {
+        if (Test-Path -LiteralPath $link) { $lines += ('{0}|{1}' -f $link, (Get-Item -LiteralPath $link).LastWriteTimeUtc.Ticks) }
+    }
+    return ($lines -join "`n")
+}
+function Test-RefusedDowngrade([string]$Setup, [string]$Label, [string]$LogName) {
+    $installed = Get-RegisteredVersion
+    $snapshot = Get-InstallationSnapshot
+    $log = Join-Path $WorkDir $LogName
+    $code = Invoke-Setup -Directory $appDir -LogPath $log -Setup $Setup
+    $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
+    $line = @($text -split "`r?`n" | Where-Object { $_ -match 'Downgrade refused: ' }) | Select-Object -First 1
+    Add-Check "$($Label): Setup refuses with exit code 1 and says why in its log" ($code -eq 1 -and [bool]$line) "exit code $code; $line"
+    Add-Check "$($Label): nothing changed (registered version $installed, every installed file, the shortcuts)" `
+        ((Get-RegisteredVersion) -eq $installed -and (Get-InstallationSnapshot) -eq $snapshot) "registered now: $(Get-RegisteredVersion)"
+    Add-Check "$($Label): the runtime check and installer did not run" ($text -notmatch 'VC\+\+ runtime:') ''
+}
+function Test-InstalledFileListMatches([string]$Name) {
+    $listedNow = if (Test-Path -LiteralPath $listPath) { @(Get-Content -LiteralPath $listPath | Where-Object { $_ -and -not $_.StartsWith(';') }) } else { @() }
+    $presentNow = @(Get-ChildItem -LiteralPath $appDir -Recurse -File | Where-Object { $_.Name -notmatch $innoFilePattern } |
+        ForEach-Object { $_.FullName.Substring($appDir.Length + 1) })
+    Add-Check $Name ($listedNow.Count -gt 0 -and @(Compare-Object $listedNow $presentNow).Count -eq 0) "$($listedNow.Count) listed, $($presentNow.Count) installed"
+}
+$versionSteps = [ordered]@{ installed = $previousVersion }
+
+if ($PreviousInstaller) {
+    # The previous release's Setup must not go back over the upgraded installation, and the package's
+    # Setup repairs it in place.
+    Test-RefusedDowngrade -Setup $PreviousInstaller -Label 'Downgrade to the previous version' -LogName 'downgrade-previous.log'
+    $current = Get-RegisteredVersion
+    $repairLog = Join-Path $WorkDir 'repair.log'
+    $exitCode = Invoke-Setup -Directory $appDir -LogPath $repairLog
+    $repairText = if (Test-Path -LiteralPath $repairLog) { Get-Content -LiteralPath $repairLog -Raw } else { '' }
+    Add-Check 'Same-version repair after the upgrade: Setup exit code 0, version unchanged' `
+        ($exitCode -eq 0 -and (Get-RegisteredVersion) -eq $current -and $repairText -match 'Downgrade check: .* this Setup repairs it') "exit code $exitCode, registered $(Get-RegisteredVersion)"
+    Test-InstalledFiles 'Files after the repair match the package manifest (SHA-256)'
+    Test-AssociationsAsBefore 'After the same-version repair that follows the upgrade'
+    $versionSteps.upgradedTo = $current
+}
+
+if ($NewerInstaller) {
+    $versionBefore = Get-RegisteredVersion
+    $newerLog = Join-Path $WorkDir 'upgrade-newer.log'
+    $exitCode = Invoke-Setup -Directory $appDir -LogPath $newerLog -Setup $NewerInstaller
+    $newer = Get-RegisteredVersion
+    $newerText = if (Test-Path -LiteralPath $newerLog) { Get-Content -LiteralPath $newerLog -Raw } else { '' }
+    Add-Check "Upgrade from $versionBefore to the newer Setup: exit code 0, one registration of the newer version" `
+        ($exitCode -eq 0 -and $newer -and $newer -ne $versionBefore -and $newerText -match 'Downgrade check: .* this Setup upgrades it') "exit code $exitCode; registered $newer"
+    Test-InstalledFiles 'Files after the upgrade to the newer Setup match its package manifest (SHA-256)' $newerManifestData
+    Test-InstalledFileListMatches "After the upgrade to the newer Setup $fileListName lists exactly the installed files"
+    Test-AssociationsAsBefore 'After the upgrade to the newer Setup'
+    Test-RefusedDowngrade -Setup $Installer -Label "Downgrade from $newer to the package's Setup" -LogName 'downgrade.log'
+    $versionSteps.newer = $newer
+}
+
+# A registration whose version Setup cannot read (W12 review SEC04-01): its uninstall registration
+# exists, but DisplayVersion is missing or not text (a registry cleaner, a hand edit). Setup must refuse
+# as for a newer version, never take it for "not installed" and install over it.
+function Get-RegistrationText {
+    # Every value of the uninstall registration but DisplayVersion: what a refused Setup must leave.
+    $item = Get-Item -LiteralPath $uninstallKey
+    return (@($item.GetValueNames() | Where-Object { $_ -ne 'DisplayVersion' } | Sort-Object | ForEach-Object { "$_=$($item.GetValue($_))" }) -join '|')
+}
+if (Test-Path -LiteralPath $uninstallKey) {
+    $registeredVersion = Get-RegisteredVersion
+    foreach ($mode in 'missing', 'REG_DWORD', 'REG_MULTI_SZ') {
+        $snapshot = Get-InstallationSnapshot
+        $registrationBefore = Get-RegistrationText
+        Remove-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -ErrorAction SilentlyContinue
+        if ($mode -eq 'REG_DWORD') { New-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -PropertyType DWord -Value 1 | Out-Null }
+        if ($mode -eq 'REG_MULTI_SZ') { New-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -PropertyType MultiString -Value @('999.0.0') | Out-Null }
+        $tampered = (Get-Item -LiteralPath $uninstallKey).GetValueNames() -contains 'DisplayVersion'
+        $kind = if ($tampered) { [string](Get-Item -LiteralPath $uninstallKey).GetValueKind('DisplayVersion') } else { 'none' }
+        try {
+            $log = Join-Path $WorkDir "downgrade-unreadable-$($mode.ToLowerInvariant()).log"
+            $code = Invoke-Setup -Directory $appDir -LogPath $log -Setup $Installer
+            $text = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
+            $line = @($text -split "`r?`n" | Where-Object { $_ -match 'Downgrade refused: ' }) | Select-Object -First 1
+            $label = "A registration of version $registeredVersion whose DisplayVersion is $(if ($mode -eq 'missing') { 'missing' } else { "a $mode" })"
+            Add-Check "$($label): Setup refuses with exit code 1 and says why in its log" ($code -eq 1 -and [bool]$line -and $line -match 'DisplayVersion') "exit code $code; $line"
+            $kindAfter = if ((Get-Item -LiteralPath $uninstallKey).GetValueNames() -contains 'DisplayVersion') { [string](Get-Item -LiteralPath $uninstallKey).GetValueKind('DisplayVersion') } else { 'none' }
+            Add-Check "$($label): nothing changed (every installed file, the shortcuts, the registration and its DisplayVersion)" `
+                ((Get-InstallationSnapshot) -eq $snapshot -and (Get-RegistrationText) -eq $registrationBefore -and $kindAfter -eq $kind) "DisplayVersion: $kind before, $kindAfter after"
+            Add-Check "$($label): the runtime check and installer did not run" ($text -notmatch 'VC\+\+ runtime:') ''
+        }
+        finally {
+            Remove-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -ErrorAction SilentlyContinue
+            New-ItemProperty -LiteralPath $uninstallKey -Name 'DisplayVersion' -PropertyType String -Value $registeredVersion | Out-Null
+        }
+    }
+    # An array goes into the ordered dictionary through the indexer (Windows PowerShell 5.1).
+    $versionSteps['unreadableVersionsRefused'] = @('missing', 'REG_DWORD', 'REG_MULTI_SZ')
 }
 
 # --- 3. Uninstall --------------------------------------------------------------------------------
@@ -672,6 +870,7 @@ $result = [ordered]@{
     checks = @($checks | ForEach-Object { [ordered]@{ name = $_.Name; passed = $_.Passed; detail = $_.Detail } })
     modulesFromInstallation = @($fromApp); modulesFromWindows = @($fromWindows); modulesOther = @($foreign)
     openWithProgidsExtensions = @($associated); supportedTypes = @($supported)
+    versions = $versionSteps
 }
 $json = ConvertTo-Json -InputObject $result -Depth 6
 [System.IO.File]::WriteAllText((Join-Path $WorkDir 'result.json'), $json, (New-Object System.Text.UTF8Encoding($false)))

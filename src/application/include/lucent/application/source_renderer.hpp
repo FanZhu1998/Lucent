@@ -20,6 +20,12 @@
 // lens_database() names it, and pixels persisted under a recipe identity (rendered thumbnails,
 // preview_service.hpp) are keyed by it too.
 //
+// W12 (APL-06, ADR 0023 amendment): Lucent.exe loads its lens database off the UI thread
+// (lens_database_source.hpp) and gives the renderer the loading source instead
+// (EngineRendererOptions::lens_database_source). Every estimate and render, and lens_database(),
+// then wait until the load has finished, so nothing is rendered or keyed without the database the
+// session corrects lenses with. These run on the services' threads, never on the UI thread.
+//
 // Thread-safety: implementations are immutable and their const members may be called
 // concurrently.
 
@@ -28,6 +34,7 @@
 #include <memory>
 #include <optional>
 
+#include <lucent/application/lens_database_source.hpp>
 #include <lucent/application/source_item.hpp>
 #include <lucent/core/cancellation.hpp>
 #include <lucent/core/error.hpp>
@@ -134,6 +141,9 @@ struct EngineRendererOptions {
     bool parallel = true;
     // engine::DevelopOptions::lens_database (see the file comment); null: no lens correction.
     std::shared_ptr<const engine::LensDatabase> lens_database;
+    // W12 (APL-06): the database is still loading; used when `lens_database` is null. Every estimate and
+    // render, and lens_database(), wait for its outcome (a source without a database: no correction).
+    std::shared_ptr<const LensDatabaseSource> lens_database_source;
 };
 
 // The production renderer over the engine's develop pipeline. InvalidArgument ("app.render") for a

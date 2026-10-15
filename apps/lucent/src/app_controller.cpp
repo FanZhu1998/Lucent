@@ -155,6 +155,7 @@ AppController::AppController(Services services, QObject* parent)
     connect(&library, &LibraryService::relink_finished, this, &AppController::on_relink_finished);
     connect(&library, &LibraryService::backup_finished, this, &AppController::on_backup_finished);
     connect(&library, &LibraryService::verification_progress, this, &AppController::on_verification_progress);
+    connect(&library, &LibraryService::lens_database_changed, this, &AppController::lensDatabaseChanged);
     connect(services_.exports.get(), &ExportService::busy_changed, this, &AppController::busyChanged);
     connect(services_.edits.get(), &EditService::busy_changed, this, &AppController::busyChanged);
     // Auto runs in the background: the window is busy while one runs. The photo being edited reports

@@ -10,7 +10,10 @@
   distance, primes and teleconverters, one lock for Lensfun, missing dependencies reported and
   recorded, the corrected proxy kept between frames, qualification with lens corrections); its
   overlays of the GLib and GNU libintl ports keep build-machine folders out of their DLLs, so the
-  release package is no longer blocked.
+  release package is no longer blocked. Amended 2026-10-10 by the W12 release phase ("Amendment: the
+  lens database off the UI thread" below, APL-06): Lucent.exe loads the database on its own thread.
+  Amended 2026-10-15 by the W12 release review ("Amendment: a loader's exception logged, and
+  listeners with subscriptions" below, APL06-R1 to APL06-R3).
 - **Date:** 2026-10-10
 - **Workflow:** W13 (Lensfun lens corrections), engine phase; verified and accepted in the
   build-and-test phase; closed by the W13 closing review ("Amendment: W13 closure")
@@ -888,3 +891,102 @@ On the reference laptop (Ryzen 5 5500U, MSVC 14.44, `/W4 /WX`):
   `budgets.json` is now derived. A 100 % view of the Z 6 takes 1.49 s instead of 1.66 s before the
   closure (the distortion evaluated once per pixel) and 1.01 s without the database (six runs of
   each, alternating).
+
+## Amendment: the lens database off the UI thread (APL-06; W12 release phase, 2026-10-10)
+
+The closure deferred APL-06: `Backend::create()` verified and parsed the bundled database on the UI
+thread before the window existed, about 140 ms of every start. Moving it needed the renderer, the
+recipe service and the batch service to take the database, and its identity, asynchronously, without
+ever rendering, recording or keying anything with a database other than the session's.
+
+1. **`app::LensDatabaseSource`** (`lens_database_source.hpp`) loads it on a thread of its own,
+   started first thing in `Backend::create()`, which no longer waits (when no thread can be started
+   it loads in place, as before). `wait()` blocks until the outcome is known, `try_get()` never
+   blocks (null while loading), `on_ready()` tells listeners once, `finished_at()` says when. A
+   loader that throws gives an outcome with a problem; the destructor joins the thread, which never
+   owns the source.
+2. **Whatever the database decides waits for it, on the services' threads**: the engine renderer
+   before every estimate and render and `lens_database()`
+   (`EngineRendererOptions::lens_database_source`), so previews, thumbnails (whose disk keys name
+   the database), single exports and the editor's frames are never made without the corrections
+   their settings ask for; the recipe service before it names the database in a revision
+   (`RecipeServiceOptions::engine_version_source`, asked once, before the service's lock); the batch
+   service before it names it in a new batch's renderer version and job identities
+   (`BatchServiceOptions::lens_database_source`, asked once by the first plan or submission, never
+   by `open()` and its recovery). While the database loads, corrections are pending, never wrong.
+3. **The user interface asks without waiting.** `LensDatabaseInfo::loading`; Help > About says the
+   database is being checked and loaded and updates when the library service's
+   `lens_database_changed` arrives (`lensDatabase` now notifies); the Lens corrections panel says it
+   is still loading (not as a problem), offers nothing to change, and follows the edit service's
+   `lens_database_changed` (or the first frame, which waited for the database); the profile search
+   finds nothing until then. The developer automation reports the database once it has loaded, with
+   `--measure` the moment it finished (`measure: lens database loaded <n> ms after the process
+   started`, which the performance harness records as `lens_database_loaded_ms`).
+4. Lucent-worker.exe, `lucent-render`, `lucent-qualify` and the tests that load the database
+   themselves are unchanged.
+
+**Tests.** `lucent_application_tests`: the source (outcome unknown until the loader finishes,
+`wait()` blocking until then, listeners once and in order, a late listener at once, a throwing
+loader's problem, the destructor joining); a renderer created while the database loads renders
+nothing until it has loaded and then the same pixels as a renderer given the database; the recipe
+service asks for its engine version once, serves readers while the first writer waits, and records
+the database in every revision. `lucent_batch_tests`: opening the batch service never asks for the
+database, the first batch does, once, and every batch names it. `lucent_ui_tests`: with the
+Backend's loader held, the services report loading and find no profile, a photo opened meanwhile
+gets no frame, and once the loader is released both services are told, every frame carries the
+database and the first revision names it; the panel's loading state; About's map; the adapter tests
+wait for the load.
+
+**Start-up** (release builds of this branch before and after this change, their staged layouts,
+`Lucent.exe --measure` with an empty data root, seven runs of each alternating, the first discarded;
+the reference laptop): the window is created after 780 ms instead of 875 ms and presents its first
+frame after 900 ms instead of 1,003 ms (medians); the database finishes loading on its own thread
+about 220 ms after the process started, long before the window exists, so nothing the user can do
+waits for it. A render, revision or batch started in those first 220 ms would wait on its own
+thread. On a cold start (`tools\bench` startup scenario, quick run of the development build: a fresh
+copy of the installed layout, its files read from disk) the load took 1.9 s and still finished
+before the window was created (2.5 s).
+
+## Amendment: a loader's exception logged, and listeners with subscriptions (W12 release review, 2026-10-15)
+
+The review of the release phase found three faults in "Amendment: the lens database off the UI
+thread" (APL06-R1 to APL06-R3). Two need an allocation failure at start-up (or a loader that throws);
+the third is what the header promised. None changes what a session renders or records.
+
+5. **Every outcome is logged, a loader's exception included** (item 1; APL06-R1). The Backend logged
+   the outcome only after a loader that returned. A loader that threw (`std::bad_alloc` while the
+   asset is read) became, in the loading thread's catch blocks, an outcome without a database that
+   `lucent.log` never mentioned, although the Backend promises that the log file records why no
+   database is active (before item 1 the same exception failed `Backend::create()`); and an
+   exception while a line was being made (describing a refused data pack) replaced a database that
+   had loaded with an out-of-memory outcome. `LensDatabaseSource::run()` (noexcept) now gives the
+   loader's outcome or, for an exception, the outcome the loading thread gives (`OutOfMemory` for
+   `std::bad_alloc`, `Internal` otherwise); the Backend's loader logs whatever `run()` returns, and
+   its logging never throws (a line whose text cannot be made is dropped, never the outcome). The
+   source itself logs no outcome.
+6. **`on_ready()` returns an `app::Subscription`** (item 1; APL06-R2). A listener could not be
+   removed: when the edit or the library service's constructor threw after adding its listener, the
+   listener stayed, and once the load finished it posted, through a dispatcher nobody had closed, to
+   the object that was gone. Ending the subscription (`reset()` or its destructor) now removes a
+   listener that has not run, waits for one the loading thread is running (a listener may end its
+   own), and releases what it captured; a listener added once the outcome is known runs at once and
+   gets an empty subscription. Both services keep theirs as a member, so it ends with them, also when
+   their constructor throws; the library service sets its maintenance sink, which has no
+   subscription, last.
+7. **The header says what the source does** (APL06-R3). The loader also probes the per-user
+   data-pack folder (`<user data>\assets\lens-database`: a directory check, and its manifest is read
+   when the folder exists), which is local by default and any folder with `--data-root`; a read that
+   stalls there delays every `wait()` and the destructor, which joins the loading thread (in
+   Lucent.exe, the UI thread at exit). Listeners added while the database loads run in the order
+   added; one added once the outcome is set runs at once on the calling thread, possibly before
+   listeners the loading thread has not called yet.
+
+**Tests.** `lucent_application_tests`: a listener whose subscription ends before the outcome is known
+is never called and is released at once; ending a subscription waits while the loading thread runs its
+listener, and a listener can end its own; a late listener's subscription is empty, and an empty
+listener is never added; `run()` gives the loading thread's outcomes. `lucent_ui_tests`
+(`ApplicationAdaptersLensDatabase.ALoaderThatThrowsIsLoggedLikeAnyOtherOutcome`): with a loader that
+throws `std::bad_alloc` or `std::runtime_error`, the Backend starts, the outcome has no database and
+the problem's code (`OutOfMemory`, `Internal`), and the log has exactly one error "no lens database
+is active, so no lens correction is applied" with the problem's text (none with the Backend's loader
+before this amendment).

@@ -1,7 +1,11 @@
 # ADR 0009: Windows packaging: installed layout, dependency audit and per-user Inno Setup installer
 
 - **Status:** Accepted (amended 2026-10-09: "Amendment: build-machine paths and the signing rehearsal" below, with its closing review;
-  amended 2026-10-10 by the closing review of W13: "Amendment: the Lensfun dependencies' builder paths and recipes" below)
+  amended 2026-10-10 by the closing review of W13: "Amendment: the Lensfun dependencies' builder paths and recipes" below;
+  amended 2026-10-10 by the W12 licence and release phase: "Amendment: the corresponding source and the release" below, with ADR 0024;
+  amended 2026-10-10 by the W12 release phase: "Amendment: the release phase's deferred fixes" below;
+  amended 2026-10-14 by the W12 release phase: "Amendment: Lucent's icon" below, with ADR 0025;
+  amended 2026-10-15 by the W12 release review: "Amendment: the release review and the first sandbox run" below)
 - **Date:** 2026-10-03
 - **Workflow:** W5 (Installer slice)
 
@@ -558,3 +562,313 @@ support). Decision 12 grants no exception, so the strings had to go where they a
     folder; its recipe files keep their SHA-1 from that copy. The notice's introduction no longer
     calls every LGPL library unmodified: it names the `lucent-*.patch` files as the Lucent project's
     only source changes.
+
+## Amendment: the corresponding source and the release (W12 licence and release phase, 2026-10-10)
+
+Decision 10 kept the installer from public distribution until the corresponding source of the LGPL
+libraries was provided. The user decided the provision and the distribution model on 2026-10-10
+([ADR 0024](0024-release-and-licensing.md)); packaging now implements them.
+
+19. **Every package run writes the corresponding source** (`-StageOnly` included):
+    `Lucent-<version>-corresponding-source.zip` beside the installer, made after the licence bundle
+    (`New-CorrespondingSourcePackage`), read back and checked with `System.IO.Compression`
+    (`Test-CorrespondingSourcePackage`) and deleted when anything is missing or wrong; its own files
+    are scanned for the build machine's folders like the installation folder (decision 12). Its
+    contents and checks are ADR 0024's decisions 2 to 4.
+20. **`licenses\LGPL-NOTICE.txt` names the archive** with its size and SHA-256 (it is written after
+    the archive, `Write-LgplNotice`), and lists for each library where its source archive and recipe
+    are inside it; `THIRD-PARTY-NOTICES.txt` names the archive too and credits Inno Setup.
+21. **The package manifest is schema 5**: `correspondingSource` (the archive with every file in it and
+    each component's archives and recipe), `distribution` (from `installer\license-policy.json`),
+    `components[].correspondingSource`, and `toolchain.innoSetupLicence` (the compiler's licence line;
+    a non-commercial compiler is refused for a commercial distribution).
+22. **"Not for public distribution" no longer applies** to a package made this way. A release still
+    passes the gates of `docs\release\checklist.md`, among them decision 11's clean-machine test,
+    now prepared as a Windows Sandbox run (`installer\sandbox`), which waits for Windows Sandbox to
+    be enabled on the reference machine. Decision 9 stands: releases are unsigned until a
+    code-signing certificate exists, and the signing path stays as rehearsed (decision 13).
+23. **One version.** Packaging refuses a build whose `vcpkg.json` version differs from the CMake
+    project version.
+
+## Amendment: the release phase's deferred fixes (W12, 2026-10-10)
+
+Three items the closing review of W12 part 1 and the licence phase left: Setup could install an
+older Lucent over a newer one (SEC-04, part 2), the builder-path scan could not see compressed
+content (SEC-07, decision 16), and the clean-machine gate (decision 11) had no harness that
+exercised Lucent itself in Windows Sandbox.
+
+24. **Setup never goes back over a newer Lucent** (`installer\lucent.iss`, `InitializeSetup`). It
+    reads this user's installation from Inno Setup's own registration (`HKA`: HKCU, Setup never runs
+    in administrative mode; `DisplayVersion` of `{AppId}_is1`) and compares it with its own version
+    by Semantic Versioning 2.0.0 precedence (MAJOR.MINOR.PATCH numerically, a release above its
+    pre-releases, pre-release identifiers numerically or in ASCII order, build metadata ignored).
+    Newer, or a version it cannot read: Setup stops before anything else (the runtime check
+    included) with a message box saying which version is installed and that going back means
+    uninstalling first (the library is kept; an older Lucent opens a newer catalog read-only or not
+    at all, ADR 0022), the log line `Downgrade refused: ...`, and exit code 1 ("Setup failed to
+    initialize") in silent mode; `/SUPPRESSMSGBOXES` suppresses the box, not the refusal. The same
+    version is repaired (`Downgrade check: ... this Setup repairs it`), an older one upgraded. The
+    preprocessor refuses an `AppVersionQuad` that is not `AppVersion` followed by `.0`. "Check for
+    updates" never offers an older version (ADR 0022), so the guard is for Setups run by hand. A
+    test hook, `/LucentTestCompareVersions=<a>,<b>;...`, logs how Setup orders each pair and stops
+    Setup (exit code 1) before it reads or changes anything: it can only stop Setup, never let it
+    install, and lets the installer test check the compiled precedence rules.
+25. **The version rehearsal.** `tools\package.ps1 -VersionRehearsal` also compiles
+    `rehearsal\Lucent-Setup-<next patch>-x64-VERSION-REHEARSAL.exe`: the same installation folder
+    registered as the next patch version (`VersionRehearsalOf` puts "version rehearsal of <v>, not
+    for distribution" in its name and version information), unsigned, not in the package manifest,
+    never published. `installer\tests\Test-InstalledPackage.ps1 -NewerInstaller` installs the
+    package's Setup (after checking 19 version pairs through the test hook: Semantic Versioning
+    2.0.0's own examples and malformed versions), repairs it over the running Lucent (the same
+    version, which the step's checks now say), upgrades to the newer Setup, and runs the package's
+    Setup again: it must exit with 1, log the refusal, start no runtime check, and leave the
+    registration, every installed file (size, time, SHA-256) and the shortcuts as they were; then
+    everything is uninstalled. With `-PreviousInstaller` (the update rehearsal) the previous
+    release's Setup must refuse to go back the same way, and a same-version repair follows the
+    upgrade.
+26. **The builder-path scan decompresses what the shipped files compress** (decision 16 resolved;
+    `installer\scripts\LucentCompressedContent.cs`, `Find-BuilderPathsInContent`). Every file's
+    bytes are scanned as before, and then what they compress: every zlib (RFC 1950) and gzip (RFC
+    1952) stream at any offset that decodes completely and matches its Adler-32 or CRC-32 (Qt's rcc
+    resources, which qCompress, and Qt's gzip-compressed MIME database; PNG data), followed one
+    level further into what those hold. Setup is read through its loader's offset table (version 2,
+    as Inno Setup 6.7 writes it, CRC-checked): the setup data blocks (LZMA: the compiled script,
+    messages, file names), the setup engine (LZMA; Inno Setup's x86 call-address transform undone,
+    then its size and CRC-32 checked against the offset table) and the installed files (LZMA2) are
+    decompressed and scanned. A hit names the file, the compressed part and its offset, and the
+    offset in the decompressed data. What the scan cannot decompress fails the packaging instead of
+    passing unseen: a zstd frame (Qt is built without zstd, so no shipped file has one), a part
+    beyond the limits (256 MiB a stream, 1 GiB a file), a Setup layout the reader does not know (a
+    future Inno Setup version needs the reader updated). The decoders are written from the
+    specifications (RFC 1951, the LZMA SDK's specification) and checked against independent
+    encoders: .NET's DeflateStream and GZipStream, liblzma (`installer\tests\inno_setup_vector.py`),
+    ISCC itself. Not covered: raw deflate without a zlib or gzip wrapper (ZIP entries; Lucent ships
+    no ZIP), and inside Setup's decompressed installed files the bytes Inno Setup's call transform
+    changes in executables (405 of the folder's 478 compressed streams still decode there): those
+    files are the installation folder's, scanned exactly before compression, and the installer test
+    compares every installed file with the package manifest's SHA-256. The manifest's
+    `audit.builderPaths` records `compressedPartsScanned` and `decompressedBytesScanned`.
+27. **The clean-machine gate has its harness** (decision 11;
+    [docs/release/clean-machine.md](../release/clean-machine.md); ADR 0024 decision 10):
+    `tools\Test-CleanMachine.ps1` prepares a gate folder (the package, its version rehearsal, three
+    smoke fixtures, the scripts) mapped read-only with a writable results folder, writes and
+    validates the `.wsb` (`installer\sandbox\LucentSandbox.psm1`, against
+    `installer\sandbox\wsb-configuration.xsd`), starts Windows Sandbox and waits with a timeout; the
+    logon script `installer\sandbox\Invoke-CleanMachineGate.ps1` installs silently, imports, runs
+    Auto, exports JPEG and 16-bit TIFF and takes screenshots through the installed `Lucent.exe`,
+    uninstalls, runs the installer test and writes `gate.json`, which the host checks against what
+    it asked for. `installer\sandbox\New-LucentSandbox.ps1` is replaced by it. The gate waits for
+    Windows Sandbox to be enabled on the reference machine; `-LocalRehearsal` runs the logon script
+    on any machine.
+
+### Evidence (2026-10-10, the reference laptop)
+
+- **Versions.** `Test-InstalledPackage.ps1 -RuntimeOutcomes -NewerInstaller` on the final release
+  package of `build\rel-def` and its version rehearsal (0.1.1): 56 of 56 checks (55 of 55 on the
+  package before the test hook existed). The 19 version pairs came out in Semantic Versioning order
+  and the five malformed versions as unreadable; the install took 5 to 7 s; the same-version repair
+  over the running Lucent logged `Downgrade check: Lucent 0.1.0 is installed; this Setup repairs
+  it`; the upgrade registered 0.1.1 with the same 391 files; the package's Setup then exited with 1
+  after `Downgrade refused: Lucent 0.1.1 is installed, newer than 0.1.0, which this Setup
+  installs`, with nothing changed and no runtime check; the uninstallation and the runtime outcomes
+  passed as before.
+- **Compressed content.** The installation folder (391 files, 72.4 MiB): 478 compressed parts (477
+  zlib streams in 10 Qt and Lucent binaries, Qt6Core.dll's gzip-compressed MIME database), 5.2 MiB
+  decompressed, no builder path; the scan takes 11 to 13 s instead of about 2 s. Setup: its two
+  setup data blocks, the setup engine (4.4 MB, CRC-32 as recorded) and the installed files (the
+  folder and Microsoft's redistributable, 101.5 MB) decompressed, 106.4 MiB with the 448 zlib
+  streams found in Setup and in those parts, no builder path, 13.5 s. `Test-BuilderPathScan.ps1`:
+  paths planted in a qCompress resource, a gzip member, a zlib stream inside a zlib stream, and the
+  LZMA setup data and LZMA2 installed files of a synthetic Inno Setup 6.7 executable are found and
+  named; a zstd frame and a damaged offset table fail; with `-InnoSetupCompiler`, a Setup that ISCC
+  6.7.3 compiles with a path in its `[Code]` and one in an installed file shows both (68 of 68
+  checks).
+- **The clean-machine harness.** `Test-CleanMachineHarness.ps1` (CTest
+  `lucent_clean_machine_harness_tests`): 33 checks. The local rehearsal
+  (`tools\Test-CleanMachine.ps1 -LocalRehearsal`) with the final package and three smoke fixtures:
+  Setup installed silently into the gate folder's profile in 5 s; run 1 imported the DJI DNG, the
+  X-T4 RAF and the Z 6 NEF, ran Auto on the DNG (2.1 s, its revision current) and exported three
+  valid JPEGs (16 s); run 2 exported three valid 16-bit TIFFs from the same library (29 s); the
+  photos were unchanged; the uninstallation removed the program, its shortcut and its registration
+  and kept the library; the installer test inside passed 56 of 56 checks, the 19 version comparisons
+  among them. 19 of the gate's 21 checks passed: the development machine is not clean (Python, Git,
+  Ninja, the runtime) and is online, which a rehearsal records without failing. The first rehearsal
+  found two defects of the gate itself, fixed before this run: `--export-all` needs an existing
+  output folder, and Windows PowerShell 5.1 refused to add an array to the result's ordered
+  dictionary by property name (now an indexer).
+
+## Amendment: Lucent's icon (W12 release phase, 2026-10-14)
+
+Lucent has a logo, a branding asset generated from the owner's image ([ADR 0025](0025-branding.md));
+the programs and Setup carry it.
+
+28. **The programs' icon and version resources.** `Lucent.exe` and `lucent-worker.exe` both get their
+    Windows resources from one template, `cmake/lucent-program.rc.in` (`lucent_add_program_resources()`
+    in `cmake/LucentBranding.cmake`, which replaces `apps/lucent/lucent.rc.in`): the branding asset's
+    Windows icon as their only icon group, `IDI_ICON1`, and the version information Lucent.exe had
+    (the worker gains it). The uninstall entry (`UninstallDisplayIcon={app}\Lucent.exe`), the shortcuts
+    and the "Open with" ProgID (`DefaultIcon`) show the logo through `Lucent.exe`.
+29. **Setup's icon and wizard images.** `installer\lucent.iss` takes `SetupIconFile`, `WizardImageFile`
+    and `WizardSmallImageFile` from the defines `BrandingIcon`, `BrandingWizardImages` and
+    `BrandingWizardSmallImages`; `tools\package.ps1` passes them from `assets\branding` by role (every
+    image-area size Inno Setup 6.7.3 documents, comma-separated) after verifying the asset against its
+    manifest, and the script stops without them.
+30. **Packaging checks the icons.** After the smoke run, the staged `Lucent.exe` and
+    `lucent-worker.exe` must have `IDI_ICON1` as their first icon group with exactly the icon's images;
+    after compiling, Setup's first icon group must be the icon (otherwise that Setup is deleted). The
+    images are resources inside the programs and Setup, so the installed layout, its audit, the
+    installed-file list, the SBOM and the notices are unchanged.
+
+### Evidence (2026-10-14)
+
+The release package of `build\wl-brand-rel`: the audit passed (344 files, 70 PE files), the smoke run
+too; `Lucent.exe`, `lucent-worker.exe` and Setup carried the icon byte for byte (`IDI_ICON1`,
+`IDI_ICON1`, `MAINICON`); the builder-path scan found nothing in 494 files and 975 compressed parts;
+Setup grew from 43,685,562 to 44,409,547 bytes. CTest `lucent_setup_branding_tests` compiles
+`installer\lucent.iss` with stand-ins and checks Setup's icon and wizard images without a release build.
+Details in ADR 0025.
+
+## Amendment: the release review and the first sandbox run (W12, 2026-10-15)
+
+The review of the release phase (findings SEC04-01, SEC07-01, SEC07-02 and CMG-01 to CMG-04) and the
+first run of the clean-machine gate in Windows Sandbox found gaps in decisions 6, 12, 24, 26 and 27.
+That run (2026-10-11: a release candidate of 0.1.0 in Windows 11 Enterprise 10.0.26100, clean and
+offline as `environment.json` recorded) went through every step and failed; its findings are SBX-1 to
+SBX-4 below.
+
+31. **A registration whose version cannot be read stops Setup** (decision 24; SEC04-01). Setup took
+    any failure to read `DisplayVersion` for "not installed", so a registration that exists without
+    it, or with a value of another type (`RegQueryStringValue` reads `REG_SZ` and `REG_EXPAND_SZ`
+    only: a registry cleaner, a hand edit), let an older Setup install into the registered folder.
+    `RegKeyExists` alone now decides "not installed". An existing registration without a text
+    `DisplayVersion` is refused as a newer version is: the log line `Downgrade refused: Lucent's
+    registration HKEY_CURRENT_USER\...\{AppId}_is1 exists, but its DisplayVersion is missing` (or
+    `is not a text value`), the message `UnreadableRegistration`, which names the key (when Settings >
+    Apps does not list Lucent, the registration is damaged and the key is to be deleted), and exit
+    code 1. `Test-InstalledPackage.ps1` deletes `DisplayVersion` after its installations, then rewrites
+    it as a `REG_DWORD` and as a `REG_MULTI_SZ` naming 999.0.0; each time the package's Setup must exit
+    with 1, log the refusal naming `DisplayVersion`, run no runtime check, and leave every installed
+    file, the shortcuts and the registration (the tampered value included) as they were. The value is
+    restored afterwards.
+32. **A default program is the program Windows opens the type with** (decision 6; SBX-3). In the
+    sandbox the profile's user choice named Photos for 15 RAW types (`.arw`, `.cr2`, `.crw`, `.erf`,
+    `.kdc`, `.mrw`, `.nef`, `.nrw`, `.orf`, `.pef`, `.raf`, `.raw`, `.rw2`, `.rwl`, `.sr2`: Windows'
+    default associations, `OEMDefaultAssociations.xml`, give Photos those types), but Windows Sandbox
+    does not hold Photos, so Windows opened them with no program (`AssocQueryString`:
+    `ERROR_NO_ASSOCIATION`). Setup counted any user choice as a default program, added
+    `Lucent.RawPhoto` to those types' `OpenWithProgids`, and Windows then opened them with Lucent, their
+    only handler: what decision 6 rules out. The installer test's check "What Windows opens each RAW
+    type with is unchanged" failed (`.arw : 0x80070483 | 0x80070483 | 0x80070483 -> "...\Lucent.exe"
+    "%1" | Lucent | Lucent.RawPhoto`, and `.cr2`, `.crw`). `ExtensionHasDefaultProgram` now asks Windows
+    first (`AssocQueryStringW`, `ASSOCSTR_PROGID` with `ASSOCF_INIT_IGNOREUNKNOWN`): a type has a
+    default program only when Windows resolves it to a ProgID and that ProgID is the user's choice
+    (`UserChoice`, `UserChoiceLatest`) or the type's own default value (not Lucent's). A choice of a
+    program that is not installed is none, and the log line names the ProgID Windows opens the type
+    with. On a clean Windows Lucent is listed under "Choose another app" for every RAW type and becomes
+    no type's program. The review proposed the opposite repair, a test that lets a type without any
+    association resolve to Lucent after the installation; that accepts a changed double-click, which
+    decision 6 excludes, so the rule changed and the test stays as strict. The installer test mirrors
+    the rule (`Test-HasDefaultProgram`), checks after the installation that the Explorer state
+    (`FileExts`, the user choice) of every RAW type is unchanged, and after every later installation
+    (the repairs, the upgrades) that no extension's default value, user choice or effective program
+    changed; the checks after the uninstallation stay.
+33. **One decompression budget for each scanned file** (decision 26; SEC07-01). Decision 26's limits
+    ("256 MiB a stream, 1 GiB a file") held per call: every part found at the first depth, and every
+    part of Setup, was scanned with a fresh gigabyte, so a few kilobytes of nested streams could make
+    the scan decompress gigabytes (the review: 1.08 GiB from a 4,131-byte file within the old limits);
+    candidates that decoded and then failed their checksum were not counted, and nothing bounded the
+    time. `Find-BuilderPathsInContent` now gives each scanned file one budget
+    (`New-CompressedContentBudget`, `DecodeBudget` in `LucentCompressedContent.cs`): 1 GiB in all, at
+    every depth and over Setup's parts, counting everything a decoding produced, a stream or not, and
+    300 seconds. A decoding may produce at most what is left, so an overrun stops while it decodes. A
+    file beyond its budget fails the packaging ("... decompresses to more than 1073741824 bytes in all
+    ..." or "... took more than 300 s ..."); a single stream above 256 MiB still fails on its own. No
+    binary of the release build comes near it: the most is 15.9 MiB (`Qt6QuickControls2Imagine.dll`,
+    which does not ship: 1,469 zlib streams).
+34. **The "any user" rule reads every user name in UTF-16** (decision 12; SEC07-02). The rule for other
+    users' profile folders (`X:\Users\<name>\`, aimed at binaries a binary cache brought from another
+    machine) took a UTF-16LE name only of code units below U+0100, so a wide path under a Chinese,
+    Cyrillic or Greek user name (an assertion's `__FILEW__`) went unseen; UTF-8 was caught. The wide
+    form now also takes any code unit with a non-zero high byte, none of which is a path separator or
+    a control character.
+35. **The clean-machine gate after its first run** (decision 27; [clean-machine.md](../release/clean-machine.md)):
+    - *Plain results* (SBX-1). The gate read Lucent's output with `Get-Content`, whose lines carry
+      PowerShell's provider properties, and the Auto summary it kept made `gate.json` 109,137,002
+      bytes of .NET type information that took minutes to write. It now reads every log as plain text
+      (`Read-TextLines`), keeps only strings, numbers and booleans, and refuses a result above 1 MiB
+      (a failed `gate.json` then says why). Its export lists are always arrays: one file was recorded
+      as a bare object and none as `{}`, which the host counted as one export (CMG-03).
+    - *Complete files* (SBX-2). The host read `gate.json` while the sandbox still wrote it and stopped
+      with a sharing violation after nine minutes, without a verdict. Every result file is now written
+      under `<name>.partial` and renamed; the host reads with retries while a file is in use or not
+      complete JSON (`Read-CleanMachineJson`) and waits for the sandbox to close.
+    - *The TIFF check reads the file* (CMG-04): the first image file directory must say
+      `BitsPerSample` 16, 16, 16, `SamplesPerPixel` 3 and one plane (the signature alone was checked).
+    - *Elevation, recorded* (CMG-01, SBX-4). Windows Sandbox runs the logon command with an elevated
+      administrator token: the first run's Setup logged "User privileges: Administrative" and installed
+      the runtime elevated, without a prompt, in about four minutes, while the scripts told the
+      operator to answer one. `environment.json` now records the gate's token (Administrators role,
+      integrity level, elevation type) and Windows' UAC settings (`EnableLUA`,
+      `ConsentPromptBehaviorAdmin` and `-User`, `PromptOnSecureDesktop`, `FilterAdministratorToken`)
+      and what they mean for the runtime's elevation; `install.exit` quotes Setup's "User privileges"
+      line, and `gate.json` notes when the runtime installed without a consent prompt. No prompt is
+      expected in the sandbox.
+    - *The host* (CMG-02, CMG-03). It refuses to start while a Windows Sandbox runs (one instance at a
+      time: `wsb list --raw` where that command line exists, and the sandbox's processes), requires the
+      gate's first step within `-StartTimeoutMinutes` (default 5) or stops with a diagnosis (another
+      sandbox; the Windows Sandbox app's reported failure to run the logon command, issue 125 of
+      microsoft/Windows-Sandbox; the host's Windows build and Sandbox version) instead of waiting the
+      full hour, and writes its verdict, `host-check.json`, beside `gate-request.json`, outside the
+      folder the sandbox can write, whatever the outcome (never started, timed out, no or an
+      unreadable result, checked). Its check counts only exports recorded with a file and its
+      SHA-256, compares the photos' file names with those it gave, and requires the installer test
+      with `-NewerInstaller` when it gave the version rehearsal. `gate-request.json` and
+      `host-check.json` record the host's Windows build with its update revision and the Windows
+      Sandbox app's version.
+    - *Decision 11's pending gate, revised.* The sandbox exercises the runtime's real installation, but
+      elevated, so never its consent prompt. The declined and the accepted prompt (manual steps 1 and
+      2) run on a Windows with UAC at its default (`ConsentPromptBehaviorAdmin` 5) and without the
+      runtime, offline: a virtual machine installed from Windows' own media, or a spare computer. The
+      other manual steps may run in the sandbox.
+36. **Decision 18's notice lists every patch.** `LGPL-NOTICE.txt` and the corresponding-source archive
+    name every patch of a library's recipe, vcpkg's included, with the files it changes and its date
+    ([ADR 0003](0003-linking-and-licensing.md), amendment of 2026-10-15).
+
+### Evidence (2026-10-15, the reference laptop)
+
+- **The defects, shown with the committed code** (334d0bb) before the fixes: the host's check passed
+  a one-photo gate whose JPEG export was recorded as `{}`; the scanner found a Chinese user name's
+  profile path in UTF-8 but not in UTF-16LE, and scanned 18 MiB of nested streams (three outer
+  streams of a few kilobytes, each holding two 3 MiB streams) through an 8 MiB limit without a
+  problem.
+- **The harness** (`Test-CleanMachineHarness.ps1`, CTest `lucent_clean_machine_harness_tests`): 69
+  checks (33 before). New: a `Get-Content` line serialises with PowerShell's provider properties, a
+  line read by the gate as a plain string, and the gate reads no file with `Get-Content`; a result
+  above the size limit is refused; the TIFF reader takes a 16-bit RGB TIFF in both byte orders and
+  tells an 8-bit, an RGBA, a planar, a truncated file, a BigTIFF and a JPEG apart; the elevation
+  record has its fields and serialises as plain data; the host's check refuses `{}` and `null` for
+  one photo's export, an export without its SHA-256, other photos, and a version rehearsal without
+  `-NewerInstaller`, and takes a request without file names; a result another process holds open is
+  read once it is closed, and one held past the timeout or incomplete fails with the reason; `wsb
+  list --raw` output gives each sandbox once; `-Check` writes `host-check.json` beside
+  `gate-request.json`, also without `gate.json`.
+- **The scan** (`Test-BuilderPathScan.ps1`, CTest `lucent_builder_path_scan_tests`): 81 checks, 83
+  with `-InnoSetupCompiler` and ISCC 6.7.3 (68 before). New: the five user names in UTF-8 and
+  UTF-16LE; the nested streams fail an 8 MiB budget and pass a 64 MiB one (nine parts, 18 MiB and
+  more counted); ten 1 MiB streams with a wrong checksum fail an 8 MiB budget and pass the audit's
+  own; a scan that outlasts its time limit fails. Over the twelve largest binaries of the release
+  build (`build\release\bin`) the largest use of a file's budget is 15.9 MiB
+  (`Qt6QuickControls2Imagine.dll`, 1,469 parts; `Lucent.exe` 0.3 MiB).
+- **Setup.** `installer\lucent.iss` compiles with ISCC 6.7.3 (CTest `lucent_setup_branding_tests`, 20
+  checks). A probe Setup compiled from its association functions, which stops in `InitializeSetup`
+  and installs nothing, found a default program for 33 of the reference machine's 44 RAW types (as
+  before: every user choice here names an installed program), and the installer test's mirror of the
+  rule agreed on all 44.
+- **The package** (`tools\package.ps1 -BuildDir build\wl-fix-scripts-rel -Jobs 5 -UpdateChannel none
+  -StageOnly`): the audit, the smoke run and the icon checks passed; the builder-path scan found
+  nothing in 493 files, the installation folder's 499 compressed parts (6.6 MiB) decompressed within
+  their budgets.
+- **Not run here:** `Test-InstalledPackage.ps1` (it installs Lucent, which this review did not do on
+  the shared machine) and the gate in Windows Sandbox. The refused unreadable registration, the
+  association checks after the repairs and upgrades, and the gate's changes run for the first time in
+  the next gate run and at the release checklist's gates 9 and 10.

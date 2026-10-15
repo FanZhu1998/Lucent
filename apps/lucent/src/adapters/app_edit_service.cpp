@@ -876,6 +876,11 @@ AppEditService::AppEditService(std::shared_ptr<Backend> backend, RenderEventSink
     release_timer_.setSingleShot(true);
     release_timer_.setInterval(std::max(0, options.release_full_resolution_ms));
     connect(&release_timer_, &QTimer::timeout, this, &AppEditService::release_idle_full_resolution);
+    // W12 (APL-06): the lens database loads off the UI thread; the Lens corrections panel is told when
+    // it has (`this` is used only by the posted function, on the UI thread while it lives). The listener
+    // ends with its subscription member, also when a statement below throws.
+    lens_database_subscription_ = backend_->lens_database_source()->on_ready(
+        [this, dispatcher = dispatcher_] { dispatcher->post([this] { emit lens_database_changed(); }); });
 
     // Auto's progress and completion (an executor thread; relayed to the UI thread).
     if (app::AutoService* automatic = backend_->automatic(); automatic != nullptr) {
@@ -909,6 +914,7 @@ AppEditService::AppEditService(std::shared_ptr<Backend> backend, RenderEventSink
 
 AppEditService::~AppEditService() {
     // No relayed event or queued refresh after this point (each reset waits for a call in progress).
+    lens_database_subscription_.reset();
     recipe_subscription_.reset();
     auto_subscription_.reset();
     std::vector<std::uint64_t> tickets;
@@ -1290,15 +1296,16 @@ QList<QPolygonF> AppEditService::mask_outline(const EditMask& mask, QSize uprigh
 }
 
 LensDatabaseInfo AppEditService::lens_database() const {
-    return to_lens_database_info(backend_->lens_database_load());
+    return to_lens_database_info(backend_->lens_database_source()->try_get());  // never waits
 }
 
 QList<LensProfileEntry> AppEditService::search_lens_profiles(const QString& text, int limit) const {
-    const std::shared_ptr<const engine::LensDatabase>& database = backend_->lens_database();
-    if (!database) {
+    // Nothing while the database loads (the panel says so, and is told when it has loaded).
+    const assets::LensDatabaseLookup* load = backend_->lens_database_source()->try_get();
+    if (load == nullptr || !load->database) {
         return {};
     }
-    return lens_profile_search(database->profiles(), text, limit);
+    return lens_profile_search(load->database->profiles(), text, limit);
 }
 
 QList<double> AppEditService::sample_tone_curve(const QList<QPointF>& points, int count) const {

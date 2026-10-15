@@ -30,15 +30,22 @@
 // Verified, stored Limited and Unsupported answers are kept (a missing database never improves a
 // state), camera_support_load() says why and the log file records it.
 //
-// W13 (ADR 0023): the lens database. Right after the camera support database, the Backend finds,
-// verifies and loads the bundled Lensfun database (assets::load_lens_database: the same pin and
-// hash checks, per-user data packs refused). The renderer gets it (EngineRendererOptions::
-// lens_database), so previews, thumbnails, single exports and the editor's frames apply each
+// W13 (ADR 0023): the lens database. The Backend finds, verifies and loads the bundled Lensfun
+// database (assets::load_lens_database: the same pin and hash checks, per-user data packs refused).
+// The renderer gets it, so previews, thumbnails, single exports and the editor's frames apply each
 // recipe's lens corrections; batch exports run in lucent-worker.exe, which loads the same bundled
 // asset itself. Auto's analysis and final check run without it (the analysis measures the
 // uncorrected image; Auto never changes the lens settings, which its revisions carry unchanged).
-// When none can be activated the session runs without lens corrections, lens_database_load() says
-// why and the log file records it: never a failure to start.
+// When none can be activated the session runs without lens corrections, the outcome says why and the
+// log file records it: never a failure to start.
+//
+// W12 (APL-06, ADR 0023 amendment): the load runs on a thread of its own, started first thing in
+// create(), which no longer waits for it (about 140 ms of every start on the reference laptop). The
+// services take the loading source (app::LensDatabaseSource): the renderer waits for it before every
+// estimate and render, the recipe service before it names the database in a revision, the batch
+// service before it names it in a new batch, all on their own threads. The UI adapters ask without
+// waiting (lens_database_source()->try_get(): null while loading) and are told when it has loaded
+// (on_ready()). BackendOptions::lens_database_loader replaces the loader (tests).
 //
 // W8: the AutoService (auto_service.hpp, ADR 0013) runs the editor's "Auto" in process on the
 // executor's Background lane, over the recipe service; it is created after the executor and
@@ -87,6 +94,7 @@
 #include <lucent/application/camera_support.hpp>
 #include <lucent/application/develop_preview.hpp>
 #include <lucent/application/export_service.hpp>
+#include <lucent/application/lens_database_source.hpp>
 #include <lucent/application/library.hpp>
 #include <lucent/application/maintenance_service.hpp>
 #include <lucent/application/preview_service.hpp>
@@ -145,6 +153,9 @@ struct BackendOptions {
     // Replaces the build's channel and the service's seams (tests: a loopback channel and a test
     // key). Its install_blocker and before_install are the Backend's.
     std::optional<app::UpdateServiceOptions> updates;
+    // W12 (APL-06). Replaces the lens database's loader (run on its own thread; tests hold it to see
+    // the services while the database loads); empty: assets::load_lens_database at asset_locations.
+    app::LensDatabaseSource::Loader lens_database_loader;
 };
 
 // Output folders chosen for exports in this session. Imports do not scan into them when a scan
@@ -219,12 +230,11 @@ public:
     [[nodiscard]] const assets::CameraSupportLoad& camera_support_load() const noexcept {
         return camera_support_load_;
     }
-    // W13. The session's lens database (null when none could be activated) and how it was found.
-    [[nodiscard]] const std::shared_ptr<const engine::LensDatabase>& lens_database() const noexcept {
-        return lens_database_load_.database;
-    }
-    [[nodiscard]] const assets::LensDatabaseLookup& lens_database_load() const noexcept {
-        return lens_database_load_;
+    // W13, W12 (APL-06). The session's lens database, loading off the UI thread (see the file comment):
+    // try_get() is null until it has loaded, then the outcome (its database is null when none could be
+    // activated, and its problem says why); wait() blocks until then (never on the UI thread).
+    [[nodiscard]] const std::shared_ptr<app::LensDatabaseSource>& lens_database_source() const noexcept {
+        return lens_database_;
     }
     [[nodiscard]] OutputFolders& output_folders() noexcept { return output_folders_; }
     // The recipe store under recipes() (tests write revisions through it directly).
@@ -261,7 +271,7 @@ private:
     std::optional<Error> library_problem_;
     assets::CameraSupportLoad camera_support_load_;
     app::CameraSupportRef camera_support_;
-    assets::LensDatabaseLookup lens_database_load_;
+    std::shared_ptr<app::LensDatabaseSource> lens_database_;
     std::shared_ptr<app::RecipeStore> recipe_store_;
     std::unique_ptr<app::RecipeService> recipes_;
     std::unique_ptr<app::BatchService> batches_;

@@ -20,7 +20,23 @@
     - New-LicenseBundle           writes licenses\ (Lucent's licence, each shipped port's copyright
                                   file, licence texts missing from vcpkg, the third-party code inside
                                   Qt from Qt's own SBOM, the licence texts of third-party data assets,
-                                  LGPL notice, notices file).
+                                  notices file).
+    - New-CorrespondingSourcePackage, Test-CorrespondingSourcePackage
+                                  write and independently check Lucent-<version>-corresponding-
+                                  source.zip: the upstream source archives, vcpkg recipes, triplet
+                                  and build records of every shipped library whose licence needs a
+                                  source provision (Get-SourceProvisionPlan: the LGPL libraries; a
+                                  copyleft licence the policy does not provide for stops packaging,
+                                  and GPL code or copyleft code compiled into the programs stops it
+                                  whatever the policy provides; Get-LicenceKind), as a deterministic
+                                  archive (New-DeterministicZip; every order ordinal,
+                                  ConvertTo-OrdinalOrder) with every patch a recipe applies to its
+                                  library's source (Get-RecipeModifications) (W12, ADR 0024).
+    - Write-LgplNotice            writes licenses\LGPL-NOTICE.txt, which names that archive and each
+                                  library's modifications.
+    - Get-InnoSetupLicence, Test-InnoSetupLicence
+                                  the licence an Inno Setup compiler's banner states, and whether it
+                                  covers the distribution the policy records (ADR 0024).
     - New-PackageSbom             aggregates vcpkg's per-port SPDX documents and Qt's SBOMs into one
                                   SPDX 2.3 SBOM, with a package for each third-party data asset, and
                                   checks it structurally.
@@ -28,7 +44,12 @@
     - Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit
                                   scan every shipped file (and the installer, and the package
                                   manifest) for the build machine's folders: the user profile, the
-                                  repository, the build tree and the vcpkg folders (W12).
+                                  repository, the build tree and the vcpkg folders (W12), in their
+                                  bytes and in what they compress: every zlib and gzip stream (Qt's
+                                  rcc resources), and Setup's LZMA-compressed setup data, setup
+                                  engine and installed files (Find-BuilderPathsInContent,
+                                  LucentCompressedContent.cs; W12 review SEC-07), within one
+                                  decompression budget per scanned file (New-CompressedContentBudget).
     - Get-CodeSigningCertificate, Test-AuthenticodeFile
                                   check the signing certificate before signing and every signature
                                   after it (signer thumbprint, offline WinVerifyTrust result,
@@ -129,6 +150,36 @@ function Format-Paragraph {
     }
     if ($current) { $lines.Add($current) }
     return ($lines -join "`n")
+}
+
+function ConvertTo-OrdinalOrder {
+    # $Items in the ordinal order of their -Property (or of themselves), the same on every machine:
+    # Sort-Object sorts by the thread's culture, which reorders names between regional formats
+    # (Estonian puts z between s and t), and the corresponding-source archive and the notices must not
+    # depend on it (W12 review LIC-7). Stable (equal keys keep their order); -Unique keeps the first
+    # item of each key.
+    param([AllowNull()][AllowEmptyCollection()][object[]]$Items, [string]$Property, [switch]$Unique)
+    $list = @($Items | Where-Object { $null -ne $_ })
+    if ($list.Count -eq 0) { return @() }
+    $keys = New-Object 'string[]' $list.Count
+    $byKey = @{}
+    for ($i = 0; $i -lt $list.Count; $i++) {
+        $key = if ($Property) { [string]$list[$i].$Property } else { [string]$list[$i] }
+        # The index after a NUL keeps equal keys in their order and every key unique. (Only the keys are
+        # sorted, in place: PowerShell would pass a copy of an items array to Array.Sort's generic form.)
+        $keys[$i] = $key + [char]0 + $i.ToString('D9', [System.Globalization.CultureInfo]::InvariantCulture)
+        $byKey[$keys[$i]] = $list[$i]
+    }
+    [Array]::Sort($keys, [System.StringComparer]::Ordinal)
+    $result = New-Object System.Collections.Generic.List[object]
+    $previous = $null
+    for ($i = 0; $i -lt $keys.Count; $i++) {
+        $key = $keys[$i].Substring(0, $keys[$i].LastIndexOf([char]0))
+        if ($Unique -and $i -gt 0 -and [string]::Equals($key, $previous, [System.StringComparison]::Ordinal)) { continue }
+        $result.Add($byKey[$keys[$i]])
+        $previous = $key
+    }
+    return $result.ToArray()
 }
 
 function Get-PortBaseVersion {
@@ -1012,15 +1063,20 @@ function Get-StaticVcpkgLibraries {
     .SYNOPSIS
         vcpkg libraries linked statically into the shipped executables (Lucent.exe and its helpers):
         the vcpkg .lib files on their link lines (build.ninja) whose members are object files rather
-        than DLL imports (lib /list).
+        than DLL imports (lib /list). Each names the executables that link it (Executables: their file
+        names, in the order Lucent.exe, then its helpers), so the notices say which program holds its
+        code (W12 review LIC-5).
     #>
     param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)][hashtable]$FileIndex)
     $binaryDir = ConvertTo-NativePath $Info.binaryDir
     $ninja = Join-Path $binaryDir 'build.ninja'
     if (-not (Test-Path -LiteralPath $ninja)) { throw "$ninja is missing: the statically linked libraries cannot be determined (the presets use Ninja)." }
     $outputs = @{}
+    $programNames = [ordered]@{}
     foreach ($built in @(@($Info.builtExecutable) + @($Info.builtHelperExecutables) | Where-Object { $_ })) {
-        $outputs[(Get-RelativePathText -Root $binaryDir -Path (ConvertTo-NativePath $built)).ToLowerInvariant()] = $null
+        $key = (Get-RelativePathText -Root $binaryDir -Path (ConvertTo-NativePath $built)).ToLowerInvariant()
+        $outputs[$key] = $null
+        $programNames[$key] = [System.IO.Path]::GetFileName((ConvertTo-NativePath $built))
     }
     $current = $null
     foreach ($line in [System.IO.File]::ReadLines($ninja)) {
@@ -1037,28 +1093,54 @@ function Get-StaticVcpkgLibraries {
     foreach ($output in @($outputs.Keys)) {
         if ($null -eq $outputs[$output]) { throw "No link statement for $output was found in $ninja." }
     }
-    $libraries = ($outputs.Values -join ' ')
     $tripletDir = [System.IO.Path]::GetFullPath((Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet)).TrimEnd('\') + '\'
     $lib = Join-Path (Split-Path -Parent (ConvertTo-NativePath $Info.dumpbin)) 'lib.exe'
     if (-not (Test-Path -LiteralPath $lib)) { throw "lib.exe was not found next to dumpbin ($lib)." }
     $found = @{}
+    $imports = @{}   # import libraries, listed once
     $escapedSpace = [string][char]0
-    foreach ($token in ($libraries.Replace('$ ', $escapedSpace) -split ' ')) {
-        $path = $token.Replace($escapedSpace, ' ') -replace '\$:', ':' -replace '\$\$', '$'
-        if ($path -notmatch '\.lib$') { continue }
-        if (-not [System.IO.Path]::IsPathRooted($path)) { $path = Join-Path $binaryDir $path }
-        $full = [System.IO.Path]::GetFullPath($path)
-        if (-not $full.StartsWith($tripletDir, [System.StringComparison]::OrdinalIgnoreCase) -or $found.ContainsKey($full.ToLowerInvariant())) { continue }
-        $members = @(& $lib /nologo /list $full | Where-Object { $_.Trim() } | Sort-Object -Unique)
-        if ($LASTEXITCODE -ne 0) { throw "lib /list failed on $full" }
-        $objects = @($members | Where-Object { $_ -notmatch '\.dll$' })
-        if ($objects.Count -eq 0) { continue }   # an import library
-        $relative = $full.Substring($tripletDir.Length).Replace('\', '/')
-        $owner = $FileIndex[$relative.ToLowerInvariant()]
-        if (-not $owner) { throw "$full is linked into $($Info.executable) but belongs to no vcpkg port." }
-        $found[$full.ToLowerInvariant()] = [pscustomobject]@{ Path = $relative; Name = [System.IO.Path]::GetFileName($full); Port = $owner.Port; Members = $objects }
+    foreach ($output in @($programNames.Keys)) {
+        foreach ($token in ($outputs[$output].Replace('$ ', $escapedSpace) -split ' ')) {
+            $path = $token.Replace($escapedSpace, ' ') -replace '\$:', ':' -replace '\$\$', '$'
+            if ($path -notmatch '\.lib$') { continue }
+            if (-not [System.IO.Path]::IsPathRooted($path)) { $path = Join-Path $binaryDir $path }
+            $full = [System.IO.Path]::GetFullPath($path)
+            $key = $full.ToLowerInvariant()
+            if (-not $full.StartsWith($tripletDir, [System.StringComparison]::OrdinalIgnoreCase) -or $imports.ContainsKey($key)) { continue }
+            if ($found.ContainsKey($key)) {
+                if ($found[$key].Executables -notcontains $programNames[$output]) { $found[$key].Executables += $programNames[$output] }
+                continue
+            }
+            $members = @(& $lib /nologo /list $full | Where-Object { $_.Trim() } | Sort-Object -Unique)
+            if ($LASTEXITCODE -ne 0) { throw "lib /list failed on $full" }
+            $objects = @($members | Where-Object { $_ -notmatch '\.dll$' })
+            if ($objects.Count -eq 0) { $imports[$key] = $true; continue }   # an import library
+            $relative = $full.Substring($tripletDir.Length).Replace('\', '/')
+            $owner = $FileIndex[$relative.ToLowerInvariant()]
+            if (-not $owner) { throw "$full is linked into $($programNames[$output]) but belongs to no vcpkg port." }
+            $found[$key] = [pscustomobject]@{ Path = $relative; Name = [System.IO.Path]::GetFileName($full); Port = $owner.Port; Members = $objects
+                Executables = @($programNames[$output]) }
+        }
     }
-    return @($found.Values | Sort-Object Path)
+    return @(ConvertTo-OrdinalOrder -Items @($found.Values) -Property Path)
+}
+
+function Format-NameList {
+    # "A", "A and B", "A, B and C".
+    param([AllowEmptyCollection()][string[]]$Names)
+    $names = @($Names | Where-Object { $_ })
+    if ($names.Count -le 1) { return [string]($names -join '') }
+    return (($names[0..($names.Count - 2)] -join ', ') + ' and ' + $names[-1])
+}
+
+function Get-StaticLibraryProgramsText {
+    # The programs a statically linked library is inside: its Executables (Get-StaticVcpkgLibraries), or
+    # every shipped executable when a record does not say.
+    param([Parameter(Mandatory)]$Library, [Parameter(Mandatory)]$Info)
+    if (($Library.PSObject.Properties.Name -contains 'Executables') -and @($Library.Executables | Where-Object { $_ }).Count -gt 0) {
+        return (Format-NameList @($Library.Executables))
+    }
+    return (Get-LucentExecutablesText $Info)
 }
 
 # --- Qt's own SBOM (tag-value SPDX) --------------------------------------------------------------
@@ -1168,9 +1250,9 @@ function Get-QtSbomFacts {
     }
     return [pscustomobject]@{
         Path = $path
-        Targets = @($targets.Values | ForEach-Object { $_.Package.PackageName } | Sort-Object)
+        Targets = @(ConvertTo-OrdinalOrder -Items @($targets.Values | ForEach-Object { $_.Package.PackageName }))
         Packages = $byName
-        Attributions = @($attributions.Values | Sort-Object Name)
+        Attributions = @(ConvertTo-OrdinalOrder -Items @($attributions.Values) -Property Name)
         Extracted = $doc.Extracted }
 }
 
@@ -1185,7 +1267,9 @@ function Get-PortSpdx {
 
 function Get-PolicyEntry {
     param([Parameter(Mandatory)]$Policy, [Parameter(Mandatory)][string]$Port)
-    if ($Policy.ports.PSObject.Properties.Name -contains $Port) { return $Policy.ports.$Port }
+    # Strict-mode safe also for a policy without ports.
+    $property = $Policy.ports.PSObject.Properties[$Port]
+    if ($property) { return $property.Value }
     return $null
 }
 
@@ -1204,7 +1288,7 @@ function Get-CompiledInPorts {
     foreach ($entry in $FileIndex.Values) {
         if ($entry.Path -match '\.(dll|lib)$') { $binaries[$entry.Port] = $true }
     }
-    return @($names | Where-Object { -not $binaries.ContainsKey($_) } | Sort-Object)
+    return @(ConvertTo-OrdinalOrder -Items @($names | Where-Object { -not $binaries.ContainsKey($_) }))
 }
 
 function Get-SourceArchive {
@@ -1387,7 +1471,8 @@ function New-LicenseBundle {
         statically (each must be reviewed in the policy), and for Qt ports the third-party code inside
         the shipped Qt files as recorded by Qt's own SBOM. For each third-party data asset
         (Get-AssetLicences): licenses\<asset id>\ with its licence text, its credit lines and its
-        provenance. Then LGPL-NOTICE.txt and THIRD-PARTY-NOTICES.txt.
+        provenance. Then THIRD-PARTY-NOTICES.txt. LGPL-NOTICE.txt follows from Write-LgplNotice,
+        after the corresponding-source package it names (New-CorrespondingSourcePackage).
     #>
     param(
         [Parameter(Mandatory)][string]$StageDir,
@@ -1415,7 +1500,7 @@ function New-LicenseBundle {
     $dynamicPorts = @($Report.Ports)
     $compiledIn = @(Get-CompiledInPorts -RepoRoot $RepoRoot -FileIndex $index)
     $staticPorts = @($StaticLibraries | ForEach-Object Port)
-    foreach ($port in (@($dynamicPorts) + @($compiledIn) + @($staticPorts) | Sort-Object -Unique)) {
+    foreach ($port in @(ConvertTo-OrdinalOrder -Items (@($dynamicPorts) + @($compiledIn) + @($staticPorts)) -Unique)) {
         $spdx = Get-PortSpdx -TripletDir $tripletDir -Port $port
         $portPackage = $spdx.packages | Where-Object { $_.SPDXID -eq 'SPDXRef-port' } | Select-Object -First 1
         $vcpkgLicense = $portPackage.licenseConcluded
@@ -1496,19 +1581,19 @@ function New-LicenseBundle {
             $review = $null
             if ($reviewedStatic -and ($reviewedStatic.PSObject.Properties.Name -contains $library.Path)) { $review = $reviewedStatic.($library.Path) }
             if (-not $review) {
-                throw "$(Get-LucentExecutablesText $Info) link $($library.Path) of port $port statically ($($library.Members -join ', ')); installer\license-policy.json has no reviewed entry for it (ports.$port.staticLibraries)."
+                throw "$(Get-StaticLibraryProgramsText $library $Info) link$(if (@($library.Executables).Count -le 1) { 's' }) $($library.Path) of port $port statically ($($library.Members -join ', ')); installer\license-policy.json has no reviewed entry for it (ports.$port.staticLibraries)."
             }
             if ($review.concluded -match 'GPL') {
-                throw "$($library.Path) is used under $($review.concluded) but is linked statically into $(Get-LucentExecutablesText $Info); LGPL and GPL code must stay in replaceable DLLs (ADR 0003)."
+                throw "$($library.Path) is used under $($review.concluded) but is linked statically into $(Get-StaticLibraryProgramsText $library $Info); LGPL and GPL code must stay in replaceable DLLs (ADR 0003)."
             }
             $statics.Add([pscustomobject]@{
                 Path = $library.Path; File = $library.Name; Name = $review.name; LicenseDeclared = $review.declared; LicenseConcluded = $review.concluded
-                Copyright = $review.copyright; Comment = $review.comment
+                Copyright = $review.copyright; Comment = $review.comment; Executables = @($library.Executables)
                 QtSbomPackage = $(if ($review.PSObject.Properties.Name -contains 'qtSbomPackage') { $review.qtSbomPackage } else { $null }) })
         }
 
         # Qt's own SBOM: the third-party code compiled into the shipped Qt files.
-        $files = @($Report.Files | Where-Object { $_.Port -eq $port } | ForEach-Object Path | Sort-Object)
+        $files = @(ConvertTo-OrdinalOrder -Items @($Report.Files | Where-Object { $_.Port -eq $port } | ForEach-Object Path))
         $shippedSources = @($Report.Files | Where-Object { $_.Port -eq $port } | ForEach-Object {
             (Get-RelativePathText -Root $tripletDir -Path $_.Source).Replace('\', '/') })
         $extraTargets = @($statics | Where-Object { $_.QtSbomPackage } | ForEach-Object { [pscustomobject]@{ Name = $_.QtSbomPackage; File = $_.File } })
@@ -1531,7 +1616,7 @@ function New-LicenseBundle {
             Comment = $(if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'comment')) { $policyEntry.comment } else { $null })
             Linkage = $linkage; Files = $files; LicenceTexts = @($texts); Notices = $notices; Lgpl = $lgpl
             StaticLibraries = $statics.ToArray(); QtSbom = $qtSbom; RecipeRef = $null
-            Sources = @($sources | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Location = $_.Location; Sha512 = $_.Sha512 } })
+            Sources = @($sources | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Location = $_.Location; Sha512 = $_.Sha512; Resource = $_.Resource } })
             Spdx = $spdx })
         $components[$components.Count - 1].RecipeRef = Get-RecipeReference -Component $components[$components.Count - 1] -VcpkgRoot $VcpkgRoot -Baseline $Baseline -RepoRoot $RepoRoot
         # A port Lucent overlays (W13: gettext-libintl, glib): its recipe exists only in Lucent's own
@@ -1566,48 +1651,8 @@ function New-LicenseBundle {
         }
     }
 
-    # LGPL notice.
-    $lgplComponents = @($components | Where-Object { $_.Lgpl })
-    $textLines = New-Object System.Collections.Generic.List[string]
-    $componentLines = New-Object System.Collections.Generic.List[string]
-    foreach ($component in $lgplComponents) {
-        foreach ($text in $component.LicenceTexts) { $textLines.Add("    $text ($($component.Port))") }
-        $componentLines.Add("$($component.Port) $($component.Version), $($component.LicenseConcluded)")
-        $dlls = @($component.Files | Where-Object { $_ -match '\.dll$' })
-        foreach ($line in (Format-WrappedList -Prefix '  DLLs: ' -Items $dlls)) { $componentLines.Add($line) }
-        if ($component.Files.Count -gt $dlls.Count) {
-            $componentLines.Add("  and $($component.Files.Count - $dlls.Count) QML module files (qmldir, type information)")
-        }
-        foreach ($source in $component.Sources) {
-            $componentLines.Add("  Source: $($source.Location)")
-            $componentLines.Add("          SHA-512 $($source.Sha512)")
-        }
-        if ($component.RecipeRef.Overlay) {
-            # A port Lucent overlays: vcpkg's recipe with Lucent's build changes, shipped with Lucent.
-            $componentLines.Add("  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion) with Lucent's")
-            $componentLines.Add("                changes (patches and build options), installed with Lucent in")
-            $componentLines.Add("                $($component.RecipeRef.ShippedRecipe) (the overlay port $($component.RecipeRef.Overlay)")
-            $componentLines.Add("                of Lucent's source" + $(if ($GitCommit) { " at commit $GitCommit)" } else { ')' }))
-        }
-        else {
-            $recipe = "  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion)"
-            if ($component.RecipeRef.Tree) { $recipe += ", port tree $($component.RecipeRef.Tree)" }
-            $componentLines.Add($recipe)
-            if ($component.RecipeRef.Url) { $componentLines.Add("                $($component.RecipeRef.Url)") }
-            else { $componentLines.Add("                (git tree object in https://github.com/microsoft/vcpkg; not the port folder at the registry baseline)") }
-        }
-        $componentLines.Add('')
-    }
-    $staticNote = ''
-    $allStatics = @($components | ForEach-Object { $_.StaticLibraries } | Where-Object { $_ })
-    if ($allStatics.Count -gt 0) {
-        $staticNote = "`n" + (@($allStatics | ForEach-Object {
-            Format-Paragraph "$(Get-LucentExecutablesText $Info) contain $($_.Name), $($_.File), linked statically. It is offered under $($_.LicenseDeclared), and Lucent uses it under $($_.LicenseConcluded) (THIRD-PARTY-NOTICES.txt)."
-        }) -join "`n`n") + "`n"
-    }
-    $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'LGPL-NOTICE.txt.in'))
-    $lgplText = (Set-TemplateTitle -Template $template -Version $Info.version).Replace('@LICENCE_TEXTS@', ($textLines -join "`n")).Replace('@COMPONENTS@', ($componentLines -join "`n").TrimEnd()).Replace('@STATIC_LINKED@', $staticNote).Replace('@VCPKG_BASELINE@', $(if ($Baseline) { $Baseline } else { '(unknown)' }))
-    Write-TextFile -Path (Join-Path $licenses 'LGPL-NOTICE.txt') -Text $lgplText
+    # LGPL-NOTICE.txt is written by Write-LgplNotice once the corresponding-source package exists
+    # (W12, ADR 0024): the notice names that archive with its size and SHA-256.
 
     # Third-party notices.
     $noticeLines = New-Object System.Collections.Generic.List[string]
@@ -1630,7 +1675,7 @@ function New-LicenseBundle {
             $listLines.Add("  $($kind): part of $(Get-LucentExecutablesText $Info)")
         }
         foreach ($static in $component.StaticLibraries) {
-            $listLines.Add("  Linked statically into $(Get-LucentExecutablesText $Info): $($static.Name) ($($static.File)), $($static.LicenseConcluded)")
+            $listLines.Add("  Linked statically into $(Get-StaticLibraryProgramsText $static $Info): $($static.Name) ($($static.File)), $($static.LicenseConcluded)")
             foreach ($line in ($static.Copyright -split "`r?`n")) { if ($line.Trim()) { $listLines.Add("    $($line.Trim())") } }
             if ($static.Comment) { $listLines.Add("    $($static.Comment)") }
         }
@@ -1794,8 +1839,9 @@ function New-PackageSbom {
     foreach ($file in ($Report.Files | Where-Object { $_.Origin -eq 'vcpkg' })) { $vcpkgPaths[$file.Path.ToLowerInvariant()] = $true }
     $ownFiles = @(Get-ChildItem -LiteralPath $StageDir -Recurse -File | ForEach-Object {
             [pscustomobject]@{ Full = $_.FullName; Relative = (Get-RelativePathText -Root $StageDir -Path $_.FullName) } } |
-        Where-Object { -not $vcpkgPaths.ContainsKey($_.Relative.ToLowerInvariant()) -and $_.Relative -ine $sbomRelative } |
-        Sort-Object Relative)
+        Where-Object { -not $vcpkgPaths.ContainsKey($_.Relative.ToLowerInvariant()) -and $_.Relative -ine $sbomRelative })
+    # Ordinal: the file elements' order and identifiers do not depend on the regional format (LIC-7).
+    $ownFiles = @(ConvertTo-OrdinalOrder -Items $ownFiles -Property Relative)
     $lucentId = 'SPDXRef-Lucent'
     $ownEntries = New-Object System.Collections.Generic.List[object]
     $assetFileIds = @{}
@@ -1942,7 +1988,7 @@ function New-PackageSbom {
                 filesAnalyzed = $false
                 licenseConcluded = $static.LicenseConcluded; licenseDeclared = $static.LicenseDeclared
                 copyrightText = $static.Copyright
-                comment = "Static library $($static.Path) of the vcpkg port $($component.Port), linked into $(Get-LucentExecutablesText $Info). $($static.Comment)" })
+                comment = "Static library $($static.Path) of the vcpkg port $($component.Port), linked into $(Get-StaticLibraryProgramsText $static $Info). $($static.Comment)" })
             $ids[$staticId] = $true
             foreach ($id in (Get-LicenseIds "$($static.LicenseConcluded) $($static.LicenseDeclared)")) { if ($id -like 'LicenseRef-*') { $usedExtracted[$id] = $component } }
             if ($map.ContainsKey('SPDXRef-binary')) { Add-Relationship $map['SPDXRef-binary'] 'CONTAINS' $staticId }
@@ -2018,7 +2064,7 @@ function New-PackageSbom {
         licenseId = $Policy.vcRedistributable.licenseRef
         name = $Policy.vcRedistributable.name
         extractedText = $Policy.vcRedistributable.licenseText })
-    foreach ($id in ($usedExtracted.Keys | Sort-Object)) {
+    foreach ($id in @(ConvertTo-OrdinalOrder -Items @($usedExtracted.Keys))) {
         $definition = $null
         foreach ($component in $Components) {
             if ($component.QtSbom -and $component.QtSbom.Extracted.ContainsKey($id)) { $definition = $component.QtSbom.Extracted[$id]; break }
@@ -2192,8 +2238,12 @@ function New-BuilderPathScanner {
         $separator = "(?:[\\/]$nul)+"
         $end = "(?:[\\/ `"]$nul|\x00$nul|$)"
         $excluded = '(?!(?:' + ((& $word 'Public'), (& $word 'Default'), (& $word 'All Users') -join '|') + ")$end)"
+        # One character of the user's name. In UTF-16LE also any code unit above U+00FF (a non-zero high
+        # byte: CJK, Cyrillic, Greek, surrogates), none of which is a separator or a control character
+        # (W12 review SEC07-02; UTF-8 encodes those characters as bytes the 8-bit form accepts).
+        $nameUnit = if ($wide) { "(?:[^\\/\x00-\x1F:*?`"<>|]\x00|[\x00-\xFF][\x01-\xFF])" } else { "[^\\/\x00-\x1F:*?`"<>|]" }
         $pattern = "(?<=[A-Za-z]$($nul):$nul|[\\/]$nul[A-Za-z]$nul)$separator$(& $word 'Users')$separator$excluded" +
-                   "(?:[^\\/\x00-\x1F:*?`"<>|]$nul){1,64}[\\/]$nul"
+                   "$nameUnit{1,64}[\\/]$nul"
         $group = "g$($groups.Count)"
         $alternatives.Add("(?<$group>$pattern)")
         $groups.Add([pscustomobject]@{ Group = $group; Rule = 'user profile folder (any user)'; Folder = 'X:\Users\<name>'
@@ -2301,16 +2351,137 @@ function Find-BuilderPathsInBytes {
     return $hits.ToArray()
 }
 
+# Compressed content (W12 review SEC-07): the most one stream may decompress to, and everything one
+# scanned file decompresses in all: every part at every depth (and Setup's LZMA parts), and what a
+# decoding produced before it proved not to be a stream, against one budget per file (W12 review
+# SEC07-01), with a time limit. More cannot be scanned, so it fails the audit.
+$script:CompressedStreamLimit = [int64]256MB
+$script:CompressedTotalLimit = [int64]1GB
+$script:CompressedSecondsLimit = 300
+# How deep compressed content inside decompressed content is followed (a file's own streams: depth 1).
+$script:CompressedDepthLimit = 2
+
+function Initialize-CompressedContentType {
+    # The decoders of LucentCompressedContent.cs (zlib, gzip, LZMA, LZMA2, Inno Setup's layout).
+    if ('LucentPackaging.DecodeBudget' -as [type]) { return }
+    Add-Type -TypeDefinition ([System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'LucentCompressedContent.cs'))) -Language CSharp
+}
+
+function New-CompressedContentBudget {
+    <#
+    .SYNOPSIS
+        What one scanned file may decompress in all (a LucentPackaging.DecodeBudget): -Bytes (default
+        1 GiB) at every depth, and -Seconds (default 300). Find-BuilderPathsInContent makes one for each
+        file it is given without one; tests pass a smaller one.
+    #>
+    param([int64]$Bytes = $script:CompressedTotalLimit, [double]$Seconds = $script:CompressedSecondsLimit)
+    Initialize-CompressedContentType
+    return New-Object LucentPackaging.DecodeBudget($Bytes, $Seconds)
+}
+
+function New-CompressedContentTally {
+    # What a scan decompressed: parts by kind, their bytes, and what it could not decompress.
+    return [pscustomobject]@{ Kinds = @{}; Streams = 0; Bytes = [int64]0; Problems = (New-Object System.Collections.Generic.List[string]) }
+}
+
+function Find-BuilderPathsInContent {
+    <#
+    .SYNOPSIS
+        The builder-path matches in a file's bytes and in what it compresses (W12 review SEC-07): every
+        zlib and gzip stream that decodes completely with a matching checksum (Qt's rcc resources,
+        qCompress data, PNG data, Qt's gzip-compressed MIME database), followed into what those hold
+        to a depth of $script:CompressedDepthLimit, and with -InnoSetup an Inno Setup executable's
+        LZMA-compressed setup data (the compiled script, messages, file names), setup engine and
+        installed files (LucentCompressedContent.cs). A hit in decompressed content names the file,
+        the part's kind and offset, and the offset in the decompressed data. What cannot be
+        decompressed is a problem in -Tally, which fails the audit: a zstd frame (no Lucent build
+        compresses with zstd; Qt is built without it), a stream beyond the size limit, content beyond
+        the file's budget (-Budget: what the scanned file decompresses in all, at every depth, and the
+        time it takes; W12 review SEC07-01; without -Budget a new one of 1 GiB and 300 s), an Inno
+        Setup layout this reader does not know.
+    #>
+    param([Parameter(Mandatory)]$Scanner, $Bytes, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Tally,
+          [switch]$InnoSetup, [int]$Depth = 0, $Budget)
+    Initialize-CompressedContentType
+    if ($null -eq $Budget) { $Budget = New-CompressedContentBudget }
+    $hits = New-Object System.Collections.Generic.List[object]
+    foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $Bytes -Name $Name)) { $hits.Add($hit) }
+    if ($null -eq $Bytes -or $Bytes.Length -lt 3) { return $hits.ToArray() }
+    foreach ($offset in [LucentPackaging.CompressedContent]::FindZstdFrames($Bytes)) {
+        $Tally.Problems.Add(('{0} at offset 0x{1:X8}: zstd-compressed data, which the scan cannot decompress' -f $Name, $offset))
+    }
+    # A spent budget was reported where it ran out; nothing more is decompressed for this file.
+    if ($Budget.Exhausted) { return $hits.ToArray() }
+    $parts = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($part in [LucentPackaging.CompressedContent]::FindDeflateStreams($Bytes, $script:CompressedStreamLimit, $Budget)) { $parts.Add($part) }
+    }
+    catch {
+        $reason = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+        $Tally.Problems.Add("$($Name): its zlib or gzip content cannot be decompressed for the scan ($reason)")
+    }
+    if ($InnoSetup -and -not $Budget.Exhausted) {
+        try {
+            foreach ($part in [LucentPackaging.InnoSetupContent]::Extract($Bytes, $Budget)) { $parts.Add($part) }
+        }
+        catch {
+            $reason = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+            $Tally.Problems.Add("$($Name): Inno Setup's compressed content cannot be decompressed for the scan ($reason)")
+        }
+    }
+    foreach ($part in $parts) {
+        $kind = $part.Kind -replace ', (block|chunk) \d+$', ''
+        $Tally.Kinds[$kind] = 1 + $(if ($Tally.Kinds.ContainsKey($kind)) { $Tally.Kinds[$kind] } else { 0 })
+        $Tally.Streams++
+        $Tally.Bytes += $part.Data.Length
+        $partName = '{0} [{1} at 0x{2:X8}]' -f $Name, $part.Kind, $part.Offset
+        if ($Depth + 1 -lt $script:CompressedDepthLimit) {
+            $found = @(Find-BuilderPathsInContent -Scanner $Scanner -Bytes $part.Data -Name $partName -Tally $Tally -Depth ($Depth + 1) -Budget $Budget)
+        }
+        else {
+            $found = @(Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $part.Data -Name $partName)
+        }
+        foreach ($hit in $found) {
+            if ($hit.Location -eq 'file data') { $hit.Location = 'decompressed data' }
+            $hits.Add($hit)
+        }
+    }
+    return $hits.ToArray()
+}
+
+function Format-CompressedContentTally {
+    # One line: what a scan decompressed.
+    param([Parameter(Mandatory)]$Tally)
+    if ($Tally.Streams -eq 0) { return 'no compressed content' }
+    $kinds = @($Tally.Kinds.Keys | Sort-Object | ForEach-Object { '{0} {1}' -f $Tally.Kinds[$_], $_ }) -join ', '
+    return ('{0} compressed part(s) decompressed and scanned ({1}), {2:N1} MiB' -f $Tally.Streams, $kinds, ($Tally.Bytes / 1MB))
+}
+
+function ConvertTo-CompressedContentRecord {
+    # The compressed content of a scan report for builder-paths.json.
+    param([Parameter(Mandatory)]$Report)
+    $kinds = [ordered]@{}
+    foreach ($name in ($Report.Compressed.Kinds.Keys | Sort-Object)) { $kinds[$name] = $Report.Compressed.Kinds[$name] }
+    return [ordered]@{ parts = $Report.Compressed.Streams; decompressedBytes = $Report.Compressed.Bytes; kinds = $kinds
+        problems = @($Report.CompressedProblems) }
+}
+
 function Invoke-BuilderPathAudit {
     <#
     .SYNOPSIS
         Scans every byte of every file below -Root (or the single file -Path, or the text -Text as
-        UTF-8) for the build machine's folders (New-BuilderPathScanner), whatever the file type:
-        the PDB paths in PE debug directories, __FILE__ strings, licence texts, the SBOM, QML type
-        information. Returns a report; each hit becomes an error naming the file and the byte offset.
+        UTF-8, or each of -Blobs: objects with Name and Bytes) for the build machine's folders
+        (New-BuilderPathScanner), whatever the file type: the PDB paths in PE debug directories,
+        __FILE__ strings, licence texts, the SBOM, QML type information, the corresponding-source
+        package's own files; and what they compress (Find-BuilderPathsInContent: zlib and gzip
+        streams, and with -InnoSetup the -Path Setup's LZMA-compressed parts; W12 review SEC-07).
+        Returns a report; each hit becomes an error naming the file and the byte offset, and content
+        the scan cannot decompress is an error too.
     #>
-    param([Parameter(Mandatory)]$Scanner, [string]$Root, [string]$Path, [string]$Text, [string]$Name, [string]$Label = 'Scan')
+    param([Parameter(Mandatory)]$Scanner, [string]$Root, [string]$Path, [string]$Text, [string]$Name, [string]$Label = 'Scan',
+          [AllowEmptyCollection()][object[]]$Blobs = @(), [switch]$InnoSetup)
     $hits = New-Object System.Collections.Generic.List[object]
+    $tally = New-CompressedContentTally
     $files = 0
     $bytes = [int64]0
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -2318,30 +2489,37 @@ function Invoke-BuilderPathAudit {
         # -Force: hidden and system files are scanned too.
         foreach ($file in (Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName)) {
             $content = [System.IO.File]::ReadAllBytes($file.FullName)
-            foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $content -Name (Get-RelativePathText -Root $Root -Path $file.FullName))) { $hits.Add($hit) }
+            foreach ($hit in (Find-BuilderPathsInContent -Scanner $Scanner -Bytes $content -Name (Get-RelativePathText -Root $Root -Path $file.FullName) -Tally $tally)) { $hits.Add($hit) }
             $files++
             $bytes += $content.Length
         }
     }
     if ($Path) {
         $content = [System.IO.File]::ReadAllBytes($Path)
-        foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $content -Name $(if ($Name) { $Name } else { Split-Path -Leaf $Path }))) { $hits.Add($hit) }
+        foreach ($hit in (Find-BuilderPathsInContent -Scanner $Scanner -Bytes $content -Name $(if ($Name) { $Name } else { Split-Path -Leaf $Path }) -Tally $tally -InnoSetup:$InnoSetup)) { $hits.Add($hit) }
         $files++
         $bytes += $content.Length
     }
     if ($PSBoundParameters.ContainsKey('Text')) {
         $content = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
-        foreach ($hit in (Find-BuilderPathsInBytes -Scanner $Scanner -Bytes $content -Name $(if ($Name) { $Name } else { 'text' }))) { $hits.Add($hit) }
+        foreach ($hit in (Find-BuilderPathsInContent -Scanner $Scanner -Bytes $content -Name $(if ($Name) { $Name } else { 'text' }) -Tally $tally)) { $hits.Add($hit) }
         $files++
         $bytes += $content.Length
+    }
+    foreach ($blob in $Blobs) {
+        foreach ($hit in (Find-BuilderPathsInContent -Scanner $Scanner -Bytes $blob.Bytes -Name $blob.Name -Tally $tally)) { $hits.Add($hit) }
+        $files++
+        $bytes += $blob.Bytes.Length
     }
     $errors = New-Object System.Collections.Generic.List[string]
     foreach ($hit in $hits) {
         $errors.Add(('{0} at offset 0x{1:X8} ({2}, {3}) names the {4} {5}: {6}' -f $hit.File, $hit.Offset, $hit.Encoding, $hit.Location, $hit.Rule, $hit.Folder, $hit.Context))
     }
+    foreach ($problem in $tally.Problems) { $errors.Add($problem) }
     return [pscustomobject]@{
         Label = $Label; Files = $files; Bytes = $bytes; Seconds = [Math]::Round($timer.Elapsed.TotalSeconds, 1)
-        Hits = $hits.ToArray(); Errors = $errors.ToArray(); HitFiles = @($hits | ForEach-Object File | Sort-Object -Unique) }
+        Hits = $hits.ToArray(); Errors = $errors.ToArray(); HitFiles = @($hits | ForEach-Object File | Sort-Object -Unique)
+        Compressed = $tally; CompressedProblems = @($tally.Problems) }
 }
 
 function Write-BuilderPathReport {
@@ -2354,8 +2532,11 @@ function Write-BuilderPathReport {
     foreach ($rule in $Scanner.Rules) { $lines.Add(('  {0,-26} {1}{2}' -f $rule.Name, $rule.Path, $(if ($rule.DriveOptional) { ' (also without the drive letter)' } else { '' }))) }
     $lines.Add('  user profile folder (any user): X:\Users\<name>\ except Public, Default and All Users')
     $lines.Add('')
+    $lines.Add('Compressed content is decompressed and scanned too (W12 review SEC-07): zlib and gzip streams, and Setup''s LZMA-compressed parts.')
+    $lines.Add('')
     foreach ($report in $Reports) {
-        $lines.Add(('{0}: {1} file(s), {2:N0} bytes, {3} s; {4} hit(s) in {5} file(s)' -f $report.Label, $report.Files, $report.Bytes, $report.Seconds, @($report.Hits).Count, @($report.HitFiles).Count))
+        $lines.Add(('{0}: {1} file(s), {2:N0} bytes, {3} s; {4} hit(s) in {5} file(s); {6}' -f $report.Label, $report.Files, $report.Bytes, $report.Seconds,
+            @($report.Hits).Count, @($report.HitFiles).Count, (Format-CompressedContentTally $report.Compressed)))
         foreach ($problem in $report.Errors) { $lines.Add("  $problem") }
     }
     Write-TextFile -Path $TextPath -Text (($lines -join "`n") + "`n")
@@ -2363,6 +2544,7 @@ function Write-BuilderPathReport {
         folders = @($Scanner.Rules | ForEach-Object { [ordered]@{ name = $_.Name; path = $_.Path; driveOptional = $_.DriveOptional } })
         scans = @($Reports | ForEach-Object { [ordered]@{
             label = $_.Label; files = $_.Files; bytes = $_.Bytes; seconds = $_.Seconds
+            compressed = (ConvertTo-CompressedContentRecord $_)
             hits = @($_.Hits | ForEach-Object { [ordered]@{ file = $_.File; offset = $_.Offset; encoding = $_.Encoding; location = $_.Location; rule = $_.Rule; folder = $_.Folder; context = $_.Context } }) } }) })
 }
 
@@ -2558,6 +2740,48 @@ function Find-InnoSetupCompiler {
     throw 'Inno Setup 6 (ISCC.exe) was not found. Install Inno Setup 6.3 or later, or set LUCENT_ISCC to ISCC.exe.'
 }
 
+function Get-InnoSetupLicence {
+    <#
+    .SYNOPSIS
+        The licence an Inno Setup compiler states in its banner (what ISCC prints before it reads the
+        script): Line (trimmed) and Kind: 'non-commercial' (a line that says non-commercial use, as
+        6.7.3's "Non-commercial use only"), 'commercial' (a line that names commercial use or a
+        licensee, and not non-commercial use), or $null when no banner line says either. The whole
+        banner is searched, not only the line after "Compiler engine version" (W12 review LIC-6).
+    #>
+    param([AllowEmptyCollection()][AllowNull()][string[]]$Output = @())
+    $banner = New-Object System.Collections.Generic.List[string]
+    foreach ($line in @($Output)) {
+        if ([string]$line -match '^\s*(Preprocessing|Parsing \[|Reading file|Compiling|Error)') { break }
+        $banner.Add([string]$line)
+    }
+    foreach ($line in $banner) { if ($line -match '(?i)\bnon-?\s?commercial\b') { return [pscustomobject]@{ Line = $line.Trim(); Kind = 'non-commercial' } } }
+    foreach ($line in $banner) { if ($line -match '(?i)\bcommercial\b|\blicen[cs]ed to\b') { return [pscustomobject]@{ Line = $line.Trim(); Kind = 'commercial' } } }
+    return [pscustomobject]@{ Line = $null; Kind = $null }
+}
+
+function Test-InnoSetupLicence {
+    <#
+    .SYNOPSIS
+        Whether the licence a compiler states (Get-InnoSetupLicence) covers the distribution
+        installer\license-policy.json records (ADR 0024). A commercial distribution needs a licence the
+        banner positively states as commercial: a non-commercial compiler, and one whose licence this
+        reader does not recognise (another wording, a translation), are errors, so a change of model
+        fails loudly. A non-commercial distribution with an unrecognised licence line is a warning (the
+        package manifest then records none). Returns Errors and Warnings.
+    #>
+    param([Parameter(Mandatory)]$Licence, [Parameter(Mandatory)][bool]$Commercial)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $warnings = New-Object System.Collections.Generic.List[string]
+    if ($Commercial -and $Licence.Kind -ne 'commercial') {
+        $errors.Add("installer\license-policy.json records a commercial distribution, but this Inno Setup compiler $(if ($Licence.Line) { "reports '$($Licence.Line)'" } else { 'states no licence that names commercial use' }): build Setup with a commercially licensed Inno Setup whose banner says so (ADR 0024).")
+    }
+    elseif (-not $Commercial -and -not $Licence.Kind) {
+        $warnings.Add('This Inno Setup compiler states no licence that this script recognises: the package manifest records none (toolchain.innoSetupLicence). Check the compiler''s terms by hand before a release (ADR 0024).')
+    }
+    return [pscustomobject]@{ Errors = $errors.ToArray(); Warnings = $warnings.ToArray() }
+}
+
 function Write-InstalledFileList {
     <#
     .SYNOPSIS
@@ -2598,11 +2822,1331 @@ function Test-InstalledFileList {
     if ($differences.Count -gt 0) { throw "$($script:InstalledFileListName) does not match the folder: $(($differences | Select-Object -First 5) -join '; ')" }
 }
 
+# --- Corresponding source (W12, ADR 0024) --------------------------------------------------------
+
+# Every entry of the corresponding-source archive carries this DOS time: 1980-02-01 00:00, a month
+# after the DOS epoch so that no time zone conversion moves it before 1980. With sorted entries,
+# stored data and no extra fields, the archive's bytes depend only on its content (ADR 0024).
+$script:ZipDosDate = [uint16](((1980 - 1980) -shl 9) -bor (2 -shl 5) -bor 1)
+$script:ZipDosTime = [uint16]0
+$script:ZipTimestamp = New-Object DateTime(1980, 2, 1, 0, 0, 0)
+$script:SourcePackageSchema = 'lucent.corresponding-source'
+
+function Initialize-StoredZipType {
+    if ('LucentPackaging.StoredZip' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+namespace LucentPackaging {
+    public sealed class StoredZipEntry {
+        public string Name;
+        public string SourcePath;
+        public byte[] Content;
+    }
+    public static class StoredZip {
+        private static readonly uint[] CrcTable = CreateCrcTable();
+        private static uint[] CreateCrcTable() {
+            uint[] table = new uint[256];
+            for (uint n = 0; n < 256; n++) {
+                uint c = n;
+                for (int k = 0; k < 8; k++) { c = (c & 1) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1; }
+                table[n] = c;
+            }
+            return table;
+        }
+        private static uint UpdateCrc(uint crc, byte[] buffer, int count) {
+            for (int i = 0; i < count; i++) { crc = CrcTable[(crc ^ buffer[i]) & 0xFF] ^ (crc >> 8); }
+            return crc;
+        }
+        public static uint Crc32(byte[] data) { return UpdateCrc(0xFFFFFFFFu, data, data.Length) ^ 0xFFFFFFFFu; }
+        // Writes the entries in the order given (the caller sorts them): each stored (method 0) with
+        // the given DOS time and date, its CRC-32 and sizes in the local header (no data descriptor),
+        // no extra fields, comments or file attributes; then the central directory and its end
+        // record. No ZIP64: a member or an archive of 4 GiB, or 65,535 members, is refused.
+        public static void Write(string path, IList<StoredZipEntry> entries, ushort dosTime, ushort dosDate) {
+            if (entries.Count >= 0xFFFF) { throw new InvalidOperationException("Too many entries for a ZIP archive without ZIP64."); }
+            byte[] buffer = new byte[1 << 20];
+            using (FileStream stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+            using (MemoryStream central = new MemoryStream()) {
+                BinaryWriter writer = new BinaryWriter(stream);
+                BinaryWriter centralWriter = new BinaryWriter(central);
+                foreach (StoredZipEntry entry in entries) {
+                    byte[] name = Encoding.ASCII.GetBytes(entry.Name);
+                    long size = entry.Content != null ? entry.Content.LongLength : new FileInfo(entry.SourcePath).Length;
+                    long offset = stream.Position;
+                    if (size >= 0xFFFFFFFFL || offset >= 0xFFFFFFFFL) { throw new InvalidOperationException(entry.Name + ": the archive would need ZIP64."); }
+                    writer.Write(0x04034B50u);
+                    writer.Write((ushort)10);   // version needed to extract: 1.0 (stored)
+                    writer.Write((ushort)0);    // general purpose flags: none
+                    writer.Write((ushort)0);    // method: stored
+                    writer.Write(dosTime);
+                    writer.Write(dosDate);
+                    long crcPosition = stream.Position;
+                    writer.Write(0u);           // CRC-32, written once the data is
+                    writer.Write((uint)size);
+                    writer.Write((uint)size);
+                    writer.Write((ushort)name.Length);
+                    writer.Write((ushort)0);    // extra field length
+                    writer.Write(name);
+                    writer.Flush();
+                    uint crc = 0xFFFFFFFFu;
+                    long copied = 0;
+                    if (entry.Content != null) {
+                        crc = UpdateCrc(crc, entry.Content, entry.Content.Length);
+                        stream.Write(entry.Content, 0, entry.Content.Length);
+                        copied = entry.Content.LongLength;
+                    } else {
+                        using (FileStream input = new FileStream(entry.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+                            int read;
+                            while ((read = input.Read(buffer, 0, buffer.Length)) > 0) {
+                                crc = UpdateCrc(crc, buffer, read);
+                                stream.Write(buffer, 0, read);
+                                copied += read;
+                            }
+                        }
+                    }
+                    if (copied != size) { throw new IOException(entry.Name + ": its source changed while it was written."); }
+                    crc ^= 0xFFFFFFFFu;
+                    long end = stream.Position;
+                    stream.Position = crcPosition;
+                    writer.Write(crc);
+                    writer.Flush();
+                    stream.Position = end;
+                    centralWriter.Write(0x02014B50u);
+                    centralWriter.Write((ushort)20);   // made by: MS-DOS, ZIP 2.0
+                    centralWriter.Write((ushort)10);
+                    centralWriter.Write((ushort)0);
+                    centralWriter.Write((ushort)0);
+                    centralWriter.Write(dosTime);
+                    centralWriter.Write(dosDate);
+                    centralWriter.Write(crc);
+                    centralWriter.Write((uint)size);
+                    centralWriter.Write((uint)size);
+                    centralWriter.Write((ushort)name.Length);
+                    centralWriter.Write((ushort)0);    // extra field length
+                    centralWriter.Write((ushort)0);    // comment length
+                    centralWriter.Write((ushort)0);    // disk number
+                    centralWriter.Write((ushort)0);    // internal attributes
+                    centralWriter.Write(0u);           // external attributes
+                    centralWriter.Write((uint)offset);
+                    centralWriter.Write(name);
+                }
+                centralWriter.Flush();
+                long centralOffset = stream.Position;
+                if (centralOffset + central.Length >= 0xFFFFFFFFL) { throw new InvalidOperationException("The archive would need ZIP64."); }
+                central.WriteTo(stream);
+                writer.Write(0x06054B50u);
+                writer.Write((ushort)0);
+                writer.Write((ushort)0);
+                writer.Write((ushort)entries.Count);
+                writer.Write((ushort)entries.Count);
+                writer.Write((uint)central.Length);
+                writer.Write((uint)centralOffset);
+                writer.Write((ushort)0);            // archive comment length
+                writer.Flush();
+            }
+        }
+    }
+}
+'@
+}
+
+function New-DeterministicZip {
+    <#
+    .SYNOPSIS
+        Writes a ZIP archive whose bytes depend only on its entries (ADR 0024): sorted by name
+        (ordinal), each stored (method 0: no compression, the large members are compressed archives
+        already) with the fixed time 1980-02-01 00:00, with no extra fields, comments, file attributes
+        or data descriptors, and no folder entries. The same entries give the same bytes on any
+        machine. The archive is written beside -Path first and renamed when complete.
+    .PARAMETER Entries
+        Objects with Name (a relative path with forward slashes, printable ASCII, unique ignoring
+        case) and either Content (byte[]) or SourcePath (a file, copied byte for byte).
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object[]]$Entries)
+    Initialize-StoredZipType
+    $byName = @{}
+    foreach ($entry in $Entries) {
+        $name = [string]$entry.Name
+        if ($name -cnotmatch '^[\x20-\x7E]+$' -or $name -match '\\|^/|/$|//|(^|/)\.\.?(/|$)|^ | $|:') {
+            throw "'$name' is not a relative path of printable ASCII with forward slashes (archive entry)."
+        }
+        $key = $name.ToLowerInvariant()
+        if ($byName.ContainsKey($key)) { throw "Two archive entries are named '$name' (ignoring case)." }
+        $hasContent = ($entry.PSObject.Properties.Name -contains 'Content') -and ($null -ne $entry.Content)
+        if (-not $hasContent -and -not (($entry.PSObject.Properties.Name -contains 'SourcePath') -and $entry.SourcePath -and
+                                        (Test-Path -LiteralPath $entry.SourcePath -PathType Leaf))) {
+            throw "The archive entry '$name' has neither content nor an existing source file."
+        }
+        $byName[$key] = $entry
+    }
+    $names = [string[]]@($byName.Values | ForEach-Object { [string]$_.Name })
+    [Array]::Sort($names, [System.StringComparer]::Ordinal)
+    $list = New-Object 'System.Collections.Generic.List[LucentPackaging.StoredZipEntry]'
+    foreach ($name in $names) {
+        $entry = $byName[$name.ToLowerInvariant()]
+        $zipEntry = New-Object LucentPackaging.StoredZipEntry
+        $zipEntry.Name = $name
+        if (($entry.PSObject.Properties.Name -contains 'Content') -and ($null -ne $entry.Content)) { $zipEntry.Content = [byte[]]$entry.Content }
+        else { $zipEntry.SourcePath = [System.IO.Path]::GetFullPath($entry.SourcePath) }
+        $list.Add($zipEntry)
+    }
+    $partial = "$Path.partial"
+    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+    try { [LucentPackaging.StoredZip]::Write($partial, $list, $script:ZipDosTime, $script:ZipDosDate) }
+    catch {
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+    Move-Item -LiteralPath $partial -Destination $Path
+}
+
+function ConvertTo-HexText {
+    param($Bytes)
+    return [System.BitConverter]::ToString($Bytes).Replace('-', '').ToLowerInvariant()
+}
+
+function Read-ZipArchiveEntries {
+    <#
+    .SYNOPSIS
+        Reads every entry of a ZIP archive with System.IO.Compression, an implementation independent
+        of New-DeterministicZip: in central-directory order, each with Name, Length,
+        CompressedLength, LastWriteTime (the DOS time as written), the SHA-256 and SHA-512 of its
+        content and, for the names in -Keep, the content itself.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [AllowEmptyCollection()][string[]]$Keep = @())
+    Add-Type -AssemblyName System.IO.Compression
+    $result = New-Object System.Collections.Generic.List[object]
+    $buffer = New-Object byte[] (1MB)
+    $file = [System.IO.File]::OpenRead($Path)
+    try {
+        $zip = New-Object System.IO.Compression.ZipArchive($file, [System.IO.Compression.ZipArchiveMode]::Read, $true)
+        try {
+            foreach ($entry in $zip.Entries) {
+                $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                $sha512 = [System.Security.Cryptography.SHA512]::Create()
+                $memory = $null
+                if ($Keep -contains $entry.FullName) { $memory = New-Object System.IO.MemoryStream }
+                $stream = $entry.Open()
+                try {
+                    while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                        [void]$sha256.TransformBlock($buffer, 0, $read, $null, 0)
+                        [void]$sha512.TransformBlock($buffer, 0, $read, $null, 0)
+                        if ($memory) { $memory.Write($buffer, 0, $read) }
+                    }
+                    [void]$sha256.TransformFinalBlock($buffer, 0, 0)
+                    [void]$sha512.TransformFinalBlock($buffer, 0, 0)
+                    # Assigned, not a subexpression's value: an empty entry's content stays an empty array.
+                    $content = $null
+                    if ($memory) { $content = $memory.ToArray() }
+                    $result.Add([pscustomobject]@{
+                        Name = $entry.FullName; Length = $entry.Length; CompressedLength = $entry.CompressedLength
+                        LastWriteTime = $entry.LastWriteTime.DateTime
+                        Sha256 = (ConvertTo-HexText $sha256.Hash); Sha512 = (ConvertTo-HexText $sha512.Hash)
+                        Content = $content })
+                }
+                finally {
+                    $stream.Dispose()
+                    $sha256.Dispose()
+                    $sha512.Dispose()
+                }
+            }
+        }
+        finally { $zip.Dispose() }
+    }
+    finally { $file.Dispose() }
+    return $result.ToArray()
+}
+
+function Get-LicenceKind {
+    <#
+    .SYNOPSIS
+        What an SPDX licence expression leaves Lucent to use: 'strong-copyleft' (GPL or AGPL without an
+        exception: ADR 0003 needs a new ADR before such code ships), 'copyleft' (a licence whose terms
+        reach the source of the covered files in object-form distribution: LGPL, MPL, EPL, CDDL, EUPL,
+        CC BY-SA, a GPL with an exception, and others), 'permissive', or 'unknown' (a LicenseRef- or
+        DocumentRef- licence, such as a vendor's commercial terms Lucent does not hold, or an identifier
+        this list does not know; also NOASSERTION and an empty expression).
+    .DESCRIPTION
+        OR is a choice: Lucent takes the best alternative it can use, permissive before copyleft before
+        strong copyleft; an unknown alternative is one it cannot take ("LicenseRef-Qt-Commercial OR
+        LGPL-3.0-only" leaves LGPL-3.0-only: W12 review LIC-4), so OR is unknown only when every
+        alternative is. AND needs every operand: strong copyleft before copyleft before unknown before
+        permissive. A licence's exception (WITH) makes a GPL a copyleft licence of the library kind and
+        leaves any other licence as it is. An election recorded in installer\license-policy.json
+        ("concluded") is a single licence and needs no choice.
+    #>
+    param([string]$Expression)
+    if (-not $Expression -or $Expression.Trim() -in 'NOASSERTION', 'NONE') { return 'unknown' }
+    $state = @{ Expression = $Expression; Position = 0
+                Tokens = @([regex]::Matches($Expression, '\(|\)|[^\s()]+') | ForEach-Object { $_.Value }) }
+    $rank = Read-LicenceDisjunction $state
+    if ($state.Position -ne $state.Tokens.Count) { throw "Unexpected '$($state.Tokens[$state.Position])' in the licence expression '$Expression'." }
+    return $script:LicenceKinds[$rank]
+}
+
+function Test-CopyleftLicence {
+    <#
+    .SYNOPSIS
+        True when an SPDX licence expression leaves no choice but a copyleft licence, strong or not
+        (Get-LicenceKind): "FTL OR GPL-2.0-or-later" is not (FreeType is used under the FTL);
+        "LicenseRef-Qt-Commercial OR LGPL-3.0-only" is (Lucent holds no commercial licence).
+    #>
+    param([string]$Expression)
+    return ((Get-LicenceKind $Expression) -in 'copyleft', 'strong-copyleft')
+}
+
+# Licence identifiers whose terms reach the covered source in object-form distribution, those of them
+# that are strong copyleft (GPL and AGPL, without an exception), and the permissive ones Lucent's
+# dependencies use (an identifier in neither list is unknown, so it is never chosen over a copyleft
+# alternative unreviewed).
+$script:CopyleftLicencePattern = '^(?:A|L)?GPL(?:-|$)|^(?:MPL|EPL|CDDL|EUPL|OSL|CPL|IPL|SPL|MS-RL|RPL|RPSL|QPL|APSL|NPL|CECILL|CC-BY-SA|ODbL|Sleepycat)(?:-|$)'
+$script:StrongCopyleftLicencePattern = '^A?GPL(?:-|$)'
+$script:PermissiveLicences = @('0BSD', 'AML', 'AML-glslang', 'Apache-1.1', 'Apache-2.0', 'blessing', 'BSD-1-Clause', 'BSD-2-Clause', 'BSD-2-Clause-Patent',
+    'BSD-3-Clause', 'BSD-3-Clause-Clear', 'BSD-4-Clause', 'BSD-Source-Code', 'BSL-1.0', 'bzip2-1.0.6', 'CC0-1.0', 'curl', 'FTL', 'HPND', 'HPND-sell-variant',
+    'ICU', 'IJG', 'Imlib2', 'Info-ZIP', 'ISC', 'Libpng', 'libpng-2.0', 'libtiff', 'MIT', 'MIT-0', 'MIT-CMU', 'MIT-Modern-Variant', 'NCSA', 'NTP', 'OpenSSL',
+    'PostgreSQL', 'PSF-2.0', 'Python-2.0', 'SSLeay-standalone', 'Unicode-3.0', 'Unicode-DFS-2015', 'Unicode-DFS-2016', 'Unlicense', 'W3C', 'W3C-20150513',
+    'X11', 'Zlib', 'zlib-acknowledgement')
+# Get-LicenceKind's ranks: OR takes the highest rank above 0, AND the lowest.
+$script:LicenceKinds = @{ 0 = 'unknown'; 1 = 'strong-copyleft'; 2 = 'copyleft'; 3 = 'permissive' }
+
+# Get-LicenceKind's recursive descent over an SPDX expression ($State: Tokens, Position), in ranks:
+# 3 permissive, 2 copyleft, 1 strong copyleft, 0 unknown.
+function Read-LicenceTerm($State) {
+    if ($State.Position -ge $State.Tokens.Count) { throw "Incomplete licence expression '$($State.Expression)'." }
+    $token = $State.Tokens[$State.Position]
+    $State.Position++
+    if ($token -eq '(') {
+        $value = Read-LicenceDisjunction $State
+        if ($State.Position -ge $State.Tokens.Count -or $State.Tokens[$State.Position] -ne ')') { throw "Unbalanced parentheses in the licence expression '$($State.Expression)'." }
+        $State.Position++
+        return $value
+    }
+    if ($token -in 'AND', 'OR', 'WITH', ')') { throw "Unexpected '$token' in the licence expression '$($State.Expression)'." }
+    $exception = $false
+    if ($State.Position -lt $State.Tokens.Count -and $State.Tokens[$State.Position] -eq 'WITH') { $State.Position += 2; $exception = $true }
+    $id = $token.TrimEnd('+')
+    if ($id -match '^(LicenseRef|DocumentRef)-') { return 0 }
+    if ($id -match $script:StrongCopyleftLicencePattern -and -not $exception) { return 1 }
+    if ($id -match $script:CopyleftLicencePattern) { return 2 }
+    if ($script:PermissiveLicences -contains $id) { return 3 }
+    return 0
+}
+
+function Read-LicenceConjunction($State) {
+    # AND: every operand applies: the most demanding wins (strong copyleft, copyleft, unknown, permissive).
+    $order = @{ 1 = 0; 2 = 1; 0 = 2; 3 = 3 }
+    $value = Read-LicenceTerm $State
+    while ($State.Position -lt $State.Tokens.Count -and $State.Tokens[$State.Position] -eq 'AND') {
+        $State.Position++
+        $operand = Read-LicenceTerm $State
+        if ($order[$operand] -lt $order[$value]) { $value = $operand }
+    }
+    return $value
+}
+
+function Read-LicenceDisjunction($State) {
+    # OR: Lucent takes the best alternative it can use; an unknown one it cannot take.
+    $value = Read-LicenceConjunction $State
+    while ($State.Position -lt $State.Tokens.Count -and $State.Tokens[$State.Position] -eq 'OR') {
+        $State.Position++
+        $operand = Read-LicenceConjunction $State
+        if ($operand -gt $value) { $value = $operand }
+    }
+    return $value
+}
+
+function Get-SourceProvisionPlan {
+    <#
+    .SYNOPSIS
+        The shipped components whose corresponding source goes into the corresponding-source package:
+        those installer\license-policy.json marks "lgpl" or "correspondingSource" (ADR 0024). A
+        component whose concluded licence, a library linked statically from it, or third-party code
+        that Qt's SBOM records inside it leaves no choice but a copyleft licence (Test-CopyleftLicence)
+        must be marked: a source provision is reviewed, never assumed, so an unmarked one is an error.
+    .DESCRIPTION
+        A source provision is not enough for everything copyleft (W12 review LIC-4; ADR 0003 decisions
+        4 and 6):
+        - Strong copyleft (GPL or AGPL without an exception, Get-LicenceKind) is an error unless the
+          port's policy entry names the ADR that accepted it (ports.<port>.strongCopyleftAdr): GPL code
+          does not ship in Lucent's MIT distribution on a source provision alone.
+        - Copyleft code compiled into Lucent's programs (a header-only port, Linkage "compiled-in") is an
+          error, as a copyleft library linked statically is (New-LicenseBundle): LGPL and GPL code stays
+          in replaceable DLLs. A file-level copyleft (MPL, EPL, CDDL) passes only with a review recorded
+          in ports.<port>.fileLevelCopyleftReview.
+    .OUTPUTS
+        Components (the components to include, by port, in ordinal order) and Errors.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Components, [Parameter(Mandatory)]$Policy)
+    $included = New-Object System.Collections.Generic.List[object]
+    $errors = New-Object System.Collections.Generic.List[string]
+    foreach ($component in @(ConvertTo-OrdinalOrder -Items $Components -Property Port)) {
+        $entry = Get-PolicyEntry -Policy $Policy -Port $component.Port
+        $names = if ($entry) { @($entry.PSObject.Properties | ForEach-Object Name) } else { @() }
+        $marked = [bool]$component.Lgpl
+        if ($names -contains 'correspondingSource') { $marked = $marked -or [bool]$entry.correspondingSource }
+        $adr = if ($names -contains 'strongCopyleftAdr') { [string]$entry.strongCopyleftAdr } else { '' }
+        $reasons = New-Object System.Collections.Generic.List[string]
+        $strong = New-Object System.Collections.Generic.List[string]
+        $licences = New-Object System.Collections.Generic.List[object]
+        $licences.Add([pscustomobject]@{ What = "its licence $($component.LicenseConcluded)"; Licence = $component.LicenseConcluded })
+        foreach ($static in @($component.StaticLibraries | Where-Object { $_ })) {
+            $licences.Add([pscustomobject]@{ What = "$($static.Name) linked from it ($($static.LicenseConcluded))"; Licence = $static.LicenseConcluded })
+        }
+        if (($component.PSObject.Properties.Name -contains 'QtSbom') -and $component.QtSbom) {
+            foreach ($attribution in $component.QtSbom.Attributions) {
+                $licences.Add([pscustomobject]@{ What = "$($attribution.Name) inside it ($($attribution.License))"; Licence = $attribution.License })
+            }
+        }
+        foreach ($licence in $licences) {
+            $kind = Get-LicenceKind $licence.Licence
+            if ($kind -in 'copyleft', 'strong-copyleft') { $reasons.Add($licence.What) }
+            if ($kind -eq 'strong-copyleft') { $strong.Add($licence.What) }
+        }
+        $refusedStrong = $strong.Count -gt 0 -and $adr -notmatch '^ADR \d{4}\b'
+        if ($refusedStrong) {
+            $errors.Add("Port $($component.Port) $($component.Version) leaves no choice but a GPL or AGPL licence without an exception ($($strong -join '; ')). GPL code does not ship in Lucent's MIT distribution on a source provision alone: ADR 0003 (decisions 4 and 6) needs a new ADR first, which ports.$($component.Port).strongCopyleftAdr then names; otherwise remove the dependency or the feature that brings it.")
+        }
+        $linkage = if ($component.PSObject.Properties.Name -contains 'Linkage') { [string]$component.Linkage } else { '' }
+        if ($linkage -eq 'compiled-in' -and $reasons.Count -gt 0) {
+            # A file-level copyleft only: every copyleft licence named is MPL, EPL or CDDL.
+            $copyleftIds = @(Get-LicenseIds $component.LicenseConcluded | Where-Object { $_ -match $script:CopyleftLicencePattern })
+            $fileLevel = $copyleftIds.Count -gt 0 -and @($copyleftIds | Where-Object { $_ -notmatch '^(MPL|EPL|CDDL)-' }).Count -eq 0
+            $reviewed = ($names -contains 'fileLevelCopyleftReview') -and [string]$entry.fileLevelCopyleftReview
+            if (-not ($fileLevel -and $reviewed -and $strong.Count -eq 0)) {
+                $errors.Add("Port $($component.Port) $($component.Version) is compiled into Lucent's programs (it installs no DLL) under a copyleft licence ($($reasons -join '; ')). LGPL and GPL code must stay in replaceable DLLs (ADR 0003); a file-level copyleft (MPL, EPL, CDDL) needs a review recorded in ports.$($component.Port).fileLevelCopyleftReview.")
+            }
+        }
+        if ($reasons.Count -gt 0 -and -not $marked -and -not $refusedStrong) {
+            $errors.Add("Port $($component.Port) $($component.Version) ships under a copyleft licence ($($reasons -join '; ')), but installer\license-policy.json does not provide its corresponding source: review it and set ports.$($component.Port).lgpl (an LGPL library in a replaceable DLL) or ports.$($component.Port).correspondingSource (another library-level or file-level copyleft licence) (ADR 0024).")
+        }
+        if ($marked) { $included.Add($component) }
+    }
+    return [pscustomobject]@{ Components = $included.ToArray(); Errors = $errors.ToArray() }
+}
+
+function Get-SourceProvisionExpectation {
+    <#
+    .SYNOPSIS
+        What the corresponding-source package must hold for one component, from vcpkg's record of its
+        build (the port's SPDX document): every source archive, by the SHA-512 vcpkg verified, and
+        every recipe file, by its path in the port folder and the SHA-256 vcpkg hashed.
+    #>
+    param([Parameter(Mandatory)]$Component)
+    $archives = @($Component.Sources | ForEach-Object {
+        [pscustomobject]@{ Name = $_.Name; Location = $_.Location; Sha512 = ([string]$_.Sha512).ToLowerInvariant() } })
+    $recipe = New-Object System.Collections.Generic.List[object]
+    $files = @()
+    if ($Component.Spdx -and ($Component.Spdx.PSObject.Properties.Name -contains 'files')) { $files = @($Component.Spdx.files) }
+    foreach ($file in $files) {
+        if ($file.SPDXID -notlike 'SPDXRef-port-file-*') { continue }
+        $sha = (@($file.checksums) | Where-Object { $_.algorithm -eq 'SHA256' } | Select-Object -First 1).checksumValue
+        $recipe.Add([pscustomobject]@{ Path = ($file.fileName -replace '^\./', ''); Sha256 = ([string]$sha).ToLowerInvariant() })
+    }
+    return [pscustomobject]@{
+        Port = $Component.Port; Version = $Component.Version; Licence = $Component.LicenseConcluded
+        Archives = $archives; RecipeFiles = @(ConvertTo-OrdinalOrder -Items $recipe.ToArray() -Property Path) }
+}
+
+function ConvertFrom-SourcePackageRecord {
+    <#
+    .SYNOPSIS
+        The expectations (Get-SourceProvisionExpectation's form) recorded in a package manifest
+        (schema 5: correspondingSource.components), so a published archive can be checked against
+        its package manifest without the build tree (installer\tests\Test-SourcePackage.ps1).
+    #>
+    param([Parameter(Mandatory)]$Record)
+    return @(@($Record.components) | ForEach-Object {
+        $port = $_.port
+        [pscustomobject]@{
+            Port = $port; Version = $_.version; Licence = $_.licence
+            Archives = @(@($_.archives) | ForEach-Object { [pscustomobject]@{ Name = $_.file; Location = $_.url; Sha512 = ([string]$_.sha512).ToLowerInvariant() } })
+            RecipeFiles = @(@($_.recipe.files) | ForEach-Object {
+                [pscustomobject]@{ Path = ([string]$_.path).Substring("ports/$port/".Length); Sha256 = ([string]$_.sha256).ToLowerInvariant() } }) } })
+}
+
+function Test-CorrespondingSourcePackage {
+    <#
+    .SYNOPSIS
+        Checks a corresponding-source archive, reading it with System.IO.Compression (not the writer's
+        code), against what it must hold (ADR 0024).
+    .DESCRIPTION
+        - Form: every entry inside the folder Lucent-<version>-corresponding-source/, no folder
+          entries, sorted by name (ordinal), unique ignoring case, stored, with the time 1980-02-01
+          00:00; README.txt, MANIFEST.json and SHA256SUMS.txt present.
+        - SHA256SUMS.txt lists every other entry exactly once, with the SHA-256 of its content.
+        - MANIFEST.json is a lucent.corresponding-source version 1 of this version.
+        - Every expected component (Get-SourceProvisionExpectation, ConvertFrom-SourcePackageRecord)
+          is listed in MANIFEST.json, and the archive holds each of its source archives in sources/
+          (an entry whose SHA-512 is the one vcpkg verified), each recipe file in ports/<port>/ with
+          the SHA-256 vcpkg recorded, and build/<port>/vcpkg_abi_info.txt.
+    .OUTPUTS
+        Errors, Size, Sha256, Entries (Name, Length, Sha256) and Manifest (the parsed MANIFEST.json).
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Version,
+          [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Expected)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $root = "Lucent-$Version-corresponding-source/"
+    $readme = $root + 'README.txt'
+    $manifestName = $root + 'MANIFEST.json'
+    $sumsName = $root + 'SHA256SUMS.txt'
+    $entries = @()
+    try { $entries = @(Read-ZipArchiveEntries -Path $Path -Keep @($readme, $manifestName, $sumsName)) }
+    catch { $errors.Add("$Path is not a readable ZIP archive: $($_.Exception.Message)") }
+    if ($entries.Count -eq 0 -and $errors.Count -eq 0) { $errors.Add("$Path holds no entry.") }
+
+    $byName = @{}
+    $previous = $null
+    foreach ($entry in $entries) {
+        if (-not $entry.Name.StartsWith($root, [System.StringComparison]::Ordinal)) { $errors.Add("$($entry.Name) is not inside the folder $root") }
+        if ($entry.Name.EndsWith('/')) { $errors.Add("$($entry.Name) is a folder entry; the archive lists files only") }
+        $key = $entry.Name.ToLowerInvariant()
+        if ($byName.ContainsKey($key)) { $errors.Add("$($entry.Name) is in the archive twice (ignoring case)") }
+        $byName[$key] = $entry
+        if ($null -ne $previous -and [string]::CompareOrdinal($previous, $entry.Name) -ge 0) { $errors.Add("$($entry.Name) follows $($previous): the entries are not sorted") }
+        $previous = $entry.Name
+        if ($entry.CompressedLength -ne $entry.Length) { $errors.Add("$($entry.Name) is compressed; every entry is stored") }
+        if ($entry.LastWriteTime -ne $script:ZipTimestamp) { $errors.Add("$($entry.Name) has the time $($entry.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')), not 1980-02-01 00:00:00") }
+    }
+    foreach ($name in @($readme, $manifestName, $sumsName)) {
+        if ($entries.Count -gt 0 -and -not $byName.ContainsKey($name.ToLowerInvariant())) { $errors.Add("$name is missing") }
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+
+    # SHA256SUMS.txt: every other entry once, with its content's SHA-256.
+    if ($byName.ContainsKey($sumsName.ToLowerInvariant())) {
+        $listed = @{}
+        foreach ($line in ($utf8.GetString($byName[$sumsName.ToLowerInvariant()].Content) -split "`r?`n")) {
+            if (-not $line) { continue }
+            if ($line -cnotmatch '^([0-9a-f]{64}) \*(\S.*)$') { $errors.Add("SHA256SUMS.txt: unexpected line '$line'"); continue }
+            if ($listed.ContainsKey($Matches[2].ToLowerInvariant())) { $errors.Add("SHA256SUMS.txt lists $($Matches[2]) twice") }
+            $listed[$Matches[2].ToLowerInvariant()] = $Matches[1]
+        }
+        foreach ($entry in $entries) {
+            if ($entry.Name -eq $sumsName -or -not $entry.Name.StartsWith($root, [System.StringComparison]::Ordinal)) { continue }
+            $relative = $entry.Name.Substring($root.Length).ToLowerInvariant()
+            if (-not $listed.ContainsKey($relative)) { $errors.Add("SHA256SUMS.txt does not list $($entry.Name.Substring($root.Length))") }
+            elseif ($listed[$relative] -ne $entry.Sha256) { $errors.Add("$($entry.Name.Substring($root.Length)) has SHA-256 $($entry.Sha256), but SHA256SUMS.txt lists $($listed[$relative])") }
+        }
+        foreach ($relative in @(ConvertTo-OrdinalOrder -Items @($listed.Keys))) {
+            if (-not $byName.ContainsKey(($root + $relative).ToLowerInvariant())) { $errors.Add("SHA256SUMS.txt lists $relative, which the archive does not hold") }
+        }
+    }
+
+    # MANIFEST.json: a JSON object of this schema and version (null, an array, a number, false or a string
+    # is valid JSON but no manifest; W12 review LIC-3). Read strict-mode safe: {} has no members.
+    $manifest = $null
+    $listedPorts = @{}
+    if ($byName.ContainsKey($manifestName.ToLowerInvariant())) {
+        $parsed = $false
+        try { $manifest = $utf8.GetString($byName[$manifestName.ToLowerInvariant()].Content) | ConvertFrom-Json; $parsed = $true }
+        catch { $errors.Add("MANIFEST.json is not JSON: $($_.Exception.Message)") }
+        if ($parsed -and $manifest -isnot [System.Management.Automation.PSCustomObject]) {
+            $errors.Add("MANIFEST.json is not a JSON object ($(if ($null -eq $manifest) { 'null or empty' } else { "a $($manifest.GetType().Name)" }))")
+            $manifest = $null
+        }
+    }
+    if ($manifest) {
+        $names = @($manifest.PSObject.Properties | ForEach-Object Name)
+        if ($names -notcontains 'schema' -or $manifest.schema -cne $script:SourcePackageSchema -or $names -notcontains 'schemaVersion' -or $manifest.schemaVersion -ne 1) {
+            $errors.Add("MANIFEST.json is not a $($script:SourcePackageSchema) version 1")
+        }
+        elseif ($names -notcontains 'productVersion' -or $manifest.productVersion -cne $Version) {
+            $errors.Add("MANIFEST.json describes Lucent $(if ($names -contains 'productVersion') { $manifest.productVersion } else { '(no version)' }), not $Version")
+        }
+        if ($names -contains 'components') {
+            foreach ($component in @($manifest.components)) {
+                if ($component -is [System.Management.Automation.PSCustomObject] -and $component.PSObject.Properties['port']) { $listedPorts[[string]$component.port] = $component }
+            }
+        }
+    }
+    # The expected components: their source archives, recipe files and build records are checked
+    # whatever MANIFEST.json holds; only "listed in MANIFEST.json" needs it.
+    $bySha512 = @{}
+    foreach ($entry in $entries) { if ($entry.Name.StartsWith($root + 'sources/', [System.StringComparison]::Ordinal)) { $bySha512[$entry.Sha512] = $entry } }
+    foreach ($component in @(ConvertTo-OrdinalOrder -Items $Expected -Property Port)) {
+        $what = "$($component.Port) $($component.Version) ($($component.Licence))"
+        if (-not $listedPorts.ContainsKey([string]$component.Port)) { $errors.Add("$what needs its corresponding source, but MANIFEST.json does not list it") }
+        if (@($component.Archives).Count -eq 0) { $errors.Add("$($what): no source archive is known (vcpkg recorded none)") }
+        foreach ($archive in @($component.Archives)) {
+            if (-not $bySha512.ContainsKey($archive.Sha512)) {
+                $errors.Add("$($what): its source archive $($archive.Name) (SHA-512 $($archive.Sha512)) is not in sources/")
+            }
+        }
+        if (@($component.RecipeFiles).Count -eq 0) { $errors.Add("$($what): no recipe file is known (vcpkg recorded none)") }
+        foreach ($file in @($component.RecipeFiles)) {
+            $name = "$($root)ports/$($component.Port)/$($file.Path)"
+            if (-not $byName.ContainsKey($name.ToLowerInvariant())) { $errors.Add("$($what): its recipe file ports/$($component.Port)/$($file.Path) is missing") }
+            elseif ($byName[$name.ToLowerInvariant()].Sha256 -ne $file.Sha256) { $errors.Add("$($what): ports/$($component.Port)/$($file.Path) is not the file vcpkg built it with") }
+        }
+        if (-not $byName.ContainsKey(("$($root)build/$($component.Port)/vcpkg_abi_info.txt").ToLowerInvariant())) {
+            $errors.Add("$($what): build/$($component.Port)/vcpkg_abi_info.txt is missing")
+        }
+    }
+    $size = $null
+    $sha256 = $null
+    if (Test-Path -LiteralPath $Path -PathType Leaf) { $size = (Get-Item -LiteralPath $Path).Length; $sha256 = Get-Sha256 $Path }
+    return [pscustomobject]@{
+        Errors = $errors.ToArray(); Size = $size; Sha256 = $sha256; Manifest = $manifest
+        Entries = @($entries | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Length = $_.Length; Sha256 = $_.Sha256 } }) }
+}
+
+function Get-GitBlobId {
+    # The id git gives a file's content (SHA-1 of "blob <size>\0" and the bytes).
+    param($Bytes)
+    $header = [System.Text.Encoding]::ASCII.GetBytes("blob $($Bytes.Length)`0")
+    $sha1 = [System.Security.Cryptography.SHA1]::Create()
+    try {
+        [void]$sha1.TransformBlock($header, 0, $header.Length, $null, 0)
+        [void]$sha1.TransformFinalBlock($Bytes, 0, $Bytes.Length)
+        return ConvertTo-HexText $sha1.Hash
+    }
+    finally { $sha1.Dispose() }
+}
+
+function Compare-OverlayPort {
+    <#
+    .SYNOPSIS
+        Compares an overlay port of the repository with the vcpkg registry's port of that name at the
+        baseline commit, file by file through git's blob ids: unchanged, line endings only, changed,
+        added or removed. Lucent's changes to a recipe are what is not unchanged.
+    #>
+    param([Parameter(Mandatory)][string]$OverlayPath, [Parameter(Mandatory)][string]$Port,
+          [Parameter(Mandatory)][string]$VcpkgRoot, [Parameter(Mandatory)][string]$Baseline)
+    $registry = @{}
+    $listing = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $VcpkgRoot, 'ls-tree', '-r', "$($Baseline):ports/$Port")
+    $inRegistry = ($listing.ExitCode -eq 0)
+    if ($inRegistry) {
+        foreach ($line in $listing.Output) { if ($line -match '^\d+ blob ([0-9a-f]{40})\t(.+)$') { $registry[$Matches[2]] = $Matches[1] } }
+    }
+    $tree = $null
+    if ($inRegistry) {
+        $probe = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $VcpkgRoot, 'rev-parse', "$($Baseline):ports/$Port")
+        if ($probe.ExitCode -eq 0) { $tree = $probe.Output[0].Trim() }
+    }
+    $files = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($file in @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $OverlayPath -Recurse -File) -Property FullName)) {
+        $relative = (Get-RelativePathText -Root $OverlayPath -Path $file.FullName).Replace('\', '/')
+        $seen[$relative] = $true
+        $status = 'added'
+        if ($registry.ContainsKey($relative)) {
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            if ((Get-GitBlobId $bytes) -eq $registry[$relative]) { $status = 'unchanged' }
+            else {
+                $text = $script:Latin1.GetString($bytes)
+                $other = if ($text.Contains("`r`n")) { $text.Replace("`r`n", "`n") } else { $text.Replace("`n", "`r`n") }
+                $status = if ((Get-GitBlobId $script:Latin1.GetBytes($other)) -eq $registry[$relative]) { 'line endings' } else { 'changed' }
+            }
+        }
+        $files.Add([pscustomobject]@{ File = $relative; Status = $status })
+    }
+    foreach ($relative in @(ConvertTo-OrdinalOrder -Items @($registry.Keys))) {
+        if (-not $seen.ContainsKey($relative)) { $files.Add([pscustomobject]@{ File = $relative; Status = 'removed' }) }
+    }
+    return [pscustomobject]@{ InRegistry = $inRegistry; Tree = $tree; Files = @(ConvertTo-OrdinalOrder -Items $files.ToArray() -Property File) }
+}
+
+function Find-SourcePin {
+    <#
+    .SYNOPSIS
+        Where a recipe pins a source archive's SHA-512: the files of Lucent's overlay port that
+        contain it (-OverlayPath), or the files of the registry's port at the baseline commit that do
+        (git grep in the vcpkg checkout). Returns their paths ("ports/<port>/<file>").
+    #>
+    param([Parameter(Mandatory)][string]$Sha512, [Parameter(Mandatory)][string]$Port, [string]$OverlayPath,
+          [Parameter(Mandatory)][string]$VcpkgRoot, [Parameter(Mandatory)][string]$Baseline)
+    if ($OverlayPath) {
+        return @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $OverlayPath -Recurse -File) -Property FullName | Where-Object {
+                [System.IO.File]::ReadAllText($_.FullName).IndexOf($Sha512, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+            ForEach-Object { "ports/$Port/" + (Get-RelativePathText -Root $OverlayPath -Path $_.FullName).Replace('\', '/') })
+    }
+    $grep = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $VcpkgRoot, 'grep', '-l', '-i', '-F', '-e', $Sha512, $Baseline, '--', "ports/$Port")
+    if ($grep.ExitCode -ne 0) { return @() }
+    $prefix = "$($Baseline):"
+    return @(ConvertTo-OrdinalOrder -Items @($grep.Output | ForEach-Object { $_.Trim() } | Where-Object { $_.StartsWith($prefix) } | ForEach-Object { $_.Substring($prefix.Length) }))
+}
+
+function Read-VcpkgAbiInfo {
+    # vcpkg_abi_info.txt: one "<key> <value>" per line (the inputs of a port's ABI hash).
+    param([Parameter(Mandatory)][string]$Path)
+    $values = [ordered]@{}
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        $space = $line.IndexOf(' ')
+        if ($space -lt 1) { continue }
+        $values[$line.Substring(0, $space)] = $line.Substring($space + 1)
+    }
+    return $values
+}
+
+function Get-RecipeCopy {
+    # The files of a port's recipe folder exactly as vcpkg built with them: each file vcpkg recorded
+    # (path and SHA-256, Get-SourceProvisionExpectation) must be in the folder with that SHA-256, and
+    # the folder must hold nothing else. Problems are added to -Errors.
+    param([Parameter(Mandatory)][string]$Port, [Parameter(Mandatory)][string]$Folder, [Parameter(Mandatory)][string]$Describe,
+          [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RecipeFiles, [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Errors)
+    $copy = New-Object System.Collections.Generic.List[object]
+    if ($RecipeFiles.Count -eq 0) { $Errors.Add("$($Port): vcpkg recorded no recipe file (share\$Port\vcpkg.spdx.json)."); return $copy.ToArray() }
+    if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { $Errors.Add("$($Port): the recipe folder $Describe is missing."); return $copy.ToArray() }
+    $recorded = @{}
+    foreach ($file in $RecipeFiles) {
+        $recorded[$file.Path.ToLowerInvariant()] = $true
+        $path = Join-Path $Folder (ConvertTo-NativePath $file.Path)
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $Errors.Add("$($Port): $($file.Path), which vcpkg built it with, is missing from $Describe."); continue }
+        $sha = Get-Sha256 $path
+        if ($sha -ne $file.Sha256) {
+            $Errors.Add("$($Port): $($file.Path) in $Describe is not the file vcpkg built it with (SHA-256 $sha; vcpkg recorded $($file.Sha256)). Rebuild the port, or restore its recipe.")
+            continue
+        }
+        $copy.Add([pscustomobject]@{ Name = "ports/$Port/$($file.Path)"; SourcePath = $path; Sha256 = $sha })
+    }
+    foreach ($present in @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $Folder -Recurse -File) -Property FullName)) {
+        $relative = (Get-RelativePathText -Root $Folder -Path $present.FullName).Replace('\', '/')
+        if (-not $recorded.ContainsKey($relative.ToLowerInvariant())) { $Errors.Add("$($Port): $relative is in $Describe, but vcpkg did not build with it. Rebuild the port.") }
+    }
+    return $copy.ToArray()
+}
+
+function Format-SourceDownload {
+    # Where a source archive can be downloaded: vcpkg's SPDX document names a GitHub source as
+    # git+https://github.com/<owner>/<repo>@<ref>, which vcpkg_from_github fetches as GitHub's
+    # .tar.gz archive of that reference; any other location is a download URL already.
+    param([string]$Location)
+    if ($Location -match '^git\+(https://github\.com/[^/@]+/[^/@]+)@([^@\s]+)$') { return "$($Matches[1])/archive/$($Matches[2]).tar.gz" }
+    return $Location
+}
+
+function Format-IndentedText {
+    # Word-wraps $Text at about 100 columns after $Prefix, continuation lines aligned under its end.
+    param([Parameter(Mandatory)][string]$Prefix, [Parameter(Mandatory)][string]$Text, [int]$Width = 100)
+    $lines = @((Format-Paragraph -Text $Text -Width ($Width - $Prefix.Length)) -split "`n")
+    $indent = ' ' * $Prefix.Length
+    return @(for ($i = 0; $i -lt $lines.Count; $i++) { $(if ($i -eq 0) { $Prefix } else { $indent }) + $lines[$i] })
+}
+
+function Get-PatchedFiles {
+    # The files a unified diff changes, as vcpkg applies it (git apply, -p1): the path of every "+++"
+    # line (the "---" line's for a deleted file) without its first component (a/, b/ or the source
+    # folder) and time stamp.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $files = New-Object System.Collections.Generic.List[string]
+    $previous = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line.StartsWith('--- ')) { $previous = $line.Substring(4); continue }
+        if (-not $line.StartsWith('+++ ')) { continue }
+        $path = $line.Substring(4)
+        if ($path -match '^/dev/null') { $path = $previous }
+        if (-not $path) { continue }
+        $path = ($path -split "`t")[0].Trim().Trim('"')
+        $slash = $path.IndexOf('/')
+        if ($slash -ge 0) { $path = $path.Substring($slash + 1) }
+        if ($path -and -not $files.Contains($path)) { $files.Add($path) }
+    }
+    return $files.ToArray()
+}
+
+function Get-RecipeModifications {
+    <#
+    .SYNOPSIS
+        What a library's recipe changes in its upstream source (W12 review LIC-1: LGPL-2.1 section 2
+        and GPL-3.0 section 5(a) ask for a notice of the changed files and the date): every patch file
+        (*.patch, *.diff) of the recipe as built that its portfile.cmake names (a few apply only on
+        other platforms or with features the build does not use; the portfile says when: listing them
+        errs on the side of naming more), with the files it changes (Get-PatchedFiles), who made it
+        and when. A patch Lucent's overlay port added or changed
+        (Compare-OverlayPort) is the Lucent project's, dated as its own text states ("Changed by the
+        Lucent project, <date>"); every other patch is vcpkg's, as in its registry at the baseline
+        commit, dated by that commit.
+    .PARAMETER RecipeFiles
+        The recipe as built (Get-RecipeCopy): Name ("ports/<port>/<file>") and SourcePath.
+    .PARAMETER Comparison
+        Compare-OverlayPort's result, for a port Lucent overlays.
+    .OUTPUTS
+        Ordered dictionaries: patch (its path in the archive), by ("vcpkg" or "the Lucent project"),
+        source, date (YYYY-MM-DD, or null when a Lucent patch states none), changes (the files).
+    #>
+    param([Parameter(Mandatory)][string]$Port, [AllowEmptyCollection()][object[]]$RecipeFiles = @(), $Comparison,
+          [Parameter(Mandatory)][string]$Baseline, [string]$BaselineDate)
+    $prefix = "ports/$Port/"
+    $portfile = @($RecipeFiles | Where-Object { $_.Name -ceq "$($prefix)portfile.cmake" }) | Select-Object -First 1
+    $portfileText = if ($portfile) { [System.IO.File]::ReadAllText($portfile.SourcePath) } else { '' }
+    $status = @{}
+    if ($Comparison) { foreach ($file in @($Comparison.Files)) { $status[[string]$file.File] = [string]$file.Status } }
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($file in @(ConvertTo-OrdinalOrder -Items @($RecipeFiles) -Property Name)) {
+        if (-not $file.Name.StartsWith($prefix, [System.StringComparison]::Ordinal)) { continue }
+        $relative = $file.Name.Substring($prefix.Length)
+        if ($relative -notmatch '\.(patch|diff)$') { continue }
+        # Applied when the portfile names it (in PATCHES, or in a list of patches it applies).
+        if ($portfileText -notmatch ('(?<![\w.-])' + [regex]::Escape([System.IO.Path]::GetFileName($relative)) + '(?![\w.-])')) { continue }
+        $text = [System.IO.File]::ReadAllText($file.SourcePath)
+        $lucent = [bool]$Comparison -and $status.ContainsKey($relative) -and $status[$relative] -in 'added', 'changed'
+        $date = $BaselineDate
+        if ($lucent) { $date = if ($text -match 'Changed by the Lucent project,\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null } }
+        $records.Add([ordered]@{
+            patch = $file.Name
+            by = $(if ($lucent) { 'the Lucent project' } else { 'vcpkg' })
+            source = $(if ($lucent) { "Lucent's overlay port" } else { "the vcpkg registry at commit $Baseline" })
+            date = $(if ($date) { $date } else { $null })
+            changes = @(Get-PatchedFiles -Text $text) })
+    }
+    return $records.ToArray()
+}
+
+function Format-RecipeModifications {
+    # The "Modified" lines of a library (README.txt and LGPL-NOTICE.txt): each patch with who made it,
+    # when, and the files it changes; or that the library is built from its source as released.
+    param([AllowEmptyCollection()][object[]]$Modifications = @(), [Parameter(Mandatory)][string]$Prefix, [string]$Baseline)
+    $short = if ($Baseline -and $Baseline.Length -ge 8) { $Baseline.Substring(0, 8) } else { $Baseline }
+    # None given ($null: what an empty array becomes on its way through an if) is none.
+    $items = @($Modifications | Where-Object { $null -ne $_ })
+    if ($items.Count -eq 0) { return @(Format-IndentedText -Prefix $Prefix -Text 'no: built from the upstream source archive as released.') }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $first = $true
+    foreach ($modification in $items) {
+        $who = if ($modification.by -eq 'the Lucent project') { "the Lucent project, $(if ($modification.date) { $modification.date } else { 'undated' })" }
+               else { "vcpkg's, as in its registry at commit $short of $(if ($modification.date) { $modification.date } else { 'an unknown date' })" }
+        $changes = @($modification.changes | Where-Object { $_ })
+        $text = "$([System.IO.Path]::GetFileName([string]$modification.patch)) ($who) changes $(if ($changes.Count) { Format-NameList $changes } else { 'no file it names' })."
+        foreach ($line in (Format-IndentedText -Prefix $(if ($first) { $Prefix } else { ' ' * $Prefix.Length }) -Text $text)) { $lines.Add($line) }
+        $first = $false
+    }
+    return $lines.ToArray()
+}
+
+function Format-StaticCodeText {
+    # What of the libraries' packages is linked into Lucent's programs (README.txt of the corresponding
+    # source; W12 review LIC-5): their statically linked libraries, with the programs and the licence.
+    param([AllowEmptyCollection()][object[]]$Components = @(), [Parameter(Mandatory)]$Info)
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($component in $Components) {
+        if (-not ($component.PSObject.Properties.Name -contains 'StaticLibraries')) { continue }
+        foreach ($static in @($component.StaticLibraries | Where-Object { $_ })) {
+            $parts.Add("$($static.Name) ($($static.File), from $($component.Port)), linked statically into $(Get-StaticLibraryProgramsText $static $Info) and used under $($static.LicenseConcluded)")
+        }
+    }
+    if ($parts.Count -eq 0) { return "No code of them is linked into $(Get-LucentExecutablesText $Info)." }
+    return "The only code of these packages inside Lucent's programs is $(Format-NameList $parts.ToArray()), not under the LGPL (licenses\LGPL-NOTICE.txt and THIRD-PARTY-NOTICES.txt in Lucent's installation folder)."
+}
+
+function Format-RecipeChanges {
+    # "lucent-x.patch (added), portfile.cmake (changed)" from Compare-OverlayPort's files.
+    param([AllowEmptyCollection()][object[]]$Files)
+    $changed = @($Files | Where-Object { $_.Status -ne 'unchanged' } | ForEach-Object {
+        $what = if ($_.Status -eq 'line endings') { 'line endings only' } else { $_.Status }
+        "$($_.File) ($what)" })
+    if ($changed.Count -eq 0) { return 'none' }
+    return ($changed -join ', ')
+}
+
+function New-CorrespondingSourcePackage {
+    <#
+    .SYNOPSIS
+        Writes Lucent-<version>-corresponding-source.zip: the corresponding source of every shipped
+        library whose licence needs one (the LGPL libraries; Get-SourceProvisionPlan), as built for
+        this package (W12, ADR 0024). Returns what it holds.
+    .DESCRIPTION
+        For each such component (folder Lucent-<version>-corresponding-source/ in the archive):
+        - sources/<archive>: every upstream source archive vcpkg built it from, from vcpkg's downloads
+          folder. Its SHA-512 must be the one vcpkg verified for the build (the port's SPDX document)
+          and must be pinned in the port's recipe: at the registry baseline commit for a registry
+          port (git grep in the vcpkg checkout), in the overlay port for a port Lucent overlays.
+        - ports/<port>/: the recipe exactly as built (Get-RecipeCopy): the registry port's folder,
+          which must be the port at the baseline commit (its git tree), or Lucent's overlay port,
+          compared with the registry's port file by file (Compare-OverlayPort) so README.txt names
+          Lucent's changes.
+        - build/<port>/vcpkg_abi_info.txt: vcpkg's record of the build's inputs (features, the hashes
+          of the recipe, triplet and helper scripts, tool versions). The triplet and post-portfile
+          files it records must be those in triplets/.
+        And: triplets/ (vcpkg-configuration.json "overlay-triplets"), lucent/vcpkg.json and
+        lucent/vcpkg-configuration.json, the recipes of Lucent's other overlay ports that the build
+        installed (build tools such as gettext; their archives are included only when a library's
+        already are), MANIFEST.json (all of it with hashes, and the build's other ports with the
+        hashes of their sources, not included), README.txt
+        (installer\notices\CORRESPONDING-SOURCE-README.txt.in) and SHA256SUMS.txt. The archive is
+        deterministic (New-DeterministicZip). Any problem stops before anything is written.
+    .OUTPUTS
+        File, Path, Size, Sha256, Root, Components (port, version, licence, archives, recipe, ...),
+        Entries (path inside the archive, size, SHA-256) and Texts (the entries that are not
+        upstream archives, with their bytes, for the builder-path scan).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$Info,
+        [Parameter(Mandatory)][object[]]$Components,
+        [Parameter(Mandatory)]$Report,
+        [Parameter(Mandatory)]$Policy,
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$DownloadsDir,
+        [Parameter(Mandatory)][string]$NoticesDir,
+        [Parameter(Mandatory)][string]$VcpkgRoot,
+        [Parameter(Mandatory)][string]$Baseline,
+        [Parameter(Mandatory)][string]$GitCommit,
+        [bool]$GitDirty,
+        [string]$Msvc = 'unknown')
+
+    $errors = New-Object System.Collections.Generic.List[string]
+    $plan = Get-SourceProvisionPlan -Components $Components -Policy $Policy
+    foreach ($problem in $plan.Errors) { $errors.Add($problem) }
+    if (@($plan.Components).Count -eq 0) { $errors.Add('No shipped component is marked for a corresponding-source provision; the LGPL libraries at least must be (installer\license-policy.json "lgpl").') }
+    $probe = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $VcpkgRoot, 'cat-file', '-e', "$Baseline^{commit}")
+    if ($probe.ExitCode -ne 0) {
+        throw "The vcpkg checkout $VcpkgRoot does not hold the registry baseline commit $Baseline; the recipes cannot be checked against it (ADR 0024)."
+    }
+    # The date of the registry commit the recipes are taken from: the date of vcpkg's patches as built.
+    $baselineDate = $null
+    $dated = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $VcpkgRoot, 'show', '-s', '--format=%cs', $Baseline)
+    if ($dated.ExitCode -eq 0 -and $dated.Output.Count -gt 0 -and [string]$dated.Output[0] -match '^\d{4}-\d{2}-\d{2}$') { $baselineDate = [string]$dated.Output[0] }
+    $tripletDir = Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet
+    $rootName = "Lucent-$($Info.version)-corresponding-source"
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $entries = New-Object System.Collections.Generic.List[object]   # Name (inside the root), SourcePath or Content, Kind
+    $archivesByName = @{}
+
+    # The triplet folder(s), as vcpkg-configuration.json names them.
+    $configuration = Get-Content -LiteralPath (Join-Path $RepoRoot 'vcpkg-configuration.json') -Raw | ConvertFrom-Json
+    $tripletFiles = New-Object System.Collections.Generic.List[object]
+    if ($configuration.PSObject.Properties.Name -contains 'overlay-triplets') {
+        foreach ($overlay in @($configuration.'overlay-triplets')) {
+            $base = [System.IO.Path]::GetFullPath($(if ([System.IO.Path]::IsPathRooted($overlay)) { $overlay } else { Join-Path $RepoRoot $overlay }))
+            foreach ($file in @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $base -Recurse -File) -Property FullName)) {
+                $relative = 'triplets/' + (Get-RelativePathText -Root $base -Path $file.FullName).Replace('\', '/')
+                $tripletFiles.Add([pscustomobject]@{ Name = $relative; SourcePath = $file.FullName; Sha256 = (Get-Sha256 $file.FullName) })
+            }
+        }
+    }
+    $tripletFile = @($tripletFiles | Where-Object { $_.Name -eq "triplets/$($Info.vcpkgTriplet).cmake" }) | Select-Object -First 1
+    if (-not $tripletFile) { $errors.Add("The triplet $($Info.vcpkgTriplet) is not in the repository's overlay triplets (vcpkg-configuration.json); a build with a registry triplet is not packaged.") }
+    foreach ($file in $tripletFiles) { $entries.Add([pscustomobject]@{ Name = $file.Name; SourcePath = $file.SourcePath; Kind = 'triplet' }) }
+
+    # Lucent's vcpkg manifest and configuration (features, baseline, overlay folders).
+    foreach ($name in 'vcpkg.json', 'vcpkg-configuration.json') {
+        $entries.Add([pscustomobject]@{ Name = "lucent/$name"; SourcePath = (Join-Path $RepoRoot $name); Kind = 'lucent' })
+    }
+
+    # Which DLLs import which (the audit's dumpbin results), for "how Lucent loads them".
+    $importers = @{}
+    foreach ($pe in $Report.PeFiles) {
+        foreach ($name in (@($pe.Imports) + @($pe.DelayImports) | Where-Object { $_ })) {
+            $key = ([string]$name).ToLowerInvariant()
+            if (-not $importers.ContainsKey($key)) { $importers[$key] = New-Object System.Collections.Generic.List[string] }
+            if (-not $importers[$key].Contains($pe.Path)) { $importers[$key].Add($pe.Path) }
+        }
+    }
+
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($component in @(ConvertTo-OrdinalOrder -Items @($plan.Components) -Property Port)) {
+        $port = $component.Port
+        $expectation = Get-SourceProvisionExpectation -Component $component
+        $recipeRef = $component.RecipeRef
+        $isOverlay = [bool]($recipeRef -and $recipeRef.OverlayPath)
+
+        # The recipe as built.
+        $recipeFolder = if ($isOverlay) { $recipeRef.OverlayPath } else { Join-Path $VcpkgRoot "ports\$port" }
+        $describe = if ($isOverlay) { "Lucent's overlay port $($recipeRef.Overlay)" } else { "the vcpkg ports tree ($recipeFolder)" }
+        if (-not $isOverlay -and -not ($recipeRef -and $recipeRef.AtBaseline)) {
+            $tree = if ($recipeRef) { $recipeRef.Tree } else { $null }
+            $errors.Add("$($port): vcpkg built it with the recipe tree $tree, which is not the port at the registry baseline $($Baseline): the corresponding source would not be the registry's port.")
+        }
+        $recipeCopy = @(Get-RecipeCopy -Port $port -Folder $recipeFolder -Describe $describe -RecipeFiles $expectation.RecipeFiles -Errors $errors)
+        foreach ($file in $recipeCopy) { $entries.Add([pscustomobject]@{ Name = $file.Name; SourcePath = $file.SourcePath; Kind = 'recipe' }) }
+        $comparison = $null
+        if ($isOverlay) { $comparison = Compare-OverlayPort -OverlayPath $recipeFolder -Port $port -VcpkgRoot $VcpkgRoot -Baseline $Baseline }
+        # What the recipe changes in the library's upstream source, with who and when (LIC-1).
+        $modifications = @(Get-RecipeModifications -Port $port -RecipeFiles $recipeCopy -Comparison $comparison -Baseline $Baseline -BaselineDate $baselineDate)
+
+        # The upstream source archives.
+        $archives = New-Object System.Collections.Generic.List[object]
+        if (@($component.Sources).Count -eq 0) { $errors.Add("$($port): vcpkg recorded no source archive (share\$port\vcpkg.spdx.json).") }
+        foreach ($source in @($component.Sources)) {
+            if (([string]$source.Sha512) -notmatch '^[0-9A-Fa-f]{128}$') {
+                $errors.Add("$($port): vcpkg recorded no SHA-512 for its source $($source.Name) ($($source.Location)); an archive that cannot be verified is not packaged.")
+                continue
+            }
+            $archive = $null
+            try { $archive = Get-SourceArchive -Resource $source.Resource -DownloadsDir $DownloadsDir }
+            catch { $errors.Add("$($port): $($_.Exception.Message)"); continue }
+            if (-not $archive) {
+                $errors.Add("$($port): the source archive of $($source.Name) ($($source.Location)) is not in vcpkg's downloads folder $DownloadsDir. vcpkg keeps the archives of the ports it built on this machine; for a port restored from the binary cache, fetch it with 'vcpkg install --only-downloads' (the archive vcpkg pins, nothing else).")
+                continue
+            }
+            $sha512 = ([string]$source.Sha512).ToLowerInvariant()
+            $pins = @(Find-SourcePin -Sha512 $sha512 -Port $port -OverlayPath $(if ($isOverlay) { $recipeFolder } else { $null }) -VcpkgRoot $VcpkgRoot -Baseline $Baseline)
+            $registryPins = if ($isOverlay) { @(Find-SourcePin -Sha512 $sha512 -Port $port -VcpkgRoot $VcpkgRoot -Baseline $Baseline) } else { $pins }
+            if ($pins.Count -eq 0) {
+                $errors.Add("$($port): the SHA-512 of $([System.IO.Path]::GetFileName($archive)) is not pinned in its recipe ($(if ($isOverlay) { $recipeRef.Overlay } else { "ports/$port at $Baseline" })).")
+                continue
+            }
+            $fileName = [System.IO.Path]::GetFileName($archive)
+            $key = $fileName.ToLowerInvariant()
+            if ($archivesByName.ContainsKey($key)) {
+                if ($archivesByName[$key].Sha512 -ne $sha512) { $errors.Add("Two different source archives are named $fileName ($port and $($archivesByName[$key].Port)).") }
+            }
+            else {
+                $archivesByName[$key] = [pscustomobject]@{ Port = $port; FileName = $fileName; Sha512 = $sha512; Sha256 = (Get-Sha256 $archive); Size = (Get-Item -LiteralPath $archive).Length }
+                $entries.Add([pscustomobject]@{ Name = "sources/$fileName"; SourcePath = $archive; Kind = 'archive' })
+            }
+            $archives.Add([ordered]@{
+                file = "sources/$($archivesByName[$key].FileName)"; url = $source.Location; download = (Format-SourceDownload $source.Location)
+                size = $archivesByName[$key].Size
+                sha512 = $sha512; sha256 = $archivesByName[$key].Sha256
+                pinnedIn = @($pins | ForEach-Object { if ($isOverlay) { "$_ (Lucent's overlay port)" } else { "$_ (vcpkg registry $Baseline)" } })
+                registryPinnedIn = @($registryPins | ForEach-Object { "$_ (vcpkg registry $Baseline)" }) })
+        }
+
+        # vcpkg's record of the build's inputs: features, and the triplet the build used.
+        $features = @()
+        $abiPath = Join-Path $tripletDir "share\$port\vcpkg_abi_info.txt"
+        if (-not (Test-Path -LiteralPath $abiPath -PathType Leaf)) { $errors.Add("$($port): vcpkg_abi_info.txt is missing ($abiPath).") }
+        else {
+            $abi = Read-VcpkgAbiInfo -Path $abiPath
+            if ($abi.Contains('features')) { $features = @(([string]$abi['features']) -split ';' | Where-Object { $_ }) }
+            else { $errors.Add("$($port): vcpkg_abi_info.txt records no features.") }
+            # triplet_abi starts with the SHA-256 of the triplet file (vcpkg 2026-07-27); each
+            # post_portfile_include_<n> is the SHA-256 of a post-portfile script.
+            $tripletAbi = if ($abi.Contains('triplet_abi')) { ([string]$abi['triplet_abi'] -split '-')[0] } else { $null }
+            if (-not $tripletFile -or $tripletAbi -ne $tripletFile.Sha256) {
+                $errors.Add("$($port) was built with another triplet file than $(if ($tripletFile) { $tripletFile.Name } else { 'the repository''s' }) (vcpkg_abi_info.txt triplet_abi $tripletAbi). Rebuild the port.")
+            }
+            foreach ($abiKey in @($abi.Keys | Where-Object { $_ -like 'post_portfile_include_*' })) {
+                if (-not ($tripletFiles | Where-Object { $_.Sha256 -eq $abi[$abiKey] })) {
+                    $errors.Add("$($port) was built with a post-portfile script ($abiKey $($abi[$abiKey])) that is not among the triplet files. Rebuild the port.")
+                }
+            }
+            $entries.Add([pscustomobject]@{ Name = "build/$port/vcpkg_abi_info.txt"; SourcePath = $abiPath; Kind = 'build' })
+        }
+
+        # The shipped files, and what loads each DLL.
+        $loading = New-Object System.Collections.Generic.List[object]
+        foreach ($file in @(ConvertTo-OrdinalOrder -Items @($component.Files | Where-Object { $_ -match '\.dll$' }))) {
+            $leaf = [System.IO.Path]::GetFileName($file)
+            $by = @()
+            if ($file -notmatch '\\' -and $importers.ContainsKey($leaf.ToLowerInvariant())) { $by = @(ConvertTo-OrdinalOrder -Items @($importers[$leaf.ToLowerInvariant()])) }
+            $how = if ($file -match '^plugins\\') { 'a Qt plugin, loaded by Qt by file name' }
+                   elseif ($file -match '^qml\\') { 'a QML module plugin, loaded by Qt QML by file name' }
+                   elseif ($by.Count -gt 0) { 'imported by ' + ($by -join ', ') }
+                   else { 'not imported' }
+            $loading.Add([ordered]@{ file = $file; importedBy = $by; loaded = $how })
+        }
+
+        $recipeRecord = [ordered]@{
+            folder = "ports/$port"
+            origin = $(if ($isOverlay) { 'Lucent overlay port' } else { 'vcpkg registry port' })
+            portVersion = $component.PortVersion
+            registryTree = $(if ($isOverlay) { $(if ($comparison) { $comparison.Tree } else { $null }) } else { $recipeRef.Tree })
+            registryUrl = $(if (-not $isOverlay -and $recipeRef.Url) { $recipeRef.Url } elseif ($comparison -and $comparison.InRegistry) { "https://github.com/microsoft/vcpkg/tree/$Baseline/ports/$port" } else { $null })
+            lucentSource = $(if ($isOverlay) { $recipeRef.Overlay } else { $null })
+            lucentChanges = @(if ($comparison) { $comparison.Files | Where-Object { $_.Status -ne 'unchanged' } | ForEach-Object { [ordered]@{ file = $_.File; status = $_.Status } } })
+            files = @($recipeCopy | ForEach-Object { [ordered]@{ path = $_.Name; sha256 = $_.Sha256 } }) }
+        $records.Add([pscustomobject]@{
+            Port = $port; Version = $component.Version; PortVersion = $component.PortVersion; Licence = $component.LicenseConcluded
+            Homepage = $component.Homepage; Features = $features; Files = @($component.Files); Loading = $loading.ToArray()
+            Archives = $archives.ToArray(); Recipe = $recipeRecord; Comparison = $comparison; IsOverlay = $isOverlay
+            Modifications = $modifications; StaticLibraries = @($component.StaticLibraries | Where-Object { $_ }) })
+    }
+
+    # Lucent's other overlay ports that this build installed: build tools of a shipped library (the
+    # gettext programs GLib's build runs). Their recipes are part of how the libraries were built.
+    $buildTools = New-Object System.Collections.Generic.List[object]
+    $includedPorts = @($records | ForEach-Object Port)
+    if ($configuration.PSObject.Properties.Name -contains 'overlay-ports') {
+        foreach ($overlay in @($configuration.'overlay-ports')) {
+            $base = [System.IO.Path]::GetFullPath($(if ([System.IO.Path]::IsPathRooted($overlay)) { $overlay } else { Join-Path $RepoRoot $overlay }))
+            foreach ($folder in @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $base -Directory) -Property Name)) {
+                $port = $folder.Name
+                if ($includedPorts -contains $port) { continue }
+                $spdxPath = Join-Path $tripletDir "share\$port\vcpkg.spdx.json"
+                if (-not (Test-Path -LiteralPath $spdxPath -PathType Leaf)) { continue }   # not part of this build
+                $spdx = Get-Content -LiteralPath $spdxPath -Raw | ConvertFrom-Json
+                $portPackage = $spdx.packages | Where-Object { $_.SPDXID -eq 'SPDXRef-port' } | Select-Object -First 1
+                $pseudo = [pscustomobject]@{ Port = $port; Version = (Get-PortBaseVersion $portPackage.versionInfo); LicenseConcluded = $portPackage.licenseConcluded
+                    Sources = @($spdx.packages | Where-Object { $_.SPDXID -like 'SPDXRef-resource-*' } | ForEach-Object {
+                        [pscustomobject]@{ Name = $_.name; Location = $_.downloadLocation; Sha512 = ($_.checksums | Where-Object { $_.algorithm -eq 'SHA512' } | Select-Object -First 1).checksumValue } })
+                    Spdx = $spdx }
+                $expectation = Get-SourceProvisionExpectation -Component $pseudo
+                $relativeFolder = (Get-RelativePathText -Root $RepoRoot -Path $folder.FullName).Replace('\', '/')
+                $copy = @(Get-RecipeCopy -Port $port -Folder $folder.FullName -Describe "Lucent's overlay port $relativeFolder" -RecipeFiles $expectation.RecipeFiles -Errors $errors)
+                foreach ($file in $copy) { $entries.Add([pscustomobject]@{ Name = $file.Name; SourcePath = $file.SourcePath; Kind = 'recipe' }) }
+                $comparison = Compare-OverlayPort -OverlayPath $folder.FullName -Port $port -VcpkgRoot $VcpkgRoot -Baseline $Baseline
+                $buildTools.Add([pscustomobject]@{
+                    Port = $port; Version = $pseudo.Version; PortVersion = $portPackage.versionInfo; Licence = $pseudo.LicenseConcluded
+                    Comparison = $comparison; LucentSource = $relativeFolder
+                    Recipe = [ordered]@{ folder = "ports/$port"; origin = 'Lucent overlay port'; portVersion = $portPackage.versionInfo
+                        registryTree = $comparison.Tree; lucentSource = $relativeFolder
+                        lucentChanges = @(@($comparison.Files) | Where-Object { $_.Status -ne 'unchanged' } | ForEach-Object { [ordered]@{ file = $_.File; status = $_.Status } })
+                        files = @($copy | ForEach-Object { [ordered]@{ path = $_.Name; sha256 = $_.Sha256 } }) }
+                    Archives = @($pseudo.Sources | ForEach-Object {
+                        $sha = ([string]$_.Sha512).ToLowerInvariant()
+                        $included = @(ConvertTo-OrdinalOrder -Items @($archivesByName.Keys) | Where-Object { $archivesByName[$_].Sha512 -eq $sha }) | Select-Object -First 1
+                        [ordered]@{ url = $_.Location; sha512 = $sha; file = $(if ($included) { "sources/$($archivesByName[$included].FileName)" } else { $null }) } }) })
+            }
+        }
+    }
+
+    # The rest of the build's ports: not included, listed with the hashes of their sources.
+    $shippedPorts = @($Components | ForEach-Object Port)
+    $buildToolPorts = @($buildTools | ForEach-Object Port)
+    $others = New-Object System.Collections.Generic.List[object]
+    foreach ($folder in @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath (Join-Path $tripletDir 'share') -Directory) -Property Name)) {
+        $spdxPath = Join-Path $folder.FullName 'vcpkg.spdx.json'
+        if (-not (Test-Path -LiteralPath $spdxPath -PathType Leaf)) { continue }
+        $spdx = Get-Content -LiteralPath $spdxPath -Raw | ConvertFrom-Json
+        $portPackage = $spdx.packages | Where-Object { $_.SPDXID -eq 'SPDXRef-port' } | Select-Object -First 1
+        $port = $portPackage.name
+        if ($includedPorts -contains $port -or $buildToolPorts -contains $port) { continue }
+        $component = $Components | Where-Object { $_.Port -eq $port } | Select-Object -First 1
+        $licence = if ($component) { $component.LicenseConcluded } elseif ($portPackage.licenseConcluded -and $portPackage.licenseConcluded -notlike 'LicenseRef-vcpkg-null') { $portPackage.licenseConcluded } else { 'NOASSERTION' }
+        $others.Add([ordered]@{
+            port = $port; portVersion = $portPackage.versionInfo; licence = $licence
+            use = $(if ($shippedPorts -contains $port) { 'shipped (permissive licence)' } else { 'build only (not shipped)' })
+            sources = @($spdx.packages | Where-Object { $_.SPDXID -like 'SPDXRef-resource-*' } | ForEach-Object {
+                [ordered]@{ url = $_.downloadLocation; download = (Format-SourceDownload $_.downloadLocation)
+                            sha512 = ([string](($_.checksums | Where-Object { $_.algorithm -eq 'SHA512' } | Select-Object -First 1).checksumValue)).ToLowerInvariant() } }) })
+    }
+
+    if ($errors.Count -gt 0) {
+        throw ("The corresponding-source package cannot be made (ADR 0024):`n  " + ($errors -join "`n  "))
+    }
+
+    # MANIFEST.json.
+    $manifest = [ordered]@{
+        schema = $script:SourcePackageSchema; schemaVersion = 1
+        product = 'Lucent'; productVersion = $Info.version; architecture = 'x64'
+        installer = "Lucent-Setup-$($Info.version)-x64.exe"
+        description = "The corresponding source of the libraries Lucent $($Info.version) ships under the GNU LGPL, as built for that installer: upstream source archives (sources/), vcpkg recipes (ports/), the triplet (triplets/), vcpkg's build records (build/) and Lucent's vcpkg manifest (lucent/). See README.txt."
+        lucent = [ordered]@{ licence = 'MIT'; repository = $Info.homepage; commit = $GitCommit; uncommittedChanges = [bool]$GitDirty
+            files = @('lucent/vcpkg.json', 'lucent/vcpkg-configuration.json') }
+        vcpkg = [ordered]@{ registry = 'https://github.com/microsoft/vcpkg'; baseline = $Baseline
+            triplet = $Info.vcpkgTriplet; hostTriplet = $Info.vcpkgTriplet
+            tripletFiles = @($tripletFiles | ForEach-Object { [ordered]@{ path = $_.Name; sha256 = $_.Sha256 } }) }
+        toolchain = [ordered]@{ msvc = $Msvc
+            note = "The MSVC toolset of the build environment. vcpkg's ABI hash of every port covers the compiler it detected (triplet_abi in build/<port>/vcpkg_abi_info.txt), so a library restored from vcpkg's binary cache was built by the same compiler." }
+        components = @($records | ForEach-Object { [ordered]@{
+            port = $_.Port; version = $_.Version; portVersion = $_.PortVersion; licence = $_.Licence; homepage = $_.Homepage
+            features = @($_.Features); shippedFiles = @($_.Files); loading = @($_.Loading)
+            archives = @($_.Archives); recipe = $_.Recipe; modifications = @($_.Modifications); buildRecord = "build/$($_.Port)/vcpkg_abi_info.txt" } })
+        buildTools = @($buildTools | ForEach-Object { [ordered]@{
+            port = $_.Port; version = $_.Version; portVersion = $_.PortVersion; licence = $_.Licence
+            note = 'Built and run while the libraries above were built (not shipped). Its recipe is included; its source archive only when a library above uses the same one.'
+            archives = @($_.Archives); recipe = $_.Recipe } })
+        notIncluded = $others.ToArray()
+    }
+    $manifestText = (ConvertTo-Json -InputObject $manifest -Depth 32) + "`n"
+    $entries.Add([pscustomobject]@{ Name = 'MANIFEST.json'; Content = $utf8.GetBytes($manifestText); Kind = 'text' })
+
+    # README.txt from its template.
+    $componentLines = New-Object System.Collections.Generic.List[string]
+    $loading = New-Object System.Collections.Generic.List[object]
+    $installItems = New-Object System.Collections.Generic.List[string]
+    foreach ($record in $records) {
+        $componentLines.Add("$($record.Port) $($record.Version) ($($record.Licence))")
+        if ($record.Homepage) { $componentLines.Add("  Home page:  $($record.Homepage)") }
+        $dlls = @($record.Files | Where-Object { $_ -match '\.dll$' -and $_ -notmatch '\\' })
+        $pluginCount = @($record.Files | Where-Object { $_ -match '\.dll$' -and $_ -match '\\' }).Count
+        foreach ($line in (Format-WrappedList -Prefix '  Ships as:   ' -Items $dlls)) { $componentLines.Add($line) }
+        if ($pluginCount -gt 0) { $componentLines.Add("              and $pluginCount plugin DLLs in plugins\ and qml\") }
+        foreach ($archive in $record.Archives) {
+            $componentLines.Add("  Source:     $($archive.file.Replace('/', '\'))")
+            $componentLines.Add("              from $($archive.download)")
+            $componentLines.Add("              SHA-512 $($archive.sha512)")
+        }
+        $recipeText = if ($record.IsOverlay) {
+            "ports\$($record.Port)\: the Lucent project's overlay of vcpkg's port $($record.Port) $($record.PortVersion) ($($record.Recipe.lucentSource) in Lucent's source). Its changes to vcpkg's port at the registry commit: $(Format-RecipeChanges $record.Comparison.Files)."
+        } else {
+            "ports\$($record.Port)\: vcpkg's port $($record.Port) $($record.PortVersion) at the registry commit, unchanged$(if ($record.Recipe.registryUrl) { " ($($record.Recipe.registryUrl))" })."
+        }
+        foreach ($line in (Format-IndentedText -Prefix '  Recipe:     ' -Text $recipeText)) { $componentLines.Add($line) }
+        foreach ($line in (Format-RecipeModifications -Modifications @($record.Modifications) -Prefix '  Modified:   ' -Baseline $Baseline)) { $componentLines.Add($line) }
+        foreach ($line in (Format-WrappedList -Prefix '  Features:   ' -Items @($record.Features))) { $componentLines.Add($line) }
+        $componentLines.Add('')
+        foreach ($item in $record.Loading) {
+            if ($item.file -match '\\') { continue }
+            # Executables by name; other DLLs by name when they are few; plugins counted.
+            $programs = @($item.importedBy | Where-Object { $_ -match '\.exe$' })
+            $libraries = @($item.importedBy | Where-Object { $_ -match '\.dll$' -and $_ -notmatch '\\' })
+            $plugins = @($item.importedBy | Where-Object { $_ -match '\\' })
+            $parts = @($programs)
+            if ($libraries.Count -le 3) { $parts += $libraries } else { $parts += "$($libraries.Count) other DLLs" }
+            if ($plugins.Count -gt 0) { $parts += "$($plugins.Count) $(if ($plugins.Count -eq 1) { 'plugin' } else { 'plugins' })" }
+            $text = if ($parts.Count -eq 0) { $item.loaded } elseif ($parts.Count -eq 1) { "imported by $($parts[0])" } else { 'imported by ' + (($parts[0..($parts.Count - 2)]) -join ', ') + ' and ' + $parts[-1] }
+            $loading.Add([pscustomobject]@{ File = $item.file; Text = $text })
+        }
+        $installItems.Add('"' + $record.Port + '[' + (@($record.Features) -join ',') + ']"')
+    }
+    $column = (@($loading | ForEach-Object { $_.File.Length }) | Measure-Object -Maximum).Maximum + 2
+    $loadingLines = @($loading | ForEach-Object { '    ' + $_.File.PadRight($column) + $_.Text })
+    $sourceFolder = "C:\src\$rootName"
+    $installLines = New-Object System.Collections.Generic.List[string]
+    $installLines.Add("       C:\src\vcpkg\vcpkg.exe install ^")
+    $installLines.Add("           --triplet $($Info.vcpkgTriplet) --host-triplet $($Info.vcpkgTriplet) ^")
+    $installLines.Add("           --overlay-ports=$sourceFolder\ports ^")
+    $installLines.Add("           --overlay-triplets=$sourceFolder\triplets ^")
+    $current = '          '
+    for ($i = 0; $i -lt $installItems.Count; $i++) {
+        $item = $installItems[$i]
+        if ($current.Length + 1 + $item.Length -gt 96 -and $current.Trim()) { $installLines.Add($current + ' ^'); $current = '          ' }
+        $current += ' ' + $item
+    }
+    $installLines.Add($current)
+    $toolNotes = @($buildTools | ForEach-Object {
+        Format-Paragraph ("ports\$($_.Port)\ is the Lucent project's overlay of vcpkg's port $($_.Port) $($_.PortVersion) ($($_.LucentSource) in Lucent's source), " +
+            "a build tool: building GLib runs its programs ($($_.Licence)), which are not part of Lucent. Its changes to vcpkg's port at the registry commit: " +
+            "$(Format-RecipeChanges $_.Comparison.Files). Its source archive is " +
+            $(if (@($_.Archives | Where-Object { $_.file }).Count -gt 0) { (@($_.Archives | Where-Object { $_.file } | ForEach-Object { $_.file.Replace('/', '\') }) -join ', ') + ', the same as a library''s above.' } else { 'not included (MANIFEST.json, "buildTools").' })) })
+    $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'CORRESPONDING-SOURCE-README.txt.in'))
+    $readme = Set-TemplateTitle -Template $template -Version $Info.version
+    $replacements = [ordered]@{
+        '@COMPONENTS@' = ($componentLines -join "`n").TrimEnd()
+        '@LOADING@' = ($loadingLines -join "`n")
+        '@INSTALL_COMMAND@' = ($installLines -join "`n")
+        '@ONE_LIBRARY@' = $(@(@($installItems | Where-Object { $_.StartsWith('"lensfun[') }) + @($installItems))[0])
+        '@BUILD_TOOLS@' = $(if ($toolNotes.Count -gt 0) { "`n" + ($toolNotes -join "`n`n") + "`n" } else { '' })
+        '@BUILT_WITH@' = (Format-Paragraph "The libraries were built with vcpkg at commit $Baseline of its registry (https://github.com/microsoft/vcpkg), with Microsoft Visual C++ $Msvc (Visual Studio 2022, x64) and the Windows SDK. To build them again:")
+        '@LUCENT_SOURCE@' = (Format-Paragraph ("Lucent is free software under the MIT License (licenses\Lucent-LICENSE.txt in its installation folder). Its source code, including its build files (CMake, vcpkg.json, cmake\ports, cmake\triplets) and the packaging scripts that made this archive (tools\package.ps1, installer\scripts\LucentPackaging.psm1), is published at $($Info.homepage). This version was built from commit $GitCommit" +
+            $(if ($GitDirty) { ', with uncommitted changes: the recipes, triplet and vcpkg manifest in this archive are the ones it was built with.' } else { '.' })))
+        '@STATIC_CODE@' = (Format-Paragraph (Format-StaticCodeText -Components $records.ToArray() -Info $Info))
+        '@BASELINE@' = $Baseline
+        '@TRIPLET@' = $Info.vcpkgTriplet
+        '@ROOT@' = $rootName }
+    foreach ($pair in $replacements.GetEnumerator()) { $readme = $readme.Replace([string]$pair.Key, [string]$pair.Value) }
+    if ($readme -cmatch '@[A-Z_]+@') { throw "CORRESPONDING-SOURCE-README.txt.in has a placeholder that was not filled: $($Matches[0])" }
+    $readme = ($readme -replace "`r`n", "`n") -replace "`n", "`r`n"
+    $entries.Add([pscustomobject]@{ Name = 'README.txt'; Content = $utf8.GetBytes($readme); Kind = 'text' })
+
+    # SHA256SUMS.txt: every other entry, sorted as in the archive.
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $sums = @{}
+        foreach ($entry in $entries) {
+            $inline = ($entry.PSObject.Properties.Name -contains 'Content') -and $null -ne $entry.Content
+            $sums[$entry.Name] = [pscustomobject]@{
+                Name = $entry.Name
+                Sha256 = $(if ($inline) { ConvertTo-HexText $hasher.ComputeHash([byte[]]$entry.Content) } else { Get-Sha256 $entry.SourcePath })
+                Size = $(if ($inline) { $entry.Content.Length } else { (Get-Item -LiteralPath $entry.SourcePath).Length }) }
+        }
+        $sumNames = [string[]]@($sums.Keys)
+        [Array]::Sort($sumNames, [System.StringComparer]::Ordinal)
+        $sumsText = (@($sumNames | ForEach-Object { "$($sums[$_].Sha256) *$_" }) -join "`n") + "`n"
+        $sumsBytes = $utf8.GetBytes($sumsText)
+        $sums['SHA256SUMS.txt'] = [pscustomobject]@{ Name = 'SHA256SUMS.txt'; Sha256 = (ConvertTo-HexText $hasher.ComputeHash($sumsBytes)); Size = $sumsBytes.Length }
+    }
+    finally { $hasher.Dispose() }
+    $entries.Add([pscustomobject]@{ Name = 'SHA256SUMS.txt'; Content = $sumsBytes; Kind = 'text' })
+
+    # The archive.
+    $zipEntries = @($entries | ForEach-Object {
+        $item = [pscustomobject]@{ Name = "$rootName/$($_.Name)"; Content = $null; SourcePath = $null }
+        if (($_.PSObject.Properties.Name -contains 'Content') -and $null -ne $_.Content) { $item.Content = $_.Content } else { $item.SourcePath = $_.SourcePath }
+        $item })
+    New-DeterministicZip -Path $Path -Entries $zipEntries
+    $item = Get-Item -LiteralPath $Path
+    $allNames = [string[]]@($sums.Keys)
+    [Array]::Sort($allNames, [System.StringComparer]::Ordinal)
+    $allSums = @($allNames | ForEach-Object { $sums[$_] })
+    $texts = @($entries | Where-Object { $_.Kind -ne 'archive' } | ForEach-Object {
+        $bytes = if (($_.PSObject.Properties.Name -contains 'Content') -and $null -ne $_.Content) { [byte[]]$_.Content } else { [System.IO.File]::ReadAllBytes($_.SourcePath) }
+        [pscustomobject]@{ Name = "$($item.Name)/$rootName/$($_.Name)"; Bytes = $bytes } })
+    return [pscustomobject]@{
+        File = $item.Name; Path = $item.FullName; Size = $item.Length; Sha256 = (Get-Sha256 $item.FullName); Root = $rootName
+        Components = $records.ToArray(); BuildTools = $buildTools.ToArray()
+        Entries = @($allSums | ForEach-Object { [ordered]@{ path = "$rootName/$($_.Name)"; size = $_.Size; sha256 = $_.Sha256 } })
+        Texts = $texts }
+}
+
+function Write-LgplNotice {
+    <#
+    .SYNOPSIS
+        Writes <stage>\licenses\LGPL-NOTICE.txt (installer\notices\LGPL-NOTICE.txt.in): the LGPL
+        libraries, the right to replace their DLLs, the statically linked non-LGPL code, and their
+        corresponding source: the corresponding-source package (its file name, size and SHA-256;
+        New-CorrespondingSourcePackage) and, per library, its upstream archives with SHA-512 and its
+        recipe (ADR 0003, ADR 0009 decision 10, ADR 0024).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$StageDir,
+        [Parameter(Mandatory)]$Info,
+        [Parameter(Mandatory)][object[]]$Components,
+        [Parameter(Mandatory)][string]$NoticesDir,
+        [Parameter(Mandatory)]$SourcePackage,
+        [string]$Baseline,
+        [string]$GitCommit)
+    $licenses = Join-Path $StageDir 'licenses'
+    $lgplComponents = @($Components | Where-Object { $_.Lgpl })
+    $textLines = New-Object System.Collections.Generic.List[string]
+    $componentLines = New-Object System.Collections.Generic.List[string]
+    foreach ($component in $lgplComponents) {
+        $packaged = @($SourcePackage.Components | Where-Object { $_.Port -eq $component.Port }) | Select-Object -First 1
+        if (-not $packaged) { throw "$($component.Port) is an LGPL library but not in $($SourcePackage.File)." }
+        foreach ($text in $component.LicenceTexts) { $textLines.Add("    $text ($($component.Port))") }
+        $componentLines.Add("$($component.Port) $($component.Version), $($component.LicenseConcluded)")
+        $dlls = @($component.Files | Where-Object { $_ -match '\.dll$' })
+        foreach ($line in (Format-WrappedList -Prefix '  DLLs: ' -Items $dlls)) { $componentLines.Add($line) }
+        if ($component.Files.Count -gt $dlls.Count) {
+            $componentLines.Add("  and $($component.Files.Count - $dlls.Count) QML module files (qmldir, type information)")
+        }
+        foreach ($source in $component.Sources) {
+            $componentLines.Add("  Source: $(Format-SourceDownload $source.Location)")
+            $componentLines.Add("          SHA-512 $($source.Sha512)")
+        }
+        if ($component.RecipeRef.Overlay) {
+            # A port Lucent overlays: vcpkg's recipe with Lucent's build changes, shipped with Lucent.
+            $componentLines.Add("  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion) with Lucent's")
+            $componentLines.Add("                changes (patches and build options), installed with Lucent in")
+            $componentLines.Add("                $($component.RecipeRef.ShippedRecipe) (the overlay port $($component.RecipeRef.Overlay)")
+            $componentLines.Add("                of Lucent's source" + $(if ($GitCommit) { " at commit $GitCommit)" } else { ')' }))
+        }
+        else {
+            $recipe = "  Build recipe: vcpkg port '$($component.Port)' version $($component.PortVersion)"
+            if ($component.RecipeRef.Tree) { $recipe += ", port tree $($component.RecipeRef.Tree)" }
+            $componentLines.Add($recipe)
+            if ($component.RecipeRef.Url) { $componentLines.Add("                $($component.RecipeRef.Url)") }
+            else { $componentLines.Add("                (git tree object in https://github.com/microsoft/vcpkg; not the port folder at the registry baseline)") }
+        }
+        # The changes the recipe makes to the library's source, each with the files, who and when (LIC-1).
+        $modifications = @()
+        if ($packaged.PSObject.Properties.Name -contains 'Modifications') { $modifications = @($packaged.Modifications) }
+        foreach ($line in (Format-RecipeModifications -Modifications $modifications -Prefix '  Modified: ' -Baseline $Baseline)) { $componentLines.Add($line) }
+        $inPackage = @($packaged.Archives | ForEach-Object { $_.file.Replace('/', '\') }) + @("ports\$($component.Port)\")
+        foreach ($line in (Format-WrappedList -Prefix "  In $($SourcePackage.File): " -Items $inPackage)) { $componentLines.Add($line) }
+        $componentLines.Add('')
+    }
+    $staticNote = ''
+    $allStatics = @($Components | ForEach-Object { $_.StaticLibraries } | Where-Object { $_ })
+    if ($allStatics.Count -gt 0) {
+        $staticNote = "`n" + (@($allStatics | ForEach-Object {
+            # Assigned, not an if's value: one program would come back as a string, none as $null.
+            $programs = @()
+            if ($_.PSObject.Properties.Name -contains 'Executables') { $programs = @($_.Executables | Where-Object { $_ }) }
+            Format-Paragraph "$(Get-StaticLibraryProgramsText $_ $Info) contain$(if ($programs.Count -eq 1) { 's' }) $($_.Name), $($_.File), linked statically. It is offered under $($_.LicenseDeclared), and Lucent uses it under $($_.LicenseConcluded) (THIRD-PARTY-NOTICES.txt)."
+        }) -join "`n`n") + "`n"
+    }
+    $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'LGPL-NOTICE.txt.in'))
+    $lgplText = Set-TemplateTitle -Template $template -Version $Info.version
+    $replacements = [ordered]@{
+        '@LICENCE_TEXTS@' = ($textLines -join "`n")
+        '@COMPONENTS@' = ($componentLines -join "`n").TrimEnd()
+        '@STATIC_LINKED@' = $staticNote
+        '@VCPKG_BASELINE@' = $(if ($Baseline) { $Baseline } else { '(unknown)' })
+        # Grouped the same way on every machine: the format operator follows the regional format (W12
+        # review LIC-7: an Estonian machine wrote "132 480 210").
+        '@SOURCE_PACKAGE_SIZE@' = ([int64]$SourcePackage.Size).ToString('N0', [System.Globalization.CultureInfo]::InvariantCulture)
+        '@SOURCE_PACKAGE_SHA256@' = $SourcePackage.Sha256
+        '@SOURCE_PACKAGE@' = $SourcePackage.File
+        '@HOMEPAGE@' = $Info.homepage }
+    foreach ($pair in $replacements.GetEnumerator()) { $lgplText = $lgplText.Replace([string]$pair.Key, [string]$pair.Value) }
+    if ($lgplText -cmatch '@[A-Z_0-9]+@') { throw "LGPL-NOTICE.txt.in has a placeholder that was not filled: $($Matches[0])" }
+    Write-TextFile -Path (Join-Path $licenses 'LGPL-NOTICE.txt') -Text $lgplText
+}
+
 # --- Inventory -----------------------------------------------------------------------------------
 
 function Get-FileInventory {
+    # In ordinal order: the package manifest lists the files the same way on every machine (LIC-7).
     param([Parameter(Mandatory)][string]$Root)
-    return @(Get-ChildItem -LiteralPath $Root -Recurse -File | Sort-Object FullName | ForEach-Object {
+    return @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $Root -Recurse -File) -Property FullName | ForEach-Object {
         [ordered]@{ path = (Get-RelativePathText -Root $Root -Path $_.FullName); size = $_.Length; sha256 = (Get-Sha256 $_.FullName) }
     })
 }
@@ -2612,6 +4156,10 @@ Export-ModuleMember -Function Read-LucentPackageInfo, Get-PeHeader, Get-PeDepend
     Get-AssetLicences, New-LicenseBundle, New-PackageSbom, Write-InstalledFileList, Test-InstalledFileList, Find-InnoSetupCompiler, Get-FileInventory,
     Write-TextFile, Write-JsonFile, Get-Sha256, Get-Sha1, Get-RelativePathText, Invoke-NativeCommand,
     Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit, Write-BuilderPathReport,
+    Find-BuilderPathsInContent, New-CompressedContentTally, Format-CompressedContentTally, Initialize-CompressedContentType, New-CompressedContentBudget,
     Get-CodeSigningCertificate, Test-AuthenticodeFile, Get-UpdateKeyId, Get-LucentUpdateChannelRecord,
     ConvertFrom-UpdateChannelLogLine, Format-UpdateChannel, Compare-UpdateChannel, Read-ExpectedUpdateChannels,
-    Test-LucentUpdateChannelPolicy
+    Test-LucentUpdateChannelPolicy, New-DeterministicZip, Test-CopyleftLicence, Get-SourceProvisionPlan,
+    Get-SourceProvisionExpectation, ConvertFrom-SourcePackageRecord, Test-CorrespondingSourcePackage,
+    New-CorrespondingSourcePackage, Write-LgplNotice, Format-SourceDownload, Get-RecipeCopy, Get-LicenceKind, ConvertTo-OrdinalOrder,
+    Get-PatchedFiles, Get-RecipeModifications, Format-RecipeModifications, Format-StaticCodeText, Get-InnoSetupLicence, Test-InnoSetupLicence

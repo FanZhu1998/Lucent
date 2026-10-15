@@ -18,18 +18,20 @@ namespace {
 
 constexpr std::string_view kLog = "ui.backend";
 
+// Where bundled assets and per-user data packs are looked for (W10, ADR 0018).
+assets::AssetLocations asset_locations_of(const BackendOptions& options) {
+    if (options.asset_locations) {
+        return *options.asset_locations;
+    }
+    core::AppDirectories directories;
+    directories.data = options.user_data_directory;
+    return assets::default_asset_locations(options.user_data_directory.empty() ? nullptr : &directories);
+}
+
 // W10 (ADR 0018): finds and verifies the camera support database, logging what was found and
 // what was refused.
 assets::CameraSupportLoad load_camera_support(const BackendOptions& options) {
-    assets::AssetLocations locations;
-    if (options.asset_locations) {
-        locations = *options.asset_locations;
-    } else {
-        core::AppDirectories directories;
-        directories.data = options.user_data_directory;
-        locations =
-            assets::default_asset_locations(options.user_data_directory.empty() ? nullptr : &directories);
-    }
+    const assets::AssetLocations locations = asset_locations_of(options);
     assets::CameraSupportLoad load;
     auto request = assets::bundled_asset_request(assets::kCameraSupportAssetId);
     if (request) {
@@ -63,34 +65,59 @@ assets::CameraSupportLoad load_camera_support(const BackendOptions& options) {
     return load;
 }
 
-// W13 (ADR 0023): finds, verifies and loads the lens database, logging what was found and what was
-// refused. Never fails: without one the session corrects no lens.
-assets::LensDatabaseLookup load_lens_database(const BackendOptions& options) {
-    assets::AssetLocations locations;
-    if (options.asset_locations) {
-        locations = *options.asset_locations;
-    } else {
-        core::AppDirectories directories;
-        directories.data = options.user_data_directory;
-        locations =
-            assets::default_asset_locations(options.user_data_directory.empty() ? nullptr : &directories);
-    }
-    assets::LensDatabaseLookup load = assets::load_lens_database(locations);
-    for (const assets::AssetCandidate& candidate : load.lookup.candidates) {
-        if (candidate.present && candidate.refused && candidate.origin == assets::AssetOrigin::UserDataPack) {
-            core::log_warn(kLog, "lens database data pack refused: {}", candidate.refused->describe());
+// W13 (ADR 0023): logs what loading the lens database found and refused (on the loading thread,
+// W12). Never a failure: without one the session corrects no lens. Never throws: a line whose text
+// cannot be made (no memory) is dropped, never the outcome.
+void log_lens_database(const assets::LensDatabaseLookup& load) noexcept {
+    try {
+        for (const assets::AssetCandidate& candidate : load.lookup.candidates) {
+            if (candidate.present && candidate.refused &&
+                candidate.origin == assets::AssetOrigin::UserDataPack) {
+                core::log_warn(kLog, "lens database data pack refused: {}", candidate.refused->describe());
+            }
         }
+        if (load.database) {
+            const engine::LensDatabaseInfo& info = load.database->info();
+            core::log_info(kLog,
+                           "lens database {} {} active ({}, {} files: {} cameras, {} lenses, {} mounts)",
+                           info.identity.asset_id, info.identity.asset_version, info.library, info.files,
+                           info.cameras, info.lenses, info.mounts);
+        } else {
+            core::log_error(kLog, "no lens database is active, so no lens correction is applied: {}",
+                            load.problem ? load.problem->describe() : std::string("unknown reason"));
+        }
+    } catch (...) {
+        // std::bad_alloc while describing a problem: the outcome stands without its log line.
     }
-    if (load.database) {
-        const engine::LensDatabaseInfo& info = load.database->info();
-        core::log_info(kLog, "lens database {} {} active ({}, {} files: {} cameras, {} lenses, {} mounts)",
-                       info.identity.asset_id, info.identity.asset_version, info.library, info.files,
-                       info.cameras, info.lenses, info.mounts);
-    } else {
-        core::log_error(kLog, "no lens database is active, so no lens correction is applied: {}",
-                        load.problem ? load.problem->describe() : std::string("unknown reason"));
+}
+
+// W12 (APL-06): starts finding, verifying and loading the lens database on its own thread (or, when no
+// thread can be started, loads it here).
+std::shared_ptr<app::LensDatabaseSource> start_lens_database(const BackendOptions& options) {
+    app::LensDatabaseSource::Loader loader = options.lens_database_loader;
+    if (!loader) {
+        loader = [locations = asset_locations_of(options)] { return assets::load_lens_database(locations); };
     }
-    return load;
+    // Every outcome is logged, a loader's exception included (run() makes it an outcome, as the source
+    // would), and logging never changes the outcome.
+    auto load = [loader = std::move(loader)] {
+        assets::LensDatabaseLookup lookup = app::LensDatabaseSource::run(loader);
+        log_lens_database(lookup);
+        return lookup;
+    };
+    auto started = app::LensDatabaseSource::start(load);
+    if (started) {
+        return std::move(*started);
+    }
+    core::log_warn(kLog, "the lens database is loaded at start-up instead: {}", started.error().describe());
+    return app::LensDatabaseSource::ready(load());
+}
+
+// The lens database's identity as revisions and batches record it (app::lens_database_text), waiting
+// for the load; empty for none.
+std::string lens_database_identity(const app::LensDatabaseSource& source) {
+    const assets::LensDatabaseLookup& load = source.wait();
+    return load.database ? app::lens_database_text(load.database->info().identity) : std::string();
 }
 
 }  // namespace
@@ -147,6 +174,9 @@ void InteractiveActivity::set_idle_listener(std::function<void()> listener) {
 Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options) {
     try {
         std::shared_ptr<Backend> backend(new Backend());
+        // W12 (APL-06): the lens database loads on its own thread while everything else starts; the
+        // services below wait for it only where it decides what they do (see the file comment).
+        backend->lens_database_ = start_lens_database(options);
 
         auto registry = raw::create_default_registry();
         if (!registry) {
@@ -211,9 +241,6 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             }
         }
 
-        // W13: the lens database (none: no lens correction).
-        backend->lens_database_load_ = load_lens_database(options);
-
         // Recipes: the catalog's revisions with the persistent library, memory otherwise.
         if (backend->catalog_) {
             auto store = app::create_catalog_recipe_store(backend->catalog_);
@@ -229,11 +256,11 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
         recipe_options.probe_limits = options.renderer.decode_limits;
         // W13 (ADR 0023): every revision records the lens database this session renders it with
         // (blueprint section 8: a recipe records its "camera/lens calibration" and resource hashes).
-        recipe_options.engine_version = std::format(
-            "{}; lens database {}", core::build_info().version,
-            backend->lens_database_load_.database
-                ? app::lens_database_text(backend->lens_database_load_.database->info().identity)
-                : std::string("none"));
+        // W12 (APL-06): composed when the first revision is written, once the database has loaded.
+        recipe_options.engine_version_source = [source = backend->lens_database_] {
+            const std::string lens = lens_database_identity(*source);
+            return std::format("{}; lens database {}", core::build_info().version, lens.empty() ? std::string("none") : lens);
+        };
         backend->recipes_ = std::make_unique<app::RecipeService>(*backend->library_, backend->recipe_store_,
                                                                  std::move(recipe_options));
 
@@ -244,9 +271,7 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             batch.registry = backend->registry_;
             batch.lucent_directories = backend->lucent_directories_;
             batch.camera_support = backend->camera_support_;
-            if (backend->lens_database_load_.database) {
-                batch.lens_database = app::lens_database_text(backend->lens_database_load_.database->info().identity);
-            }
+            batch.lens_database_source = [source = backend->lens_database_] { return lens_database_identity(*source); };
             if (!batch.interactive_busy) {
                 batch.interactive_busy = [activity = &backend->interactive_] { return activity->busy(); };
             }
@@ -284,8 +309,8 @@ Expected<std::shared_ptr<Backend>> Backend::create(const BackendOptions& options
             backend->renderer_ = options.renderer_override;
         } else {
             app::EngineRendererOptions renderer_options = options.renderer;
-            if (!renderer_options.lens_database) {
-                renderer_options.lens_database = backend->lens_database_load_.database;
+            if (!renderer_options.lens_database && !renderer_options.lens_database_source) {
+                renderer_options.lens_database_source = backend->lens_database_;  // renders wait for it
             }
             auto renderer = app::create_engine_renderer(backend->registry_, renderer_options);
             if (!renderer) {

@@ -273,6 +273,12 @@ struct RecipeServiceOptions {
     raw::DecodeLimits probe_limits;
     // Recorded in every revision (NewRevision::engine_version); empty: core::build_info().version.
     std::string engine_version;
+    // W12 (APL-06): when set, the engine version is this function's result instead (empty result:
+    // core::build_info().version). It is asked for once, by the first revision written or the first
+    // engine_version() call, outside the service's lock, and kept. It may block: Lucent.exe's names the
+    // lens database, which loads off the UI thread (lens_database_source.hpp), so a revision never names
+    // another database than the one the session renders with.
+    std::function<std::string()> engine_version_source;
     // Time stamps of new revisions; empty: catalog::current_time().
     std::function<catalog::Timestamp()> clock;
 };
@@ -351,8 +357,8 @@ public:
     [[nodiscard]] Expected<RecipeState> refresh(ItemId item);
     // The analysis records of the item's automatic revisions, oldest first (the store's).
     [[nodiscard]] Expected<std::vector<catalog::AutoAnalysisRecord>> automatic_analyses(ItemId item) const;
-    // The engine version recorded in new revisions (RecipeServiceOptions::engine_version, or this
-    // build's version).
+    // The engine version recorded in new revisions (RecipeServiceOptions::engine_version_source's or
+    // engine_version, or this build's version). The first call may wait for engine_version_source.
     [[nodiscard]] std::string engine_version() const;
     // Time stamps of new revisions (RecipeServiceOptions::clock, or the current time).
     [[nodiscard]] catalog::Timestamp now() const;

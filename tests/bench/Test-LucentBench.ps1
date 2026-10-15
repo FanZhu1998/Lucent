@@ -172,6 +172,7 @@ $log = @(
     'lucent: camera support database 2.1.0 (qualified 2026-10-09): 40 modes, 14 verified, from C:\x',
     'lucent: measure: window loaded 812 ms after the process started',
     'lucent: measure: first frame presented 1045 ms after the process started',
+    'lucent: measure: lens database loaded 260 ms after the process started',
     'lucent: import finished: 5 added (1 limited, 0 unsupported), 0 already in library, 0 found again, 0 ignored, 0 failed',
     'lucent: measure: first thumbnail visible 233 ms after the import started',
     'lucent: measure: fit preview visible 1061 ms after it was requested; latest render 1452 x 968 px: engine 0.93 s, preview 1.02 s (request to pixels)',
@@ -206,6 +207,7 @@ $log = @(
 $m = ConvertFrom-LucentLog -Lines $log
 Assert-Equal 812.0 $m.window_loaded_ms 'window loaded'
 Assert-Equal 1045.0 $m.first_frame_ms 'first frame presented'
+Assert-Equal 260.0 $m.lens_database_loaded_ms 'lens database loaded off the UI thread (W12, APL-06)'
 Assert-Equal 233.0 $m.first_thumbnail_ms 'first thumbnail'
 Assert-Equal 5.0 $m.import.added 'import added'
 Assert-Equal 1061.0 $m.fit_preview.visible_ms 'fit preview visible'
@@ -396,9 +398,24 @@ $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powersh
 $gateWork = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-bench-gate-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $gateWork | Out-Null
 function Invoke-Gate {
-    param([string]$DataDir)
-    $output = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gate -DataDir $DataDir)
+    # The baselines of 2026-10-09 and 2026-10-10 were measured before the harness waited for a quiet
+    # machine, so they record no wait: -AllowBusyMachine accepts them (BENCH-2).
+    param([string]$DataDir, [switch]$Strict)
+    $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $gate, '-DataDir', $DataDir)
+    if (-not $Strict) { $arguments += '-AllowBusyMachine' }
+    $output = @(& $powershell @arguments)
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+}
+function Set-ScenarioQuiet {
+    # Writes quiet_before into every scenario file of a copied data folder, as the harness does since
+    # it waits before every scenario.
+    param([string]$Folder, $Quiet)
+    foreach ($file in @(Get-ChildItem -LiteralPath $Folder -Filter '*.json' -File | Where-Object { $_.Name -notlike 'machine*' })) {
+        $document = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+        if ($document.PSObject.Properties['quiet_before']) { $document.quiet_before = $Quiet }
+        else { $document | Add-Member -NotePropertyName quiet_before -NotePropertyValue $Quiet }
+        [System.IO.File]::WriteAllText($file.FullName, (ConvertTo-Json -InputObject $document -Depth 64), (New-Object System.Text.UTF8Encoding($false)))
+    }
 }
 try {
     $empty = Join-Path $gateWork 'empty'
@@ -406,7 +423,30 @@ try {
     Assert-Equal 2 (Invoke-Gate $empty).ExitCode 'a folder without measurements is not a pass'
     Assert-Equal 2 (Invoke-Gate (Join-Path $gateWork 'absent')).ExitCode 'a folder that does not exist is not a pass'
     $baseline = Invoke-Gate $baselineDir
-    Assert-Equal 0 $baseline.ExitCode ('the baseline passes its own budgets: ' + ($baseline.Output | Select-Object -Last 1))
+    Assert-Equal 0 $baseline.ExitCode ('the baseline passes its own budgets (-AllowBusyMachine: it records no quiet wait): ' + ($baseline.Output | Select-Object -Last 1))
+    $strict = Invoke-Gate $baselineDir -Strict
+    Assert-Equal 3 $strict.ExitCode 'BENCH-2: measurements that record no quiet wait are refused without -AllowBusyMachine'
+    Assert-True (@($strict.Output | Where-Object { $_ -match '^Not quiet: startup: no quiet wait recorded' }).Count -eq 1) 'BENCH-2: it names the scenario and why'
+
+    $quietCopy = Join-Path $gateWork 'quiet'
+    Copy-Item -LiteralPath $baselineDir -Destination $quietCopy -Recurse
+    Set-ScenarioQuiet -Folder $quietCopy -Quiet ([pscustomobject]@{ quiet = $true; waited_s = 6.1; samples = @(2.4, 2.6, 2.5); busiest_process_percent = @(3, 2, 2) })
+    Assert-Equal 0 (Invoke-Gate $quietCopy -Strict).ExitCode 'BENCH-2: scenarios that started quiet pass without -AllowBusyMachine'
+    $busyFile = Join-Path $quietCopy 'startup.json'
+    $busy = Get-Content -LiteralPath $busyFile -Raw | ConvertFrom-Json
+    $busy.quiet_before = [pscustomobject]@{ quiet = $false; waited_s = 300.2; samples = @(9.1, 8.8, 9.4); busiest_process_percent = @(97, 99, 98) }
+    [System.IO.File]::WriteAllText($busyFile, (ConvertTo-Json -InputObject $busy -Depth 64), (New-Object System.Text.UTF8Encoding($false)))
+    $result = Invoke-Gate $quietCopy -Strict
+    Assert-Equal 3 $result.ExitCode 'BENCH-2: a scenario that started on a busy machine is refused'
+    Assert-True (@($result.Output | Where-Object { $_ -match '^Not quiet: startup: started on a busy machine .*busiest other process 97, 99, 98 %' }).Count -eq 1) 'BENCH-2: the busy start is named with its samples'
+    Assert-Equal 0 (Invoke-Gate $quietCopy).ExitCode 'BENCH-2: -AllowBusyMachine accepts it'
+    $busy.quiet_before = [pscustomobject]@{ quiet = $false; skipped = $true; waited_s = 0; timeout_s = 0 }
+    [System.IO.File]::WriteAllText($busyFile, (ConvertTo-Json -InputObject $busy -Depth 64), (New-Object System.Text.UTF8Encoding($false)))
+    $result = Invoke-Gate $quietCopy -Strict
+    Assert-True ($result.ExitCode -eq 3 -and @($result.Output | Where-Object { $_ -match '^Not quiet: startup: the wait for a quiet machine was skipped' }).Count -eq 1) 'BENCH-2: a skipped wait is refused'
+    $created = Join-Path $gateWork 'budgets.json'
+    $create = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gate -Create -BaselineDir $baselineDir -Budgets $created)
+    Assert-True ($LASTEXITCODE -eq 3 -and -not (Test-Path -LiteralPath $created)) "BENCH-2: no budgets from a baseline without a quiet wait ($($create | Select-Object -Last 1))"
 
     # A scenario that did not run, an image that failed although the baseline exported it, a failed run.
     $altered = Join-Path $gateWork 'altered'
@@ -427,6 +467,44 @@ try {
 finally {
     Remove-Item -LiteralPath $gateWork -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# --- Scenario order and the quiet machine (W12 release phase, W13 note) -------------------------
+
+$all = @(Get-BenchScenarioOrder)
+Assert-Equal 10 $all.Count 'all ten scenarios'
+Assert-Equal 'startup' $all[-1] 'the cold starts run last (their fresh copies keep the antivirus busy)'
+Assert-Equal 'thumbnails' $all[0] 'thumbnails first'
+$picked = @(Get-BenchScenarioOrder -Requested @('startup,preview', 'edit'))
+Assert-Equal 'preview|edit|startup' ($picked -join '|') 'a requested order is the fixed order'
+$picked = @(Get-BenchScenarioOrder -Requested @('preview', 'preview'))
+Assert-Equal 'preview' ($picked -join '|') 'each scenario once'
+$threw = $false
+try { Get-BenchScenarioOrder -Requested @('warp') | Out-Null } catch { $threw = $_.Exception.Message -match "Unknown scenario 'warp'" }
+Assert-True $threw 'an unknown scenario is refused'
+Assert-True ((Get-Content -LiteralPath (Join-Path $repoRoot 'tools\bench\Invoke-LucentBench.ps1') -Raw) -match 'Get-BenchScenarioOrder -Requested \$Scenario') 'the harness runs the scenarios in the fixed order'
+
+# The quiet wait with a scripted sampler: busy, busy, then quiet three times in a row.
+$script:cpu = New-Object System.Collections.Queue
+foreach ($value in 80, 35, 4, 12, 3, 5, 2, 90) { $script:cpu.Enqueue([double]$value) }
+$quiet = Wait-BenchQuiet -MaxCpuPercent 10 -Consecutive 3 -SampleMs 1 -TimeoutSeconds 60 -Sampler { param($ms) $script:cpu.Dequeue() }
+Assert-True $quiet.quiet 'a quiet machine is found'
+Assert-Equal '80|35|4|12|3|5|2' ($quiet.samples -join '|') 'it waits for three quiet samples in a row (12 % breaks the run)'
+$busy = Wait-BenchQuiet -MaxCpuPercent 10 -Consecutive 3 -SampleMs 1 -TimeoutSeconds 1 -Sampler { param($ms) Start-Sleep -Milliseconds 50; 50 }
+Assert-True (-not $busy.quiet) 'a busy machine times out'
+Assert-True ($busy.waited_s -ge 1 -and $busy.waited_s -lt 10) "the wait ends at the timeout ($($busy.waited_s) s)"
+Assert-True ($busy.samples.Count -ge 2) 'the busy samples are recorded'
+# BENCH-1: one busy thread is 8.3 % of 12 logical processors, below the machine-wide limit; the
+# busiest other process (percent of one processor) breaks the run.
+$script:activity = New-Object System.Collections.Queue
+foreach ($sample in @(@(8.3, 100), @(8.4, 97), @(2.5, 30), @(2.6, 5), @(2.4, 4), @(2.5, 3))) { $script:activity.Enqueue([ordered]@{ cpu = [double]$sample[0]; busiest_process_percent = [double]$sample[1] }) }
+$thread = Wait-BenchQuiet -MaxCpuPercent 10 -MaxProcessPercent 25 -Consecutive 3 -SampleMs 1 -TimeoutSeconds 60 -Sampler { param($ms) $script:activity.Dequeue() }
+Assert-True $thread.quiet 'BENCH-1: a machine whose busy thread stops is found quiet'
+Assert-Equal '100|97|30|5|4|3' ($thread.busiest_process_percent -join '|') 'BENCH-1: one busy thread (8.3 % of the machine) and a process at 30 % of a processor are not quiet; the busiest process of each sample is recorded'
+Assert-Equal 25 $thread.max_process_percent 'BENCH-1: the per-process limit is recorded'
+$activity = Measure-BenchActivity -Milliseconds 200
+Assert-True ($activity.cpu -ge 0 -and $activity.cpu -le 100 -and $activity.busiest_process_percent -ge 0) "BENCH-1: a sample measures the machine and its busiest other process ($([math]::Round($activity.cpu, 1)) %, $([math]::Round($activity.busiest_process_percent, 0)) % of one processor)"
+$harness = Get-Content -LiteralPath (Join-Path $repoRoot 'tools\bench\Invoke-LucentBench.ps1') -Raw
+Assert-True ($harness -match '\$script:scenarioQuiet = Wait-ForQuietMachine \$name' -and $harness -match 'quiet_before = \$script:scenarioQuiet') 'BENCH-2: the harness waits before every scenario and records the wait in its JSON'
 
 Write-Host ("{0} checks, {1} failed" -f $script:checks, $script:failures)
 if ($script:failures -gt 0) { exit 1 }

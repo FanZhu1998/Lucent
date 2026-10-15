@@ -14,10 +14,16 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <memory>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
+
+#include <lucent/core/log.hpp>
 
 #include "adapter_test_support.hpp"
 
@@ -239,6 +245,8 @@ TEST(ApplicationAdaptersCameraSupport, AMissingDatabaseIsReportedNotReplaced) {
 // Lens corrections panel), and nothing can be chosen.
 TEST_F(ApplicationAdaptersTest, TheBundledLensDatabaseIsActive) {
     create();
+    // W12 (APL-06): it loads off the UI thread.
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !library_->lens_database().loading; }, kAdapterWaitMs));
     const LensDatabaseInfo info = library_->lens_database();
     EXPECT_TRUE(info.available) << info.problem.toStdString();
     EXPECT_EQ(info.version, QStringLiteral("1.0.0"));
@@ -257,11 +265,61 @@ TEST(ApplicationAdaptersLensDatabase, AMissingDatabaseLeavesCorrectionsUnavailab
     options.asset_locations = locations;
     auto services = adapters::create_application_services(options);
     ASSERT_TRUE(services) << services.error().describe();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !services->library->lens_database().loading; }, kAdapterWaitMs));
     const LensDatabaseInfo info = services->library->lens_database();
     EXPECT_FALSE(info.available);
     EXPECT_TRUE(info.problem.contains(QStringLiteral("not installed"))) << info.problem.toStdString();
     EXPECT_EQ(services->edits->lens_database().problem, info.problem);
     EXPECT_TRUE(services->edits->search_lens_profiles(QStringLiteral("nikkor"), 10).isEmpty());
+}
+
+// Review finding APL06-R1 (W12): a lens database loader that throws (std::bad_alloc while the asset is
+// read, or any other exception) is an outcome like any other: the session runs without lens corrections,
+// the outcome says why, and the log file says so as it does for a missing database.
+TEST(ApplicationAdaptersLensDatabase, ALoaderThatThrowsIsLoggedLikeAnyOtherOutcome) {
+    auto sink = std::make_shared<core::MemorySink>();
+    ASSERT_TRUE(core::logger().add_sink(sink));
+    struct Detach {
+        const core::LogSink* sink;
+        ~Detach() { core::logger().remove_sink(sink); }
+    } detach{sink.get()};
+
+    struct Case {
+        const char* name;
+        app::LensDatabaseSource::Loader loader;
+        ErrorCode code;
+        std::string logged;  // in the log line
+    };
+    const std::vector<Case> cases = {
+        {"std::bad_alloc", []() -> assets::LensDatabaseLookup { throw std::bad_alloc(); },
+         ErrorCode::OutOfMemory, "out of memory while loading the lens database"},
+        {"std::runtime_error",
+         []() -> assets::LensDatabaseLookup { throw std::runtime_error("the disk went away"); },
+         ErrorCode::Internal, "loading the lens database failed: the disk went away"},
+    };
+    for (const Case& test : cases) {
+        SCOPED_TRACE(test.name);
+        sink->clear();
+        adapters::BackendOptions options = testing::test_backend_options();
+        options.lens_database_loader = test.loader;
+        auto backend = adapters::Backend::create(options);
+        ASSERT_TRUE(backend) << backend.error().describe();
+        const assets::LensDatabaseLookup& outcome = (*backend)->lens_database_source()->wait();
+        EXPECT_FALSE(outcome.database);
+        ASSERT_TRUE(outcome.problem);
+        EXPECT_EQ(outcome.problem->code, test.code);
+        // Logged on the loading thread before the outcome was published.
+        constexpr std::string_view kNone = "no lens database is active, so no lens correction is applied: ";
+        int lines = 0;
+        for (const core::LogRecord& record : sink->records()) {
+            if (record.category == "ui.backend" && record.message.starts_with(kNone)) {
+                ++lines;
+                EXPECT_EQ(record.level, core::LogLevel::Error);
+                EXPECT_NE(record.message.find(test.logged), std::string::npos) << record.message;
+            }
+        }
+        EXPECT_EQ(lines, 1);
+    }
 }
 
 TEST_F(ApplicationAdaptersTest, SupportedSuffixesAreTheImportRawExtensions) {

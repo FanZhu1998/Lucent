@@ -7,9 +7,11 @@
 #                        (lucent_application): import, camera and Lucent previews, export. Binds
 #                        them in src/service_factory.cpp (docs/adr/0007-application-shell.md).
 #   lucent_ui            QML module "Lucent" (static library): QML views, view models, controller,
-#                        asynchronous image providers, developer automation.
+#                        asynchronous image providers, developer automation; Lucent's logo as a Qt
+#                        resource (the window icon and the About dialog's logo, ADR 0025).
 #   lucent_ui_qmlplugin  The module's static QML plugin, imported with Q_IMPORT_QML_PLUGIN.
-#   Lucent               Lucent.exe: WIN32 subsystem (no console window), version resource.
+#   Lucent               Lucent.exe: WIN32 subsystem (no console window), icon and version resources
+#                        (lucent_add_program_resources, cmake/LucentBranding.cmake).
 #   lucent_ui_tests      GoogleTest + Qt Test, offscreen platform, software scene graph.
 #   lucent_ui_runtime    Build-tree runtime (see below).
 #
@@ -134,6 +136,8 @@ qt_add_qml_module(lucent_ui
     SOURCES
         src/app_controller.cpp
         src/app_controller.hpp
+        src/branding.cpp
+        src/branding.hpp
         src/developer_automation.cpp
         src/developer_automation.hpp
         src/imaging/frame_store.cpp
@@ -206,6 +210,25 @@ target_link_libraries(lucent_ui
         Qt6::QuickControls2
     PRIVATE
         Lucent::compiler_options)
+
+# Lucent's logo (ADR 0025): the "app-icon" derivatives of the branding asset, compiled in as the Qt
+# resource folder :/lucent/branding/app-icon under their own file names. The window icon and the
+# About dialog's logo take every image of that folder (src/branding.hpp), so a new logo or a new size
+# changes no code; rcc depends on the files, so a regenerated image is compiled in again. PNG only:
+# Qt's ico image plugin is not needed.
+lucent_branding_files(app-icon _lucent_app_icons)
+set(_lucent_app_icon_names "")
+foreach(_lucent_app_icon IN LISTS _lucent_app_icons)
+    get_filename_component(_lucent_app_icon_name "${_lucent_app_icon}" NAME)
+    if(_lucent_app_icon_name IN_LIST _lucent_app_icon_names)
+        message(FATAL_ERROR "Two app-icon derivatives are named ${_lucent_app_icon_name}.")
+    endif()
+    list(APPEND _lucent_app_icon_names "${_lucent_app_icon_name}")
+    set_source_files_properties("${_lucent_app_icon}" PROPERTIES QT_RESOURCE_ALIAS "app-icon/${_lucent_app_icon_name}")
+endforeach()
+qt_add_resources(lucent_ui lucent_branding
+    PREFIX "/lucent/branding"
+    FILES ${_lucent_app_icons})
 target_compile_definitions(lucent_ui PRIVATE "LUCENT_APP_VERSION=\"${PROJECT_VERSION}\"")
 # The generated QML type registrations include each QML_ELEMENT header by its file name.
 target_include_directories(lucent_ui PRIVATE
@@ -215,17 +238,11 @@ set_target_properties(lucent_ui lucent_ui_qmlplugin PROPERTIES FOLDER "apps/luce
 
 # --- Lucent.exe ----------------------------------------------------------------------------------
 
-set(LUCENT_RC_COMPANY "Lucent")
-set(LUCENT_RC_DESCRIPTION "Lucent RAW photo developer")
-set(LUCENT_RC_COPYRIGHT "Copyright (c) 2026 Fan Zhu. MIT License.")
-configure_file(lucent.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/lucent.rc" @ONLY)
-
 qt_add_executable(Lucent WIN32
     src/main.cpp
     src/service_factory.cpp
     src/service_factory.hpp
     lucent.exe.manifest
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/lucent.rc"
 )
 target_link_libraries(Lucent PRIVATE
     Lucent::compiler_options
@@ -235,6 +252,9 @@ target_link_libraries(Lucent PRIVATE
 set_target_properties(Lucent PROPERTIES
     OUTPUT_NAME Lucent
     FOLDER "apps")
+# The icon IDI_ICON1 (Lucent's logo: Explorer, the taskbar, shortcuts and Qt's window class) and the
+# version information, from the template every shipped program shares.
+lucent_add_program_resources(Lucent DESCRIPTION "Lucent RAW photo developer")
 
 # --- Build-tree runtime --------------------------------------------------------------------------
 

@@ -741,7 +741,8 @@ public:
     // ---- Lens corrections (version 3; see the file comment) -----------------------------------------
 
     // The lens database the session's renders correct lenses with, or why there is none. The default
-    // has none.
+    // has none. W12 (APL-06): LensDatabaseInfo::loading while it loads off the UI thread (frames wait
+    // for it); lens_database_changed is emitted once it has loaded.
     [[nodiscard]] virtual LensDatabaseInfo lens_database() const { return {}; }
     // Profiles of the lens database whose maker and model hold every word of `text` (case ignored;
     // an empty text lists them all), at most `limit`, by maker and model. The default has none.
@@ -769,6 +770,8 @@ signals:
     void auto_progress(const lucent::ui::AutoProgress& progress);
     void auto_finished(const lucent::ui::AutoOutcome& outcome);
     void auto_summary_changed(lucent::ui::ItemId item, const lucent::ui::AutoSummary& summary);
+    // W12 (APL-06): the lens database has finished loading (lens_database() tells the outcome).
+    void lens_database_changed();
 };
 
 }  // namespace lucent::ui

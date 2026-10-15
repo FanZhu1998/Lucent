@@ -381,8 +381,13 @@ CameraSupportInfo to_camera_support_info(const app::CameraSupportRef& active,
     return info;
 }
 
-LensDatabaseInfo to_lens_database_info(const assets::LensDatabaseLookup& load) {
+LensDatabaseInfo to_lens_database_info(const assets::LensDatabaseLookup* loaded) {
     LensDatabaseInfo info;
+    if (loaded == nullptr) {
+        info.loading = true;  // W12 (APL-06): verified and loaded off the UI thread
+        return info;
+    }
+    const assets::LensDatabaseLookup& load = *loaded;
     if (!load.database) {
         const ErrorCode code = load.problem ? load.problem->code : ErrorCode::NotFound;
         switch (code) {

@@ -1,6 +1,8 @@
 # ADR 0003: Linking model and third-party licensing
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-10: "Amendment: the release decisions" below, with ADR 0024;
+  amended 2026-10-15 by the W12 release review: "Amendment: modified libraries and the copyleft guard"
+  below)
 - **Date:** 2026-09-24
 - **Workflow:** W1 (Foundation and RAW probe)
 
@@ -120,3 +122,75 @@ provision for covered libraries and a shipped licence bundle generated from the 
 - **Running a GPL application as a subprocess** (for example RawTherapee's command line) to get its
   demosaicing. The blueprint notes that a command-line boundary is not an automatic answer to
   licensing obligations. It would also bundle a full application. Rejected.
+
+## Amendment: the release decisions (W12 licence and release phase, 2026-10-10)
+
+The user decided how Lucent is distributed and how the LGPL libraries' source reaches recipients
+([ADR 0024](0024-release-and-licensing.md)). For this ADR:
+
+9. **Lucent is free and open source under the MIT licence and is not sold.** The linking model
+   (decisions 1 to 6) is unchanged: LGPL libraries stay unmodified replaceable DLLs, except the two
+   patches of Lucent's overlay ports for GLib and GNU libintl (ADR 0009, decision 17), which ship with
+   the source. Lucent's MIT terms never restrict modifying the libraries or reverse engineering Lucent
+   to debug such modifications, as LGPL-2.1 section 6 and LGPL-3.0 section 4 require of the terms of a
+   combined work.
+10. **The corresponding-source provision is an archive beside every installer**,
+    `Lucent-<version>-corresponding-source.zip`, written and checked by `tools\package.ps1`: the
+    upstream archives (verified by SHA-512 against vcpkg's record and the recipe's pin at the registry
+    baseline), the recipes as built (registry ports and Lucent's overlay ports), the triplet, vcpkg's
+    build records and a README on rebuilding and replacing each library. It covers every LGPL library
+    that ships today: Qt (`qtbase`, `qtdeclarative`, `qtsvg`), LibRaw, Lensfun, GLib, GNU libintl and
+    GNU libiconv. The "Consequences" item "a corresponding-source provision for LibRaw and Qt" is met
+    by it.
+11. **A copyleft licence cannot ship without a reviewed source provision.** Packaging stops when a
+    shipped component's concluded licence, a library linked statically from it, or third-party code
+    recorded inside it leaves no choice but a copyleft licence and `installer\license-policy.json`
+    does not mark the port `lgpl` or `correspondingSource`. This extends decision 7: the ledger
+    records each shipped component's obligations and their status for a release
+    ([licence ledger](../legal/third-party-notices.md), "Release status").
+
+## Amendment: modified libraries and the copyleft guard (W12 release review, 2026-10-15)
+
+The review of the release phase found decision 9 inaccurate (LIC-1) and decision 11 open in two
+directions (LIC-4).
+
+**Modified libraries.** Decision 9 called the LGPL libraries unmodified except for Lucent's two
+overlay patches, and the ledger marked GLib's and libintl's "changed files marked" as met. But the
+vcpkg recipes Lucent builds with patch the upstream source too: GLib's `use-libiconv-on-windows.patch`
+makes `glib/gconvert.c` convert with GNU libiconv instead of the bundled win_iconv (code of
+`glib-2.0-0.dll`), libintl's `0003-Fix-win-unicode-paths.patch` changes `intl/loadmsgcat.c` and its
+`uwp.patch` two more files, Qt's recipe patches mostly its CMake build files but also
+`src/gui/text/qtextmarkdownimporter.cpp` (`md4c.diff`, in `Qt6Gui.dll`), and LibRaw's and Lensfun's
+patch their CMake files. By the standard decision 17 of ADR 0009 applies to Lucent's own patches,
+those libraries are modified, and LGPL-2.1 section 2 and GPL-3.0 section 5(a) (which LGPL-3.0
+incorporates) ask for a notice of the changed files and the date. vcpkg's patch files cannot be edited
+(vcpkg hashes the recipe), so:
+
+12. **Every patch is listed with the library it modifies.** Packaging reads, for every library with a
+    source provision, each patch file its recipe as built names (`Get-RecipeModifications`: a few
+    apply only on other platforms or with features Lucent does not use, which the portfile says;
+    listing them errs on the side of naming more), with the files it changes and who made it when:
+    vcpkg's patches as they are in its registry at the baseline commit, dated by that commit; Lucent's
+    own (`lucent-*.patch`, which also mark the files they change) with the date they state. The list
+    is in `licenses\LGPL-NOTICE.txt` ("Modified"), in the corresponding-source archive's README and
+    `MANIFEST.json` (`components[].modifications`), and a library without patches says "Modified:
+    no". GNU libiconv's three patches change only the `iconv` program's helpers and an installed
+    header, which `iconv-2.dll` does not compile, and are listed all the same. Decision 9's
+    "unmodified" now reads "replaceable"; the ledger's "Met" for GLib and libintl rests on the list.
+
+**The copyleft guard.** Decision 11's check took every alternative of an OR as one Lucent could
+choose, so `LicenseRef-Vendor-Commercial OR LGPL-3.0-only` passed unmarked, although Lucent holds no
+commercial licence; and its only remedy, the `lgpl` or `correspondingSource` mark, also admitted GPL
+code and copyleft code compiled into the programs, which decisions 4 and 6 keep out without a new ADR.
+
+13. **What an expression leaves Lucent to use decides** (`Get-LicenceKind`): a `LicenseRef-` or
+    `DocumentRef-` alternative, or an identifier the packaging scripts do not know, is no alternative
+    Lucent can take (an election is recorded as the policy's `concluded`); AND needs every operand, OR
+    takes the best alternative Lucent can use.
+14. **A source provision is not enough for GPL code or for copyleft code compiled in.** GPL or AGPL
+    without an exception stops packaging even for a marked port, unless the port's policy entry names
+    the ADR that accepted it (`strongCopyleftAdr`); a header-only port (compiled into the programs)
+    under a copyleft licence stops it as a statically linked one does, a file-level copyleft (MPL, EPL,
+    CDDL) only with a review recorded in `fileLevelCopyleftReview`. The error no longer offers the mark
+    as the remedy for GPL code. Nothing that ships today is affected: the 0.1.0 package's archive and
+    plan were made again with these rules without an error.

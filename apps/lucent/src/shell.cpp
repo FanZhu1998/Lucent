@@ -7,6 +7,7 @@
 #include <QVariantMap>
 
 #include "app_controller.hpp"
+#include "branding.hpp"
 
 #ifndef LUCENT_APP_VERSION
 #error "LUCENT_APP_VERSION must be defined by the build (apps/lucent/CMakeLists.txt)"
@@ -24,6 +25,7 @@ void configure_application() {
 }
 
 QQuickWindow* load_main_window(QQmlApplicationEngine& engine, AppController& controller) {
+    install_branding(engine);
     controller.install_image_providers(engine);
     engine.setInitialProperties({{QStringLiteral("controller"), QVariant::fromValue(&controller)}});
     engine.loadFromModule("Lucent", "Main");

@@ -108,8 +108,10 @@
 //                              Before the screenshot the panel's state is reported ("lucent: lens: ...").
 //   --show-panel <lens>        Scrolls the Edit view's side panel so that this section is at its top
 //                              (and expands it) before the screenshot; reports the panel's state too.
-//                              At start-up every run reports the lens database it uses on stderr
-//                              ("lucent: lens database 1.0.0 ..." or "... unavailable:").
+//                              Every run reports the lens database it uses on stderr once it has loaded
+//                              off the UI thread (W12, APL-06): "lucent: lens database 1.0.0 ..." or
+//                              "... unavailable:", with --measure after "measure: lens database loaded
+//                              <n> ms after the process started".
 //   --export-batch <folder>    W7: when the imports have finished, export every photo of <folder>
 //                              (and its subfolders with --include-subfolders) as one durable batch,
 //                              as the Export batch dialog's Start does: the folder is added to the
@@ -309,6 +311,8 @@ private:
     bool apply_lens(const QString& spec);
     // The Lens corrections panel's state ("lens: ..." lines).
     void report_lens();
+    // The session's lens database ("lens database ..."), once it has loaded (W12, APL-06).
+    void report_lens_database();
     // Starts a synthetic stroke (see --brush); false when the masks tool cannot paint.
     bool paint_brush(const QList<QPointF>& points);
     void start_drag();

@@ -351,6 +351,40 @@ TEST_F(LensCorrectionsTest, WithoutALensDatabaseNothingCanBeChanged) {
     EXPECT_EQ(service.count(QStringLiteral("apply")), 0);
 }
 
+// W12 (APL-06): while the lens database still loads off the UI thread the panel says so (not as a
+// problem) and offers nothing to change; when the service says it has loaded, the panel follows.
+TEST_F(LensCorrectionsTest, WhileTheLensDatabaseLoadsThePanelWaitsForIt) {
+    const LensDatabaseInfo loaded = service.lens_database_info;
+    ASSERT_TRUE(loaded.available);
+    service.lens_database_info = LensDatabaseInfo{};
+    service.lens_database_info.loading = true;
+    session.set_item(7);
+    EditState state;
+    state.item = 7;
+    service.emit_state(state);
+    EXPECT_TRUE(lens().loading());
+    EXPECT_FALSE(lens().available());
+    EXPECT_FALSE(lens().editable());
+    EXPECT_TRUE(lens().unavailable_reason().contains(u"still loading")) << lens().unavailable_reason().toStdString();
+    lens().setCorrection(QStringLiteral("distortion"), false);
+    lens().openPicker();
+    EXPECT_FALSE(lens().picking());
+    EXPECT_EQ(service.count(QStringLiteral("apply")), 0);
+
+    int changes = 0;
+    QObject::connect(&lens(), &LensCorrections::changed, &lens(), [&] { ++changes; });
+    service.lens_database_info = loaded;
+    emit service.lens_database_changed();
+    EXPECT_GE(changes, 1);
+    EXPECT_FALSE(lens().loading());
+    EXPECT_TRUE(lens().available());
+    EXPECT_TRUE(lens().unavailable_reason().isEmpty());
+    // Frames that arrive later are shown as usual.
+    show_frame(exact_info());
+    EXPECT_TRUE(lens().known());
+    EXPECT_TRUE(lens().editable());
+}
+
 TEST_F(LensCorrectionsTest, TheCopyCategoryIsOfferedButNotSelected) {
     open();
     bool found = false;

@@ -1,0 +1,560 @@
+{
+ "schema": "lucent.branding",
+ "schema_version": 1,
+ "master": {
+  "path": "master/lucent-logo.png",
+  "format": "png",
+  "width": 1254,
+  "height": 1254,
+  "size": 1013687,
+  "sha256": "106aaee47ba11568677fe96d509d903280be72227befc9d34edffa49437eab43",
+  "chunks": [
+   "IHDR",
+   "caBX",
+   "IDAT",
+   "IEND"
+  ],
+  "provenance": "provenance.json"
+ },
+ "analysis": {
+  "noise_alpha": 2,
+  "cleared_pixels": 1977,
+  "faint_components": 296,
+  "faint_pixels": 3132,
+  "content_box": {
+   "left": 97,
+   "top": 107,
+   "right": 1157,
+   "bottom": 1172
+  },
+  "solid_alpha": 253,
+  "interior_pixels": 1082041
+ },
+ "method": {
+  "alpha": "Alpha 1 to 2 is cleared as the image generator's noise, then every group of touching (4-connected) non-transparent pixels in which no pixel reaches alpha 128 (specks, and ringing separated from an edge by transparent pixels). Coverage is min(1, alpha / solid_alpha), where solid_alpha is the 1st-percentile alpha of the artwork's solid interior (at least 240): the nearly opaque artwork becomes opaque and its anti-aliased edges keep their ramp.",
+  "placement": "The content box (the bounding box of alpha >= 128) is cropped, and its longer side spans the derivative's artwork square, centred in it: the master's off-centre placement is corrected and its proportions are kept.",
+  "resampling": "Each pixel is the area average (box filter, exact footprint coverage) of the master under it, in premultiplied linear light: sRGB (IEC 61966-2-1) decoded and encoded with deterministic arithmetic; alpha is the covered fraction, colour the average colour of what covers it. Fully transparent pixels are 0, 0, 0, 0.",
+  "icon_padding": "Icon-style renderings (the Windows icon, the app icons, the small wizard images) place the content box (alpha >= 128) round(size / 16) pixels from each side; the artwork's anti-aliased rim, below alpha 128, reaches about one pixel into that margin.",
+  "wizard_image": "The large wizard images show the logo at half the image's width, centred horizontally, its middle at 38 % of the image's height, on a transparent background.",
+  "docs_logo": "The documentation logo keeps a 4-pixel margin.",
+  "png": "8-bit RGBA; IHDR, IDAT and IEND only (no metadata, no timestamps); each row filtered by the smallest sum of absolute differences; one zlib stream with fixed Huffman codes (greedy LZ77): the same pixels always give the same bytes.",
+  "ico": "Images below 256 px are 32-bit BMPs (BITMAPINFOHEADER, straight alpha, bottom-up, AND mask set where alpha is 0); the 256 px image is PNG."
+ },
+ "derivatives": [
+  {
+   "path": "windows/lucent.ico",
+   "role": "windows-icon",
+   "format": "ico",
+   "images": [
+    {
+     "width": 16,
+     "height": 16,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 1,
+      "top": 1,
+      "size": 14
+     }
+    },
+    {
+     "width": 20,
+     "height": 20,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 1,
+      "top": 1,
+      "size": 18
+     }
+    },
+    {
+     "width": 24,
+     "height": 24,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 2,
+      "top": 2,
+      "size": 20
+     }
+    },
+    {
+     "width": 32,
+     "height": 32,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 2,
+      "top": 2,
+      "size": 28
+     }
+    },
+    {
+     "width": 40,
+     "height": 40,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 3,
+      "top": 3,
+      "size": 34
+     }
+    },
+    {
+     "width": 48,
+     "height": 48,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 3,
+      "top": 3,
+      "size": 42
+     }
+    },
+    {
+     "width": 64,
+     "height": 64,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 4,
+      "top": 4,
+      "size": 56
+     }
+    },
+    {
+     "width": 96,
+     "height": 96,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 6,
+      "top": 6,
+      "size": 84
+     }
+    },
+    {
+     "width": 128,
+     "height": 128,
+     "encoding": "bmp32",
+     "artwork": {
+      "left": 8,
+      "top": 8,
+      "size": 112
+     }
+    },
+    {
+     "width": 256,
+     "height": 256,
+     "encoding": "png",
+     "artwork": {
+      "left": 16,
+      "top": 16,
+      "size": 224
+     }
+    }
+   ]
+  },
+  {
+   "path": "app/lucent-16.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 16,
+   "height": 16,
+   "artwork": {
+    "left": 1,
+    "top": 1,
+    "size": 14
+   }
+  },
+  {
+   "path": "app/lucent-20.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 20,
+   "height": 20,
+   "artwork": {
+    "left": 1,
+    "top": 1,
+    "size": 18
+   }
+  },
+  {
+   "path": "app/lucent-24.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 24,
+   "height": 24,
+   "artwork": {
+    "left": 2,
+    "top": 2,
+    "size": 20
+   }
+  },
+  {
+   "path": "app/lucent-28.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 28,
+   "height": 28,
+   "artwork": {
+    "left": 2,
+    "top": 2,
+    "size": 24
+   }
+  },
+  {
+   "path": "app/lucent-32.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 32,
+   "height": 32,
+   "artwork": {
+    "left": 2,
+    "top": 2,
+    "size": 28
+   }
+  },
+  {
+   "path": "app/lucent-36.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 36,
+   "height": 36,
+   "artwork": {
+    "left": 2,
+    "top": 2,
+    "size": 32
+   }
+  },
+  {
+   "path": "app/lucent-40.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 40,
+   "height": 40,
+   "artwork": {
+    "left": 3,
+    "top": 3,
+    "size": 34
+   }
+  },
+  {
+   "path": "app/lucent-48.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 48,
+   "height": 48,
+   "artwork": {
+    "left": 3,
+    "top": 3,
+    "size": 42
+   }
+  },
+  {
+   "path": "app/lucent-56.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 56,
+   "height": 56,
+   "artwork": {
+    "left": 4,
+    "top": 4,
+    "size": 48
+   }
+  },
+  {
+   "path": "app/lucent-64.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 64,
+   "height": 64,
+   "artwork": {
+    "left": 4,
+    "top": 4,
+    "size": 56
+   }
+  },
+  {
+   "path": "app/lucent-72.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 72,
+   "height": 72,
+   "artwork": {
+    "left": 5,
+    "top": 5,
+    "size": 62
+   }
+  },
+  {
+   "path": "app/lucent-80.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 80,
+   "height": 80,
+   "artwork": {
+    "left": 5,
+    "top": 5,
+    "size": 70
+   }
+  },
+  {
+   "path": "app/lucent-96.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 96,
+   "height": 96,
+   "artwork": {
+    "left": 6,
+    "top": 6,
+    "size": 84
+   }
+  },
+  {
+   "path": "app/lucent-112.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 112,
+   "height": 112,
+   "artwork": {
+    "left": 7,
+    "top": 7,
+    "size": 98
+   }
+  },
+  {
+   "path": "app/lucent-128.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 128,
+   "height": 128,
+   "artwork": {
+    "left": 8,
+    "top": 8,
+    "size": 112
+   }
+  },
+  {
+   "path": "app/lucent-144.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 144,
+   "height": 144,
+   "artwork": {
+    "left": 9,
+    "top": 9,
+    "size": 126
+   }
+  },
+  {
+   "path": "app/lucent-160.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 160,
+   "height": 160,
+   "artwork": {
+    "left": 10,
+    "top": 10,
+    "size": 140
+   }
+  },
+  {
+   "path": "app/lucent-192.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 192,
+   "height": 192,
+   "artwork": {
+    "left": 12,
+    "top": 12,
+    "size": 168
+   }
+  },
+  {
+   "path": "app/lucent-256.png",
+   "role": "app-icon",
+   "format": "png",
+   "width": 256,
+   "height": 256,
+   "artwork": {
+    "left": 16,
+    "top": 16,
+    "size": 224
+   }
+  },
+  {
+   "path": "installer/wizard-image-202x386.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 202,
+   "height": 386,
+   "artwork": {
+    "left": 51,
+    "top": 96,
+    "size": 101
+   }
+  },
+  {
+   "path": "installer/wizard-image-269x515.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 269,
+   "height": 515,
+   "artwork": {
+    "left": 67,
+    "top": 128,
+    "size": 135
+   }
+  },
+  {
+   "path": "installer/wizard-image-336x643.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 336,
+   "height": 643,
+   "artwork": {
+    "left": 84,
+    "top": 160,
+    "size": 168
+   }
+  },
+  {
+   "path": "installer/wizard-image-403x772.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 403,
+   "height": 772,
+   "artwork": {
+    "left": 101,
+    "top": 192,
+    "size": 202
+   }
+  },
+  {
+   "path": "installer/wizard-image-430x824.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 430,
+   "height": 824,
+   "artwork": {
+    "left": 108,
+    "top": 206,
+    "size": 215
+   }
+  },
+  {
+   "path": "installer/wizard-image-498x953.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 498,
+   "height": 953,
+   "artwork": {
+    "left": 125,
+    "top": 238,
+    "size": 249
+   }
+  },
+  {
+   "path": "installer/wizard-image-534x1022.png",
+   "role": "setup-wizard-image",
+   "format": "png",
+   "width": 534,
+   "height": 1022,
+   "artwork": {
+    "left": 134,
+    "top": 255,
+    "size": 267
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-58.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 58,
+   "height": 58,
+   "artwork": {
+    "left": 4,
+    "top": 4,
+    "size": 50
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-77.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 77,
+   "height": 77,
+   "artwork": {
+    "left": 5,
+    "top": 5,
+    "size": 67
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-97.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 97,
+   "height": 97,
+   "artwork": {
+    "left": 6,
+    "top": 6,
+    "size": 85
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-116.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 116,
+   "height": 116,
+   "artwork": {
+    "left": 7,
+    "top": 7,
+    "size": 102
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-124.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 124,
+   "height": 124,
+   "artwork": {
+    "left": 8,
+    "top": 8,
+    "size": 108
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-143.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 143,
+   "height": 143,
+   "artwork": {
+    "left": 9,
+    "top": 9,
+    "size": 125
+   }
+  },
+  {
+   "path": "installer/wizard-small-image-159.png",
+   "role": "setup-wizard-small-image",
+   "format": "png",
+   "width": 159,
+   "height": 159,
+   "artwork": {
+    "left": 10,
+    "top": 10,
+    "size": 139
+   }
+  },
+  {
+   "path": "docs/lucent-logo.png",
+   "role": "docs-logo",
+   "format": "png",
+   "width": 256,
+   "height": 256,
+   "artwork": {
+    "left": 4,
+    "top": 4,
+    "size": 248
+   }
+  }
+ ]
+}

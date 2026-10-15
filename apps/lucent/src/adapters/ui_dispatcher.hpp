@@ -14,6 +14,10 @@
 // destroyed (QObject removes its pending posted events), so a posted function runs only while its
 // target is alive and may therefore capture the target's `this`.
 //
+// A constructor that throws runs no destructor, so no close(): the owner gives the dispatcher only
+// to callbacks that its members unregister (subscription members, which wait for a call in
+// progress), and registers a callback that has no such member last, after everything that can throw.
+//
 // Thread-safety: post() from any thread; close() on the target's thread.
 
 #include <QMetaObject>

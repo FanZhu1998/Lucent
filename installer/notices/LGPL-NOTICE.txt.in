@@ -24,15 +24,35 @@ Your rights
 Corresponding source
 --------------------
 
+The complete corresponding source of these libraries, as they were built for this version of
+Lucent, is the archive
+
+    @SOURCE_PACKAGE@
+    (@SOURCE_PACKAGE_SIZE@ bytes, SHA-256 @SOURCE_PACKAGE_SHA256@)
+
+which is published next to Lucent-Setup-@VERSION@-x64.exe, from the same place and for as long as
+that installer is offered. It holds, for each library below, the exact upstream source archive,
+the build recipe used (the vcpkg port: build script and patches, including the Lucent project's
+own changes), the build settings (the vcpkg triplet) and a README that explains how to rebuild
+each library and replace its DLL. You do not need Lucent's own source code (MIT License) to
+rebuild or replace these libraries; it is published at @HOMEPAGE@.
+
 The libraries were built from the upstream source archives listed below, with the build recipe
 (build script and patches) of the vcpkg port named for each. vcpkg verifies every archive against
 the SHA-512 value shown. A recipe is identified by the git tree hash of its port folder in the
 vcpkg registry (https://github.com/microsoft/vcpkg) and, when the registry commit Lucent builds
 against (@VCPKG_BASELINE@) holds exactly that tree, by a link to the port folder at that commit.
 A port that Lucent overlays (vcpkg's recipe with Lucent's build changes) is installed with Lucent
-in the folder named for it (licenses\<port>\recipe): its patches named lucent-*.patch are the
-Lucent project's only changes to the library's source, each described in the patch and in the
-recipe's portfile.cmake. Every other library is built without changes by the Lucent project. The
-same information is available in machine-readable form in Lucent.spdx.json (SPDX 2.3).
+in the folder named for it (licenses\<port>\recipe).
+
+Modified libraries: where a library's recipe patches its upstream source, the library is a
+modified version of it. Every patch its recipe names (portfile.cmake; a few apply only on other
+platforms or with features Lucent does not use, as the portfile says) is listed below with the
+library ("Modified"), with the files it changes and who made the change and when: vcpkg's patches
+as they are in its registry at the commit above (dated by that commit), and the Lucent project's
+own patches, named lucent-*.patch, with the date each states (it also marks the files it changes).
+A library whose entry says "Modified: no" is built from its upstream source archive as released.
+The archives and recipes are also listed in machine-readable form in Lucent.spdx.json (SPDX 2.3),
+and, with these patches, in MANIFEST.json inside the archive above.
 
 @COMPONENTS@

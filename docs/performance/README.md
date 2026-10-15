@@ -31,7 +31,7 @@ powershell -NoProfile -File tools\bench\Test-BenchBudgets.ps1 -DataDir docs\perf
 | `tools\bench\Invoke-LucentBench.ps1` | The scenarios below; writes `machine.json` and one `<scenario>.json` per scenario. `-Scenario` picks some, `-Repetitions` (default 3), `-Quick` checks the harness itself. |
 | `tools\bench\Invoke-BatchResilience.ps1` | The 1,000-file batch resilience run; writes `resilience.json`. |
 | `tools\bench\Format-BenchReport.ps1` | Renders a baseline's Markdown tables from its JSON. |
-| `tools\bench\Test-BenchBudgets.ps1` | `-Create` derives `budgets.json` from a baseline; otherwise checks a new run against it (exit code 1 when a budget fails: exceeded, missing, measured by more failed runs or over fewer values than the baseline, or over images of which one failed that the baseline exported; 2 when the folder holds no measurement). |
+| `tools\bench\Test-BenchBudgets.ps1` | `-Create` derives `budgets.json` from a baseline; otherwise checks a new run against it (exit code 1 when a budget fails: exceeded, missing, measured by more failed runs or over fewer values than the baseline, or over images of which one failed that the baseline exported; 2 when the folder holds no measurement; 3 when a scenario it reads did not start on a quiet machine, unless `-AllowBusyMachine`). |
 | `tests\bench\Test-LucentBench.ps1` | The harness's tests (CTest `lucent_bench_harness_tests`, label `bench`). |
 
 The harness only reads the fixtures: the scenarios' folders hold one hard link per fixture under the
@@ -42,9 +42,18 @@ photo, so the 1,000-file run uses real copies and synthetic DNGs instead: see it
 
 ### Scenarios
 
+They run in this order whatever order `-Scenario` names them in, the cold starts last (ADR 0021,
+decision 12): their fresh copies of the installed layout keep the antivirus busy for a while, which
+slowed the scenarios that followed them in the W13 baseline. Before every scenario the harness
+waits for a quiet machine: three 2-second samples in a row in which the system's CPU use is at most
+10 % and no other process uses more than 25 % of one logical processor (one busy thread is only
+8.3 % of the reference machine's 12), at most 300 s (`-QuietCpuPercent`, `-QuietProcessPercent`,
+`-QuietTimeoutSeconds`; ADR 0021, decisions 13, 15 and 16). Each scenario's JSON records its wait
+(`quiet_before`), `machine.json` the first one and every scenario's outcome (`quiet_by_scenario`);
+`-QuietTimeoutSeconds 0` records the waits as skipped.
+
 | Scenario | Program and options | Measured |
 |---|---|---|
-| `startup` | `Lucent.exe --measure` | window created and first frame presented after process creation; cold (fresh unbuffered copy of the installed layout, new data root) and warm (the same again) |
 | `thumbnails` | `Lucent.exe --import <folder> --measure` | first thumbnail visible after the import request: new library (camera previews) and after a restart (disk cache) |
 | `preview` | `Lucent.exe --import <photo> --open-first --zoom 100 --measure` | first RAW preview (Fit) and the 100 % view |
 | `edit` | `--set exposure=1 --set contrast=20 --drag exposure`, `--drag shadows` | one-step edit to its frame on screen, slider position to frame (60 Hz synthetic drag), UI-thread gaps |
@@ -54,6 +63,7 @@ photo, so the 1,000-file run uses real copies and synthetic DNGs instead: see it
 | `export` | `lucent-render --format jpeg` / `tiff16 --report` | per-image export in one process: decode, render, encode, write, verify |
 | `batch` | `Lucent.exe --export-batch <folder> --preset jpeg/tiff [--automatic auto] --measure --quit-when-done` | photos per minute, submission time, the scheduler's figures (workers, peak commit of all workers together), Lucent.exe and worker memory, CPU use; every report checked against the files |
 | `batch-cancel` | the same with `--cancel-batch-after <n>` | cancel request to the batch stopped |
+| `startup` | `Lucent.exe --measure` | window created and first frame presented after process creation, and when the lens database had loaded (off the UI thread); cold (fresh unbuffered copy of the installed layout, new data root) and warm (the same again) |
 
 Lucent.exe's measurement hooks (`--measure` lines, `--cancel-batch-after`, `--pause-batch-after`,
 `--resume-after`, `--resume-batch`, `--cancel-auto-after`) are described in
@@ -84,7 +94,11 @@ may not fall below min(0.80 x median, 0.90 x the smallest value). Only measureme
 three values and a small variation (CV at most 10 %, memory 5 %) are budgets; the other 11 are
 tracked with their reason (ADR 0021, decision 5). They hold for the reference machine only: measure
 an exceeded budget again with the machine idle before treating it as a regression (the 2026-10-10
-baseline measured its preview scenario again for that reason), and keep the antivirus's scan of
-freshly copied files in mind: the cold starts make such copies just before the thumbnails and
-preview scenarios. A budget whose measurement is missing or not trustworthy fails too (ADR 0021,
-decision 8): a new run is judged only on what it measured.
+baseline measured its preview scenario again for that reason). The cold starts copy the installed
+layout afresh and the antivirus scans those copies afterwards: since the W12 release phase they run
+last, so no scenario of the same run follows them, but a second run started right after one with
+cold starts begins with the quiet wait for that reason. A budget whose measurement is missing or not
+trustworthy fails too (ADR 0021, decision 8): a new run is judged only on what it measured. And
+`Test-BenchBudgets.ps1` judges a run only when every scenario it reads started on a quiet machine
+(decision 17): a busy start, a skipped wait or no record (both baselines predate the wait) ends the
+check with exit code 3, and `-Create` writes no budgets, unless `-AllowBusyMachine` accepts them.

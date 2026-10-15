@@ -28,7 +28,10 @@ Executables live in `apps/`: `Lucent.exe` (GUI, WIN32 subsystem), `lucent-worker
 processing worker) and developer tools such as `lucent-probe.exe`, `lucent-render.exe` and
 `lucent-qualify.exe` (camera qualification and the export of the camera support database). Data
 assets live in `assets/<id>/` (manifest and files; the camera support database first) and are
-installed next to `Lucent.exe` in `assets\`.
+installed next to `Lucent.exe` in `assets\`. One asset is used at build time only: `assets/branding`,
+Lucent's logo (one master and the images `tools/branding/Update-Branding.ps1` generates from it, ADR
+0025), which the build compiles into `Lucent.exe`, `lucent-worker.exe` and Setup by role
+(`cmake/LucentBranding.cmake`); it is never installed as files.
 
 ## Dependency rules
 

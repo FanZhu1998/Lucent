@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -146,6 +147,43 @@ TEST(AssetManifest, WriterRefusesWhatTheReaderWouldRefuse) {
     manifest.files = {*file, *file};
     EXPECT_FALSE(write_asset_manifest(manifest).has_value());
     EXPECT_FALSE(describe_asset_file("../x", std::string()).has_value());
+}
+
+// ADR 0025: the branding asset (assets/branding, written by tools/branding/Update-Branding.ps1, a
+// build-time asset that is never installed) uses this manifest format too. Its committed manifest is
+// what this reader accepts and this writer writes, and it lists every file of the folder, with its
+// size and SHA-256, but itself and the README.
+TEST(AssetManifest, TheBrandingAssetsManifestIsCanonicalAndComplete) {
+    const std::filesystem::path folder = std::filesystem::path(LUCENT_SOURCE_DIR) / "assets" / "branding";
+    const std::string text = test::read_bytes(folder / "manifest.json");
+    auto manifest = parse_asset_manifest(text);
+    ASSERT_TRUE(manifest.has_value()) << manifest.error().describe();
+    EXPECT_EQ(manifest->id, "branding");
+    EXPECT_EQ(manifest->content.schema, "lucent.branding");
+    EXPECT_EQ(manifest->content.schema_version, 1u);
+    auto written = write_asset_manifest(*manifest);
+    ASSERT_TRUE(written.has_value());
+    EXPECT_EQ(*written, text);
+    EXPECT_NE(manifest->find("branding.json"), nullptr);
+    EXPECT_NE(manifest->find("master/lucent-logo.png"), nullptr);
+    EXPECT_NE(manifest->find("provenance.json"), nullptr);
+    std::size_t present = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(folder)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const std::string relative = entry.path().lexically_relative(folder).generic_string();
+        if (relative == "manifest.json" || relative == "README.md") {
+            continue;
+        }
+        ++present;
+        const AssetFile* listed = manifest->find(relative);
+        ASSERT_NE(listed, nullptr) << relative << " is not listed";
+        auto described = describe_asset_file(relative, test::read_bytes(entry.path()));
+        ASSERT_TRUE(described.has_value()) << relative;
+        EXPECT_EQ(*described, *listed) << relative;
+    }
+    EXPECT_EQ(present, manifest->files.size());
 }
 
 }  // namespace

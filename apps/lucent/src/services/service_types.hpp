@@ -13,6 +13,7 @@
 // separator and shows native ones.
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 
@@ -202,6 +203,10 @@ struct ImportOptions {
 // W13 (ADR 0023). The lens database the session's lens-profile corrections use (Help > About, the
 // Edit view's Lens corrections panel).
 struct LensDatabaseInfo {
+    // W12 (APL-06): the database is still being verified and loaded off the UI thread (nothing else is
+    // known yet; lens corrections are pending, and renders wait for it). The services say when it has
+    // loaded (LibraryService::lens_database_changed, EditService::lens_database_changed).
+    bool loading = false;
     bool available = false;  // a database is active
     QString version;         // its asset version, e.g. "1.0.0"
     QString library;         // "Lensfun 0.3.4"
@@ -209,6 +214,8 @@ struct LensDatabaseInfo {
     int cameras = 0;
     int lenses = 0;
     QString problem;  // user-facing: why no database is active (empty when one is)
+    // W12 (APL-06): when the load finished (steady clock; the clock's epoch while loading or unknown).
+    std::chrono::steady_clock::time_point loaded_at{};
 };
 
 // W10 (ADR 0018). The camera support database the session uses (Help > About).

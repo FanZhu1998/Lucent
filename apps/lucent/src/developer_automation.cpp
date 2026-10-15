@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -871,6 +872,29 @@ DeveloperAutomation::DeveloperAutomation(DeveloperOptions options, AppController
     });
 }
 
+void DeveloperAutomation::report_lens_database() {
+    const LensDatabaseInfo lens = controller_.library_service().lens_database();
+    if (lens.loading) {
+        return;
+    }
+    if (options_.measure && lens.loaded_at != std::chrono::steady_clock::time_point{}) {
+        // When the loading thread finished, which is usually before this report (the window's start).
+        const auto ago = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - lens.loaded_at);
+        report(QStringLiteral("measure: lens database loaded %1 ms after the process started")
+                   .arg(milliseconds_since_process_start() - static_cast<qint64>(ago.count())));
+    }
+    if (lens.available) {
+        report(QStringLiteral("lens database %1 (%2): %3 lenses, %4 cameras, from %5")
+                   .arg(lens.version, lens.library)
+                   .arg(lens.lenses)
+                   .arg(lens.cameras)
+                   .arg(lens.location));
+    } else {
+        report(QStringLiteral("lens database unavailable: %1")
+                   .arg(lens.problem.isEmpty() ? QStringLiteral("none configured") : lens.problem));
+    }
+}
+
 void DeveloperAutomation::start() {
     clock_.start();
     // W10 (ADR 0018): which camera support database the session uses (the packaging smoke run
@@ -894,17 +918,13 @@ void DeveloperAutomation::start() {
     for (const QString& note : support.notes) {
         report(QStringLiteral("camera support note: %1").arg(note));
     }
-    // W13 (ADR 0023): which lens database the session's lens corrections use.
-    const LensDatabaseInfo lens = controller_.library_service().lens_database();
-    if (lens.available) {
-        report(QStringLiteral("lens database %1 (%2): %3 lenses, %4 cameras, from %5")
-                   .arg(lens.version, lens.library)
-                   .arg(lens.lenses)
-                   .arg(lens.cameras)
-                   .arg(lens.location));
+    // W13 (ADR 0023): which lens database the session's lens corrections use. W12 (APL-06): it loads off
+    // the UI thread, so it is reported once it has (the line may follow later ones).
+    if (controller_.library_service().lens_database().loading) {
+        connect(&controller_.library_service(), &LibraryService::lens_database_changed, this,
+                &DeveloperAutomation::report_lens_database, Qt::SingleShotConnection);
     } else {
-        report(QStringLiteral("lens database unavailable: %1")
-                   .arg(lens.problem.isEmpty() ? QStringLiteral("none configured") : lens.problem));
+        report_lens_database();
     }
     if (options_.measure) {
         report(QStringLiteral("measure: window loaded %1 ms after the process started")

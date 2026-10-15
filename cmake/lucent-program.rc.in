@@ -1,0 +1,44 @@
+// Windows resources of a shipped Lucent program (Lucent.exe, lucent-worker.exe): its icon and version
+// information. Generated into the build tree for each program by lucent_add_program_resources()
+// (cmake/LucentBranding.cmake) from the project version and the branding asset (ADR 0025).
+
+// configure_file() writes this script in UTF-8, with the icon's absolute path. Without this pragma RC
+// reads it in the system's ANSI code page and does not find the icon when a folder of that path has a
+// name that is not ASCII (a user name with an accent, a folder named in Chinese).
+#pragma code_page(65001)
+
+#include <winver.h>
+
+// The "windows-icon" derivative of assets/branding. Explorer, the taskbar and shortcuts show a
+// program's first icon group; Qt's Windows platform plugin loads IDI_ICON1 by this name for the
+// window class icons. A name, not a number: no #define may give it one.
+IDI_ICON1 ICON "@LUCENT_RC_ICON@"
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+    PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+    FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+    FILEFLAGS 0x0L
+    FILEOS VOS_NT_WINDOWS32
+    FILETYPE VFT_APP
+    FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "@LUCENT_RC_COMPANY@"
+            VALUE "FileDescription", "@LUCENT_RC_DESCRIPTION@"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "@LUCENT_RC_INTERNAL_NAME@"
+            VALUE "LegalCopyright", "@LUCENT_RC_COPYRIGHT@"
+            VALUE "OriginalFilename", "@LUCENT_RC_ORIGINAL_FILENAME@"
+            VALUE "ProductName", "Lucent"
+            VALUE "ProductVersion", "@PROJECT_VERSION@ (@LUCENT_GIT_COMMIT@)"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

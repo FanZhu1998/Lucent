@@ -165,7 +165,13 @@ struct BatchService::Impl {
     RecipeService& recipes;
     BatchServiceOptions options;
     std::string session;  // random hex: lease owners of this service instance
-    std::string renderer_version;
+    // The renderer and asset versions new batches and their job identities record: this build, the
+    // develop versions, the worker protocol and the lens database. Composed once, by the first plan or
+    // submission, outside any lock: BatchServiceOptions::lens_database_source may wait for the lens
+    // database (W12, APL-06). Batches already in the journal keep their own (BatchContext).
+    [[nodiscard]] const std::string& renderer_version() const;
+    mutable std::once_flag renderer_version_once;
+    mutable std::string renderer_version_text;
     std::uint64_t total_budget = 0;
     std::uint64_t worker_budget = 0;
     detail::ObserverList<BatchEvent> observers{"app.batch"};

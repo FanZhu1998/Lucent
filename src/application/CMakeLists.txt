@@ -46,13 +46,16 @@ lucent_add_library(application
         include/lucent/application/task_executor.hpp
         src/task_executor.cpp
 
-        # Rendering seam, display conversion, previews and their caches.
+        # Rendering seam, display conversion, previews and their caches; the lens database loaded off
+        # the UI thread (W12, APL-06).
+        include/lucent/application/lens_database_source.hpp
         include/lucent/application/source_renderer.hpp
         include/lucent/application/display_image.hpp
         include/lucent/application/preview.hpp
         include/lucent/application/preview_cache.hpp
         include/lucent/application/preview_service.hpp
         include/lucent/application/thumbnail_cache.hpp
+        src/lens_database_source.cpp
         src/source_renderer.cpp
         src/display_image.cpp
         src/preview.cpp
@@ -222,6 +225,7 @@ set(LUCENT_APPLICATION_TEST_SOURCES
     tests/recipe_test.cpp
     tests/recipe_service_test.cpp
     tests/develop_preview_test.cpp
+    tests/lens_database_source_test.cpp
     tests/thumbnail_cache_test.cpp
     tests/export_service_test.cpp
     tests/auto_service_test.cpp

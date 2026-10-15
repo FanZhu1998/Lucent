@@ -644,6 +644,11 @@ struct BatchServiceOptions {
     // and so of every job's identity (blueprint section 7: "renderer and asset versions"): an output
     // made with another database is not taken for this one's.
     std::string lens_database;
+    // W12 (APL-06): when set, the lens database's text is this function's result instead (empty: none).
+    // It is asked for once, when the first batch is planned or submitted (never by open()), and kept. It
+    // may block: Lucent.exe's waits for its lens database, which loads off the UI thread
+    // (lens_database_source.hpp), so a batch never names another database than the one it renders with.
+    std::function<std::string()> lens_database_source;
     // Exporter temporaries ("~lucent-<hex>.tmp") older than this are removed by the leftover sweep.
     std::chrono::seconds stale_temporary_age{3600};
     std::function<catalog::Timestamp()> clock;  // empty: catalog::current_time

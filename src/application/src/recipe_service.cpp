@@ -278,6 +278,10 @@ struct RecipeService::State {
     mutable std::mutex camera_mutex;
     mutable std::unordered_map<std::uint64_t, CameraEntry> cameras;
 
+    // RecipeServiceOptions::engine_version_source's result, asked for once (W12, APL-06).
+    mutable std::once_flag engine_version_once;
+    mutable std::string resolved_engine_version;
+
     // ---- Loading ------------------------------------------------------------------------------
 
     // Re-reads the item's revisions from the store into `entry` (the transient edit is kept). The
@@ -407,10 +411,21 @@ struct RecipeService::State {
         return ok();
     }
 
+    // May wait for RecipeServiceOptions::engine_version_source the first time: the public functions
+    // that write revisions call it before they take `mutex` (prefetch_engine_version()), so the wait
+    // never holds the lock; append_locked() then reads the kept value.
     std::string engine_version() const {
+        if (options.engine_version_source) {
+            std::call_once(engine_version_once, [this] { resolved_engine_version = options.engine_version_source(); });
+            if (!resolved_engine_version.empty()) {
+                return resolved_engine_version;
+            }
+        }
         return options.engine_version.empty() ? std::string(core::build_info().version)
                                               : options.engine_version;
     }
+
+    void prefetch_engine_version() const { static_cast<void>(engine_version()); }
 
     catalog::Timestamp now() const { return options.clock ? options.clock() : catalog::current_time(); }
 
@@ -678,6 +693,7 @@ Expected<RecipeState> RecipeService::set_transient(ItemId item, const engine::De
 
 Expected<RecipeState> RecipeService::commit(ItemId item) {
     try {
+        state_->prefetch_engine_version();  // before the lock: it may wait (W12, APL-06)
         std::vector<RecipeChange> changes;
         RecipeState result;
         {
@@ -972,6 +988,7 @@ Expected<RecipeState> RecipeService::select_revision(ItemId item,
 
 Expected<RecipeState> RecipeService::reset_to_as_shot(ItemId item) {
     try {
+        state_->prefetch_engine_version();
         std::vector<RecipeChange> changes;
         RecipeState result;
         {
@@ -1005,6 +1022,7 @@ Expected<RecipeState> RecipeService::reset_to_as_shot(ItemId item) {
 
 Expected<RecipeState> RecipeService::revert_to(ItemId item, catalog::RevisionId revision) {
     try {
+        state_->prefetch_engine_version();
         auto found = state_->store->find(revision);
         if (!found) {
             return Unexpected(std::move(found.error()));
@@ -1048,6 +1066,7 @@ Expected<RecipeState> RecipeService::revert_to(ItemId item, catalog::RevisionId 
 
 Expected<RecipeState> RecipeService::set_lock(ItemId item, engine::DevelopControl control, bool locked) {
     try {
+        state_->prefetch_engine_version();
         if (engine::to_string(control) == "invalid") {
             return fail(ErrorCode::InvalidArgument, "unknown control", std::string(kWhere));
         }
@@ -1155,6 +1174,7 @@ Expected<RecipeClipboard> RecipeService::copy(ItemId item, const std::set<Recipe
 Expected<std::vector<PasteOutcome>> RecipeService::paste(const RecipeClipboard& clipboard,
                                                          std::span<const ItemId> targets) {
     try {
+        state_->prefetch_engine_version();
         if (clipboard.categories.empty()) {
             return fail(ErrorCode::InvalidArgument, "the clipboard has no category",
                         std::string(kWherePaste));

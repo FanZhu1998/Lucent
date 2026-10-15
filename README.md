@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/branding/docs/lucent-logo.png" alt="Lucent's logo: a two-tone L on a dark rounded square" width="96" height="96"></p>
+
 # Lucent
 
 Offline, camera-independent RAW photo development for Windows.
@@ -115,14 +117,15 @@ The developer command-line tools `lucent-probe`, `lucent-render`, `lucent-auto` 
 ## Installing
 
 There is no published release yet. `tools\package.ps1` builds the installer from source,
-`Lucent-Setup-<version>-x64.exe` ([setup](docs/development/setup.md#packaging-the-installer),
-[ADR 0009](docs/adr/0009-windows-packaging.md)).
+`Lucent-Setup-<version>-x64.exe`, and beside it `Lucent-<version>-corresponding-source.zip`, the
+source of the LGPL libraries it contains ([setup](docs/development/setup.md#packaging-the-installer),
+[ADR 0009](docs/adr/0009-windows-packaging.md), [ADR 0024](docs/adr/0024-release-and-licensing.md)).
+A release publishes both, after the gates of the [release checklist](docs/release/checklist.md).
 
-> **Not for distribution yet.** Do not publish or hand out installers built today: the way the
-> source code of the LGPL libraries it contains (Qt, LibRaw, Lensfun with GLib, GNU libintl and
-> libiconv) is provided to recipients is decided
-> in the licence and release phase of release hardening (W12), the installer's clean-machine test
-> is still pending, and no build is signed or configured with an update channel yet.
+> **The first release waits for its clean-machine test.** Installers are published only with their
+> corresponding-source archive and only after every gate of the release checklist has passed; the
+> test on a clean, offline Windows (in Windows Sandbox: its first run, on 2026-10-11, failed on
+> defects since fixed) has not passed yet, so do not hand out installers built today.
 
 - **Per user, no administrator rights.** Lucent installs into `%LOCALAPPDATA%\Programs\Lucent`
   with a Start Menu shortcut and, optionally, a Desktop shortcut. Windows asks for permission only
@@ -135,12 +138,15 @@ There is no published release yet. `tools\package.ps1` builds the installer from
 - **Uninstall** from Windows Settings (Apps) removes the program, its shortcuts and registry
   entries. Your library (catalog and backups), settings and caches in `%LOCALAPPDATA%\Lucent` are
   kept; delete that folder yourself if you no longer need them. Photographs are never touched.
-- **Unsigned for now.** Windows SmartScreen may warn before the installer runs. The installer is
-  verified on the development machine; its clean-machine test is still pending.
+- **Unsigned for now.** Releases are unsigned until Lucent has a code-signing certificate, so
+  Windows SmartScreen may warn before the installer runs; compare the installer's SHA-256 with the
+  one published beside it. Unsigned releases do not offer updates through **Check for updates**:
+  install the next version over the previous one.
 - **Licences.** The installation folder's `licenses` subfolder holds the third-party notices, the
-  LGPL information for Qt, LibRaw and the Lensfun libraries (with the build recipes of the two
-  libraries Lucent patches), every licence text, the Lensfun lens database's CC BY-SA 3.0 licence,
-  and a software bill of materials (SPDX).
+  LGPL information for Qt, LibRaw, Lensfun, GLib, GNU libintl and GNU libiconv (your right to
+  replace their DLLs, and the name, size and SHA-256 of the corresponding-source archive published
+  with the installer), every licence text, the build recipes of the two libraries Lucent patches,
+  the Lensfun lens database's CC BY-SA 3.0 licence, and a software bill of materials (SPDX).
 
 ## Repository layout
 
@@ -240,7 +246,16 @@ steps, presets, the research environment and troubleshooting.
 
 ## Licence
 
-Lucent's own source code is released under the [MIT License](LICENSE). Third-party components
-keep their own licences. LibRaw (used under LGPL-2.1) and Qt (LGPL-3.0) are linked dynamically as
-replaceable DLLs. See [ADR 0003](docs/adr/0003-linking-and-licensing.md) and the
-[licence ledger](docs/legal/third-party-notices.md).
+Lucent is free and open-source software: its own source code is released under the
+[MIT License](LICENSE), and Lucent is distributed free of charge, not sold. Third-party components
+keep their own licences. The libraries Lucent uses under the GNU LGPL (Qt and LibRaw, and Lensfun
+with GLib, GNU libintl and GNU libiconv) are separate DLLs that Lucent loads dynamically and that
+you may replace with your own builds; every release publishes their complete corresponding source,
+`Lucent-<version>-corresponding-source.zip`, beside its installer, with instructions to rebuild
+them. The bundled Lensfun lens database is used unmodified under CC BY-SA 3.0, and the installer is
+made with Inno Setup under its non-commercial terms. Lucent's logo (`assets/branding`) is not
+covered by the MIT License: its licence terms are not decided yet, and the project owner records them
+in `assets/branding/provenance.json` and the asset's [README](assets/branding/README.md) before the
+first release. See
+[ADR 0003](docs/adr/0003-linking-and-licensing.md), [ADR 0024](docs/adr/0024-release-and-licensing.md)
+and the [licence ledger](docs/legal/third-party-notices.md).

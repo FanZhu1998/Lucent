@@ -459,8 +459,10 @@ powershell -NoProfile -File installer\tests\Test-InstalledPackage.ps1 `
     -Fixture fixtures\cache\canon-eos-r5-cr3-raw\Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3 -RuntimeOutcomes
 ```
 
-The clean-machine gate (a Windows 10/11 machine or Windows Sandbox without developer tools or the
-Visual C++ runtime, offline) runs the same script and is still pending (ADR 0009, decision 11).
+The clean-machine gate (Windows Sandbox without developer tools or the Visual C++ runtime, offline;
+`tools\Test-CleanMachine.ps1`, [the clean-machine gate](../release/clean-machine.md)) runs the same
+script inside the sandbox; two of its manual steps need a Windows that asks for consent. It has not
+passed yet (ADR 0009, decisions 11, 27 and 35).
 
 Useful Setup options for silent installs: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<folder>"
 /TASKS="desktopicon,openwith" /LOG="<file>"`; the uninstaller is `<folder>\unins000.exe` with

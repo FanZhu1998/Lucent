@@ -11,11 +11,22 @@
 ;                               its version, for example 14, 44, 35211: the oldest runtime accepted
 ;   VCRuntimeDlls               comma-separated runtime DLLs Lucent imports (from the audit)
 ;   AssociationsInclude         generated file with the "Open with Lucent" registry entries
+;   BrandingIcon                Lucent's Windows icon (assets\branding, role windows-icon; ADR 0025):
+;                               Setup's and the uninstaller's own icon
+;   BrandingWizardImages        comma-separated wizard images, one per image-area size Inno Setup 6.7
+;                               documents for 100 to 250 % (role setup-wizard-image); Setup picks
+;                               the one that fits its scale
+;   BrandingWizardSmallImages   the same for the small wizard image (role setup-wizard-small-image)
 ;   LucentSign                  optional: sign Setup and the uninstaller with the "lucent" sign tool,
 ;                               which package.ps1 defines with ISCC /S when signing is configured.
 ;                               Inno Setup signs the uninstaller inside Setup; a signed uninstaller
 ;                               keeps its messages in unins000.msg beside unins000.exe, which
 ;                               installer\tests\Test-InstalledPackage.ps1 -SignerThumbprint checks
+;   VersionRehearsalOf          optional (tools\package.ps1 -VersionRehearsal, W12): this Setup is a
+;                               version rehearsal of the package version given here: AppVersion is
+;                               the next patch version, with the same files, so that the installer
+;                               test can upgrade to it and see the real Setup refuse to go back. It
+;                               says so in its name and version information; never published.
 ;
 ; Policies (ADR 0009):
 ; - Per user, no elevation: PrivilegesRequired=lowest installs into %LOCALAPPDATA%\Programs\Lucent.
@@ -23,11 +34,24 @@
 ; - x64 Windows only (x64os): Windows on Arm is not supported until its runtime path is tested.
 ; - "Open with Lucent" for RAW files is optional and never changes what opens a file: Lucent is
 ;   listed for every RAW type (Applications\Lucent.exe\SupportedTypes) and added to a type's
-;   OpenWithProgids only when that type already has a default program.
+;   OpenWithProgids only when Windows already opens that type with a default program (the program
+;   Windows resolves for it is the user's choice or the type's own default; ExtensionHasDefaultProgram).
 ; - Upgrades delete only the files that the previous version's Lucent-files.txt lists and the new
 ;   version no longer installs, after Restart Manager has closed a running Lucent.
 ; - Uninstall removes the program, its shortcuts and registry entries, and keeps the user's library
 ;   (catalog), settings and caches in %LOCALAPPDATA%\Lucent and HKCU\Software\Lucent.
+; - Never over a newer Lucent (W12 review SEC-04, part 2; ADR 0009 amendment): when this user's
+;   installation (its uninstall registration's DisplayVersion) is newer than this Setup's version by
+;   Semantic Versioning precedence, or its version cannot be read (not a Semantic Version, or the
+;   registration exists without a text DisplayVersion; W12 review SEC04-01), Setup stops at
+;   InitializeSetup, before anything is changed or the runtime installer runs: a message box (suppressed by
+;   /SUPPRESSMSGBOXES), the log line "Downgrade refused: ...", and exit code 1 ("Setup failed to
+;   initialize"). The same version is repaired and an older one upgraded. To go back to an older
+;   version the user uninstalls first (the library is kept).
+; - Lucent's logo (ADR 0025): Setup and the uninstaller show the branding asset's Windows icon, and the
+;   wizard its images, all generated from the logo's master; Lucent.exe carries the same icon, which
+;   the shortcuts, the uninstall entry (UninstallDisplayIcon) and "Open with" (DefaultIcon) show.
+;   tools\package.ps1 checks that the compiled Setup's icon is the logo.
 
 #if VER < EncodeVer(6, 3, 0)
   #error Inno Setup 6.3 or later is required.
@@ -53,6 +77,18 @@
 #ifndef AssociationsInclude
   #error AssociationsInclude is not defined: build the installer with tools\package.ps1.
 #endif
+#ifndef BrandingIcon
+  #error BrandingIcon is not defined: build the installer with tools\package.ps1.
+#endif
+#ifndef BrandingWizardImages
+  #error BrandingWizardImages is not defined: build the installer with tools\package.ps1.
+#endif
+#ifndef BrandingWizardSmallImages
+  #error BrandingWizardSmallImages is not defined: build the installer with tools\package.ps1.
+#endif
+#if AppVersionQuad != AppVersion + ".0"
+  #error AppVersionQuad must be AppVersion followed by .0: Lucent's versions are MAJOR.MINOR.PATCH.
+#endif
 
 #define AppName "Lucent"
 #define AppExe "Lucent.exe"
@@ -69,14 +105,22 @@
 AppId={{{#AppGuid}}
 AppName={#AppName}
 AppVersion={#AppVersion}
+#ifdef VersionRehearsalOf
+AppVerName={#AppName} {#AppVersion} (version rehearsal of {#VersionRehearsalOf}, not for distribution)
+#else
 AppVerName={#AppName} {#AppVersion}
+#endif
 AppPublisher={#AppName}
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppCopyright=Copyright (c) 2026 Fan Zhu. MIT License.
 VersionInfoVersion={#AppVersionQuad}
 VersionInfoProductName={#AppName}
+#ifdef VersionRehearsalOf
+VersionInfoDescription={#AppName} Setup, version rehearsal of {#VersionRehearsalOf}, not for distribution
+#else
 VersionInfoDescription={#AppName} Setup
+#endif
 PrivilegesRequired=lowest
 DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes
@@ -88,6 +132,11 @@ OutputBaseFilename=Lucent-Setup-{#AppVersion}-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; Lucent's logo (ADR 0025). The wizard images are transparent PNGs: the light wizard's window colour
+; shows around the logo.
+SetupIconFile={#BrandingIcon}
+WizardImageFile={#BrandingWizardImages}
+WizardSmallImageFile={#BrandingWizardSmallImages}
 ShowLanguageDialog=no
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
@@ -117,6 +166,9 @@ VCRuntimeCancelled=Lucent needs the Microsoft Visual C++ Runtime (x64) %1 or lat
 VCRuntimeBusy=Another installation is in progress, so the Microsoft Visual C++ Runtime could not be installed. Finish or restart that installation, then run Setup again.
 VCRuntimeFailed=The Microsoft Visual C++ Runtime (x64) could not be installed (%1), so Setup cannot continue.%n%nInstall the "Microsoft Visual C++ Redistributable (x64)" %2 or later from Microsoft, then run Setup again.
 VCRuntimeStillMissing=The Microsoft Visual C++ Runtime installer finished, but the runtime is still missing or older than %1, so Setup cannot continue.%n%nRestart Windows and run Setup again. If this message returns, repair "Microsoft Visual C++ Redistributable (x64)" in Settings > Apps, or install it from Microsoft.
+NewerVersionInstalled=Lucent %1 is installed, which is newer than Lucent %2, the version this Setup installs. Setup does not replace a newer Lucent with an older one: the newer version may have upgraded your photo library to a format an older Lucent can open only read-only, or not at all. Nothing was changed.%n%nTo keep Lucent %1, close this message. To go back to Lucent %2, first uninstall Lucent in Settings > Apps (your photo library, settings and photographs are kept), then run this Setup again.
+UnknownVersionInstalled=Lucent is installed, but Setup cannot read its version ("%1"), so it does not replace it: it might be newer than Lucent %2, the version this Setup installs. Nothing was changed.%n%nUninstall Lucent first in Settings > Apps (your photo library, settings and photographs are kept), then run this Setup again.
+UnreadableRegistration=Lucent is registered as installed for this user, but its registration (HKEY_CURRENT_USER\%1) holds no readable version, so Setup does not replace it: it might be newer than Lucent %2, the version this Setup installs. Nothing was changed.%n%nUninstall Lucent first in Settings > Apps (your photo library, settings and photographs are kept), then run this Setup again. If Lucent is not listed there, its registration is damaged: delete that registry key, then run this Setup again.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -252,6 +304,262 @@ begin
   Result := Registered and RuntimeFilesPresent;
 end;
 
+// --- Never over a newer Lucent (W12 review SEC-04, part 2) ---------------------------------------
+//
+// Lucent's versions follow Semantic Versioning 2.0.0 (ADR 0022): MAJOR.MINOR.PATCH, optionally
+// -PRERELEASE (dot-separated identifiers) and +BUILD (ignored for precedence).
+
+function IsDigitText(const S: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := Length(S) > 0;
+  for I := 1 to Length(S) do
+    if (S[I] < '0') or (S[I] > '9') then
+      Result := False;
+end;
+
+// A pre-release identifier: [0-9A-Za-z-]+, and a numeric one without a leading zero.
+function IsIdentifierText(const S: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := Length(S) > 0;
+  for I := 1 to Length(S) do
+    if not (((S[I] >= '0') and (S[I] <= '9')) or ((S[I] >= 'A') and (S[I] <= 'Z')) or
+            ((S[I] >= 'a') and (S[I] <= 'z')) or (S[I] = '-')) then
+      Result := False;
+  if Result and IsDigitText(S) and (Length(S) > 1) and (S[1] = '0') then
+    Result := False;
+end;
+
+// The dot-separated parts of S (an empty part stays, so '1..2' has three).
+function SplitDots(const S: String): TArrayOfString;
+var
+  Rest: String;
+  P, N: Integer;
+begin
+  Rest := S;
+  N := 0;
+  repeat
+    P := Pos('.', Rest);
+    N := N + 1;
+    SetArrayLength(Result, N);
+    if P > 0 then
+    begin
+      Result[N - 1] := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end
+    else
+      Result[N - 1] := Rest;
+  until P = 0;
+end;
+
+// Core receives MAJOR, MINOR and PATCH, Pre the pre-release identifiers (none: empty). False when
+// Text is not a Semantic Version.
+function ParseVersion(const Text: String; var Core, Pre: TArrayOfString): Boolean;
+var
+  Version, PreText: String;
+  P, I: Integer;
+begin
+  Result := False;
+  Version := Text;
+  P := Pos('+', Version);
+  if P > 0 then
+    Version := Copy(Version, 1, P - 1);
+  PreText := '';
+  P := Pos('-', Version);
+  if P > 0 then
+  begin
+    PreText := Copy(Version, P + 1, Length(Version));
+    Version := Copy(Version, 1, P - 1);
+    if PreText = '' then
+      exit;
+  end;
+  Core := SplitDots(Version);
+  if GetArrayLength(Core) <> 3 then
+    exit;
+  for I := 0 to 2 do
+    if not IsDigitText(Core[I]) or ((Length(Core[I]) > 1) and (Core[I][1] = '0')) then
+      exit;
+  SetArrayLength(Pre, 0);
+  if PreText <> '' then
+  begin
+    Pre := SplitDots(PreText);
+    for I := 0 to GetArrayLength(Pre) - 1 do
+      if not IsIdentifierText(Pre[I]) then
+        exit;
+  end;
+  Result := True;
+end;
+
+function Sign(Value: Integer): Integer;
+begin
+  if Value < 0 then
+    Result := -1
+  else if Value > 0 then
+    Result := 1
+  else
+    Result := 0;
+end;
+
+// Numbers of any length (no leading zeros): -1, 0 or 1.
+function CompareDigits(const A, B: String): Integer;
+begin
+  if Length(A) <> Length(B) then
+    Result := Sign(Length(A) - Length(B))
+  else
+    Result := Sign(CompareStr(A, B));
+end;
+
+// Semantic Versioning precedence (section 11): -1, 0 or 1.
+function CompareVersions(const ACore, APre, BCore, BPre: TArrayOfString): Integer;
+var
+  I, Count: Integer;
+begin
+  for I := 0 to 2 do
+  begin
+    Result := CompareDigits(ACore[I], BCore[I]);
+    if Result <> 0 then
+      exit;
+  end;
+  // A release ranks above its pre-releases.
+  if (GetArrayLength(APre) = 0) or (GetArrayLength(BPre) = 0) then
+  begin
+    Result := Sign(GetArrayLength(BPre) - GetArrayLength(APre));
+    exit;
+  end;
+  Count := GetArrayLength(APre);
+  if GetArrayLength(BPre) < Count then
+    Count := GetArrayLength(BPre);
+  for I := 0 to Count - 1 do
+  begin
+    if IsDigitText(APre[I]) and IsDigitText(BPre[I]) then
+      Result := CompareDigits(APre[I], BPre[I])
+    else if IsDigitText(APre[I]) then
+      Result := -1
+    else if IsDigitText(BPre[I]) then
+      Result := 1
+    else
+      Result := Sign(CompareStr(APre[I], BPre[I]));
+    if Result <> 0 then
+      exit;
+  end;
+  Result := Sign(GetArrayLength(APre) - GetArrayLength(BPre));
+end;
+
+// Where Inno Setup registers this user's installation of Lucent (HKA: HKCU, Setup never runs in
+// administrative install mode).
+function UninstallRegistrationKey: String;
+begin
+  Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#AppGuid}' + '}_is1';
+end;
+
+// Runs before anything else: Setup stops (exit code 1) when the installed Lucent is newer than this
+// Setup's, or its version cannot be read (see the policy at the top).
+// Test hook: /LucentTestCompareVersions=<a>,<b>;<c>,<d>;... logs how this Setup orders each pair
+// ("Version comparison: a < b", "=", ">", or "invalid") and stops Setup (exit code 1) without
+// reading or changing anything else, so installer\tests\Test-InstalledPackage.ps1 can check the
+// precedence rules above on the compiled Setup. It can only stop Setup, never let it install.
+procedure LogVersionComparisons(const Pairs: String);
+var
+  Rest, Pair, A, B, Relation: String;
+  P: Integer;
+  ACore, APre, BCore, BPre: TArrayOfString;
+begin
+  Rest := Pairs;
+  while Rest <> '' do
+  begin
+    P := Pos(';', Rest);
+    if P > 0 then
+    begin
+      Pair := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end
+    else
+    begin
+      Pair := Rest;
+      Rest := '';
+    end;
+    P := Pos(',', Pair);
+    if P = 0 then
+      continue;
+    A := Copy(Pair, 1, P - 1);
+    B := Copy(Pair, P + 1, Length(Pair));
+    if not ParseVersion(A, ACore, APre) or not ParseVersion(B, BCore, BPre) then
+      Relation := 'invalid'
+    else
+      case CompareVersions(ACore, APre, BCore, BPre) of
+        -1: Relation := '<';
+        0: Relation := '=';
+      else
+        Relation := '>';
+      end;
+    Log('Version comparison: ' + A + ' ' + Relation + ' ' + B);
+  end;
+end;
+
+function InitializeSetup: Boolean;
+var
+  Installed, Probe, Problem: String;
+  InstalledCore, InstalledPre, ThisCore, ThisPre: TArrayOfString;
+begin
+  Result := True;
+  Probe := ExpandConstant('{param:LucentTestCompareVersions|}');
+  if Probe <> '' then
+  begin
+    LogVersionComparisons(Probe);
+    Log('Version comparison test hook: Setup stops');
+    Result := False;
+    exit;
+  end;
+  if not ParseVersion('{#AppVersion}', ThisCore, ThisPre) then
+  begin
+    Log('Downgrade check: this Setup''s version {#AppVersion} is not a Semantic Version; Setup stops');
+    SuppressibleMsgBox('This Setup''s version ({#AppVersion}) is invalid, so it cannot check the installed Lucent. Setup stops.', mbCriticalError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if not RegKeyExists(HKA, UninstallRegistrationKey) then
+  begin
+    Log('Downgrade check: Lucent is not installed for this user');
+    exit;
+  end;
+  // The registration exists: a DisplayVersion that is missing or not text (RegQueryStringValue reads
+  // REG_SZ and REG_EXPAND_SZ only) is a version Setup cannot read, never "not installed" (W12 review
+  // SEC04-01).
+  if not RegQueryStringValue(HKA, UninstallRegistrationKey, 'DisplayVersion', Installed) then
+  begin
+    if RegValueExists(HKA, UninstallRegistrationKey, 'DisplayVersion') then
+      Problem := 'is not a text value'
+    else
+      Problem := 'is missing';
+    Log('Downgrade refused: Lucent''s registration HKEY_CURRENT_USER\' + UninstallRegistrationKey + ' exists, but its DisplayVersion ' +
+      Problem + '; this Setup installs {#AppVersion}');
+    SuppressibleMsgBox(FmtMessage(CustomMessage('UnreadableRegistration'), [UninstallRegistrationKey, '{#AppVersion}']), mbError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if not ParseVersion(Installed, InstalledCore, InstalledPre) then
+  begin
+    Log('Downgrade refused: the installed Lucent''s version "' + Installed + '" cannot be read; this Setup installs {#AppVersion}');
+    SuppressibleMsgBox(FmtMessage(CustomMessage('UnknownVersionInstalled'), [Installed, '{#AppVersion}']), mbError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if CompareVersions(InstalledCore, InstalledPre, ThisCore, ThisPre) > 0 then
+  begin
+    Log('Downgrade refused: Lucent ' + Installed + ' is installed, newer than {#AppVersion}, which this Setup installs');
+    SuppressibleMsgBox(FmtMessage(CustomMessage('NewerVersionInstalled'), [Installed, '{#AppVersion}']), mbError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if CompareVersions(InstalledCore, InstalledPre, ThisCore, ThisPre) = 0 then
+    Log('Downgrade check: Lucent ' + Installed + ' is installed; this Setup repairs it')
+  else
+    Log('Downgrade check: Lucent ' + Installed + ' is installed; this Setup upgrades it to {#AppVersion}');
+end;
+
 procedure InitializeWizard;
 begin
   VCRuntimePage := CreateOutputProgressPage(CustomMessage('VCRuntimeTitle'), CustomMessage('VCRuntimeDescription'));
@@ -365,23 +673,60 @@ begin
   Result := not VCRuntimeRestartNeeded;
 end;
 
+// Windows' own association query (shlwapi): with ASSOCSTR_PROGID (20) and ASSOCF_INIT_IGNOREUNKNOWN
+// ($400), the ProgID Windows opens files of a type with now.
+function AssocQueryString(Flags: Cardinal; What: Cardinal; Assoc: String; Extra: String; Buffer: String;
+  var BufferLength: Cardinal): Integer;
+  external 'AssocQueryStringW@shlwapi.dll stdcall';
+
+// The ProgID Windows opens Extension's files with now, or '' when it has none (for example a user's
+// choice of a program that is not installed, which Windows ignores).
+function EffectiveProgId(const Extension: String): String;
+var
+  Buffer: String;
+  Size: Cardinal;
+  Code: Integer;
+begin
+  Result := '';
+  Size := 1024;
+  SetLength(Buffer, Size);
+  Code := AssocQueryString($400, 20, Extension, '', Buffer, Size);
+  if Code = 0 then
+    Result := Copy(Buffer, 1, Pos(#0, Buffer + #0) - 1)
+  else
+    Log(Format('Open with Lucent: Windows opens %s with no program (AssocQueryString %d)', [Extension, Code]));
+end;
+
 // "Open with Lucent" adds Lucent to an extension's OpenWithProgids only when Windows already opens
-// that extension with a default program: the user's choice (UserChoice, or UserChoiceLatest on
-// newer Windows 11) or a registered default ProgID. That default keeps winning. Without one, an
-// OpenWithProgids entry would change what a double-click does (Lucent would become the program, or
-// Windows would start asking which one to use), so Lucent is listed through SupportedTypes only.
+// that extension with a default program: the program Windows opens it with now (EffectiveProgId) is
+// the user's choice (UserChoice, or UserChoiceLatest on newer Windows 11) or the extension's own
+// default ProgID. That default keeps winning over OpenWithProgids. Without one, an OpenWithProgids
+// entry would change what a double-click does (Windows would open the type with Lucent, or start
+// asking which program to use), so Lucent is listed through SupportedTypes only. A user's choice that
+// Windows does not resolve does not count: in Windows Sandbox the profile chooses Photos, which the
+// sandbox does not hold, for 15 RAW types, and Lucent's OpenWithProgids value made Lucent their
+// program (W12 sandbox run SBX-3).
 function ExtensionHasDefaultProgram(const Extension: String): Boolean;
 var
-  ProgId: String;
+  Effective, Choice: String;
 begin
   Result := False;
-  if (RegQueryStringValue(HKCU, FileExtsKey + Extension + '\UserChoice', 'ProgId', ProgId) and (ProgId <> '')) or
-     (RegQueryStringValue(HKCU, FileExtsKey + Extension + '\UserChoiceLatest\ProgId', 'ProgId', ProgId) and (ProgId <> '')) then
-    Result := True
-  else if RegQueryStringValue(HKCR, Extension, '', ProgId) and (ProgId <> '') and
-          (CompareText(ProgId, '{#ProgId}') <> 0) and RegKeyExists(HKCR, ProgId) then
-    Result := True;
-  Log(Format('Open with Lucent: %s has a default program: %s', [Extension, IntToStr(Ord(Result))]));
+  Effective := EffectiveProgId(Extension);
+  if Effective <> '' then
+  begin
+    Choice := '';
+    if RegQueryStringValue(HKCU, FileExtsKey + Extension + '\UserChoice', 'ProgId', Choice) and (CompareText(Choice, Effective) = 0) then
+      Result := True;
+    Choice := '';
+    if not Result and RegQueryStringValue(HKCU, FileExtsKey + Extension + '\UserChoiceLatest\ProgId', 'ProgId', Choice) and
+       (CompareText(Choice, Effective) = 0) then
+      Result := True;
+    Choice := '';
+    if not Result and RegQueryStringValue(HKCR, Extension, '', Choice) and (CompareText(Choice, Effective) = 0) and
+       (CompareText(Choice, '{#ProgId}') <> 0) then
+      Result := True;
+  end;
+  Log(Format('Open with Lucent: %s has a default program: %s (Windows opens it with "%s")', [Extension, IntToStr(Ord(Result)), Effective]));
 end;
 
 // Reads an installed-file list ({#InstalledFileList}): lower-case relative paths. Returns nil when

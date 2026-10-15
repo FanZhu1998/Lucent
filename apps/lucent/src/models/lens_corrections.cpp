@@ -189,11 +189,27 @@ LensCorrections::LensCorrections(EditSession& session)
     connect(&session_, &EditSession::frameChanged, this, &LensCorrections::on_session_changed);
     connect(&session_, &EditSession::settingsChanged, this, &LensCorrections::on_session_changed);
     connect(&session_, &EditSession::stateChanged, this, &LensCorrections::on_session_changed);
+    connect(&session_.service(), &EditService::lens_database_changed, this, &LensCorrections::on_database_changed);
 }
 
 LensCorrections::~LensCorrections() = default;
 
+void LensCorrections::on_database_changed() {
+    if (!database_.loading) {
+        return;
+    }
+    database_ = session_.service().lens_database();
+    if (picking_) {
+        refresh_profiles();
+    }
+    emit changed();
+}
+
 void LensCorrections::on_session_changed() {
+    if (database_.loading) {
+        // A frame can arrive before the posted notice that the database has loaded (frames wait for it).
+        database_ = session_.service().lens_database();
+    }
     if (session_.frame_lens()) {
         info_ = session_.frame_lens();  // the newest frame's; kept while a new one renders
     } else if (!session_.has_frame()) {
@@ -212,6 +228,9 @@ bool LensCorrections::available() const {
 QString LensCorrections::unavailable_reason() const {
     if (database_.available) {
         return {};
+    }
+    if (database_.loading) {
+        return tr_text("The lens database is still loading; lens corrections follow when it has.");
     }
     return database_.problem.isEmpty()
                ? tr_text("Lens corrections are unavailable: no lens database is in use.")

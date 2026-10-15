@@ -62,7 +62,9 @@
 // queued finish (so a commit of a pending gesture, an apply or an undo still reaches the recipes;
 // nothing is rendered or opened any more meanwhile), stops the command thread, closes every session
 // (waiting for running sink calls), and waits for the conversion thread; it must run on the UI
-// thread (it may release the last reference to the Backend).
+// thread (it may release the last reference to the Backend). Everything the constructor registers with
+// the Backend's services (Auto's and the recipes' observers, the lens database's listener) is held by a
+// subscription member, so a constructor that throws leaves nothing that could reach the object.
 
 #include <QHash>
 #include <QThreadPool>
@@ -142,6 +144,7 @@ private:
     std::shared_ptr<State> state_;
     app::Subscription auto_subscription_;
     app::Subscription recipe_subscription_;
+    app::Subscription lens_database_subscription_;  // W12 (APL-06): lens_database_changed
     QTimer release_timer_;
     QHash<ItemId, AutoProgress> auto_runs_;  // runs in progress, as last reported
     bool has_clipboard_ = false;

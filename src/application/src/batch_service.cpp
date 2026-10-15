@@ -1143,6 +1143,19 @@ Status BatchService::Impl::recover() {
 
 // ---- Open and close ----------------------------------------------------------------------------
 
+const std::string& BatchService::Impl::renderer_version() const {
+    std::call_once(renderer_version_once, [this] {
+        const std::string lens = options.lens_database_source ? options.lens_database_source() : options.lens_database;
+        renderer_version_text = std::format("lucent {}; develop {}; worker protocol {}; lens database {}",
+                                            workers::describe(workers::current_build_identity()), describe_versions(),
+                                            workers::kMaxProtocolVersion, lens.empty() ? std::string("none") : lens);
+        if (renderer_version_text.size() > catalog::kMaxJobLabelBytes) {
+            renderer_version_text.resize(catalog::kMaxJobLabelBytes);
+        }
+    });
+    return renderer_version_text;
+}
+
 BatchService::BatchService(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
 
 BatchService::~BatchService() {
@@ -1173,13 +1186,7 @@ Expected<std::unique_ptr<BatchService>> BatchService::open(Library& library, std
     try {
         auto impl = std::make_unique<Impl>(library, std::move(catalog), recipes, std::move(options));
         impl->session = detail::random_hex(6);
-        impl->renderer_version = std::format(
-            "lucent {}; develop {}; worker protocol {}; lens database {}",
-            workers::describe(workers::current_build_identity()), describe_versions(), workers::kMaxProtocolVersion,
-            impl->options.lens_database.empty() ? std::string("none") : impl->options.lens_database);
-        if (impl->renderer_version.size() > catalog::kMaxJobLabelBytes) {
-            impl->renderer_version.resize(catalog::kMaxJobLabelBytes);
-        }
+        // The renderer version is composed by the first plan or submission (Impl::renderer_version()).
         const detail::PhysicalMemory memory = detail::physical_memory();
         constexpr std::uint64_t kGiB = std::uint64_t{1} << 30;
         std::uint64_t total = impl->options.memory.total_bytes;
@@ -1238,6 +1245,8 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
             progress(BatchSubmitProgress{phase, done, total});
         }
     };
+    // Composed here, before any lock is taken: it may wait for the lens database (W12, APL-06).
+    static_cast<void>(s.renderer_version());
     Prepared prepared;
 
     // ---- Settings and destination ------------------------------------------------------------
@@ -1633,7 +1642,7 @@ static Expected<Prepared> prepare_batch(BatchService::Impl& s, const BatchReques
                 input.source_sha256 = *item.sha256;
                 input.subimage = item.subimage;
                 input.settings_sha256 = settings_doc->sha256;
-                input.renderer_version = s.renderer_version;
+                input.renderer_version = s.renderer_version();
                 input.assets_json = "{}";
                 input.export_settings_sha256 = prepared.export_sha256;
                 if (auto identity = catalog::compute_job_identity(input)) {
@@ -1807,7 +1816,7 @@ Expected<SubmittedBatch> BatchService::submit(const BatchRequest& request, const
     batch.destination_json = std::move(*destination_json);
     batch.export_settings_json = prepared->export_json;
     batch.policy_json = std::move(*policy_json);
-    batch.renderer_version = s.renderer_version;
+    batch.renderer_version = s.renderer_version();
     batch.created_at = s.now();
     batch.start = request.start;
     batch.automatic = request.automatic == AutomaticSettings::Auto          ? catalog::AutoMode::Auto

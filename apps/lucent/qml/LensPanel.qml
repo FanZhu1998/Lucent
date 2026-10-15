@@ -86,12 +86,12 @@ PanelSection {
         }
     }
 
-    // No lens database: nothing can be corrected, and why.
+    // No lens database: nothing can be corrected, and why (or, W12, that it is still loading).
     Text {
         objectName: "lensUnavailable"
         visible: !panel.lens.available
         text: panel.lens.unavailableReason
-        color: Theme.attention
+        color: panel.lens.loading ? Theme.textTertiary : Theme.attention
         font.pixelSize: Theme.fontSmall
         wrapMode: Text.Wrap
         Layout.fillWidth: true

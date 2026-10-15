@@ -1,0 +1,128 @@
+Lucent @VERSION@: corresponding source of the LGPL libraries
+=
+
+This archive is the complete corresponding source of the libraries that Lucent @VERSION@
+(Lucent-Setup-@VERSION@-x64.exe) contains under the GNU Lesser General Public License, as they were
+built for that installer: the upstream source archives, the build recipes with every patch
+(including the Lucent project's own changes) and the build settings. It is published next to the
+installer, from the same place and for as long as the installer is offered.
+
+Lucent's own code is free software under the MIT License. You do not need it to rebuild or replace
+these libraries: Lucent loads them dynamically (see "How Lucent uses them" and "Lucent's own
+source").
+
+Contents
+--------
+
+README.txt          this file
+MANIFEST.json       every library with its licence, the files Lucent ships from it and what loads
+                    them, its source archives (download location, size, SHA-512, SHA-256, the
+                    recipe file that pins each one), its recipe files (SHA-256) and its build
+                    features; the triplet; and the build's other ports with the hashes of their
+                    sources (not included here, see "notIncluded")
+SHA256SUMS.txt      the SHA-256 of every other file in this archive
+sources\            the upstream source archives, byte for byte as the build used them
+ports\<port>\       the vcpkg build recipe ("port") of each library: portfile.cmake, the patches,
+                    vcpkg.json. A recipe is either vcpkg's port at the registry commit named below,
+                    unchanged, or the Lucent project's overlay of it; the libraries named below say
+                    which. Every patch a recipe names (portfile.cmake applies it to the library's
+                    upstream source; a few only on other platforms or with other features, as the
+                    portfile says) is listed with that library ("Modified"): the files it changes,
+                    and who made it and when (vcpkg's patches as they are in its registry at that
+                    commit; the Lucent project's own, named lucent-*.patch, with the date each
+                    states; they also mark the files they change)
+triplets\           the vcpkg triplet @TRIPLET@ (the build settings): 64-bit x64, shared
+                    libraries (DLLs), the dynamic Microsoft C runtime (/MD), release builds only,
+                    and the linker and compiler options that keep the build machine's folders out of
+                    the binaries
+build\<port>\       vcpkg_abi_info.txt: vcpkg's record of what went into each build (its features,
+                    the hashes of its recipe files, the triplet and vcpkg's helper scripts, and the
+                    tool versions)
+lucent\             Lucent's vcpkg.json and vcpkg-configuration.json: the registry commit, the
+                    features Lucent asks for, and its overlay folders (cmake\ports and
+                    cmake\triplets in Lucent's source are ports\ and triplets\ here)
+
+When this archive was made, every file in sources\ was checked: its SHA-512 is the one vcpkg
+verified before building the library, and the one the library's recipe pins (for vcpkg's own
+ports, in the recipe at the registry commit). To check a file yourself:
+
+    certutil -hashfile <file> SHA512
+    (or in PowerShell: Get-FileHash -Algorithm SHA512 <file>)
+
+The libraries
+-------------
+
+@COMPONENTS@
+@BUILD_TOOLS@
+How Lucent uses them
+--------------------
+
+Lucent loads every library above dynamically. Each one is a separate DLL in Lucent's installation
+folder (by default %LOCALAPPDATA%\Programs\Lucent). When a program starts, Windows loads the DLLs it
+imports from that folder by file name, and then the DLLs those import, in the same way:
+
+@LOADING@
+
+@STATIC_CODE@
+
+While Lucent runs, Qt also loads its plugins (plugins\) and the plugins of the QML modules Lucent
+uses (qml\) by file name. Lucent does not check signatures or hashes of these DLLs and does
+nothing to prevent you from replacing them.
+
+Rebuilding a library
+--------------------
+
+@BUILT_WITH@
+
+1. Install Visual Studio 2022, or its Build Tools, with "Desktop development with C++" (the MSVC
+   v143 x64 toolset and a Windows SDK), and Git for Windows.
+2. Get vcpkg at that commit, in a short folder: Qt's build needs short paths unless Windows' long
+   paths are enabled.
+
+       git clone https://github.com/microsoft/vcpkg C:\src\vcpkg
+       git -C C:\src\vcpkg checkout @BASELINE@
+       C:\src\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+3. Extract this archive into C:\src, which creates C:\src\@ROOT@.
+4. Copy the files of sources\ into C:\src\vcpkg\downloads, so that vcpkg uses them instead of
+   downloading them; it checks each one against the SHA-512 in its recipe. vcpkg still downloads its
+   own tools (CMake, Ninja, MSYS2 and others) and the sources of the libraries' dependencies that
+   are not in this archive; MANIFEST.json lists those with their hashes.
+5. Build, from an "x64 Native Tools Command Prompt for VS 2022":
+
+@INSTALL_COMMAND@
+
+   --overlay-ports makes vcpkg build with the recipes of this archive, --overlay-triplets with its
+   triplet, and the names in brackets are the features each library was built with (also in
+   MANIFEST.json and build\<port>\vcpkg_abi_info.txt). You can build one library alone the same
+   way, for example @ONE_LIBRARY@.
+6. The DLLs are in C:\src\vcpkg\installed\@TRIPLET@\bin.
+
+To change a library, change its source and build it again: add a patch to ports\<port>\ and list it
+in the PATCHES of its portfile.cmake (as the lucent-*.patch files are), or run "vcpkg install" with
+--editable, which keeps the extracted source in C:\src\vcpkg\buildtrees\<port>\src for you to edit
+before you build again.
+
+Replacing a library in Lucent
+-----------------------------
+
+Close Lucent, then copy your DLL over the file of the same name in Lucent's installation folder
+(keep the original, to go back). Your build must stay binary compatible with the one Lucent was
+built against: 64-bit x64, built with Microsoft Visual C++ against the dynamic C runtime, the same
+version of the library and the same configuration (features and options). Replace Qt's files only
+with a build of the same Qt version and configuration: Qt's modules and plugins use each other's
+internal interfaces. Repairing or updating Lucent with its installer puts its own files back.
+
+Lucent's own source
+-------------------
+
+@LUCENT_SOURCE@
+
+Licences
+--------
+
+Each library keeps its own licence: its texts are in its source archive, and in licenses\<port>\ in
+Lucent's installation folder, where licenses\LGPL-NOTICE.txt names this archive. vcpkg's recipes are
+under the MIT License (Copyright (c) Microsoft Corporation). The Lucent project's overlay ports and
+triplet are under the MIT License (Copyright (c) 2026 Fan Zhu); a library built with its patches
+remains under the library's own licence.
