@@ -118,9 +118,11 @@ The qualification report, the support table and the camera support database are 
 ```powershell
 $q = 'build\rel-<v>-core\bin\lucent-qualify.exe'
 & $q --tier all --out-json build\rel-<v>-qualification.json --out-md build\rel-<v>-support-table.md
-# The same outcomes as the committed table: only the "Generated ..." line (date, commit) may differ.
-Compare-Object (Get-Content docs\qualification\support-table.md | Where-Object { $_ -notmatch '^Generated ' }) `
-               (Get-Content build\rel-<v>-support-table.md | Where-Object { $_ -notmatch '^Generated ' })
+# The same outcomes as the committed table: only the "Generated ..." line (date, commit) and the last
+# section, "## Measurements" (times and memory, which differ on every run), may differ.
+$outcomes = { param($table) $lines = @(Get-Content $table); $end = [Array]::IndexOf($lines, '## Measurements')
+              if ($end -lt 0) { $end = $lines.Count }; $lines[0..($end - 1)] | Where-Object { $_ -notmatch '^Generated ' } }
+Compare-Object (& $outcomes docs\qualification\support-table.md) (& $outcomes build\rel-<v>-support-table.md)
 # The committed report came from a clean build of this release's code: between its commit (the
 # "Generated" line of docs\qualification\support-table.md) and HEAD nothing but data changed.
 git diff --stat <report commit> HEAD -- src apps cmake CMakeLists.txt vcpkg.json vcpkg-configuration.json fixtures
