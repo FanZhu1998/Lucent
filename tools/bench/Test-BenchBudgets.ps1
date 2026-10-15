@@ -20,6 +20,13 @@
     otherwise lower the statistic). A tracked measurement is shown beside its baseline and never
     fails the check. Compare only runs from the same machine in a like state (machine.json).
 
+    A quiet machine (W12 review BENCH-2): every scenario file the budgets read must record that its
+    scenario started on a quiet machine (quiet_before.quiet true in the file, or in the machine
+    record of the run that wrote it: machine*.json, the newest whose harness.scenarios names it). A
+    scenario that started busy, whose wait was skipped (-QuietTimeoutSeconds 0) or that records no
+    wait (a run of the harness before the quiet wait) is refused: exit code 3 in check mode, and no
+    budgets.json with -Create, unless -AllowBusyMachine accepts it (the table then says so).
+
 .PARAMETER Create
     Write budgets from -BaselineDir.
 .PARAMETER BaselineDir
@@ -29,6 +36,9 @@
     The new run's data folder (check mode).
 .PARAMETER Budgets
     budgets.json (default docs\performance\budgets.json).
+.PARAMETER AllowBusyMachine
+    Accept scenarios that did not start on a quiet machine, or record no quiet wait (see DESCRIPTION),
+    for example the baselines of 2026-10-09 and 2026-10-10, measured before the harness waited.
 
 .EXAMPLE
     powershell -NoProfile -File tools\bench\Test-BenchBudgets.ps1 -Create
@@ -36,14 +46,17 @@
     powershell -NoProfile -File tools\bench\Test-BenchBudgets.ps1 -DataDir docs\performance\data\2026-11-02
 
 .NOTES
-    Windows PowerShell 5.1 and PowerShell 7. Keep this file ASCII.
+    Exit code 0: every budget held; 1: a budget failed; 2: no measurement; 3: a scenario did not start
+    on a quiet machine (without -AllowBusyMachine). Windows PowerShell 5.1 and PowerShell 7. Keep this
+    file ASCII.
 #>
 [CmdletBinding()]
 param(
     [switch]$Create,
     [string]$BaselineDir = 'docs\performance\data\2026-10-10',
     [string]$DataDir,
-    [string]$Budgets = 'docs\performance\budgets.json'
+    [string]$Budgets = 'docs\performance\budgets.json',
+    [switch]$AllowBusyMachine
 )
 
 $ErrorActionPreference = 'Stop'
@@ -150,8 +163,44 @@ function Get-Measurement {
         cv = Get-BenchValue $document $Candidate.cv; n = [int](Get-BenchValue $s 'n'); failed_runs = 0; failed = $failedImages }
 }
 
+function Get-QuietProblems {
+    # The scenario files of -Folder that the candidates read and that did not start on a quiet machine
+    # (BENCH-2): the scenario file's own quiet_before, else the quiet_before of the newest machine record
+    # (machine*.json) whose harness.scenarios names the scenario.
+    param([string]$Folder)
+    $machines = @(Get-ChildItem -LiteralPath $Folder -Filter 'machine*.json' -File -ErrorAction SilentlyContinue | ForEach-Object { Read-BenchJson -Path $_.FullName } |
+        Sort-Object -Property @{ Expression = { [string](Get-BenchValue $_ 'collected_at') } } -Descending)
+    $problems = New-Object System.Collections.ArrayList
+    foreach ($file in @($candidates | ForEach-Object { $_.file } | Select-Object -Unique)) {
+        $path = Join-Path $Folder "$file.json"
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $document = Read-BenchJson -Path $path
+        $quiet = Get-BenchValue $document 'quiet_before'
+        if ($null -eq $quiet) {
+            foreach ($machine in $machines) {
+                if (@(Get-BenchValue $machine 'harness.scenarios') -contains $file -and $null -ne (Get-BenchValue $machine 'quiet_before')) { $quiet = Get-BenchValue $machine 'quiet_before'; break }
+            }
+        }
+        if ($null -eq $quiet) { [void]$problems.Add("$($file): no quiet wait recorded (a run of the harness before it waited for a quiet machine)") }
+        elseif ((Get-BenchValue $quiet 'skipped') -eq $true) { [void]$problems.Add("$($file): the wait for a quiet machine was skipped (-QuietTimeoutSeconds 0)") }
+        elseif ((Get-BenchValue $quiet 'quiet') -ne $true) {
+            [void]$problems.Add(("{0}: started on a busy machine (CPU samples {1} %; busiest other process {2} % of one processor)" -f $file,
+                (@(Get-BenchValue $quiet 'samples') -join ', '), (@(Get-BenchValue $quiet 'busiest_process_percent') -join ', ')))
+        }
+    }
+    return @($problems)
+}
+
 if ($Create) {
     $folder = Resolve-RepoPath $BaselineDir
+    $quietProblems = @(Get-QuietProblems -Folder $folder)
+    if ($quietProblems.Count -gt 0) {
+        foreach ($problem in $quietProblems) { Write-Output "Not quiet: $problem" }
+        if (-not $AllowBusyMachine) {
+            Write-Output 'A baseline must come from a quiet machine: no budgets were written (-AllowBusyMachine accepts it).'
+            exit 3
+        }
+    }
     $entries = foreach ($c in $candidates) {
         $m = Get-Measurement -Candidate $c -Folder $folder
         if ($null -ne $m) { $m.Remove('failed_runs'); $m.Remove('failed') }
@@ -237,5 +286,13 @@ foreach ($entry in @($definition.budgets)) {
 }
 Write-Output ''
 Write-Output ("{0} budgets failed (exceeded, missing or not trustworthy)." -f $failed)
+# BENCH-2: measurements of a machine that was not quiet are no evidence either way.
+$quietProblems = @(Get-QuietProblems -Folder $folder)
+foreach ($problem in $quietProblems) { Write-Output "Not quiet: $problem" }
+if ($quietProblems.Count -gt 0 -and -not $AllowBusyMachine) {
+    Write-Output ("{0} scenario(s) did not start on a quiet machine: run tools\bench\Invoke-LucentBench.ps1 again on an idle machine (-AllowBusyMachine accepts them)." -f $quietProblems.Count)
+    exit 3
+}
+if ($quietProblems.Count -gt 0) { Write-Output 'Accepted with -AllowBusyMachine.' }
 if ($failed -gt 0) { exit 1 }
 exit 0

@@ -38,10 +38,15 @@
                      the scenarios that followed (the W13 baseline's preview scenario ran right after
                      it and was measured again; docs\performance\baseline-2026-10-10.md, ADR 0021).
 
-    A quiet machine first: before the first scenario the harness waits until the system's CPU use stays
-    at or below -QuietCpuPercent for three 2-second samples in a row (at most -QuietTimeoutSeconds), so
-    that background work (an antivirus still scanning a fresh build or an earlier run's copies, an
-    indexer, an update) does not land in the measurements; machine.json records the wait (quiet_before).
+    A quiet machine first: before every scenario the harness waits until, for three 2-second samples in
+    a row, the system's CPU use stays at or below -QuietCpuPercent and no other process uses more than
+    -QuietProcessPercent of one logical processor (one busy thread is only 8.3 % of the reference
+    machine's 12; W12 review BENCH-1), at most -QuietTimeoutSeconds, so that background work (an
+    antivirus still scanning a fresh build or an earlier run's copies, an indexer, an update) does not
+    land in the measurements. Each scenario's JSON records its wait (quiet_before), machine.json the
+    first one (quiet_before) and every scenario's outcome (quiet_by_scenario); a skipped wait
+    (-QuietTimeoutSeconds 0) is recorded as skipped. tools\bench\Test-BenchBudgets.ps1 refuses
+    measurements that did not start quiet (W12 review BENCH-2).
 
     Cache state: the fixtures are read (hashed) once before the first scenario, so inputs come from
     the file cache unless memory pressure evicted them; Lucent's binaries are warm except in the cold
@@ -79,10 +84,13 @@
     One repetition and the smoke fixtures only: a check of the harness, not a measurement.
 .PARAMETER QuietCpuPercent
     The system CPU use (percent of all logical processors) at or below which the machine counts as
-    quiet before the first scenario (default 10).
+    quiet before a scenario (default 10).
+.PARAMETER QuietProcessPercent
+    The most CPU any other process may use (percent of one logical processor) for the machine to count
+    as quiet (default 25).
 .PARAMETER QuietTimeoutSeconds
-    The longest wait for a quiet machine (default 300; 0: no wait). A run that starts on a busy machine
-    says so in machine.json (quiet_before.quiet false).
+    The longest wait for a quiet machine before each scenario (default 300; 0: no wait, recorded as
+    skipped). A scenario that starts on a busy machine says so in its JSON (quiet_before.quiet false).
 
 .EXAMPLE
     powershell -NoProfile -File tools\bench\Invoke-LucentBench.ps1
@@ -106,6 +114,7 @@ param(
     [string]$Tag,
     [switch]$Quick,
     [ValidateRange(1, 100)][double]$QuietCpuPercent = 10,
+    [ValidateRange(1, 1000)][double]$QuietProcessPercent = 25,
     [ValidateRange(0, 3600)][int]$QuietTimeoutSeconds = 300
 )
 
@@ -213,7 +222,8 @@ $machine = Get-BenchMachineFacts -RepoRoot $repoRoot -BuildDir $BuildDir
 $machine.idle_cpu_percent_before = Measure-BenchIdleCpu -Seconds 5
 $machine.harness = [ordered]@{ build_dir = Get-RelativePath $BuildDir; app_dir = Get-RelativePath $AppDir
     work_dir = Get-RelativePath $WorkDir; repetitions = $Repetitions; sample_ms = $SampleMs; quick = [bool]$Quick
-    powershell = $PSVersionTable.PSVersion.ToString(); scenarios = $Scenario }
+    powershell = $PSVersionTable.PSVersion.ToString(); scenarios = $Scenario; tag = $(if ($Tag) { $Tag } else { $null })
+    quiet_cpu_percent = $QuietCpuPercent; quiet_process_percent = $QuietProcessPercent; quiet_timeout_s = $QuietTimeoutSeconds }
 $machine.fixtures = $fixtureFacts
 Write-BenchJson -InputObject (ConvertTo-BenchRounded $machine) -Path (Join-Path $OutputDir $machineFile)
 
@@ -290,6 +300,7 @@ function Save-Scenario {
     $document = [ordered]@{
         schema = 'lucent.bench-scenario'; version = 1; scenario = $Name; description = $Description
         repetitions = $Repetitions; measured_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        quiet_before = $script:scenarioQuiet
         summary = $summary; extra = $Extra; runs = @($Runs)
     }
     Write-BenchJson -InputObject (ConvertTo-BenchRounded $document) -Path (Join-Path $OutputDir "$Name$suffix.json")
@@ -755,18 +766,33 @@ function Invoke-BatchCancelScenario {
             'checked: exported photos have their files, cancelled ones none, no temporary file is left.')
 }
 
-# A quiet machine before the first measurement (see the description).
-if ($QuietTimeoutSeconds -gt 0) {
-    Write-Host ("Waiting for a quiet machine (CPU at most {0} % for 6 s, at most {1} s)..." -f $QuietCpuPercent, $QuietTimeoutSeconds)
-    $machine['quiet_before'] = Wait-BenchQuiet -MaxCpuPercent $QuietCpuPercent -TimeoutSeconds $QuietTimeoutSeconds
-    Write-Host ("  {0} after {1} s (CPU samples: {2} %)" -f $(if ($machine.quiet_before.quiet) { 'quiet' } else { 'STILL BUSY' }),
-        $machine.quiet_before.waited_s, ($machine.quiet_before.samples -join ', '))
-    Write-BenchJson -InputObject (ConvertTo-BenchRounded $machine) -Path (Join-Path $OutputDir $machineFile)
+# A quiet machine before every scenario (see the description): the antivirus scanning the exports of
+# the batch scenarios, or the cold starts' copies, must not land in the next scenario (W12 review
+# BENCH-1 and BENCH-2). Each scenario's JSON records its wait.
+$script:scenarioQuiet = $null
+function Wait-ForQuietMachine([string]$Before) {
+    if ($QuietTimeoutSeconds -le 0) {
+        Write-Host "  No wait for a quiet machine before $Before (-QuietTimeoutSeconds 0): recorded as skipped." -ForegroundColor Yellow
+        return [ordered]@{ quiet = $false; skipped = $true; waited_s = 0; max_cpu_percent = $QuietCpuPercent; max_process_percent = $QuietProcessPercent; timeout_s = 0 }
+    }
+    Write-Host ("  Waiting for a quiet machine before {0} (CPU at most {1} % in all and {2} % of one processor in any other process, for 6 s; at most {3} s)..." -f
+        $Before, $QuietCpuPercent, $QuietProcessPercent, $QuietTimeoutSeconds)
+    $wait = Wait-BenchQuiet -MaxCpuPercent $QuietCpuPercent -MaxProcessPercent $QuietProcessPercent -TimeoutSeconds $QuietTimeoutSeconds
+    Write-Host ("  {0} after {1} s (CPU samples: {2} %; busiest other process: {3} % of one processor)" -f $(if ($wait.quiet) { 'quiet' } else { 'STILL BUSY' }),
+        $wait.waited_s, ($wait.samples -join ', '), ($wait.busiest_process_percent -join ', ')) -ForegroundColor $(if ($wait.quiet) { 'Gray' } else { 'Yellow' })
+    if (-not $wait.quiet) { Write-Host '  The scenario runs anyway; tools\bench\Test-BenchBudgets.ps1 refuses its measurements (it records quiet_before.quiet false).' -ForegroundColor Yellow }
+    return $wait
 }
+$machine['quiet_by_scenario'] = [ordered]@{}
 
 $started = Get-Date
 foreach ($name in $Scenario) {
     Write-Host "Scenario $name"
+    $script:scenarioQuiet = Wait-ForQuietMachine $name
+    if (-not $machine.Contains('quiet_before')) { $machine['quiet_before'] = $script:scenarioQuiet }
+    $machine['quiet_by_scenario'][$name] = [ordered]@{ quiet = $script:scenarioQuiet.quiet; waited_s = $script:scenarioQuiet.waited_s
+        skipped = [bool]($script:scenarioQuiet.Contains('skipped') -and $script:scenarioQuiet['skipped']) }
+    Write-BenchJson -InputObject (ConvertTo-BenchRounded $machine) -Path (Join-Path $OutputDir $machineFile)
     switch ($name) {
         'startup' { Invoke-StartupScenario }
         'thumbnails' { Invoke-ThumbnailScenario }

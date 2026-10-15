@@ -3,7 +3,9 @@
 - **Status:** Accepted (amended 2026-10-09: "Amendment: closing review of W12 part 1" below; amended
   2026-10-10 by the closing review of W13: "Amendment: the lens-correction cost and the baseline of
   2026-10-10" below; amended 2026-10-10 by the W12 release phase: "Amendment: the scenario order
-  and a quiet machine" below)
+  and a quiet machine" below; amended 2026-10-15 by the W12 release review: "Amendment: a quiet
+  machine is required, and judged per process" and "Amendment: a run ended at its timeout waits for
+  its processes" below)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), the performance report
 
@@ -328,3 +330,60 @@ starts). `lucent_bench_harness_tests` checks the order (startup last, a requeste
 the fixed one, each scenario once, an unknown one refused), the quiet wait with a scripted sampler
 (three quiet samples in a row, the timeout) and the new measure line. The idle-machine baseline with
 the budgets derived again (COR-5) remains to be measured.
+
+## Amendment: a quiet machine is required, and judged per process (W12 release review, 2026-10-15)
+
+The review of the release phase found decision 13 weaker than it reads (BENCH-1, BENCH-2). The limit is
+10 % of all logical processors: one saturated thread is 8.3 % of the reference machine's 12, so a
+background task on one core (an antivirus scan, an indexer) passes the wait at once unless the idle
+floor (2.4 to 2.9 % on this machine) tips it over. The wait ran once, before the first scenario; a
+timeout only printed "STILL BUSY" and the run went on; `Test-BenchBudgets.ps1` never read the wait's
+record, and with `-QuietTimeoutSeconds 0` nothing was recorded at all. Since the reordering the warm
+starts follow batch and batch-cancel, whose exports the antivirus scans, with no wait between them.
+
+15. **Quiet means the machine and every other process.** `Wait-BenchQuiet` takes each 2-second sample
+    of the system's CPU use and of every other process (`Measure-BenchActivity`: the harness and the
+    idle process left out) and counts a sample as quiet only when the system is at most
+    `-QuietCpuPercent` (10 %) and no other process uses more than `-QuietProcessPercent` (25 %) of one
+    logical processor. The record adds the busiest other process of every sample (a percentage, no
+    process name: the record is committed with a baseline) and the limits.
+16. **The wait runs before every scenario** and each scenario's JSON records its own (`quiet_before`),
+    the startup scenario's after batch and batch-cancel included; `machine.json` keeps the first one
+    (`quiet_before`) and every scenario's outcome (`quiet_by_scenario`), and `harness` records the
+    limits. With `-QuietTimeoutSeconds 0` the record says `skipped`. On a quiet machine the waits add
+    about 6 s a scenario.
+17. **`Test-BenchBudgets.ps1` refuses measurements that did not start quiet.** Every scenario file the
+    budgets read must record a quiet start (its own `quiet_before`, or the newest `machine*.json` of
+    the run that names the scenario). A busy start, a skipped wait and no record at all (a run of the
+    harness before decision 13, such as both baselines) end the check with exit code 3, and `-Create`
+    writes no budgets; `-AllowBusyMachine` accepts them and the output says so. The release checklist's
+    gate 5 therefore passes only on a quiet run.
+
+The warm-start budgets (1,090 ms to the window, 1,200 ms to the first frame, 193 MiB) come from the
+2026-10-10 run, in which startup ran first; in the new order they are measured after batch-cancel
+and a quiet wait. Whether that order changes them was not measured (the machine was shared during
+the review); they stay until the idle-machine baseline (COR-5) derives every budget again, which now
+needs a quiet record. `lucent_bench_harness_tests` checks a busy thread and a busy process breaking
+the wait, the per-process figures recorded, the harness waiting before every scenario, and the gate
+refusing a baseline without a record, a busy start and a skipped wait (exit code 3) and accepting
+them with `-AllowBusyMachine`.
+
+## Amendment: a run ended at its timeout waits for its processes (W12 release review, 2026-10-15)
+
+`lucent_bench_harness_tests` failed once in the branding phase's full `dev` run
+([ADR 0025](0025-branding.md), "Evidence (2026-10-14)") on "no process of an ended run is left
+running", and passed alone. The cause was `BenchProcess.KillTree` (decision 1), which ends a run at
+its timeout: it called `TerminateProcess` for the program and every live descendant and returned, but
+`TerminateProcess` only starts a process's end, so the final sample, taken a moment later, could still
+find one of them running and record it so (no end time). On a busy machine that moment is long
+enough.
+
+18. **`KillTree` returns once the processes it ended have ended.** It waits for each of them (up to
+    5 s each); a process can start a child between a look at the processes and its own end, so it
+    looks again until it finds none alive (at most four times).
+
+**Evidence.** The check's scenario (`cmd /c ping -n 30 127.0.0.1 >nul`, ended after one second), run
+120 times with 16 busy processes on the reference machine's 12 logical processors: before the change
+30 runs recorded a process of the ended run as running (`conhost.exe`, in two of them also
+`PING.EXE`), after it none. `lucent_bench_harness_tests` (191 checks) passed in the release review's
+fresh `dev` and release test runs, which include the change.

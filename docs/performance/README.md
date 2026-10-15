@@ -31,7 +31,7 @@ powershell -NoProfile -File tools\bench\Test-BenchBudgets.ps1 -DataDir docs\perf
 | `tools\bench\Invoke-LucentBench.ps1` | The scenarios below; writes `machine.json` and one `<scenario>.json` per scenario. `-Scenario` picks some, `-Repetitions` (default 3), `-Quick` checks the harness itself. |
 | `tools\bench\Invoke-BatchResilience.ps1` | The 1,000-file batch resilience run; writes `resilience.json`. |
 | `tools\bench\Format-BenchReport.ps1` | Renders a baseline's Markdown tables from its JSON. |
-| `tools\bench\Test-BenchBudgets.ps1` | `-Create` derives `budgets.json` from a baseline; otherwise checks a new run against it (exit code 1 when a budget fails: exceeded, missing, measured by more failed runs or over fewer values than the baseline, or over images of which one failed that the baseline exported; 2 when the folder holds no measurement). |
+| `tools\bench\Test-BenchBudgets.ps1` | `-Create` derives `budgets.json` from a baseline; otherwise checks a new run against it (exit code 1 when a budget fails: exceeded, missing, measured by more failed runs or over fewer values than the baseline, or over images of which one failed that the baseline exported; 2 when the folder holds no measurement; 3 when a scenario it reads did not start on a quiet machine, unless `-AllowBusyMachine`). |
 | `tests\bench\Test-LucentBench.ps1` | The harness's tests (CTest `lucent_bench_harness_tests`, label `bench`). |
 
 The harness only reads the fixtures: the scenarios' folders hold one hard link per fixture under the
@@ -44,10 +44,13 @@ photo, so the 1,000-file run uses real copies and synthetic DNGs instead: see it
 
 They run in this order whatever order `-Scenario` names them in, the cold starts last (ADR 0021,
 decision 12): their fresh copies of the installed layout keep the antivirus busy for a while, which
-slowed the scenarios that followed them in the W13 baseline. Before the first scenario the harness
-waits for a quiet machine (CPU at most 10 % in three 2-second samples in a row, at most 300 s;
-`-QuietCpuPercent`, `-QuietTimeoutSeconds`; decision 13) and records the wait in `machine.json`
-(`quiet_before`).
+slowed the scenarios that followed them in the W13 baseline. Before every scenario the harness
+waits for a quiet machine: three 2-second samples in a row in which the system's CPU use is at most
+10 % and no other process uses more than 25 % of one logical processor (one busy thread is only
+8.3 % of the reference machine's 12), at most 300 s (`-QuietCpuPercent`, `-QuietProcessPercent`,
+`-QuietTimeoutSeconds`; ADR 0021, decisions 13, 15 and 16). Each scenario's JSON records its wait
+(`quiet_before`), `machine.json` the first one and every scenario's outcome (`quiet_by_scenario`);
+`-QuietTimeoutSeconds 0` records the waits as skipped.
 
 | Scenario | Program and options | Measured |
 |---|---|---|
@@ -95,4 +98,7 @@ baseline measured its preview scenario again for that reason). The cold starts c
 layout afresh and the antivirus scans those copies afterwards: since the W12 release phase they run
 last, so no scenario of the same run follows them, but a second run started right after one with
 cold starts begins with the quiet wait for that reason. A budget whose measurement is missing or not
-trustworthy fails too (ADR 0021, decision 8): a new run is judged only on what it measured.
+trustworthy fails too (ADR 0021, decision 8): a new run is judged only on what it measured. And
+`Test-BenchBudgets.ps1` judges a run only when every scenario it reads started on a quiet machine
+(decision 17): a busy start, a skipped wait or no record (both baselines predate the wait) ends the
+check with exit code 3, and `-Create` writes no budgets, unless `-AllowBusyMachine` accepts them.

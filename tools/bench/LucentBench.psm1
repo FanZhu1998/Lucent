@@ -22,7 +22,8 @@
       a watcher hashed while the batch ran.
     - Machine facts, fixture lists, hard-link corpora, unbuffered copies and JSON helpers.
     - Get-BenchScenarioOrder: the scenarios in their fixed order ("startup" last), and
-      Wait-BenchQuiet: waits for a quiet machine before measuring (W12 release phase, W13 note).
+      Wait-BenchQuiet: waits for a quiet machine before measuring (W12 release phase, W13 note): the
+        system's CPU use and the busiest other process's (Measure-BenchActivity; W12 review BENCH-1).
 
     Windows PowerShell 5.1 and PowerShell 7. Keep this file ASCII.
 #>
@@ -590,22 +591,41 @@ namespace LucentBench
             }
         }
 
-        // Ends the program and every live descendant at once.
+        // Ends the program and every live descendant, and returns once they have ended (up to 5 s
+        // each): TerminateProcess only starts a process's end, and the final sample must not find a
+        // process of an ended run still running. A process can start a child between a look at the
+        // processes and its own end, so the look is repeated until it finds none alive (at most four).
         public void KillTree()
         {
             lock (gate)
             {
-                Discover();
-                ProcessRecord root;
-                if (records.TryGetValue(rootPid, out root) && IsAlive(root))
+                for (int pass = 0; pass < 4; pass++)
                 {
-                    Native.TerminateProcess(root.Handle, 1);
-                }
-                foreach (ProcessRecord record in records.Values)
-                {
-                    if (record.Pid != rootPid && IsAlive(record))
+                    Discover();
+                    List<ProcessRecord> ending = new List<ProcessRecord>();
+                    ProcessRecord root;
+                    if (records.TryGetValue(rootPid, out root) && IsAlive(root))
+                    {
+                        ending.Add(root);
+                    }
+                    foreach (ProcessRecord record in records.Values)
+                    {
+                        if (record.Pid != rootPid && IsAlive(record))
+                        {
+                            ending.Add(record);
+                        }
+                    }
+                    if (ending.Count == 0)
+                    {
+                        return;
+                    }
+                    foreach (ProcessRecord record in ending)
                     {
                         Native.TerminateProcess(record.Handle, 1);
+                    }
+                    foreach (ProcessRecord record in ending)
+                    {
+                        Native.WaitForSingleObject(record.Handle, 5000);
                     }
                 }
             }
@@ -1572,31 +1592,70 @@ function Get-BenchScenarioOrder {
     return @($script:BenchScenarioOrder | Where-Object { $names -contains $_ })
 }
 
+function Measure-BenchActivity {
+    <#
+    .SYNOPSIS
+        One sample of the machine's activity over $Milliseconds: the system's CPU use (percent of all
+        logical processors) and the CPU use of the busiest other process (percent of one logical
+        processor; the harness's own process and the idle process left out). Returns cpu and
+        busiest_process_percent.
+    #>
+    param([int]$Milliseconds = 2000)
+    $before = @{}
+    foreach ($p in @(Get-Process)) {
+        if ($p.Id -eq 0 -or $p.Id -eq $PID) { continue }
+        try { $before[$p.Id] = $p.TotalProcessorTime.TotalMilliseconds } catch { }
+    }
+    $cpu = [LucentBench.BenchProcess]::MeasureSystemCpu($Milliseconds)
+    $busiest = 0.0
+    foreach ($p in @(Get-Process)) {
+        if (-not $before.ContainsKey($p.Id)) { continue }
+        try {
+            $percent = 100.0 * ($p.TotalProcessorTime.TotalMilliseconds - $before[$p.Id]) / $Milliseconds
+            if ($percent -gt $busiest) { $busiest = $percent }
+        } catch { }
+    }
+    return [ordered]@{ cpu = $cpu; busiest_process_percent = $busiest }
+}
+
 function Wait-BenchQuiet {
     <#
     .SYNOPSIS
-        Waits until the machine is quiet before measuring: until $Consecutive samples in a row of the
-        system's CPU use (every logical processor, $SampleMs each) are at most $MaxCpuPercent, or
+        Waits until the machine is quiet before measuring: until $Consecutive samples in a row
+        ($SampleMs each) find the system's CPU use (every logical processor) at most $MaxCpuPercent and
+        no other process using more than $MaxProcessPercent of one logical processor, or until
         $TimeoutSeconds have passed (W13 note: an antivirus still scanning freshly copied files, an
-        update or indexer at work). Returns what happened: waited_s, samples (the CPU percentages),
-        quiet (false when it timed out), and the limits. $Sampler replaces the measurement (tests: a
-        script block taking the sample's milliseconds and returning a percentage).
+        update or indexer at work). The second limit catches one busy thread, which on the reference
+        machine's 12 logical processors is 8.3 % of all of them, below the first (W12 review BENCH-1).
+        Returns what happened: quiet (false when it timed out), waited_s, samples (the system CPU
+        percentages), busiest_process_percent (the busiest other process of each sample), and the
+        limits. $Sampler replaces the measurement (tests: a script block taking the sample's
+        milliseconds and returning the system CPU percentage, or an object with cpu and
+        busiest_process_percent).
     #>
-    param([double]$MaxCpuPercent = 10, [int]$Consecutive = 3, [int]$SampleMs = 2000, [int]$TimeoutSeconds = 300,
+    param([double]$MaxCpuPercent = 10, [double]$MaxProcessPercent = 25, [int]$Consecutive = 3, [int]$SampleMs = 2000, [int]$TimeoutSeconds = 300,
         [scriptblock]$Sampler)
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $samples = New-Object System.Collections.ArrayList
+    $busiest = New-Object System.Collections.ArrayList
     $run = 0
     $quiet = $false
     while ($true) {
-        $cpu = if ($Sampler) { [double](& $Sampler $SampleMs) } else { [LucentBench.BenchProcess]::MeasureSystemCpu($SampleMs) }
+        $sample = if ($Sampler) { & $Sampler $SampleMs } else { Measure-BenchActivity -Milliseconds $SampleMs }
+        $cpu = 0.0
+        $process = 0.0
+        if ($sample -is [System.Collections.IDictionary]) { $cpu = [double]$sample['cpu']; $process = [double]$sample['busiest_process_percent'] }
+        elseif ($null -ne $sample -and $sample.PSObject.Properties['cpu']) { $cpu = [double]$sample.cpu; $process = [double]$sample.busiest_process_percent }
+        else { $cpu = [double]$sample }
         [void]$samples.Add([math]::Round($cpu, 1))
-        if ($cpu -le $MaxCpuPercent) { $run++ } else { $run = 0 }
+        [void]$busiest.Add([math]::Round($process, 0))
+        if ($cpu -le $MaxCpuPercent -and $process -le $MaxProcessPercent) { $run++ } else { $run = 0 }
         if ($run -ge $Consecutive) { $quiet = $true; break }
         if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
     }
     return [ordered]@{ quiet = $quiet; waited_s = [math]::Round($clock.Elapsed.TotalSeconds, 1); samples = @($samples)
-        max_cpu_percent = $MaxCpuPercent; consecutive = $Consecutive; sample_ms = $SampleMs; timeout_s = $TimeoutSeconds }
+        busiest_process_percent = @($busiest); max_cpu_percent = $MaxCpuPercent; max_process_percent = $MaxProcessPercent
+        consecutive = $Consecutive; sample_ms = $SampleMs; timeout_s = $TimeoutSeconds }
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -1744,4 +1803,4 @@ Export-ModuleMember -Function ConvertTo-BenchArgumentString, ConvertTo-BenchNumb
     Get-BenchPercentile, Get-BenchStatistics, Write-BenchJson, Read-BenchJson, ConvertTo-BenchRounded, ConvertFrom-LucentLog,
     Invoke-BenchProcess, Get-BenchResourceSummary, Stop-BenchProcessesNamed, Get-BenchFixtures, New-BenchHardLink,
     Copy-BenchTreeUnbuffered, Get-BenchMachineFacts, Get-BenchBusyProcesses, Get-BenchAggregate, Get-BenchSignificantRound,
-    New-BenchBudget, Test-BenchBudgetValue, Measure-BenchIdleCpu, Test-BenchBatchReport, Get-BenchScenarioOrder, Wait-BenchQuiet
+    New-BenchBudget, Test-BenchBudgetValue, Measure-BenchIdleCpu, Test-BenchBatchReport, Get-BenchScenarioOrder, Wait-BenchQuiet, Measure-BenchActivity
