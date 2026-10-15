@@ -2,9 +2,9 @@
  "schema": "lucent.camera-support",
  "schema_version": 3,
  "qualification": {
-  "generated": "2026-10-10T23:41:14Z",
-  "date": "2026-10-10",
-  "tool": "lucent-qualify 0.1.0 (6ca00170a99f)",
+  "generated": "2026-10-15T16:32:33Z",
+  "date": "2026-10-15",
+  "tool": "lucent-qualify 0.1.0 (7c42d0f01a0d)",
   "report": "docs/qualification/qualification-report.json",
   "basis": {
    "decoder": "LibRaw 0.22.2-Release",

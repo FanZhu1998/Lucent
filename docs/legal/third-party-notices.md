@@ -143,7 +143,7 @@ until that review the status "Met" below did not cover vcpkg's own patches).
 | nlohmann-json | 3.12.0 | MIT | Compiled in (header-only) | Notice | Met |
 | tl-expected | 1.3.1 | CC0-1.0 | Compiled in | None | Listed |
 | Lensfun lens database (asset `lens-database`) | 1.0.0 (data format 1, 2026-10-08) | CC-BY-SA-3.0 | `assets\lens-database`, 56 XML files | Attribution (title, authors, URI), licence text with every copy, notices intact, no technological measures restricting the licence's rights; adaptations under BY-SA | Met: credit in `THIRD-PARTY-NOTICES.txt` and Help > About; the licence text twice; files unmodified with `provenance.json`; Lucent's integrity check only decides whether Lucent uses the files, which stay plain XML |
-| Camera support database (asset `camera-support`) | 3.0.0 | MIT (Lucent's own) | `assets\camera-support` | None beyond Lucent's | Met |
+| Camera support database (asset `camera-support`) | 3.0.1 | MIT (Lucent's own) | `assets\camera-support` | None beyond Lucent's | Met |
 | Microsoft Visual C++ Redistributable | 14.44.35211.0 | Microsoft Software License Terms | Inside Setup only | Unmodified, official package | Met: Authenticode-checked when packaging, run by Setup only when needed |
 | Inno Setup (Setup and `unins000.exe`) | 6.7.3 | Inno Setup License, non-commercial use | Setup's loader and the uninstaller | Keep its copyright notices; non-commercial use | Met: unmodified; free distribution; credited in `THIRD-PARTY-NOTICES.txt` |
 
