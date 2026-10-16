@@ -33,8 +33,9 @@
     5. Writes licenses\: Lucent's licence, the copyright file of every shipped vcpkg port, licence
        texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, the licence text of every third-party data
        asset (the lens database's CC BY-SA 3.0, installer\license-policy.json "assets"),
-       THIRD-PARTY-NOTICES.txt (including the third-party code inside Qt from Qt's own SBOM and the
-       libraries linked statically into Lucent's executables).
+       THIRD-PARTY-NOTICES.txt (beginning with the terms of Lucent's logo, which is not covered by the
+       MIT License, from assets\branding\provenance.json, ADR 0025; including the third-party code
+       inside Qt from Qt's own SBOM and the libraries linked statically into Lucent's executables).
        Then the corresponding source (W12, ADR 0024): Lucent-<version>-corresponding-source.zip beside
        the installer, holding for every shipped library whose licence needs a source provision (the
        LGPL libraries; installer\license-policy.json "lgpl"/"correspondingSource") the upstream
@@ -48,7 +49,8 @@
        is missing from the archive. LGPL-NOTICE.txt then names the archive with its size and SHA-256.
        Last come Lucent-files.txt (the installed-file list that the next version's Setup uses to
        upgrade) and the SBOM Lucent.spdx.json (SPDX 2.3, checked structurally, and with pyspdxtools
-       when it is available).
+       when it is available; Lucent's programs are "MIT AND" the logo's licence reference, whose
+       text it gives).
     6. Scans every byte of every file of the folder for the build machine's folders (W12): the user
        profile, the repository, the build tree, the vcpkg root, installed tree, buildtrees, packages
        and downloads folders, and any X:\Users\<name>\ path, in 8-bit and UTF-16 text, either
@@ -328,6 +330,11 @@ foreach ($file in @($brandingIcon) + $brandingWizardImages + $brandingWizardSmal
 }
 Write-Host ("Branding {0}: {1}, {2} wizard images, {3} small wizard images (assets\branding, every file as its manifest lists)" -f $branding.Version,
     (Split-Path -Leaf $brandingIcon), $brandingWizardImages.Count, $brandingWizardSmallImages.Count)
+# The logo is not covered by the MIT License (ADR 0025, amendment of 2026-10-15): its terms, as
+# provenance.json records them, go into THIRD-PARTY-NOTICES.txt and the SBOM. A logo whose terms are not
+# recorded (or recorded without an identifier) stops packaging here.
+$logoLicence = Get-BrandingLicence -Asset $branding
+Write-Host ("The logo's terms: {0} ({1}), decided {2}" -f $logoLicence.Id, $logoLicence.Name, $logoLicence.Decided)
 
 # Never leave an earlier run's installer, checksum, manifest or SBOM copy next to this run's layout.
 # A test-signed package says so in its file names (SEC-03).
@@ -478,7 +485,7 @@ Write-Step 'Writing licences, notices, the installed-file list and the SBOM'
 $downloads = if ($env:VCPKG_DOWNLOADS) { $env:VCPKG_DOWNLOADS } else { Join-Path $env:VCPKG_ROOT 'downloads' }
 $assetLicences = @(Get-AssetLicences -StageDir $stage -Info $info -Policy $policy)
 $components = New-LicenseBundle -StageDir $stage -Info $info -Report $report -Policy $policy -RepoRoot $repoRoot `
-    -DownloadsDir $downloads -NoticesDir (Join-Path $installerDir 'notices') -StaticLibraries $staticLibraries `
+    -DownloadsDir $downloads -NoticesDir (Join-Path $installerDir 'notices') -LogoLicence $logoLicence -StaticLibraries $staticLibraries `
     -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT -Baseline $vcpkgBaseline -GitCommit $gitCommit
 
 # The corresponding source of the LGPL libraries (W12, ADR 0024): written, then read back and checked
@@ -513,7 +520,7 @@ $sbomRelative = 'licenses\Lucent.spdx.json'
 $sbomPath = Join-Path $stage $sbomRelative
 $listed = Write-InstalledFileList -StageDir $stage -Version $info.version -AlsoList @($sbomRelative)
 $sbom = New-PackageSbom -Path $sbomPath -Info $info -Components $components -Report $report -StageDir $stage `
-    -GitCommit $gitCommit -VcRedist $vc -Policy $policy -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT
+    -GitCommit $gitCommit -VcRedist $vc -Policy $policy -LogoLicence $logoLicence -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT
 Test-InstalledFileList -StageDir $stage
 $attributions = @($components | Where-Object { $_.QtSbom } | ForEach-Object { $_.QtSbom.Attributions }).Count
 Write-Host ("    {0} components ({1})" -f $components.Count, (($components | ForEach-Object { "$($_.Port) $($_.Version)" }) -join ', '))

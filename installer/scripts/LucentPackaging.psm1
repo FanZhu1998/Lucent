@@ -20,7 +20,7 @@
     - New-LicenseBundle           writes licenses\ (Lucent's licence, each shipped port's copyright
                                   file, licence texts missing from vcpkg, the third-party code inside
                                   Qt from Qt's own SBOM, the licence texts of third-party data assets,
-                                  notices file).
+                                  notices file, which begins with the terms of Lucent's logo, ADR 0025).
     - New-CorrespondingSourcePackage, Test-CorrespondingSourcePackage
                                   write and independently check Lucent-<version>-corresponding-
                                   source.zip: the upstream source archives, vcpkg recipes, triplet
@@ -38,8 +38,9 @@
                                   the licence an Inno Setup compiler's banner states, and whether it
                                   covers the distribution the policy records (ADR 0024).
     - New-PackageSbom             aggregates vcpkg's per-port SPDX documents and Qt's SBOMs into one
-                                  SPDX 2.3 SBOM, with a package for each third-party data asset, and
-                                  checks it structurally.
+                                  SPDX 2.3 SBOM, with a package for each third-party data asset and
+                                  the terms of Lucent's logo inside its programs, and checks it
+                                  structurally.
     - Write-InstalledFileList     writes Lucent-files.txt, the list the next Setup's upgrade uses.
     - Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit
                                   scan every shipped file (and the installer, and the package
@@ -1471,8 +1472,12 @@ function New-LicenseBundle {
         statically (each must be reviewed in the policy), and for Qt ports the third-party code inside
         the shipped Qt files as recorded by Qt's own SBOM. For each third-party data asset
         (Get-AssetLicences): licenses\<asset id>\ with its licence text, its credit lines and its
-        provenance. Then THIRD-PARTY-NOTICES.txt. LGPL-NOTICE.txt follows from Write-LgplNotice,
-        after the corresponding-source package it names (New-CorrespondingSourcePackage).
+        provenance. Then THIRD-PARTY-NOTICES.txt, which begins with Lucent's own terms: the MIT
+        License, except Lucent's logo, whose terms it states once, before the third-party list, as
+        the branding asset records them (-LogoLicence: Get-BrandingLicence of
+        tools\branding\LucentBranding.psm1; ADR 0025, amendment of 2026-10-15). LGPL-NOTICE.txt
+        follows from Write-LgplNotice, after the corresponding-source package it names
+        (New-CorrespondingSourcePackage).
     #>
     param(
         [Parameter(Mandatory)][string]$StageDir,
@@ -1482,6 +1487,7 @@ function New-LicenseBundle {
         [Parameter(Mandatory)][string]$RepoRoot,
         [Parameter(Mandatory)][string]$DownloadsDir,
         [Parameter(Mandatory)][string]$NoticesDir,
+        [Parameter(Mandatory)]$LogoLicence,
         [AllowEmptyCollection()][object[]]$StaticLibraries = @(),
         [AllowEmptyCollection()][object[]]$AssetLicences = @(),
         [string]$VcpkgRoot,
@@ -1718,8 +1724,21 @@ function New-LicenseBundle {
     if ($dataLines.Count -eq 0) { $dataLines.Add('(none)') }
 
     if ($noticeLines.Count -eq 0) { $noticeLines.Add('(none)') }
+
+    # Lucent's own notice, before the third-party list (ADR 0025, amendment of 2026-10-15): its logo is
+    # not covered by the MIT License, and its terms, as the branding asset's provenance.json records them,
+    # are stated here once (the SBOM names them by their identifier).
+    $logoHolders = Format-NameList (@(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ }) + @('Lucent Setup', 'its uninstaller (unins000.exe)'))
+    $logoLines = New-Object System.Collections.Generic.List[string]
+    $logoLines.Add((Format-Paragraph ("Lucent's logo is the icon of $logoHolders, and Lucent's window, Help > About and Setup's wizard show it. " +
+        "Its terms, as its owner decided them on $($LogoLicence.Decided) (recorded in Lucent's source, assets/branding/provenance.json, branding " +
+        "$($LogoLicence.Version); $($LogoLicence.Id) in Lucent.spdx.json):")))
+    $logoLines.Add('')
+    foreach ($line in ((Format-Paragraph -Text $LogoLicence.Text -Width 96) -split "`n")) { $logoLines.Add("    $line") }
+
     $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'THIRD-PARTY-NOTICES.txt.in'))
-    $noticesText = (Set-TemplateTitle -Template $template -Version $Info.version).Replace('@NOTICES@', ($noticeLines -join "`n")).Replace('@COMPONENTS@', ($listLines -join "`n").TrimEnd()).Replace('@DATA@', ($dataLines -join "`n").TrimEnd())
+    if (-not $template.Contains('@LUCENT_LOGO@')) { throw "THIRD-PARTY-NOTICES.txt.in has no @LUCENT_LOGO@: the notices would not state the terms of Lucent's logo." }
+    $noticesText = (Set-TemplateTitle -Template $template -Version $Info.version).Replace('@LUCENT_LOGO@', ($logoLines -join "`n")).Replace('@NOTICES@', ($noticeLines -join "`n")).Replace('@COMPONENTS@', ($listLines -join "`n").TrimEnd()).Replace('@DATA@', ($dataLines -join "`n").TrimEnd())
     Write-TextFile -Path (Join-Path $licenses 'THIRD-PARTY-NOTICES.txt') -Text $noticesText
 
     return $components
@@ -1807,7 +1826,10 @@ function New-PackageSbom {
         recipe files, and the binary files that ship), the third-party code Qt records inside the
         shipped Qt files, libraries linked statically into the executable, each third-party data
         asset (its files carry the asset's licence; Get-AssetLicences), and the Visual C++
-        redistributable bundled in Setup.
+        redistributable bundled in Setup. Lucent's programs contain its logo, which is not covered by
+        the MIT License (ADR 0025, amendment of 2026-10-15): the programs, and Lucent's package, are
+        "MIT AND <the logo's licence reference>", whose text hasExtractedLicensingInfos gives as the
+        branding asset records it (-LogoLicence: Get-BrandingLicence).
     #>
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -1818,6 +1840,7 @@ function New-PackageSbom {
         [Parameter(Mandatory)][string]$GitCommit,
         [Parameter(Mandatory)]$VcRedist,
         [Parameter(Mandatory)]$Policy,
+        [Parameter(Mandatory)]$LogoLicence,
         [AllowEmptyCollection()][object[]]$AssetLicences = @(),
         [string]$VcpkgRoot)
 
@@ -1843,13 +1866,17 @@ function New-PackageSbom {
     # Ordinal: the file elements' order and identifiers do not depend on the regional format (LIC-7).
     $ownFiles = @(ConvertTo-OrdinalOrder -Items $ownFiles -Property Relative)
     $lucentId = 'SPDXRef-Lucent'
+    # Lucent's logo is inside its programs (their icon; Lucent.exe's window icon and About logo) and is
+    # not covered by the MIT License (ADR 0025): the programs are MIT and the logo's terms.
+    $programLicence = "MIT AND $($LogoLicence.Id)"
     $ownEntries = New-Object System.Collections.Generic.List[object]
     $assetFileIds = @{}
     $counter = 0
     foreach ($file in $ownFiles) {
         $counter++
         $sha1 = Get-Sha1 $file.Full
-        $licence = if ($file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative -or $file.Relative -like 'assets\*') { 'MIT' } else { 'NOASSERTION' }
+        $program = $file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative
+        $licence = if ($program) { $programLicence } elseif ($file.Relative -like 'assets\*') { 'MIT' } else { 'NOASSERTION' }
         $copyright = 'NOASSERTION'
         # A third-party data asset's files carry its licence (W13, ADR 0023), except Lucent's own files in it.
         foreach ($asset in @($AssetLicences | Where-Object { $_.ThirdParty })) {
@@ -1864,12 +1891,14 @@ function New-PackageSbom {
                 }
             }
         }
-        $ownEntries.Add([ordered]@{
+        $entry = [ordered]@{
             fileName = './' + $file.Relative.Replace('\', '/'); SPDXID = "SPDXRef-Lucent-file-$counter"
             checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $sha1 },
                           [ordered]@{ algorithm = 'SHA256'; checksumValue = (Get-Sha256 $file.Full) })
             licenseConcluded = $licence
-            copyrightText = $copyright })
+            copyrightText = $copyright }
+        if ($program) { $entry.comment = "Contains Lucent's logo (branding $($LogoLicence.Version)), which is under $($LogoLicence.Id), not the MIT License." }
+        $ownEntries.Add($entry)
     }
     $packages.Add([ordered]@{
         name = 'Lucent'; SPDXID = $lucentId; versionInfo = $Info.version
@@ -1880,9 +1909,9 @@ function New-PackageSbom {
         packageVerificationCode = [ordered]@{
             packageVerificationCodeValue = (Get-SpdxVerificationCode -Sha1Values @($ownEntries | ForEach-Object { $_.checksums[0].checksumValue }))
             packageVerificationCodeExcludedFiles = @($sbomFileName) }
-        licenseConcluded = 'MIT'; licenseDeclared = 'MIT'
+        licenseConcluded = $programLicence; licenseDeclared = $programLicence
         copyrightText = 'Copyright (c) 2026 Fan Zhu'
-        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list, the bundled data assets such as the camera support database, and the licence bundle) and the files of third-party data assets (the Lensfun lens database), which carry their own licence; the third-party binary files are listed under each component's binary package." })
+        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list, the bundled data assets such as the camera support database, and the licence bundle) and the files of third-party data assets (the Lensfun lens database), which carry their own licence; the third-party binary files are listed under each component's binary package. Lucent's code is under the MIT License; its logo, inside $(Get-LucentExecutablesText $Info) (branding $($LogoLicence.Version)), is not: it is under $($LogoLicence.Id)." })
     $ids[$lucentId] = $true
     Add-Relationship 'SPDXRef-DOCUMENT' 'DESCRIBES' $lucentId
     foreach ($entry in $ownEntries) {
@@ -2064,6 +2093,11 @@ function New-PackageSbom {
         licenseId = $Policy.vcRedistributable.licenseRef
         name = $Policy.vcRedistributable.name
         extractedText = $Policy.vcRedistributable.licenseText })
+    $extractedInfos.Add([ordered]@{
+        licenseId = $LogoLicence.Id
+        name = $LogoLicence.Name
+        extractedText = $LogoLicence.Text
+        comment = "The terms of Lucent's logo, decided by its owner on $($LogoLicence.Decided) and recorded in Lucent's source (assets/branding/provenance.json, branding $($LogoLicence.Version)). The logo is built into $(Format-NameList (@(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ }) + @('Lucent Setup'))); THIRD-PARTY-NOTICES.txt states the same terms." })
     foreach ($id in @(ConvertTo-OrdinalOrder -Items @($usedExtracted.Keys))) {
         $definition = $null
         foreach ($component in $Components) {

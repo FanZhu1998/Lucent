@@ -16,6 +16,11 @@
   "content_credentials": "A C2PA manifest (C2PA 2.2) in the PNG's caBX chunk (21,881 bytes), kept in the committed master: claim generator \"OpenAI Media Service API\"; actions c2pa.created (ChatGPT, gpt-image), c2pa.converted and c2pa.watermarked.unbound; signed by \"OpenAI Media Service\" (OpenAI OpCo, LLC; certificate issued by Trufo C2PA Claim Signing CA (2025)) with a time stamp of 2026-10-10T17:48:31Z. Read from the manifest's text; the signature was not validated (Lucent's tools include no C2PA validator)."
  },
  "modifications": "None: the master is the supplied file, byte for byte. Every other image of this folder is generated from it by tools/branding/Update-Branding.ps1.",
- "licence": null,
- "licence_status": "Not decided. The project owner decides the logo's licence terms and records them here before the first release (docs/release/checklist.md, gate 8); until then no terms are claimed for it."
+ "licence": {
+  "id": "LicenseRef-Lucent-Logo",
+  "name": "Lucent logo: all rights reserved",
+  "text": "Copyright (c) 2026 Fan Zhu. All rights reserved. Lucent's logo is not covered by the MIT License that covers Lucent's source code. Others may show it, unmodified, only to refer to Lucent. These terms do not limit the rights the GNU LGPL gives you to modify Lucent and its LGPL libraries for your own use and to reverse engineer Lucent for debugging such modifications.",
+  "decided": "2026-10-15"
+ },
+ "licence_status": "Decided by the project owner, Fan Zhu, on 2026-10-15, who chose \"All rights reserved\" from the options offered (\"You keep all rights; others may show it only to refer to Lucent.\"). Stated in assets/branding/README.md (\"Licence\"), in the installed THIRD-PARTY-NOTICES.txt and in the SBOM (LicenseRef-Lucent-Logo)."
 }

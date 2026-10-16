@@ -11,6 +11,10 @@
 > [ADR 0024](../adr/0024-release-and-licensing.md)).
 
 - **Lucent's own code:** MIT (`LICENSE` at the repository root).
+- **Lucent's logo** (`assets/branding`, built into the programs and Setup): not covered by the MIT
+  License. Copyright (c) 2026 Fan Zhu, all rights reserved; others may show it, unmodified, only to
+  refer to Lucent (the owner's decision of 2026-10-15, `LicenseRef-Lucent-Logo`;
+  [the asset's README](../../assets/branding/README.md#licence), [ADR 0025](../adr/0025-branding.md)).
 - **Policy:** [ADR 0003: linking model and third-party licensing](../adr/0003-linking-and-licensing.md).
   In short, every third-party library is a DLL; LGPL libraries (LibRaw, Qt, and since W13 Lensfun
   with GLib, libintl and libiconv) are shipped as replaceable DLLs. Their vcpkg recipes patch the
@@ -100,6 +104,13 @@ library's recipe with the files it changes and its date ("modifications listed" 
 and the archive's README names `Qt6EntryPoint.lib` as the only library code linked into a program
 (`Lucent.exe`).
 
+Re-verified on 2026-10-15, after the owner's decision on the logo's terms, against the `-StageOnly`
+package of the `release` preset (`build\lic-logo`, commit `973c11d` with the change recording them,
+uncommitted): the same 23 components, 8 LGPL libraries and two data assets; `THIRD-PARTY-NOTICES.txt`
+states the logo's terms right after Lucent's own notice, and the SBOM gives `Lucent.exe`, `lucent-worker.exe` and Lucent's
+package `MIT AND LicenseRef-Lucent-Logo`, with the terms as an extracted licensing info, and passed
+`pyspdxtools` (spdx-tools 0.8.5) (the row "Lucent's logo" below).
+
 To refresh the ledger after changing `vcpkg.json`, the baseline or the triplet, repeat the steps
 above, update `installer\license-policy.json` and this file in the same change (ADR 0003,
 decision 7).
@@ -107,9 +118,9 @@ decision 7).
 ## Release status
 
 How the 0.1.0 package (the `-StageOnly` run of 2026-10-10 above; the modifications as the run of
-2026-10-15 lists them) meets each shipped component's
-obligations. "Notice" means the component's copyright file (and any further text named) is in
-`licenses\<port>\` and the component is listed in `THIRD-PARTY-NOTICES.txt`; "source" means its
+2026-10-15 lists them; the logo's terms as the run for them states them) meets each shipped
+component's obligations. "Notice" means the component's copyright file (and any further text named)
+is in `licenses\<port>\` and the component is listed in `THIRD-PARTY-NOTICES.txt`; "source" means its
 upstream archives and recipe are in `Lucent-0.1.0-corresponding-source.zip` and `LGPL-NOTICE.txt`
 names them; "replaceable" means a separate DLL that Lucent loads dynamically and never checks;
 "modifications listed" means `LGPL-NOTICE.txt` and the archive name every patch the library's recipe
@@ -118,7 +129,7 @@ until that review the status "Met" below did not cover vcpkg's own patches).
 
 | Component | Version | Licence as used | Ships as | Obligations | Status |
 |---|---|---|---|---|---|
-| Lucent | 0.1.0 | MIT | `Lucent.exe`, `lucent-worker.exe`, assets, `qt.conf` | Keep the notice | Met: `licenses\Lucent-LICENSE.txt`; source public at the release tag |
+| Lucent | 0.1.0 | MIT, except the logo inside the programs (row "Lucent's logo") | `Lucent.exe`, `lucent-worker.exe`, assets, `qt.conf` | Keep the notice | Met: `licenses\Lucent-LICENSE.txt`; source public at the release tag |
 | Qt Base (`qtbase`) | 6.11.1 | LGPL-3.0-only; its entry point `Qt6EntryPoint.lib` BSD-3-Clause | 4 DLLs, 4 plugins; the entry point linked statically into `Lucent.exe` | Replaceable, texts (LGPL-3.0, GPL-3.0), source, a dated notice of the modifications (GPL-3.0 section 5(a), which LGPL-3.0 incorporates), notices of the third-party code inside, terms allowing modification and reverse engineering | Met: replaceable (`--no-patchqt`), notice and texts, source, modifications listed (vcpkg's recipe: mostly CMake build files, `md4c.diff` in `qtextmarkdownimporter.cpp` of `Qt6Gui.dll`, header patches for clang-cl or static builds only), Qt's SBOM attributions (MPL-2.0 Public Suffix List among them, its source inside the qtbase archive) |
 | Qt Declarative (`qtdeclarative`) | 6.11.1 | LGPL-3.0-only | 19 DLLs, 18 QML plugin DLLs, QML module files | As Qt Base | Met: replaceable, notice, source; no patch ("Modified: no") |
 | Qt SVG (`qtsvg`) | 6.11.1 | LGPL-3.0-only | `Qt6Svg.dll`, 2 plugins | As Qt Base | Met: replaceable, notice, source; no patch |
@@ -144,6 +155,7 @@ until that review the status "Met" below did not cover vcpkg's own patches).
 | tl-expected | 1.3.1 | CC0-1.0 | Compiled in | None | Listed |
 | Lensfun lens database (asset `lens-database`) | 1.0.0 (data format 1, 2026-10-08) | CC-BY-SA-3.0 | `assets\lens-database`, 56 XML files | Attribution (title, authors, URI), licence text with every copy, notices intact, no technological measures restricting the licence's rights; adaptations under BY-SA | Met: credit in `THIRD-PARTY-NOTICES.txt` and Help > About; the licence text twice; files unmodified with `provenance.json`; Lucent's integrity check only decides whether Lucent uses the files, which stay plain XML |
 | Camera support database (asset `camera-support`) | 3.0.1 | MIT (Lucent's own) | `assets\camera-support` | None beyond Lucent's | Met |
+| Lucent's logo (asset `branding`) | 1.0.2 | Lucent's own, not MIT: copyright (c) 2026 Fan Zhu, all rights reserved; others may show it, unmodified, only to refer to Lucent; the terms do not limit the GNU LGPL's rights to modify Lucent and its LGPL libraries for one's own use and to reverse engineer Lucent for debugging such modifications (`LicenseRef-Lucent-Logo`, decided by the owner on 2026-10-15) | Built in, not installed as a file: `Lucent.exe` and `lucent-worker.exe` (icon resource; `Lucent.exe`'s window icon and Help > About), Setup and its uninstaller (icon), Setup's wizard images | State its terms, since the MIT License does not cover it | Met (the `-StageOnly` package for the logo's terms, 2026-10-15, above): the terms at the top of `THIRD-PARTY-NOTICES.txt`, and in the SBOM (`Lucent.exe`, `lucent-worker.exe` and Lucent's package `MIT AND LicenseRef-Lucent-Logo`, with the text), from `assets\branding\provenance.json` |
 | Microsoft Visual C++ Redistributable | 14.44.35211.0 | Microsoft Software License Terms | Inside Setup only | Unmodified, official package | Met: Authenticode-checked when packaging, run by Setup only when needed |
 | Inno Setup (Setup and `unins000.exe`) | 6.7.3 | Inno Setup License, non-commercial use | Setup's loader and the uninstaller | Keep its copyright notices; non-commercial use | Met: unmodified; free distribution; credited in `THIRD-PARTY-NOTICES.txt` |
 
@@ -153,10 +165,11 @@ archive for completeness), Qt's tools (`qtshadertools`, `qtlanguageserver`, `win
 and the vcpkg helper ports. libffi (MIT) is reviewed but not imported. No model weights or datasets
 ship (ADR 0019).
 
-Not done for this package: the SBOM was checked structurally by packaging, but not by `pyspdxtools`
-(optional, `-SpdxValidator`; the W5 SBOM passed spdx-tools 0.8.5): spdx-tools is not installed on the
-reference machine now, and installing it needs PyPI. The release checklist's step 6 runs it where it
-is installed.
+Not done for the packages of 2026-10-10 and of the release review: their SBOMs were checked
+structurally by packaging, but not by `pyspdxtools` (optional, `-SpdxValidator`; the W5 SBOM passed
+spdx-tools 0.8.5): spdx-tools was not installed on the reference machine then. It now is, pinned in
+the tools environment (`tools\requirements-spdx-tools.txt`), and the SBOM of the package for the
+logo's terms (above) passed it. The release checklist's step 6 runs it.
 
 **Usage key:**
 

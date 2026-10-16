@@ -28,7 +28,7 @@ machine of [setup](../development/setup.md)). `<v>` is the version being release
 | 5 | Performance (regression) | `tools\bench\Invoke-LucentBench.ps1`, `Test-BenchBudgets.ps1` | `Test-BenchBudgets.ps1` exits 0 (every scenario started on a quiet machine), or each exceedance is explained in the release notes |
 | 6 | Package | `tools\package.ps1 -Fresh -RunTests -UpdateChannel none` | Exit code 0; manifest `gitDirty` false, `gitCommit` the release commit, audit and builder-path errors 0 |
 | 7 | Corresponding source | `installer\tests\Test-SourcePackage.ps1 -PackageManifest ...` | Exit code 0 (every LGPL library's archives and recipe present, every hash as recorded) |
-| 8 | Licence review | Read `THIRD-PARTY-NOTICES.txt`, `LGPL-NOTICE.txt`, the ledger, `assets\branding\provenance.json` | No component, version or licence differs from the [ledger](../legal/third-party-notices.md); the LGPL notice names the archive and lists each library's modifications; the logo's licence terms are recorded |
+| 8 | Licence review | Read `THIRD-PARTY-NOTICES.txt`, `LGPL-NOTICE.txt`, the ledger, `assets\branding\provenance.json` | No component, version or licence differs from the [ledger](../legal/third-party-notices.md); the LGPL notice names the archive and lists each library's modifications; the logo's licence terms are recorded and `THIRD-PARTY-NOTICES.txt` states them |
 | 9 | Installer on the release machine | `installer\tests\Test-InstalledPackage.ps1 ... -RuntimeOutcomes -NewerInstaller` (and `-PreviousInstaller`) | Exit code 0, every check passed (install, same-version repair, upgrade, refused downgrade) |
 | 10 | Clean machine, offline | Windows Sandbox: `tools\Test-CleanMachine.ps1`, then the manual steps ([clean-machine.md](clean-machine.md)) | The script exits with 0 (`<gate>\host-check.json` passed); every manual step as described, the declined and the accepted elevation prompt on a Windows that asks for consent |
 | 11 | Signing | Only when a certificate exists (until then: skipped, release unsigned) | Every signature verified by `tools\package.ps1` and `Test-InstalledPackage.ps1 -SignerThumbprint` |
@@ -223,14 +223,22 @@ a commercial licence (ADR 0003 and ADR 0024, amendments of 2026-10-15). What rem
   `lens-database`, which ship as files, and `branding`, Lucent's logo, which is built into the programs
   and Setup ([ADR 0025](../adr/0025-branding.md)).
 - The logo's licence terms are decided by the project owner and recorded: `licence` in
-  `assets\branding\provenance.json` is no longer `null`, and the asset's README states the terms. (The
-  logo was supplied by the owner on 2026-10-11 and made with an image generator; its provenance is
-  recorded there. Until the owner decides, no terms are claimed for it, it is not covered by the MIT
-  License, and no release is published.) Recording them changes the asset: edit `provenance.json`
-  (`licence`, `licence_status`) and the asset's README, run
+  `assets\branding\provenance.json` holds them (their `LicenseRef-` identifier, a name, the text and
+  the date of the decision), the asset's README states them, and so do the top of
+  `THIRD-PARTY-NOTICES.txt` and the SBOM (`Lucent.exe`, `lucent-worker.exe` and Lucent's package are
+  `MIT AND` that identifier). The logo is not covered by the MIT License; packaging refuses a logo
+  whose terms are not recorded. **Met for 0.1.0:** the owner decided on 2026-10-15 (all rights
+  reserved; others may show the logo, unmodified, only to refer to Lucent; the GNU LGPL's rights are
+  not limited; `LicenseRef-Lucent-Logo`),
+  recorded as branding 1.0.2 ([ADR 0025](../adr/0025-branding.md), amendment of 2026-10-15). What
+  remains for each release is to read that the notices state these terms. (The logo was supplied by
+  the owner on 2026-10-11 and made with an image generator; its provenance is recorded there.) A
+  change of the terms changes the asset: edit `provenance.json` (`licence`, `licence_status`) and the
+  asset's README, run
   `powershell -NoProfile -File tools\branding\Update-Branding.ps1 -Version <the next PATCH version>`
   (the manifest lists `provenance.json`, so `-Check`, the build and packaging refuse the folder until
-  then), commit, and start again at step 1 with that commit.
+  then), commit, and start again at step 1 with that commit. A new logo records its terms with its
+  provenance (the asset's README, "Replacing the logo").
 - `installer\license-policy.json` "distribution" still describes the release: free, MIT, not sold
   (`commercial: false`), unsigned or signed as built.
 

@@ -79,8 +79,9 @@ No code changes; this folder only:
    534 x 1022 wizard image; the generator never enlarges), and a larger master gives smoother edges.
 2. Record its provenance in `provenance.json`: its size and SHA-256
    (`Get-FileHash <file> -Algorithm SHA256`), what it shows, who supplied it and when, how it was
-   made, and its licence terms (or `null` while they are undecided). The generator refuses a master
-   that the record does not describe.
+   made, and its licence terms in the form under [Licence](#licence) (or `null` while they are
+   undecided: the generator and the tests accept that, `tools\package.ps1` does not). The generator
+   refuses a master that the record does not describe.
 3. Generate everything with a new branding version (Semantic Versioning: MINOR for a new master or new
    images, PATCH for the same master rendered differently or for a change of `provenance.json` or of
    the generated record's wording only, MAJOR when a role or a file is removed or renamed), and write a
@@ -142,15 +143,43 @@ validator. The generated images carry no metadata and no content credentials.
 
 ## Licence
 
-**Not decided yet.** The project owner decides the logo's licence terms and records them before the
-first release ([release checklist](../../docs/release/checklist.md), gate 8). Until then no licence
-terms are stated for the logo, and it is not covered by the MIT License of Lucent's source code.
+Lucent's logo is **not covered by the MIT License** that covers Lucent's source code. Its terms,
+decided by its owner, Fan Zhu, on 2026-10-15:
 
-Recording them is a change of the asset, made before the release commit (gate 1):
+> Copyright (c) 2026 Fan Zhu. All rights reserved. Lucent's logo is not covered by the MIT License
+> that covers Lucent's source code. Others may show it, unmodified, only to refer to Lucent. These
+> terms do not limit the rights the GNU LGPL gives you to modify Lucent and its LGPL libraries for
+> your own use and to reverse engineer Lucent for debugging such modifications.
 
-1. Set `licence` (the terms, in words) and `licence_status` in `provenance.json`, and state the terms
-   in this section.
+They cover the master and every image in this folder, and the logo as it is built into
+`Lucent.exe`, `lucent-worker.exe` and Setup and shown in this repository's README. The provenance
+facts above stay as they are.
+
+`provenance.json` records them (since branding 1.0.2), and `tools\package.ps1` takes them from there:
+the installed `licenses\THIRD-PARTY-NOTICES.txt` states them at its top, in Lucent's own notice, and
+the SBOM (`licenses\Lucent.spdx.json`) gives `Lucent.exe`, `lucent-worker.exe` and Lucent's package
+the licence `MIT AND LicenseRef-Lucent-Logo`, with the text above for `LicenseRef-Lucent-Logo`.
+
+`licence` in `provenance.json` is `null` while the owner has not decided, or an object of exactly:
+
+| Member | What |
+|---|---|
+| `id` | the terms' SPDX identifier: `LicenseRef-` followed by letters, digits, `.` and `-` (`LicenseRef-Lucent-Logo`); the SBOM names the terms by it |
+| `name` | a short name of the terms |
+| `text` | the terms in full, as plain text |
+| `decided` | the date of the owner's decision (YYYY-MM-DD) |
+
+`licence_status` says, in words, who decided what and when. (The generator still accepts the terms
+as text alone, the form `provenance.json` version 1 had before 2026-10-15, but packaging needs the
+object, and refuses a logo whose terms are `null` or text alone.)
+
+Changing the terms, or recording those of a new logo, is a change of the asset, made before a
+release commit ([release checklist](../../docs/release/checklist.md), gate 8):
+
+1. Set `licence` and `licence_status` in `provenance.json`, and state the terms in this section.
 2. Run `powershell -NoProfile -File tools\branding\Update-Branding.ps1 -Version <the next PATCH
    version>`: `provenance.json` is listed in `manifest.json`, so the manifest records its new size and
    SHA-256 (the images do not change). `-Check` and `tools\package.ps1` refuse the folder until then.
-3. Commit the folder, and start the release at gate 1 with that commit.
+3. Update the repository's README ("Licence") and the logo's row in the
+   [licence ledger](../../docs/legal/third-party-notices.md) if they no longer describe the terms.
+4. Commit, and start the release at gate 1 with that commit.

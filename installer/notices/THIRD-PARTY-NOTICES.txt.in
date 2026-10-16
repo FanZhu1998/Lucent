@@ -2,9 +2,11 @@ Lucent @VERSION@: third-party notices
 ====================================
 
 Lucent is copyright (c) 2026 Fan Zhu and distributed under the MIT License (Lucent-LICENSE.txt in
-this folder). It includes the third-party components listed below, each under its own licence.
-This list is generated from the files that this installation actually contains (tools/package.ps1),
-so it names exactly the components that ship.
+this folder), except its logo (below). It includes the third-party components listed below, each
+under its own licence. This list is generated from the files that this installation actually
+contains (tools/package.ps1), so it names exactly the components that ship.
+
+@LUCENT_LOGO@
 
 - "DLL" components are separate files in the installation folder. "Compiled in" components are
   header-only libraries whose code is part of Lucent.exe; code "linked statically into Lucent.exe"

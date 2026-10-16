@@ -5,7 +5,9 @@
   amended 2026-10-10 by the W12 licence and release phase: "Amendment: the corresponding source and the release" below, with ADR 0024;
   amended 2026-10-10 by the W12 release phase: "Amendment: the release phase's deferred fixes" below;
   amended 2026-10-14 by the W12 release phase: "Amendment: Lucent's icon" below, with ADR 0025;
-  amended 2026-10-15 by the W12 release review: "Amendment: the release review and the first sandbox run" below)
+  amended 2026-10-15 by the W12 release review: "Amendment: the release review and the first sandbox run" below;
+  amended 2026-10-15 by ADR 0025's "Amendment: the logo's licence terms": the notices and the SBOM state the logo's
+  terms, so item 30's "the SBOM and the notices are unchanged" no longer holds)
 - **Date:** 2026-10-03
 - **Workflow:** W5 (Installer slice)
 

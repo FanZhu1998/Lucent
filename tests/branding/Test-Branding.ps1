@@ -35,6 +35,14 @@
        128). A translucent artwork, an artwork touching the edge, a colour profile (iCCP), a master that
        is not 8-bit RGBA, one too small and one whose artwork is not roughly square are refused. A new
        master needs its provenance record first and a higher branding version.
+    7. The licence record (provenance.json's licence; ADR 0025, amendment of 2026-10-15): null
+       (undecided), the terms as text (the first form of version 1) and an object of id, name, text and
+       decided are accepted; an empty text, another type (a number, an array, even of one text), an
+       identifier that is not an SPDX LicenseRef- (or is in an array), empty terms, a date that does not
+       exist, and a missing or unknown member are refused. Get-BrandingLicence, from which
+       tools\package.ps1 takes the terms for the notices and the SBOM, returns the object's terms with
+       the branding version, and refuses a logo whose terms are undecided or recorded as text alone;
+       for the committed asset it returns the recorded terms (when they are the object).
 
     Registered with CTest as lucent_branding_tests (label "branding"). Exit code 0 when every check
     passed. Windows PowerShell 5.1 compatible. Keep this file ASCII.
@@ -144,13 +152,14 @@ function New-SyntheticMaster([int]$Size = 600, [double]$Left = 90, [double]$Top 
     if ($Edit) { & $Edit $pixels }
     return [LucentBranding.Png]::Write((New-Object LucentBranding.RgbaImage $Size, $Size, $pixels))
 }
-function Write-Provenance([string]$Folder, [byte[]]$MasterBytes) {
-    # A provenance record for a synthetic master (the form Test-BrandingProvenance requires).
+function Write-Provenance([string]$Folder, [byte[]]$MasterBytes, $Licence = $null) {
+    # A provenance record for a synthetic master (the form Test-BrandingProvenance requires), with the
+    # given licence member (null: undecided).
     $record = [ordered]@{
         schema = 'lucent.branding-provenance'; schema_version = 1
         master = [ordered]@{ path = 'master/lucent-logo.png'; size = [long]$MasterBytes.Length; sha256 = (Get-BytesSha256 $MasterBytes) }
         description = 'A synthetic test master.'; supplied_by = 'tests\branding\Test-Branding.ps1'; supplied = '2026-10-14'
-        origin = [ordered]@{ tool = 'Test-Branding.ps1' }; modifications = 'None.'; licence = $null; licence_status = 'Test data.' }
+        origin = [ordered]@{ tool = 'Test-Branding.ps1' }; modifications = 'None.'; licence = $Licence; licence_status = 'Test data.' }
     [System.IO.File]::WriteAllText((Join-Path $Folder 'provenance.json'), (ConvertTo-CanonicalJson $record), (New-Object System.Text.UTF8Encoding $false))
 }
 
@@ -160,6 +169,18 @@ $committed = Invoke-BrandingGenerator -Root $Root -Check
 Assert-True ($committed.Errors.Count -eq 0) "the committed asset is what the generator makes from its master ($($committed.Errors -join ' | '))"
 $asset = Read-BrandingAsset -Root $Root
 Write-Host "Branding $($asset.Version): $(@($asset.Derivatives).Count) derivatives of $($asset.Master.Path) (SHA-256 $($asset.Master.Sha256))"
+# The logo's terms, when the record holds them in the form packaging states in the notices and the SBOM
+# (ADR 0025, amendment of 2026-10-15): what Get-BrandingLicence returns for the committed asset.
+$committedLicence = ([System.IO.File]::ReadAllText((Join-Path $Root 'provenance.json')) | ConvertFrom-Json).licence
+if ($committedLicence -is [System.Management.Automation.PSCustomObject]) {
+    $terms = Get-BrandingLicence -Asset $asset
+    Assert-True ($terms.Id -cmatch '^LicenseRef-[A-Za-z0-9.-]+$' -and $terms.Name -and $terms.Text -and $terms.Decided -cmatch '^\d{4}-\d{2}-\d{2}$' -and
+                 $terms.Version -ceq $asset.Version) "the committed record's terms are what packaging states ($($terms.Id), decided $($terms.Decided), branding $($terms.Version))"
+    Write-Host "The logo's terms: $($terms.Id) ($($terms.Name)), decided $($terms.Decided)"
+}
+else {
+    Write-Host "The logo's terms are not recorded as an object (licence $(if ($null -eq $committedLicence) { 'null' } else { 'as text' })): packaging refuses the asset until they are."
+}
 
 # --- 2. The Windows icon -------------------------------------------------------------------------------
 
@@ -348,11 +369,14 @@ try {
     Assert-True ($restored.Unchanged -and @($restored.Written) -contains 'app/lucent-32.png' -and @(Get-CheckErrors $copy).Count -eq 0) 'BRD-05: and is restored the same way'
     Assert-True (@(Get-BrandingRemedy -Problems @('app/lucent-17.png is in the folder but not in manifest.json (left over, or added by hand)'))[0] -match 'delete it') 'BRD-05: an unlisted file is to be deleted'
 
-    # W12 review BRD-03: the licence recorded in provenance.json by hand: the check fails, the advice is a
-    # PATCH version, and generating with it passes the check.
+    # W12 review BRD-03: the licence changed in provenance.json by hand (whatever its form, here to terms as
+    # text, which the record still accepts): the check fails, the advice is a PATCH version, and generating
+    # with it passes the check.
     $copy = New-AssetCopy
     $provenancePath = Join-Path $copy 'provenance.json'
-    $record = [System.IO.File]::ReadAllText($provenancePath).Replace('"licence": null', '"licence": "All rights reserved (a test)."')
+    $before = [System.IO.File]::ReadAllText($provenancePath)
+    $record = [regex]::Replace($before, '(?s)"licence": (?:null|"(?:[^"\\]|\\.)*"|\{.*?\r?\n \})', '"licence": "Terms changed by hand (a test)."')
+    Assert-True ($record -cne $before) 'BRD-03: the copy''s licence is changed by hand'
     [System.IO.File]::WriteAllText($provenancePath, $record, (New-Object System.Text.ASCIIEncoding))
     $errors = @(Get-CheckErrors $copy)
     Assert-Problem $errors '^provenance\.json is \d+ bytes, manifest\.json says \d+' 'BRD-03: a licence recorded by hand is a provenance.json the manifest does not list'
@@ -469,6 +493,56 @@ try {
     Assert-True ($recheck.Errors.Count -eq 0) "the regenerated copy passes the check ($($recheck.Errors -join ' | '))"
     $replacedIcon = @(Test-IconFile -Path (Join-Path $copy 'windows\lucent.ico') -ExpectedSizes @(Get-IconSizes (Read-BrandingAsset -Root $copy)))
     Assert-True ($replacedIcon.Count -eq 0) "the new master's Windows icon is valid ($($replacedIcon -join ' | '))"
+
+    # --- 7. The licence record -----------------------------------------------------------------------------
+
+    # provenance.json's licence (ADR 0025, amendment of 2026-10-15): null while the owner has not decided,
+    # the terms as text (the first form of version 1), or an object of the terms' SPDX identifier, a name,
+    # the text and the date of the decision.
+    function New-TestLicence([hashtable]$Set = @{}, [string[]]$Remove = @()) {
+        $licence = [ordered]@{ id = 'LicenseRef-Test-Logo'; name = 'Test terms'; text = 'Test terms, for the tests only.'; decided = '2026-10-15' }
+        foreach ($key in $Set.Keys) { $licence[$key] = $Set[$key] }
+        foreach ($key in $Remove) { $licence.Remove($key) }
+        return $licence
+    }
+    $records = Join-Path $work 'records'
+    New-Item -ItemType Directory -Path $records | Out-Null
+    function Get-LicenceProblems($Licence) {
+        Write-Provenance $records $clean $Licence
+        return @(Test-BrandingProvenance -Path (Join-Path $records 'provenance.json') -MasterBytes $clean)
+    }
+    foreach ($case in @(@{ Licence = $null; What = 'null (undecided)' },
+                        @{ Licence = 'All rights reserved (a test).'; What = 'text (the first form)' },
+                        @{ Licence = (New-TestLicence); What = 'an object of id, name, text and decided' })) {
+        $problems = @(Get-LicenceProblems $case.Licence)
+        Assert-True ($problems.Count -eq 0) "a licence of $($case.What) is accepted ($($problems -join ' | '))"
+    }
+    foreach ($case in @(@{ Licence = ''; Pattern = 'licence is empty'; What = 'an empty text' },
+                        @{ Licence = 42; Pattern = 'licence must be an object'; What = 'a number' },
+                        @{ Licence = @('All rights reserved (a test).'); Pattern = 'licence must be an object'; What = 'an array of one text' },
+                        @{ Licence = @(); Pattern = 'licence must be an object'; What = 'an empty array' },
+                        @{ Licence = (New-TestLicence @{ id = 'MIT' }); Pattern = "licence\.id 'MIT' is not an SPDX licence reference"; What = 'an identifier that is not a LicenseRef-' },
+                        @{ Licence = (New-TestLicence @{ id = @('LicenseRef-Test-Logo') }); Pattern = 'is not an SPDX licence reference'; What = 'an identifier in an array' },
+                        @{ Licence = (New-TestLicence @{ id = 'LicenseRef-Test Logo' }); Pattern = 'is not an SPDX licence reference'; What = 'an identifier with a space' },
+                        @{ Licence = (New-TestLicence @{ text = ' ' }); Pattern = 'licence\.text must be text'; What = 'empty terms' },
+                        @{ Licence = (New-TestLicence @{ decided = '2026-02-30' }); Pattern = 'licence\.decided must be a date'; What = 'a date that does not exist' },
+                        @{ Licence = (New-TestLicence -Remove 'decided'); Pattern = "licence has no member 'decided'"; What = 'no date of the decision' },
+                        @{ Licence = (New-TestLicence @{ url = 'https://example.org/terms' }); Pattern = "licence has an unknown member 'url'"; What = 'an unknown member' })) {
+        Assert-Problem (Get-LicenceProblems $case.Licence) $case.Pattern "a licence of $($case.What) is refused"
+    }
+
+    # Packaging states the terms from the record (Get-BrandingLicence; tools\package.ps1): only the object,
+    # whose identifier the SBOM names. The copy with the new master above records none (null).
+    Assert-Refused { Get-BrandingLicence -Asset (Read-BrandingAsset -Root $copy) } 'has no recorded licence terms' 'packaging refuses a logo whose terms are undecided (licence null)'
+    Write-Provenance $copy $clean 'All rights reserved (a test).'
+    $null = Invoke-BrandingGenerator -Root $copy -Version 2.0.1
+    Assert-Refused { Get-BrandingLicence -Asset (Read-BrandingAsset -Root $copy) } 'as text alone' 'packaging refuses terms recorded as text alone (no identifier for the SBOM)'
+    Write-Provenance $copy $clean (New-TestLicence)
+    $null = Invoke-BrandingGenerator -Root $copy -Version 2.0.2
+    $terms = Get-BrandingLicence -Asset (Read-BrandingAsset -Root $copy)
+    Assert-True ($terms.Id -ceq 'LicenseRef-Test-Logo' -and $terms.Name -ceq 'Test terms' -and $terms.Text -ceq 'Test terms, for the tests only.' -and
+                 $terms.Decided -ceq '2026-10-15' -and $terms.Status -ceq 'Test data.' -and $terms.Version -ceq '2.0.2') "Get-BrandingLicence returns the recorded terms and the branding version ($($terms.Id), $($terms.Decided), $($terms.Version))"
+    Assert-True (@((Invoke-BrandingGenerator -Root $copy -Check).Errors).Count -eq 0) 'a copy with the terms as an object passes the check'
 }
 finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
