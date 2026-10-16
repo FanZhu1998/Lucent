@@ -177,8 +177,9 @@ folders, compiles Setup and writes the package manifest. Any failure stops it.
 `audit.builderPaths.hits` is 0, `distribution.commercial` is `false`, `toolchain.innoSetupLicence`
 is the compiler's licence line, `correspondingSource.file` is
 `Lucent-<v>-corresponding-source.zip` with the size and SHA-256 the script printed, and `signed` is
-`false` (until step 11). `sbom.validatedBy` should be `pyspdxtools`: install spdx-tools in the tools
-environment (`pip install spdx-tools`) or pass `-SpdxValidator`; without it only the structural check
+`false` (until step 11). `sbom.validatedBy` is `pyspdxtools`: install spdx-tools in the tools
+environment from `tools\requirements-spdx-tools.txt` (pinned, `--require-hashes`;
+[setup](../development/setup.md)) or pass `-SpdxValidator`; without it only the structural check
 runs, and the release notes do not claim a validated SBOM. The script prints the installer's and the
 archive's path, size and SHA-256: copy them into the release notes.
 

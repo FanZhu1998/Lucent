@@ -328,9 +328,11 @@ $bin = '.\build\dev\bin\Lucent.exe'
   (`%VCPKG_ROOT%\downloads`, or `VCPKG_DOWNLOADS`): two licence texts the ports do not install are
   taken from them. They are there when the ports were built on the machine, not after a pure
   binary-cache restore; then run `vcpkg install --only-downloads` for those ports.
-- **Optional: spdx-tools** (`pip install spdx-tools`) to validate the SBOM. `pyspdxtools.exe` is
-  found through `-SpdxValidator`, `LUCENT_PYSPDXTOOLS` or `PATH`; without it only the built-in
-  structural check runs.
+- **spdx-tools** to validate the SBOM (required for a release, release checklist gate 6), pinned
+  with every wheel's SHA-256 in `tools\requirements-spdx-tools.txt`:
+  `& "$env:USERPROFILE\dev\toolsenv\Scripts\python.exe" -m pip install --require-hashes --no-deps -r tools\requirements-spdx-tools.txt`.
+  `pyspdxtools.exe` is found through `-SpdxValidator`, `LUCENT_PYSPDXTOOLS` or `PATH` (`tools\dev-env.ps1`
+  puts the tools venv on it); without it only the built-in structural check runs.
 
 ```powershell
 # Build the release preset (Lucent.exe only), lay out, audit, license and compile the installer of a
