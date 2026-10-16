@@ -328,9 +328,11 @@ $bin = '.\build\dev\bin\Lucent.exe'
   (`%VCPKG_ROOT%\downloads`, or `VCPKG_DOWNLOADS`): two licence texts the ports do not install are
   taken from them. They are there when the ports were built on the machine, not after a pure
   binary-cache restore; then run `vcpkg install --only-downloads` for those ports.
-- **Optional: spdx-tools** (`pip install spdx-tools`) to validate the SBOM. `pyspdxtools.exe` is
-  found through `-SpdxValidator`, `LUCENT_PYSPDXTOOLS` or `PATH`; without it only the built-in
-  structural check runs.
+- **spdx-tools** to validate the SBOM (required for a release, release checklist gate 6), pinned
+  with every wheel's SHA-256 in `tools\requirements-spdx-tools.txt`:
+  `& "$env:USERPROFILE\dev\toolsenv\Scripts\python.exe" -m pip install --require-hashes --no-deps -r tools\requirements-spdx-tools.txt`.
+  `pyspdxtools.exe` is found through `-SpdxValidator`, `LUCENT_PYSPDXTOOLS` or `PATH` (`tools\dev-env.ps1`
+  puts the tools venv on it); without it only the built-in structural check runs.
 
 ```powershell
 # Build the release preset (Lucent.exe only), lay out, audit, license and compile the installer of a
@@ -356,7 +358,7 @@ prints the channel and records it in the manifest.
 | Audit | Every import resolves to the folder, Windows or the Visual C++ runtime, and every root DLL is imported; the required Qt plugins and every QML module Lucent uses (with the plugin DLL its `qmldir` names) are present; every file is Lucent's or unmodified from a vcpkg port; one GUI executable, x64 only. Errors stop the run | `audit.txt`, `audit.json` |
 | Smoke run | The staged `Lucent.exe` starts with `PATH` reduced to Windows' folders and a temporary `--data-root`, saves a screenshot and must exit with 0, without Qt or QML loading errors and without changing the folder; it must report the camera support database of the folder and the update channel the build tree recorded | `smoke\` |
 | Sign | Only with `LUCENT_SIGN_CERT_SHA1` set (see below): `Lucent.exe` and `lucent-worker.exe`, each signature verified | |
-| Licences | `stage\licenses\`: copyright files of the shipped ports, missing licence texts, Qt's LGPL-3.0 and GPL-3.0, `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` (with the third-party code inside Qt from Qt's own SBOMs, and the libraries linked statically into `Lucent.exe`), `Lucent.spdx.json` (SPDX 2.3, checked structurally and by `pyspdxtools` when available); `stage\Lucent-files.txt`, the installed-file list that the next version's upgrade uses | `Lucent-Setup-<version>-x64.spdx.json` |
+| Licences | `stage\licenses\`: copyright files of the shipped ports, missing licence texts, Qt's LGPL-3.0 and GPL-3.0, `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` (beginning with the terms of Lucent's logo, from `assets\branding\provenance.json`, which must record them; with the third-party code inside Qt from Qt's own SBOMs, and the libraries linked statically into `Lucent.exe`), `Lucent.spdx.json` (SPDX 2.3, checked structurally and by `pyspdxtools` when available; the programs are `MIT AND` the logo's `LicenseRef-`); `stage\Lucent-files.txt`, the installed-file list that the next version's upgrade uses | `Lucent-Setup-<version>-x64.spdx.json` |
 | Builder paths | Every byte of every file of the folder is scanned for the build machine's folders: the user profile, the repository, the build tree, the vcpkg root, installed tree, buildtrees, packages and downloads folders, and any `X:\Users\<name>\` path, as 8-bit or UTF-16 text, with either separator and in any letter case. A hit (a PDB path in a DLL's debug directory, a `__FILE__` string, a path in a text file) stops the run with the file and byte offset. Setup and the manifest are scanned too | `builder-paths.txt`, `builder-paths.json` |
 | Installer | `installer\lucent.iss` with the version from CMake; Setup and the uninstaller signed when signing is configured | `Lucent-Setup-<version>-x64.exe`, `.exe.sha256`, `iscc.log` |
 | Manifest | Version, git commit, signing (certificate, test or release, timestamp, every signature checked), the update channel (and what `-UpdateChannel` declared), toolchain, audit summary (including the builder-path scan), SBOM summary, the RAW extensions of "Open with Lucent", every installed file with its SHA-256, the installer's size and SHA-256 (none with `-StageOnly`) | `Lucent-Setup-<version>-x64.manifest.json` |

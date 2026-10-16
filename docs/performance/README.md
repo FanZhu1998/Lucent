@@ -11,6 +11,7 @@ nothing here turns them into claims the data does not support.
 |---|---|---|---|
 | [2026-10-09](baseline-2026-10-09.md) | release preset, branch `feat/w12-hardening` (W12 part 1 working tree on e51dd65) | Ryzen 5 5500U, 11.9 GB, Windows 11 | the first baseline and the 1,000-file resilience gate (passed); the machine was a loaded development laptop (see the baseline) |
 | [2026-10-10](baseline-2026-10-10.md) | release preset, branch `feat/w13-lensfun` (the W13 closure working tree on d728f5f) | the same, idle | the lens corrections of exactly matched photos (W13, ADR 0023): `budgets.json` is derived from this baseline (ADR 0021, closure amendment of W13) |
+| [2026-10-15](baseline-2026-10-15.md) | release preset, branch `release/0.1.0` (80409e4, the 0.1.0 release candidate) | the same; every scenario started on a quiet machine; the display, the session and Lucent's window not recorded | the release checklist's gate 5: six preview budgets of 2026-10-10 exceeded, by the machine's state on the A/B measurement (its preview scenario measured alone and alternately with the 2026-10-10 baseline's code, `data/2026-10-15/scenario-alone/` and `ab-preview/`); recorded, but `budgets.json` is not derived from it while the change is unexplained (ADR 0021, amendment of the W12 release; COR-5 open) |
 
 ## The harness
 
@@ -92,13 +93,32 @@ whose four budgets the lens corrections exceed; ADR 0021, closure amendment of W
 exceed max(1.25 x median, 1.10 x the largest value), a memory peak 1.10 x the largest value, a rate
 may not fall below min(0.80 x median, 0.90 x the smallest value). Only measurements with at least
 three values and a small variation (CV at most 10 %, memory 5 %) are budgets; the other 11 are
-tracked with their reason (ADR 0021, decision 5). They hold for the reference machine only: measure
-an exceeded budget again with the machine idle before treating it as a regression (the 2026-10-10
-baseline measured its preview scenario again for that reason). The cold starts copy the installed
-layout afresh and the antivirus scans those copies afterwards: since the W12 release phase they run
-last, so no scenario of the same run follows them, but a second run started right after one with
-cold starts begins with the quiet wait for that reason. A budget whose measurement is missing or not
-trustworthy fails too (ADR 0021, decision 8): a new run is judged only on what it measured. And
+tracked with their reason (ADR 0021, decision 5). The 2026-10-15 baseline does not replace them
+(ADR 0021, decision 19): its exceeded preview figures are 26 to 60 % above 2026-10-10's medians, on
+the 2026-10-10 baseline's own code as on the 0.1.0 release candidate, for a cause not established,
+and budgets derived from it would sit 57 to 99 % above those medians, loose enough to pass a preview
+regression of that size if the machine returned to the state of the 2026-10-10 preview scenario.
+The 0.1.0 release's gate 5 therefore exceeds six preview budgets (`preview.r5.first_raw_frame`
+1,558 ms against at most 1,490 ms, `preview.r5.view_100` 2,074 against 1,840 ms,
+`preview.a7iv.view_100` 1,952 against 1,940 ms, `preview.dji.view_100` 1,125 against 1,020 ms,
+`preview.z6.first_raw_frame` 1,611 against 1,270 ms, `preview.z6.view_100` 2,140 against 2,020 ms;
+it also fails `edit.z6.exposure_step`, which rests on two of its three values) and passes by the
+release checklist's rule that each exceedance is explained in the release notes, on the A/B evidence
+of the 2026-10-15 baseline. COR-5 stays open: the budgets are derived again from a baseline measured
+with the display on, the session unlocked and Lucent's windows visible, and recorded as such. They
+hold for the reference machine only: measure an exceeded budget again with the machine idle before
+treating it as a regression (the 2026-10-10 baseline measured its preview scenario again for that
+reason), and if it still fails, build the code the budgets' baseline measured and measure the
+scenario alternately with the new build, base and new twice each (the A/B measurement, ADR 0021,
+decision 20): the new build is a regression when it is slower than the base by more than the base's
+spread in the session (the largest minus the smallest of its six values) in both pairs, and the
+machine's state has changed when it is slower by more than that in neither pair and the base exceeds
+the budget in both of its runs; anything else is measured with more pairs. The cold starts copy the
+installed layout afresh and the antivirus scans those copies afterwards: since the W12 release phase
+they run last, so no scenario of the same run follows them, but a second run started right after one
+with cold starts begins with the quiet wait for that reason. A budget whose measurement is missing or
+not trustworthy fails too (ADR 0021, decision 8): a new run is judged only on what it measured. And
 `Test-BenchBudgets.ps1` judges a run only when every scenario it reads started on a quiet machine
-(decision 17): a busy start, a skipped wait or no record (both baselines predate the wait) ends the
-check with exit code 3, and `-Create` writes no budgets, unless `-AllowBusyMachine` accepts them.
+(decision 17): a busy start, a skipped wait or no record (the 2026-10-09 and 2026-10-10 baselines
+predate the wait; the 2026-10-15 baseline records a quiet start for every scenario) ends the check
+with exit code 3, and `-Create` writes no budgets, unless `-AllowBusyMachine` accepts them.

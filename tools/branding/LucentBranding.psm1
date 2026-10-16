@@ -12,6 +12,8 @@ tools\package.ps1 and the CTest suites lucent_branding_tests and lucent_program_
                               and returns the derivatives by role: what tools\package.ps1 and the tests use
     Test-BrandingProvenance   provenance.json, the hand-written record of where the master comes from and
                               on which terms it is used, against the master's bytes
+    Get-BrandingLicence       the logo's terms as provenance.json records them, for the installed notices
+                              and the SBOM (tools\package.ps1)
     Test-IconFile             the structure of an .ico (sizes, depth, alpha, PNG and BMP images, Windows'
                               own reading of each image)
     Test-ProgramIcon          an executable carries the branding icon as an icon group, image for image
@@ -40,6 +42,11 @@ $script:ManifestName = 'manifest.json'
 $script:ProvenanceDocument = 'provenance.json'
 $script:ProvenanceSchema = 'lucent.branding-provenance'
 $script:ProvenanceSchemaVersion = 1
+# Its licence member in the form packaging states (ADR 0025, amendment of 2026-10-15): the terms' SPDX
+# identifier (a licence reference: "LicenseRef-" and letters, digits, '.' and '-'), a name, the text and
+# the date of the owner's decision.
+$script:LicenceMembers = @('id', 'name', 'text', 'decided')
+$script:LicenceIdPattern = '^LicenseRef-[A-Za-z0-9.-]+$'
 # Files of the folder that the manifest does not list: itself and the README (documentation).
 $script:UnlistedFiles = @('manifest.json', 'README.md')
 
@@ -349,7 +356,15 @@ function Test-BrandingProvenance {
           modifications            what was changed in the master before it was committed
           licence                  the logo's licence terms as the project owner decided them, or null
                                    while they are undecided (a release needs them: docs\release\
-                                   checklist.md, gate 8)
+                                   checklist.md, gate 8). Either an object (since 2026-10-15; the form
+                                   packaging needs, Get-BrandingLicence) of exactly
+                                     id       the terms' SPDX licence reference, "LicenseRef-" followed by
+                                              letters, digits, '.' and '-' (the SBOM names them by it)
+                                     name     a short name of the terms
+                                     text     the terms in full, as plain text
+                                     decided  the date of the owner's decision (YYYY-MM-DD)
+                                   or the terms as text, the first form of version 1, still accepted
+                                   (ADR 0025, amendment of 2026-10-15)
           licence_status           the state of that decision, in words
     #>
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][byte[]]$MasterBytes)
@@ -372,8 +387,8 @@ function Test-BrandingProvenance {
         if ($value -isnot [string] -or -not $value.Trim()) { $problems.Add("$name`: $member must be text") }
     }
     if ([string](Get-Property $record 'supplied') -cnotmatch '^\d{4}-\d{2}-\d{2}$') { $problems.Add("$name`: supplied must be a date (YYYY-MM-DD)") }
-    $licence = Get-Property $record 'licence'
-    if ($null -ne $licence -and ($licence -isnot [string] -or -not $licence.Trim())) { $problems.Add("$name`: licence must be text, or null while it is undecided") }
+    $licence = Get-MemberValue $record 'licence'
+    foreach ($problem in @(Test-BrandingLicenceMember $licence $name)) { $problems.Add($problem) }
     $origin = Get-Property $record 'origin'
     $originMembers = @(if ($origin -is [System.Management.Automation.PSCustomObject]) { $origin.PSObject.Properties })
     if ($originMembers.Count -eq 0) { $problems.Add("$name`: origin must be an object with at least one member") }
@@ -390,6 +405,81 @@ function Test-BrandingProvenance {
             $name, (Get-Property $master 'size'), (Get-Property $master 'sha256'), $MasterBytes.Length, $sha256))
     }
     return $problems.ToArray()
+}
+
+function Get-MemberValue($Object, [string]$Name) {
+    # A member's value as it is. Get-Property returns it through the pipeline, which unrolls an array of
+    # one element into that element (and an empty one into nothing), so a hand-written ["terms"] would
+    # pass for text; the comma keeps the value whole.
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return ,$property.Value
+}
+
+function Test-IsoDate($Value) {
+    # A calendar date written YYYY-MM-DD.
+    $date = [datetime]::MinValue
+    return ($Value -is [string] -and $Value -cmatch '^\d{4}-\d{2}-\d{2}$' -and
+            [datetime]::TryParseExact($Value, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture,
+                                      [System.Globalization.DateTimeStyles]::None, [ref]$date))
+}
+
+function Test-BrandingLicenceMember($Licence, [string]$Name) {
+    # provenance.json's licence (Test-BrandingProvenance): null while the owner has not decided, the terms
+    # as text (the first form of version 1), or an object of id, name, text and decided. Returns the
+    # problems.
+    if ($null -eq $Licence) { return @() }
+    if ($Licence -is [string]) {
+        if (-not $Licence.Trim()) { return @("$Name`: licence is empty: give the terms, or null while they are undecided") }
+        return @()
+    }
+    if ($Licence -isnot [System.Management.Automation.PSCustomObject]) {
+        return @("$Name`: licence must be an object ($($script:LicenceMembers -join ', ')), the terms as text, or null while they are undecided")
+    }
+    $problems = @(Test-ExactMembers $Licence $script:LicenceMembers "$Name's licence")
+    $id = Get-MemberValue $Licence 'id'
+    if ($id -isnot [string] -or $id -cnotmatch $script:LicenceIdPattern) {
+        $problems += "$Name`: licence.id '$id' is not an SPDX licence reference (LicenseRef- followed by letters, digits, '.' and '-')"
+    }
+    foreach ($member in @('name', 'text')) {
+        $value = Get-MemberValue $Licence $member
+        if ($value -isnot [string] -or -not $value.Trim()) { $problems += "$Name`: licence.$member must be text" }
+    }
+    $decided = Get-MemberValue $Licence 'decided'
+    if (-not (Test-IsoDate $decided)) { $problems += "$Name`: licence.decided must be a date (YYYY-MM-DD)" }
+    return $problems
+}
+
+function Get-BrandingLicence {
+    <#
+    .SYNOPSIS
+        The logo's licence terms as provenance.json records them, for the installed notices and the SBOM
+        (tools\package.ps1; ADR 0025, amendment of 2026-10-15).
+    .DESCRIPTION
+        -Asset is what Read-BrandingAsset returns (so provenance.json has the size and SHA-256 the
+        manifest lists), and the record must be valid and describe the master
+        (Test-BrandingProvenance). Its licence must be the object form: a logo whose terms are undecided
+        (null) cannot be stated in the notices, and terms recorded as text alone have no identifier for the
+        SBOM; both are refused, as packaging refuses a component whose licence is unknown.
+    .OUTPUTS
+        Id (the SPDX licence reference), Name, Text, Decided (YYYY-MM-DD), Status (licence_status) and the
+        branding Version.
+    #>
+    param([Parameter(Mandatory)]$Asset)
+    $path = Join-Path $Asset.Root $script:ProvenanceDocument
+    $problems = @(Test-BrandingProvenance -Path $path -MasterBytes ([System.IO.File]::ReadAllBytes($Asset.Master.FullPath)))
+    if ($problems.Count -gt 0) { throw ("$path is not valid:`n  " + ($problems -join "`n  ")) }
+    $record = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+    $licence = Get-MemberValue $record 'licence'
+    if ($null -eq $licence) {
+        throw "Lucent's logo has no recorded licence terms ($path`: licence is null; ""$(Get-Property $record 'licence_status')""). The project owner decides them, and they are recorded before packaging states them in the notices and the SBOM (assets\branding\README.md, ""Licence""; docs\release\checklist.md, gate 8)."
+    }
+    if ($licence -is [string]) {
+        throw "$path records the logo's terms as text alone, without the identifier the SBOM names them by. Record them as an object of id (an SPDX LicenseRef- identifier), name, text and decided (assets\branding\README.md, ""Licence"")."
+    }
+    return [pscustomobject]@{
+        Id = [string]$licence.id; Name = [string]$licence.name; Text = [string]$licence.text; Decided = [string]$licence.decided
+        Status = [string](Get-Property $record 'licence_status'); Version = [string]$Asset.Version }
 }
 
 function Invoke-BrandingRendering {
@@ -956,6 +1046,6 @@ function New-ProgramIconSheet {
 }
 
 Export-ModuleMember -Function Initialize-BrandingType, Get-IconPadding, Get-BrandingRecipe, ConvertTo-CanonicalJson, Compare-SemanticVersion,
-    Test-SemanticVersion, Read-BrandingMaster, Test-BrandingProvenance, Invoke-BrandingRendering, Read-BrandingAsset, Get-BrandingFiles,
+    Test-SemanticVersion, Read-BrandingMaster, Test-BrandingProvenance, Get-BrandingLicence, Invoke-BrandingRendering, Read-BrandingAsset, Get-BrandingFiles,
     Invoke-BrandingGenerator, Test-IconFile, Get-ProgramIconGroups, Test-ProgramIcon, New-BrandingContactSheet, New-ProgramIconSheet, Get-BrandingRemedy, Test-BrandingPath,
     Get-BytesSha256

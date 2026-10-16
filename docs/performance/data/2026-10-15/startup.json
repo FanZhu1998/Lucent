@@ -1,0 +1,553 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "startup",
+  "description": "Lucent.exe --measure with an empty library. cold: first start of a fresh copy of the installed layout made with unbuffered I/O (robocopy /J) and a new data root; warm: the same copy and data root started again right after. window_loaded_ms: QML window created; first_frame_ms: first frame presented (both from process creation).",
+  "repetitions": 3,
+  "measured_at": "2026-10-15T19:10:29Z",
+  "quiet_before": {
+    "quiet": true,
+    "waited_s": 12.3,
+    "samples": [10.3,9.6,11.8,2.5,3,4.4],
+    "busiest_process_percent": [99,102,100,17,12,21],
+    "max_cpu_percent": 10,
+    "max_process_percent": 25,
+    "consecutive": 3,
+    "sample_ms": 2000,
+    "timeout_s": 300
+  },
+  "summary": {
+    "cold": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.window_loaded_ms": {
+        "n": 3,
+        "median": 2932,
+        "p95": 3020,
+        "min": 2912,
+        "max": 3020,
+        "mean": 2954.667,
+        "stdev": 57.457,
+        "cv": 0.019
+      },
+      "metrics.first_frame_ms": {
+        "n": 3,
+        "median": 3132,
+        "p95": 3371,
+        "min": 3106,
+        "max": 3371,
+        "mean": 3203,
+        "stdev": 146.072,
+        "cv": 0.046
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 195.6,
+        "p95": 195.9,
+        "min": 195.4,
+        "max": 195.9,
+        "mean": 195.633,
+        "stdev": 0.252,
+        "cv": 0.001
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 160.4,
+        "p95": 160.7,
+        "min": 160.3,
+        "max": 160.7,
+        "mean": 160.467,
+        "stdev": 0.208,
+        "cv": 0.001
+      },
+      "metrics.process.cpu_s": {
+        "n": 3,
+        "median": 1.28,
+        "p95": 1.28,
+        "min": 1.2,
+        "max": 1.28,
+        "mean": 1.253,
+        "stdev": 0.046,
+        "cv": 0.037
+      },
+      "seconds": {
+        "n": 3,
+        "median": 6.062,
+        "p95": 6.163,
+        "min": 5.56,
+        "max": 6.163,
+        "mean": 5.928,
+        "stdev": 0.323,
+        "cv": 0.055
+      }
+    },
+    "warm": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.window_loaded_ms": {
+        "n": 3,
+        "median": 757,
+        "p95": 775,
+        "min": 735,
+        "max": 775,
+        "mean": 755.667,
+        "stdev": 20.033,
+        "cv": 0.027
+      },
+      "metrics.first_frame_ms": {
+        "n": 3,
+        "median": 864,
+        "p95": 882,
+        "min": 840,
+        "max": 882,
+        "mean": 862,
+        "stdev": 21.071,
+        "cv": 0.024
+      },
+      "metrics.process.peak_working_set_mib": {
+        "n": 3,
+        "median": 188.3,
+        "p95": 188.5,
+        "min": 187.1,
+        "max": 188.5,
+        "mean": 187.967,
+        "stdev": 0.757,
+        "cv": 0.004
+      },
+      "metrics.process.peak_commit_mib": {
+        "n": 3,
+        "median": 157.8,
+        "p95": 158.6,
+        "min": 156.9,
+        "max": 158.6,
+        "mean": 157.767,
+        "stdev": 0.85,
+        "cv": 0.005
+      },
+      "metrics.process.cpu_s": {
+        "n": 3,
+        "median": 0.98,
+        "p95": 1.02,
+        "min": 0.98,
+        "max": 1.02,
+        "mean": 0.993,
+        "stdev": 0.023,
+        "cv": 0.023
+      },
+      "seconds": {
+        "n": 3,
+        "median": 3.436,
+        "p95": 3.725,
+        "min": 3.186,
+        "max": 3.725,
+        "mean": 3.449,
+        "stdev": 0.27,
+        "cv": 0.078
+      }
+    }
+  },
+  "extra": {
+    "app_dir": "build\\rel-0.1.0-perf\\package\\stage"
+  },
+  "runs": [
+    {
+      "name": "warm",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.609,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\warm-warmup.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 295,
+        "window_loaded_ms": 910,
+        "first_frame_ms": 1038,
+        "ui": {
+          "seconds": 2.3,
+          "ticks": 122,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 188.7,
+          "peak_commit_mib": 158,
+          "commit_mib": 130.8,
+          "cpu_s": 1.02,
+          "user_s": 0.64,
+          "kernel_s": 0.38,
+          "wall_s": 3.23
+        }
+      },
+      "resources": {
+        "wall_s": 3.609,
+        "cpu_s": 1.266,
+        "cpu_percent_of_machine": 2.923,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 158.016,
+          "peak_working_set_mib": 188.684,
+          "cpu_s": 1.266
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3094.531
+        }
+      }
+    },
+    {
+      "name": "cold",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.163,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\cold-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 2220,
+        "window_loaded_ms": 3020,
+        "first_frame_ms": 3371,
+        "ui": {
+          "seconds": 2.8,
+          "ticks": 122,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 195.6,
+          "peak_commit_mib": 160.7,
+          "commit_mib": 133.4,
+          "cpu_s": 1.2,
+          "user_s": 0.63,
+          "kernel_s": 0.58,
+          "wall_s": 5.83
+        }
+      },
+      "resources": {
+        "wall_s": 6.163,
+        "cpu_s": 1.422,
+        "cpu_percent_of_machine": 1.923,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 160.656,
+          "peak_working_set_mib": 195.629,
+          "cpu_s": 1.422
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3083.473
+        }
+      }
+    },
+    {
+      "name": "warm",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.725,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\warm-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 221,
+        "window_loaded_ms": 775,
+        "first_frame_ms": 882,
+        "ui": {
+          "seconds": 2.7,
+          "ticks": 117,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 188.5,
+          "peak_commit_mib": 157.8,
+          "commit_mib": 130.6,
+          "cpu_s": 0.98,
+          "user_s": 0.66,
+          "kernel_s": 0.33,
+          "wall_s": 3.48
+        }
+      },
+      "resources": {
+        "wall_s": 3.725,
+        "cpu_s": 1.203,
+        "cpu_percent_of_machine": 2.692,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 157.797,
+          "peak_working_set_mib": 188.461,
+          "cpu_s": 1.203
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3095.738
+        }
+      }
+    },
+    {
+      "name": "cold",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.062,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\cold-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 2022,
+        "window_loaded_ms": 2932,
+        "first_frame_ms": 3132,
+        "ui": {
+          "seconds": 2.8,
+          "ticks": 125,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 195.9,
+          "peak_commit_mib": 160.3,
+          "commit_mib": 133,
+          "cpu_s": 1.28,
+          "user_s": 0.78,
+          "kernel_s": 0.5,
+          "wall_s": 5.76
+        }
+      },
+      "resources": {
+        "wall_s": 6.062,
+        "cpu_s": 1.5,
+        "cpu_percent_of_machine": 2.062,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 160.281,
+          "peak_working_set_mib": 195.938,
+          "cpu_s": 1.5
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3086.301
+        }
+      }
+    },
+    {
+      "name": "warm",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.186,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\warm-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 225,
+        "window_loaded_ms": 735,
+        "first_frame_ms": 840,
+        "ui": {
+          "seconds": 2.2,
+          "ticks": 117,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 187.1,
+          "peak_commit_mib": 156.9,
+          "commit_mib": 129.6,
+          "cpu_s": 0.98,
+          "user_s": 0.56,
+          "kernel_s": 0.42,
+          "wall_s": 2.96
+        }
+      },
+      "resources": {
+        "wall_s": 3.186,
+        "cpu_s": 1.219,
+        "cpu_percent_of_machine": 3.188,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 156.852,
+          "peak_working_set_mib": 187.055,
+          "cpu_s": 1.219
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3091.578
+        }
+      }
+    },
+    {
+      "name": "cold",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 5.56,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\cold-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 2009,
+        "window_loaded_ms": 2912,
+        "first_frame_ms": 3106,
+        "ui": {
+          "seconds": 2.3,
+          "ticks": 121,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 195.4,
+          "peak_commit_mib": 160.4,
+          "commit_mib": 133.2,
+          "cpu_s": 1.28,
+          "user_s": 0.72,
+          "kernel_s": 0.56,
+          "wall_s": 5.24
+        }
+      },
+      "resources": {
+        "wall_s": 5.56,
+        "cpu_s": 1.516,
+        "cpu_percent_of_machine": 2.272,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 160.387,
+          "peak_working_set_mib": 195.434,
+          "cpu_s": 1.516
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3090.441
+        }
+      }
+    },
+    {
+      "name": "warm",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 3.436,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\startup\\warm-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 224,
+        "window_loaded_ms": 757,
+        "first_frame_ms": 864,
+        "ui": {
+          "seconds": 2.4,
+          "ticks": 112,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 6,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 188.3,
+          "peak_commit_mib": 158.6,
+          "commit_mib": 131.4,
+          "cpu_s": 1.02,
+          "user_s": 0.58,
+          "kernel_s": 0.44,
+          "wall_s": 3.21
+        }
+      },
+      "resources": {
+        "wall_s": 3.436,
+        "cpu_s": 1.219,
+        "cpu_percent_of_machine": 2.955,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 158.598,
+          "peak_working_set_mib": 188.262,
+          "cpu_s": 1.219
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3082.695
+        }
+      }
+    }
+  ]
+}

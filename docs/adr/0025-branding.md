@@ -1,7 +1,8 @@
 # ADR 0025: Lucent's logo: one master, generated derivatives found by role, and the icon in the programs, the window and Setup
 
 - **Status:** Accepted (amended 2026-10-15 by the W12 release review: "Amendment: the branding review"
-  below; the asset is branding 1.0.1)
+  below, branding 1.0.1; and on 2026-10-15 for the owner's decision on the logo's terms: "Amendment:
+  the logo's licence terms" below; the asset is branding 1.0.2)
 - **Date:** 2026-10-14
 - **Workflow:** W12 (Release hardening), release phase: branding
 - **Amends:** ADR 0009 (Setup's icon and wizard images, the programs' icon and version resources, and
@@ -518,3 +519,91 @@ rules, and statements that were not quite true.
   level), its plate at the text column's leftmost glyph pixel; the regenerated contact sheet differs
   from the first one only in the version in its title (`build\wl-brand-evidence\2026-10-15`, with a
   README).
+
+## Amendment: the logo's licence terms (2026-10-15)
+
+Decision 12 left the logo's licence terms to the owner, and the release waited for them (release
+checklist, gate 8). On 2026-10-15 the owner, Fan Zhu, chose from the options offered "All rights
+reserved": "You keep all rights; others may show it only to refer to Lucent." Asked the same day
+whether the terms should say that they never limit what the GNU LGPL requires Lucent's terms to
+allow (LGPL-2.1 section 6, LGPL-3.0 section 4: modification of the work for the customer's own use
+and reverse engineering for debugging such modifications), the owner chose to add that sentence, and
+to keep the conventional copyright notice.
+
+27. **The terms** (decision 12, item 23). The logo is not covered by the MIT License that covers
+    Lucent's source code; all rights are reserved by its owner, Fan Zhu; others may show it,
+    unmodified, only to refer to Lucent; and these terms do not limit the GNU LGPL's rights. In the
+    words recorded and stated everywhere below:
+
+    > Copyright (c) 2026 Fan Zhu. All rights reserved. Lucent's logo is not covered by the MIT
+    > License that covers Lucent's source code. Others may show it, unmodified, only to refer to
+    > Lucent. These terms do not limit the rights the GNU LGPL gives you to modify Lucent and its
+    > LGPL libraries for your own use and to reverse engineer Lucent for debugging such
+    > modifications.
+
+    Their identifier is `LicenseRef-Lucent-Logo`, an SPDX licence reference (they are no licence of
+    the SPDX list). They cover the master, every derivative, and the logo as the programs, Setup and
+    the README show it. The provenance facts (the Context, decision 1) stay as they are, and so do the
+    programs' version information (`LegalCopyright` "Copyright (c) 2026 Fan Zhu. MIT License.", item
+    23) and Setup's `AppCopyright`.
+28. **`provenance.json`'s licence is an object** (decisions 1, 2 and 12). The schema stays
+    "lucent.branding-provenance" version 1, extended compatibly: `licence` is `null` while the owner
+    has not decided, the terms as text (the form version 1 had, still accepted), or an object of
+    exactly `id` (the terms' SPDX licence reference: `LicenseRef-` followed by letters, digits, `.` and
+    `-`), `name`, `text` (the terms in full) and `decided` (the date of the decision). The generator
+    refuses anything else: another type, an array (even of one text, which PowerShell would otherwise
+    unroll into text), an identifier that is not a `LicenseRef-`, empty terms, a date that does not
+    exist, a missing or an unknown member. The record now holds the terms above as that object, and
+    `licence_status` says who decided what and when. Only `provenance.json` changed, so the asset is
+    branding **1.0.2** (a PATCH, item 19); every image and `branding.json` are byte for byte those of
+    1.0.1.
+29. **Packaging states the terms** (amends decision 10, under which the notices and the SBOM did not
+    change for the logo, and ADR 0009's item 30). `Get-BrandingLicence` reads them from the verified
+    asset; `tools\package.ps1` calls it right after verifying the asset, before the layout, and passes
+    them on. `THIRD-PARTY-NOTICES.txt` begins with Lucent's own notice, "distributed under the MIT
+    License ..., except its logo", then says where the logo is (the icon of `Lucent.exe`,
+    `lucent-worker.exe`, Setup and its uninstaller; Lucent's window, Help > About and Setup's wizard)
+    and states the terms, once, before the third-party list. The SBOM gives `Lucent.exe`,
+    `lucent-worker.exe` and Lucent's package the licence `MIT AND LicenseRef-Lucent-Logo` (for the
+    package concluded and declared), with the terms as an extracted licensing info.
+    `Lucent-LICENSE.txt` stays the MIT text of `LICENSE`, and `LGPL-NOTICE.txt` ("Lucent's own code
+    ... MIT License") is unchanged. Packaging refuses a logo whose terms are undecided (`null`) or
+    recorded as text alone (no identifier for the SBOM), as it refuses a component whose licence is
+    unknown; a new logo records its terms with its provenance. The licence policy's checks (the
+    copyleft guard, the source provision) concern the shipped components and are unaffected; its
+    comment says where the logo's terms come from.
+30. **Where the decision is stated.** `assets/branding/provenance.json` and the asset's README
+    ("Licence", with the record's form); the repository's README ("Licence": Lucent's source is MIT,
+    the logo is excluded, with a link to the asset's README; `LICENSE` is unchanged); the installed
+    notices and the SBOM (item 29); the [licence ledger](../legal/third-party-notices.md) (a row for
+    the logo, and the Lucent row's exception); the release checklist's gate 8, met for 0.1.0 and kept
+    as the rule for a change of the terms; the roadmap; `docs/development/setup.md`;
+    `installer\license-policy.json`'s comment.
+
+### Evidence (2026-10-15)
+
+- **The asset.** `Update-Branding.ps1 -Version 1.0.2` wrote `manifest.json` only (`provenance.json`
+  from 1,709 to 2,147 bytes, SHA-256 `41db697b013f09d97c1e5e255a30b996a4ef7132c1b3c82d7ad04b19fd8b0533`);
+  `Update-Branding.ps1 -Check` passes.
+- **Tests.** `lucent_branding_tests` (`Test-Branding.ps1`): 279 checks (259 before), 0 failed. New:
+  the committed record's terms are what `Get-BrandingLicence` returns; BRD-03's licence changed by
+  hand works on any form of the member (it replaced the text `"licence": null`, which is gone); the
+  three accepted forms and eleven refused ones; `Get-BrandingLicence` refuses a copy whose terms are
+  `null` or text alone and returns those of the object with the branding version, and that copy
+  passes `-Check`. A first version of the check accepted `"licence": ["a"]`, unrolled into text; it
+  now reads the member whole. `lucent_setup_branding_tests` (`Test-SetupBranding.ps1`, ISCC): 20
+  checks; `lucent_program_icon_tests` (`Test-ProgramIcons.ps1`, the programs of the build below): 19
+  checks; 0 failed.
+- **The package** (`tools\package.ps1 -BuildDir build\lic-logo -Jobs 6 -UpdateChannel none
+  -StageOnly`, the release preset built into a new folder; commit `973c11d` with this change
+  uncommitted, so `gitDirty` is true): the audit passed (344 files, 70 PE files), the smoke run too,
+  both programs carry `IDI_ICON1` with the icon's ten images byte for byte; the same 23 components
+  and two data assets; `THIRD-PARTY-NOTICES.txt` states the terms at its top, and nowhere else in
+  `licenses\` but the SBOM; `Lucent-LICENSE.txt` is `LICENSE` byte for byte; the SBOM (107 packages,
+  545 files, 708 relationships) gives the two programs and Lucent's package
+  `MIT AND LicenseRef-Lucent-Logo` and was validated by `pyspdxtools` (spdx-tools 0.8.5, the tools
+  environment): the manifest records `sbom.validatedBy` `pyspdxtools`, `audit.errors` 0 and
+  `audit.builderPaths.hits` 0 (none in 493 files). A copy of that SBOM without the logo's extracted
+  licensing info is refused by `pyspdxtools` ("Unrecognized license reference:
+  LicenseRef-Lucent-Logo", four times); the copy re-serialised unchanged passes. The
+  corresponding-source archive: 132,480,210 bytes, 110 files. The build folder was deleted afterwards.

@@ -142,11 +142,12 @@ A release publishes both, after the gates of the [release checklist](docs/releas
   Windows SmartScreen may warn before the installer runs; compare the installer's SHA-256 with the
   one published beside it. Unsigned releases do not offer updates through **Check for updates**:
   install the next version over the previous one.
-- **Licences.** The installation folder's `licenses` subfolder holds the third-party notices, the
-  LGPL information for Qt, LibRaw, Lensfun, GLib, GNU libintl and GNU libiconv (your right to
-  replace their DLLs, and the name, size and SHA-256 of the corresponding-source archive published
-  with the installer), every licence text, the build recipes of the two libraries Lucent patches,
-  the Lensfun lens database's CC BY-SA 3.0 licence, and a software bill of materials (SPDX).
+- **Licences.** The installation folder's `licenses` subfolder holds the third-party notices (which
+  state the terms of Lucent's logo after Lucent's own notice), the LGPL information for Qt, LibRaw, Lensfun, GLib, GNU
+  libintl and GNU libiconv (your right to replace their DLLs, and the name, size and SHA-256 of the
+  corresponding-source archive published with the installer), every licence text, the build recipes
+  of the two libraries Lucent patches, the Lensfun lens database's CC BY-SA 3.0 licence, and a
+  software bill of materials (SPDX).
 
 ## Repository layout
 
@@ -253,9 +254,11 @@ with GLib, GNU libintl and GNU libiconv) are separate DLLs that Lucent loads dyn
 you may replace with your own builds; every release publishes their complete corresponding source,
 `Lucent-<version>-corresponding-source.zip`, beside its installer, with instructions to rebuild
 them. The bundled Lensfun lens database is used unmodified under CC BY-SA 3.0, and the installer is
-made with Inno Setup under its non-commercial terms. Lucent's logo (`assets/branding`) is not
-covered by the MIT License: its licence terms are not decided yet, and the project owner records them
-in `assets/branding/provenance.json` and the asset's [README](assets/branding/README.md) before the
-first release. See
+made with Inno Setup under its non-commercial terms. Lucent's logo is excluded from the MIT License:
+the images in `assets/branding` and the logo built from them into `Lucent.exe`, `lucent-worker.exe`
+and Setup are copyright (c) 2026 Fan Zhu, all rights reserved, and others may show them,
+unmodified, only to refer to Lucent. These terms do not limit what the GNU LGPL allows you to do
+with Lucent and its LGPL libraries; the full terms are in the asset's
+[README](assets/branding/README.md#licence). See
 [ADR 0003](docs/adr/0003-linking-and-licensing.md), [ADR 0024](docs/adr/0024-release-and-licensing.md)
 and the [licence ledger](docs/legal/third-party-notices.md).

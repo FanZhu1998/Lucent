@@ -5,7 +5,9 @@
   2026-10-10" below; amended 2026-10-10 by the W12 release phase: "Amendment: the scenario order
   and a quiet machine" below; amended 2026-10-15 by the W12 release review: "Amendment: a quiet
   machine is required, and judged per process" and "Amendment: a run ended at its timeout waits for
-  its processes" below)
+  its processes" below; amended 2026-10-15 for the W12 release (COR-5, still open): "Amendment: the
+  baseline of 2026-10-15, the budgets of 2026-10-10 kept, and an exceeded budget told from the
+  machine's state" below)
 - **Date:** 2026-10-09
 - **Workflow:** W12 (release hardening), the performance report
 
@@ -387,3 +389,116 @@ enough.
 30 runs recorded a process of the ended run as running (`conhost.exe`, in two of them also
 `PING.EXE`), after it none. `lucent_bench_harness_tests` (191 checks) passed in the release review's
 fresh `dev` and release test runs, which include the change.
+
+## Amendment: the baseline of 2026-10-15, the budgets of 2026-10-10 kept, and an exceeded budget told from the machine's state (W12 release, COR-5, 2026-10-15)
+
+The release checklist's gate 5 measured the 0.1.0 release candidate (the `release` preset of
+80409e4) with every scenario started on a quiet machine (decisions 15 to 17). Against the budgets of
+the 2026-10-10 baseline it failed seven: six of the preview scenario (the first RAW frame of the R5
+and the Z 6, and the 100 % views of the R5, the ILCE-7M4, the DJI FC4382 and the Z 6: 0.6 to 27 %
+over their budgets, 26 to 59 % above that baseline) and `edit.z6.exposure_step`, which rested on two
+of its three values (a frame published but never recorded as shown, as once in the first baseline).
+The preview scenario measured again alone failed the same six. Neither earlier baseline can give
+the budgets again without `-AllowBusyMachine`, since both predate the quiet wait (decision 17), and
+the idle-machine baseline that decisions 9 and 11 and the scenario-order amendment left to the
+release phase (COR-5) was still to be measured.
+
+19. **The baseline of 2026-10-15 is recorded; the budgets stay those of 2026-10-10.**
+    [`docs/performance/baseline-2026-10-15.md`](../performance/baseline-2026-10-15.md), with its data
+    in `docs/performance/data/2026-10-15/` (the run; the preview scenario measured again alone, in
+    `scenario-alone/`; the A/B runs of decision 20, in `ab-preview/`; each with its machine record):
+    the release build of the 0.1.0 release candidate, all ten scenarios in the fixed order, three
+    repetitions, every scenario started on a quiet machine, the reference machine on AC power.
+    `budgets.json` is not derived from it. Its exceeded preview figures are 26 to 60 % above
+    2026-10-10's medians in every run of the day, the 2026-10-10 baseline's own code included
+    (decision 20's evidence below), the cause is not established, and budgets derived from it would
+    sit 57 to 99 % above those medians (the Z 6's first RAW frame at most 2,020 ms against its median
+    of 1,015 ms), so a preview regression of that size would pass if the machine returned to the
+    state in which the 2026-10-10 preview scenario was measured. A budget is not loosened on an
+    unexplained change of the machine's state: `budgets.json` keeps the 79 measurements of
+    2026-10-10, 68 budgets and 11 tracked, `Test-BenchBudgets.ps1` still defaults to that baseline,
+    and `lucent_bench_harness_tests` still checks the gate on it. The 0.1.0 release's gate 5 exceeds
+    six of its preview budgets (`preview.r5.first_raw_frame` 1,558 ms against at most 1,490 ms,
+    `preview.r5.view_100` 2,074 against 1,840 ms, `preview.a7iv.view_100` 1,952 against 1,940 ms,
+    `preview.dji.view_100` 1,125 against 1,020 ms, `preview.z6.first_raw_frame` 1,611 against
+    1,270 ms, `preview.z6.view_100` 2,140 against 2,020 ms) and fails `edit.z6.exposure_step` on two
+    of its three values (60 ms, within its 68.8 ms); it passes by the release checklist's rule that
+    each exceedance is explained in the release notes: the six as the machine's state on the A/B
+    evidence (decision 20), the exposure step as a repetition that recorded no value. Every other
+    budget held, the warm start's too, now measured last and after a quiet wait (0.76 s to the
+    window, 0.86 s to the first frame, 188 MiB), which the amendment "a quiet machine is required, and
+    judged per process" left open. **COR-5 stays open:** the budgets are derived again from a
+    baseline measured with the display on, the session unlocked and Lucent's windows visible, and
+    recorded as such (the follow-up below). Decision 9's other half is not done either: the
+    over-images statistics are still gated on the median of their images' repetition CVs, not on the
+    repetition variability of the statistic itself, which `Test-BenchBudgets.ps1` does not compute;
+    computed by hand on the 2026-10-15 run it is 0.2 to 2.2 %, so the same six statistics would be
+    budgets either way.
+20. **An exceeded budget is told from the machine's state by an A/B measurement.** When a run
+    exceeds a budget and the scenario measured again on a quiet machine still does (decision 5), the
+    code the budgets' baseline measured is built with the same preset in a temporary worktree and
+    staged, and the scenario is measured alternately with the new build on the same machine in one
+    session, with one harness: base, new, base, new, two pairs. For each exceeded figure, the base's
+    spread is the largest minus the smallest of its six values in the session (three repetitions in
+    each of its two runs), and a pair's difference is the new build's median minus the base's.
+    - *A regression:* the new build is slower than the base by more than the spread in both pairs. It
+      is fixed, or recorded as a cost with a new baseline (decision 5), whether or not the base
+      exceeds the budget too.
+    - *The machine's state:* the new build is slower by more than the spread in neither pair, and the
+      base exceeds the budget in both of its runs. The machine's state has changed since the
+      baseline, not the code: the exceedance is no regression, and the budgets change only with a new
+      baseline, recorded here with that evidence.
+    - *Anything else* (one pair beyond the spread, or the base within the budget) is measured with
+      more pairs before it is judged.
+
+    A difference within the spread counts for nothing, so a figure is never both. The runs' JSON and
+    machine records are kept with the baseline that relies on them.
+
+**Evidence (2026-10-15).** The code the 2026-10-10 baseline measured, as merged into main before the
+W12 release phase (f2faf0e), built with the release preset, and the release candidate measured the
+preview scenario alternately within 11 minutes (`docs/performance/data/2026-10-15/ab-preview/`:
+base1, head1, base2, head2). Each of the four runs exceeded the same six preview budgets of
+2026-10-10 as the release run, and decision 20 judges all six the machine's state: the W13 code
+exceeds each in both of its runs, and in neither pair is the release candidate slower by more than
+the W13 code's spread (the ILCE-7M4's 100 % view, for example, 5 and 2 ms slower against a spread
+of 500 ms; the largest difference, the R5's 100 % view in the second pair, 220 ms against 830 ms).
+Averaged over each build's two runs, the medians differ by at most 5 % per figure, in either
+direction, except the X-T4's 100 % view, which varies most from run to run; the full-size render
+and the peak working set are the same, and the release candidate's window is created 0.11 s earlier
+(median of 30 runs each), consistent with the lens database loading off the UI thread (ADR 0023,
+"Amendment: the lens database off the UI thread"). The harness's changes since 2026-10-10 do not
+change how a run is measured, and the fixtures are the same files. The preview's change is
+therefore the machine's state, not the code.
+
+**What the data shows of the cause, and the follow-up.** Which condition of the machine changed is
+not established; `machine.json` records neither the display nor the session nor whether Lucent's
+window was visible. Lucent.exe used the same CPU time per preview run as on 2026-10-10 over a longer
+time; the time added lies after the photo is opened, and those latencies fall on the 15.625 ms
+default tick of Windows' timers (70 % of the times from opening to the first RAW frame and 73 % of
+the 100 % views of the day's six preview runs within 2 ms of a multiple of it, against 1 and 2 of 15
+in the 2026-10-10 preview scenario). The first part of the 2026-10-10 full run shows the same
+signature: its scenarios after the preview scenario that open a photo took 0.62 to 0.88 s from
+opening to the first RAW frame, 22 of 33 times on the tick, and its preview scenario measured this
+day's level (decision 11). The automation's 5 ms responsiveness probe marks a change within that
+run: the 99th percentile of its gaps was 6 to 7 ms up to Auto cancellation, as in every run of
+2026-10-15 (6 to 10 ms), and 22 to 30 ms from the batch scenarios on, the preview scenario measured
+again included, which the preview budgets come from. The candidates the data supports, none of them
+shown to be the cause: a Windows servicing update between the baselines (`machine.json` records
+Windows PowerShell 5.1.26100.9444 on 2026-10-09 and 2026-10-10 and 5.1.26100.9711 on 2026-10-15;
+both states occurred on 2026-10-10, before it); Windows 11's timer policy, which does not guarantee
+a timer resolution finer than the default to a process whose windows are not visible to the user,
+as a display turned off or a locked session may make them (the times on the tick fit it, and so do
+the probe's missing stalls if the slower runs presented no frames on screen); and less available
+memory (2.59 GiB at the start of the run against 3.35 GiB on 2026-10-10; the first part of the
+2026-10-10 full run, started with 3.35 GiB, was in the slower state too, and the 2026-10-09 run,
+started with 2.41 GiB, in the faster one). Decision 11's attribution
+of that run's slower previews to the antivirus scanning the cold starts' copies is not established
+either: this day's runs measured the same level with the cold starts last and a quiet machine before
+every scenario. **Follow-up (COR-5):** the harness records the display state, whether the session is
+locked and whether Lucent's window was visible (and, if it is cheap, the timer resolution in
+effect); the preview path is checked for waits that depend on the timer resolution, the
+automation's own included (it reads these latencies in a 50 ms poll and, while the window presents
+no frames, lays the view out by grabbing a frame at most every 250 ms), since a latency of a whole
+number of ticks points at a timer or a poll rather than at work; then a baseline measured with the
+display on, the session unlocked and Lucent's windows visible, recorded as such, closes COR-5 and
+derives the budgets again.

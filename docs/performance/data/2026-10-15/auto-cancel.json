@@ -1,0 +1,700 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "auto-cancel",
+  "description": "Auto cancelled as the Automatic settings panel does, 1 s (analysis) or 4 s (final check) after it started: time from the cancel request to the run ending (nothing written).",
+  "repetitions": 3,
+  "measured_at": "2026-10-15T18:26:11Z",
+  "quiet_before": {
+    "quiet": true,
+    "waited_s": 12.3,
+    "samples": [10.2,9.3,10,2,3.1,1.3],
+    "busiest_process_percent": [97,103,101,9,12,1],
+    "max_cpu_percent": 10,
+    "max_process_percent": 25,
+    "consecutive": 3,
+    "sample_ms": 2000,
+    "timeout_s": 300
+  },
+  "summary": {
+    "canon-eos-r5-cr3-raw-after-1000-ms": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.auto_cancel.ended_after_request_ms": {
+        "n": 3,
+        "median": 46,
+        "p95": 53,
+        "min": 41,
+        "max": 53,
+        "mean": 46.667,
+        "stdev": 6.028,
+        "cv": 0.129
+      },
+      "metrics.auto_cancel.progress": {
+        "n": 3,
+        "median": 0.094,
+        "p95": 0.094,
+        "min": 0.094,
+        "max": 0.094,
+        "mean": 0.094,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.auto.cancelled": {
+        "n": 3,
+        "median": 1,
+        "p95": 1,
+        "min": 1,
+        "max": 1,
+        "mean": 1,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.auto.ended_after_ms": {
+        "n": 3,
+        "median": 1046,
+        "p95": 1053,
+        "min": 1041,
+        "max": 1053,
+        "mean": 1046.667,
+        "stdev": 6.028,
+        "cv": 0.006
+      }
+    },
+    "canon-eos-r5-cr3-raw-after-4000-ms": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.auto_cancel.ended_after_request_ms": {
+        "n": 3,
+        "median": 263,
+        "p95": 302,
+        "min": 99,
+        "max": 302,
+        "mean": 221.333,
+        "stdev": 107.723,
+        "cv": 0.487
+      },
+      "metrics.auto_cancel.progress": {
+        "n": 3,
+        "median": 0.675,
+        "p95": 0.675,
+        "min": 0.675,
+        "max": 0.675,
+        "mean": 0.675,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.auto.cancelled": {
+        "n": 3,
+        "median": 1,
+        "p95": 1,
+        "min": 1,
+        "max": 1,
+        "mean": 1,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.auto.ended_after_ms": {
+        "n": 3,
+        "median": 4263,
+        "p95": 4301,
+        "min": 4098,
+        "max": 4301,
+        "mean": 4220.667,
+        "stdev": 107.918,
+        "cv": 0.026
+      }
+    }
+  },
+  "extra": null,
+  "runs": [
+    {
+      "name": "canon-eos-r5-cr3-raw-after-1000-ms",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.527,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-1000-ms-warmup.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 228,
+        "window_loaded_ms": 826,
+        "first_frame_ms": 921,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 120,
+        "fit_preview": {
+          "visible_ms": 767,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.88,
+          "preview_s": 0.9
+        },
+        "first_raw_preview_ms": 1578,
+        "auto": {
+          "finished_ms": 1064,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 1054,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 1000,
+          "ended_after_request_ms": 54,
+          "cancelled": 1,
+          "progress": 0.094
+        },
+        "ui": {
+          "seconds": 4.5,
+          "ticks": 428,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1008.1,
+          "peak_commit_mib": 1005,
+          "commit_mib": 270.2,
+          "cpu_s": 9.25,
+          "user_s": 7.52,
+          "kernel_s": 1.73,
+          "wall_s": 5.31
+        }
+      },
+      "resources": {
+        "wall_s": 6.527,
+        "cpu_s": 10.453,
+        "cpu_percent_of_machine": 13.347,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1005.039,
+          "peak_working_set_mib": 1008.133,
+          "cpu_s": 10.453
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3021.66
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-after-1000-ms",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 5.994,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-1000-ms-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 233,
+        "window_loaded_ms": 823,
+        "first_frame_ms": 919,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 127,
+        "fit_preview": {
+          "visible_ms": 876,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.86,
+          "preview_s": 0.88
+        },
+        "first_raw_preview_ms": 1056,
+        "auto": {
+          "finished_ms": 1064,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 1041,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 1000,
+          "ended_after_request_ms": 41,
+          "cancelled": 1,
+          "progress": 0.094
+        },
+        "ui": {
+          "seconds": 4,
+          "ticks": 407,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 12,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1009.2,
+          "peak_commit_mib": 1006.2,
+          "commit_mib": 271.4,
+          "cpu_s": 8.64,
+          "user_s": 7.36,
+          "kernel_s": 1.28,
+          "wall_s": 4.83
+        }
+      },
+      "resources": {
+        "wall_s": 5.994,
+        "cpu_s": 9.781,
+        "cpu_percent_of_machine": 13.598,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1006.23,
+          "peak_working_set_mib": 1009.215,
+          "cpu_s": 9.781
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3029.555
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-after-4000-ms",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.721,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-4000-ms-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 235,
+        "window_loaded_ms": 789,
+        "first_frame_ms": 885,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 122,
+        "fit_preview": {
+          "visible_ms": 810,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.88,
+          "preview_s": 0.9
+        },
+        "first_raw_preview_ms": 1615,
+        "auto": {
+          "finished_ms": 4124,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 4098,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 3999,
+          "ended_after_request_ms": 99,
+          "cancelled": 1,
+          "progress": 0.675
+        },
+        "ui": {
+          "seconds": 7.7,
+          "ticks": 1041,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 11,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1414.1,
+          "peak_commit_mib": 1411.4,
+          "commit_mib": 272.7,
+          "cpu_s": 34.28,
+          "user_s": 31.08,
+          "kernel_s": 3.2,
+          "wall_s": 8.49
+        }
+      },
+      "resources": {
+        "wall_s": 9.721,
+        "cpu_s": 35.469,
+        "cpu_percent_of_machine": 30.405,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1411.426,
+          "peak_working_set_mib": 1414.078,
+          "cpu_s": 35.469
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3035.969
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-after-1000-ms",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.03,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-1000-ms-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 239,
+        "window_loaded_ms": 813,
+        "first_frame_ms": 911,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 124,
+        "fit_preview": {
+          "visible_ms": 873,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.88,
+          "preview_s": 0.9
+        },
+        "first_raw_preview_ms": 1063,
+        "auto": {
+          "finished_ms": 1064,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 1053,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 1000,
+          "ended_after_request_ms": 53,
+          "cancelled": 1,
+          "progress": 0.094
+        },
+        "ui": {
+          "seconds": 4,
+          "ticks": 398,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 14,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1007.6,
+          "peak_commit_mib": 1006.3,
+          "commit_mib": 272.7,
+          "cpu_s": 9.5,
+          "user_s": 7.64,
+          "kernel_s": 1.86,
+          "wall_s": 4.86
+        }
+      },
+      "resources": {
+        "wall_s": 6.03,
+        "cpu_s": 10.641,
+        "cpu_percent_of_machine": 14.706,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1006.305,
+          "peak_working_set_mib": 1007.602,
+          "cpu_s": 10.641
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3056.711
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-after-4000-ms",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.668,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-4000-ms-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 244,
+        "window_loaded_ms": 844,
+        "first_frame_ms": 945,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 128,
+        "fit_preview": {
+          "visible_ms": 809,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.87,
+          "preview_s": 0.89
+        },
+        "first_raw_preview_ms": 1615,
+        "auto": {
+          "finished_ms": 4309,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 4263,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 4000,
+          "ended_after_request_ms": 263,
+          "cancelled": 1,
+          "progress": 0.675
+        },
+        "ui": {
+          "seconds": 7.6,
+          "ticks": 1078,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1413.8,
+          "peak_commit_mib": 1412,
+          "commit_mib": 272.4,
+          "cpu_s": 37.95,
+          "user_s": 34.95,
+          "kernel_s": 3,
+          "wall_s": 8.48
+        }
+      },
+      "resources": {
+        "wall_s": 9.668,
+        "cpu_s": 39.125,
+        "cpu_percent_of_machine": 33.724,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1412.047,
+          "peak_working_set_mib": 1413.844,
+          "cpu_s": 39.125
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3071.387
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-after-1000-ms",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.544,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-1000-ms-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 242,
+        "window_loaded_ms": 820,
+        "first_frame_ms": 917,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 128,
+        "fit_preview": {
+          "visible_ms": 765,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.88,
+          "preview_s": 0.91
+        },
+        "first_raw_preview_ms": 1631,
+        "auto": {
+          "finished_ms": 1060,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 1046,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 1000,
+          "ended_after_request_ms": 46,
+          "cancelled": 1,
+          "progress": 0.094
+        },
+        "ui": {
+          "seconds": 4.5,
+          "ticks": 430,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1009.4,
+          "peak_commit_mib": 1005.5,
+          "commit_mib": 271.2,
+          "cpu_s": 9.44,
+          "user_s": 7.5,
+          "kernel_s": 1.94,
+          "wall_s": 5.3
+        }
+      },
+      "resources": {
+        "wall_s": 6.544,
+        "cpu_s": 10.672,
+        "cpu_percent_of_machine": 13.59,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1005.48,
+          "peak_working_set_mib": 1009.438,
+          "cpu_s": 10.672
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3064.066
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-after-4000-ms",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.753,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\auto-cancel\\canon-eos-r5-cr3-raw-after-4000-ms-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 236,
+        "window_loaded_ms": 800,
+        "first_frame_ms": 899,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 124,
+        "fit_preview": {
+          "visible_ms": 751,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.86,
+          "preview_s": 0.89
+        },
+        "first_raw_preview_ms": 1565,
+        "auto": {
+          "finished_ms": 4314,
+          "message": "Auto was cancelled; nothing was changed.",
+          "ended_after_ms": 4301,
+          "cancelled": 1
+        },
+        "auto_cancel": {
+          "requested_after_ms": 3999,
+          "ended_after_request_ms": 302,
+          "cancelled": 1,
+          "progress": 0.675
+        },
+        "ui": {
+          "seconds": 7.7,
+          "ticks": 1075,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 12,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1413,
+          "peak_commit_mib": 1412.1,
+          "commit_mib": 276.2,
+          "cpu_s": 36.08,
+          "user_s": 32.97,
+          "kernel_s": 3.11,
+          "wall_s": 8.52
+        }
+      },
+      "resources": {
+        "wall_s": 9.753,
+        "cpu_s": 37.266,
+        "cpu_percent_of_machine": 31.842,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1412.113,
+          "peak_working_set_mib": 1413.031,
+          "cpu_s": 37.266
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3069.203
+        }
+      }
+    }
+  ]
+}

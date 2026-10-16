@@ -1,0 +1,1783 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "edit",
+  "description": "Interactive edit latency in the Edit view at Fit. edit_\u003ccontrol\u003e: a one-step edit (typed value) to its final frame shown; drag: a synthetic 60 Hz mouse drag of 60 moves over a third of the slider, slider position to its frame shown (median, 90th percentile, max per run), the develop service\u0027s share, and the UI thread\u0027s largest gap between 5 ms timer ticks.",
+  "repetitions": 3,
+  "measured_at": "2026-10-15T18:22:11Z",
+  "quiet_before": {
+    "quiet": true,
+    "waited_s": 12.3,
+    "samples": [10,9.2,9.1,2.8,1.9,2.4],
+    "busiest_process_percent": [95,102,98,2,11,10],
+    "max_cpu_percent": 10,
+    "max_process_percent": 25,
+    "consecutive": 3,
+    "sample_ms": 2000,
+    "timeout_s": 300
+  },
+  "summary": {
+    "canon-eos-r5-cr3-raw-exposure": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.edit_exposure=1": {
+        "n": 3,
+        "median": 46,
+        "p95": 47,
+        "min": 45,
+        "max": 47,
+        "mean": 46,
+        "stdev": 1,
+        "cv": 0.022
+      },
+      "metrics.edit_contrast=20": {
+        "n": 3,
+        "median": 54,
+        "p95": 55,
+        "min": 54,
+        "max": 55,
+        "mean": 54.333,
+        "stdev": 0.577,
+        "cv": 0.011
+      },
+      "metrics.drag.shown_median_ms": {
+        "n": 3,
+        "median": 69,
+        "p95": 69,
+        "min": 67,
+        "max": 69,
+        "mean": 68.333,
+        "stdev": 1.155,
+        "cv": 0.017
+      },
+      "metrics.drag.shown_p90_ms": {
+        "n": 3,
+        "median": 74,
+        "p95": 77,
+        "min": 74,
+        "max": 77,
+        "mean": 75,
+        "stdev": 1.732,
+        "cv": 0.023
+      },
+      "metrics.drag.shown_max_ms": {
+        "n": 3,
+        "median": 78,
+        "p95": 78,
+        "min": 76,
+        "max": 78,
+        "mean": 77.333,
+        "stdev": 1.155,
+        "cv": 0.015
+      },
+      "metrics.drag.service_median_ms": {
+        "n": 3,
+        "median": 60,
+        "p95": 60,
+        "min": 58,
+        "max": 60,
+        "mean": 59.333,
+        "stdev": 1.155,
+        "cv": 0.019
+      },
+      "metrics.drag.quick": {
+        "n": 3,
+        "median": 19,
+        "p95": 19,
+        "min": 19,
+        "max": 19,
+        "mean": 19,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.drag.final_after_release_ms": {
+        "n": 3,
+        "median": 110,
+        "p95": 113,
+        "min": 104,
+        "max": 113,
+        "mean": 109,
+        "stdev": 4.583,
+        "cv": 0.042
+      },
+      "metrics.drag.ui_gap_max_ms": {
+        "n": 3,
+        "median": 10,
+        "p95": 10,
+        "min": 10,
+        "max": 10,
+        "mean": 10,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 811,
+        "p95": 816,
+        "min": 750,
+        "max": 816,
+        "mean": 792.333,
+        "stdev": 36.747,
+        "cv": 0.046
+      }
+    },
+    "canon-eos-r5-cr3-raw-shadows": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.edit_exposure=1": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "stdev": null,
+        "cv": null
+      },
+      "metrics.edit_contrast=20": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "stdev": null,
+        "cv": null
+      },
+      "metrics.drag.shown_median_ms": {
+        "n": 3,
+        "median": 95,
+        "p95": 96,
+        "min": 95,
+        "max": 96,
+        "mean": 95.333,
+        "stdev": 0.577,
+        "cv": 0.006
+      },
+      "metrics.drag.shown_p90_ms": {
+        "n": 3,
+        "median": 104,
+        "p95": 107,
+        "min": 102,
+        "max": 107,
+        "mean": 104.333,
+        "stdev": 2.517,
+        "cv": 0.024
+      },
+      "metrics.drag.shown_max_ms": {
+        "n": 3,
+        "median": 119,
+        "p95": 119,
+        "min": 113,
+        "max": 119,
+        "mean": 117,
+        "stdev": 3.464,
+        "cv": 0.03
+      },
+      "metrics.drag.service_median_ms": {
+        "n": 3,
+        "median": 86,
+        "p95": 86,
+        "min": 85,
+        "max": 86,
+        "mean": 85.667,
+        "stdev": 0.577,
+        "cv": 0.007
+      },
+      "metrics.drag.quick": {
+        "n": 3,
+        "median": 13,
+        "p95": 13,
+        "min": 13,
+        "max": 13,
+        "mean": 13,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.drag.final_after_release_ms": {
+        "n": 3,
+        "median": 166,
+        "p95": 173,
+        "min": 136,
+        "max": 173,
+        "mean": 158.333,
+        "stdev": 19.655,
+        "cv": 0.124
+      },
+      "metrics.drag.ui_gap_max_ms": {
+        "n": 3,
+        "median": 11,
+        "p95": 12,
+        "min": 10,
+        "max": 12,
+        "mean": 11,
+        "stdev": 1,
+        "cv": 0.091
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 872,
+        "p95": 880,
+        "min": 814,
+        "max": 880,
+        "mean": 855.333,
+        "stdev": 36.019,
+        "cv": 0.042
+      }
+    },
+    "nikon-z-6-nef-lossless-exposure": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.edit_exposure=1": {
+        "n": 2,
+        "median": 60,
+        "p95": 60,
+        "min": 60,
+        "max": 60,
+        "mean": 60,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.edit_contrast=20": {
+        "n": 3,
+        "median": 67,
+        "p95": 68,
+        "min": 66,
+        "max": 68,
+        "mean": 67,
+        "stdev": 1,
+        "cv": 0.015
+      },
+      "metrics.drag.shown_median_ms": {
+        "n": 3,
+        "median": 78,
+        "p95": 81,
+        "min": 78,
+        "max": 81,
+        "mean": 79,
+        "stdev": 1.732,
+        "cv": 0.022
+      },
+      "metrics.drag.shown_p90_ms": {
+        "n": 3,
+        "median": 88,
+        "p95": 90,
+        "min": 83,
+        "max": 90,
+        "mean": 87,
+        "stdev": 3.606,
+        "cv": 0.041
+      },
+      "metrics.drag.shown_max_ms": {
+        "n": 3,
+        "median": 107,
+        "p95": 107,
+        "min": 102,
+        "max": 107,
+        "mean": 105.333,
+        "stdev": 2.887,
+        "cv": 0.027
+      },
+      "metrics.drag.service_median_ms": {
+        "n": 3,
+        "median": 69,
+        "p95": 71,
+        "min": 68,
+        "max": 71,
+        "mean": 69.333,
+        "stdev": 1.528,
+        "cv": 0.022
+      },
+      "metrics.drag.quick": {
+        "n": 3,
+        "median": 16,
+        "p95": 16,
+        "min": 16,
+        "max": 16,
+        "mean": 16,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.drag.final_after_release_ms": {
+        "n": 3,
+        "median": 135,
+        "p95": 138,
+        "min": 129,
+        "max": 138,
+        "mean": 134,
+        "stdev": 4.583,
+        "cv": 0.034
+      },
+      "metrics.drag.ui_gap_max_ms": {
+        "n": 3,
+        "median": 11,
+        "p95": 11,
+        "min": 11,
+        "max": 11,
+        "mean": 11,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 750,
+        "p95": 770,
+        "min": 750,
+        "max": 770,
+        "mean": 756.667,
+        "stdev": 11.547,
+        "cv": 0.015
+      }
+    },
+    "nikon-z-6-nef-lossless-shadows": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.edit_exposure=1": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "stdev": null,
+        "cv": null
+      },
+      "metrics.edit_contrast=20": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "stdev": null,
+        "cv": null
+      },
+      "metrics.drag.shown_median_ms": {
+        "n": 3,
+        "median": 103,
+        "p95": 104,
+        "min": 100,
+        "max": 104,
+        "mean": 102.333,
+        "stdev": 2.082,
+        "cv": 0.02
+      },
+      "metrics.drag.shown_p90_ms": {
+        "n": 3,
+        "median": 114,
+        "p95": 118,
+        "min": 114,
+        "max": 118,
+        "mean": 115.333,
+        "stdev": 2.309,
+        "cv": 0.02
+      },
+      "metrics.drag.shown_max_ms": {
+        "n": 3,
+        "median": 155,
+        "p95": 172,
+        "min": 153,
+        "max": 172,
+        "mean": 160,
+        "stdev": 10.44,
+        "cv": 0.065
+      },
+      "metrics.drag.service_median_ms": {
+        "n": 3,
+        "median": 93,
+        "p95": 94,
+        "min": 92,
+        "max": 94,
+        "mean": 93,
+        "stdev": 1,
+        "cv": 0.011
+      },
+      "metrics.drag.quick": {
+        "n": 3,
+        "median": 12,
+        "p95": 12,
+        "min": 12,
+        "max": 12,
+        "mean": 12,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.drag.final_after_release_ms": {
+        "n": 3,
+        "median": 175,
+        "p95": 187,
+        "min": 164,
+        "max": 187,
+        "mean": 175.333,
+        "stdev": 11.504,
+        "cv": 0.066
+      },
+      "metrics.drag.ui_gap_max_ms": {
+        "n": 3,
+        "median": 11,
+        "p95": 11,
+        "min": 10,
+        "max": 11,
+        "mean": 10.667,
+        "stdev": 0.577,
+        "cv": 0.054
+      },
+      "metrics.fit_preview.visible_ms": {
+        "n": 3,
+        "median": 750,
+        "p95": 751,
+        "min": 750,
+        "max": 751,
+        "mean": 750.333,
+        "stdev": 0.577,
+        "cv": 0.001
+      }
+    }
+  },
+  "extra": null,
+  "runs": [
+    {
+      "name": "canon-eos-r5-cr3-raw-exposure",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.736,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-exposure-warmup.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 45,
+            "last_published_ms": 45,
+            "shown_ms": 47
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 54,
+            "last_published_ms": 54,
+            "shown_ms": 55
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 226,
+        "window_loaded_ms": 1001,
+        "first_frame_ms": 1102,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 135,
+        "fit_preview": {
+          "visible_ms": 810,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.87,
+          "preview_s": 0.89
+        },
+        "first_raw_preview_ms": 1611,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 981,
+          "quick": 19,
+          "final": 1,
+          "shown_median_ms": 70,
+          "shown_p90_ms": 76,
+          "shown_max_ms": 84,
+          "frames": 20,
+          "published_median_ms": 67,
+          "published_max_ms": 81,
+          "service_median_ms": 60,
+          "final_after_release_ms": 119,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 8,
+          "ui_gap_max_ms": 9,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.9,
+          "ticks": 882,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 19,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 979,
+          "peak_commit_mib": 1052.2,
+          "commit_mib": 303.6,
+          "cpu_s": 20.38,
+          "user_s": 16.86,
+          "kernel_s": 3.52,
+          "wall_s": 7.89
+        },
+        "edit_exposure=1": 47,
+        "edit_exposure=1_published": 45,
+        "edit_contrast=20": 55,
+        "edit_contrast=20_published": 54
+      },
+      "resources": {
+        "wall_s": 8.736,
+        "cpu_s": 21.203,
+        "cpu_percent_of_machine": 20.225,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1052.152,
+          "peak_working_set_mib": 979.043,
+          "cpu_s": 21.203
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3220.395
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-exposure",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.552,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-exposure-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 45,
+            "last_published_ms": 45,
+            "shown_ms": 47
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 52,
+            "last_published_ms": 52,
+            "shown_ms": 54
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 231,
+        "window_loaded_ms": 792,
+        "first_frame_ms": 889,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 120,
+        "fit_preview": {
+          "visible_ms": 816,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.88,
+          "preview_s": 0.9
+        },
+        "first_raw_preview_ms": 1619,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 978,
+          "quick": 19,
+          "final": 1,
+          "shown_median_ms": 67,
+          "shown_p90_ms": 74,
+          "shown_max_ms": 78,
+          "frames": 20,
+          "published_median_ms": 65,
+          "published_max_ms": 75,
+          "service_median_ms": 58,
+          "final_after_release_ms": 104,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 8,
+          "ui_gap_max_ms": 10,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.9,
+          "ticks": 878,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 10,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 979.3,
+          "peak_commit_mib": 1052.3,
+          "commit_mib": 303.8,
+          "cpu_s": 21.31,
+          "user_s": 17.8,
+          "kernel_s": 3.52,
+          "wall_s": 7.69
+        },
+        "edit_exposure=1": 47,
+        "edit_exposure=1_published": 45,
+        "edit_contrast=20": 54,
+        "edit_contrast=20_published": 52
+      },
+      "resources": {
+        "wall_s": 8.552,
+        "cpu_s": 22.125,
+        "cpu_percent_of_machine": 21.559,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1052.34,
+          "peak_working_set_mib": 979.344,
+          "cpu_s": 22.125
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3224.688
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-shadows",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.223,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-shadows-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 235,
+        "window_loaded_ms": 828,
+        "first_frame_ms": 926,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 126,
+        "fit_preview": {
+          "visible_ms": 880,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.86,
+          "preview_s": 0.89
+        },
+        "first_raw_preview_ms": 1055,
+        "drag": {
+          "label": "shadows",
+          "moves": 60,
+          "move_ms": 979,
+          "quick": 13,
+          "final": 1,
+          "shown_median_ms": 96,
+          "shown_p90_ms": 104,
+          "shown_max_ms": 119,
+          "frames": 14,
+          "published_median_ms": 93,
+          "published_max_ms": 118,
+          "service_median_ms": 86,
+          "final_after_release_ms": 136,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 8,
+          "ui_gap_max_ms": 10,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 7,
+          "ticks": 937,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 11,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1303.6,
+          "peak_commit_mib": 1356.7,
+          "commit_mib": 310.4,
+          "cpu_s": 22.75,
+          "user_s": 18.61,
+          "kernel_s": 4.14,
+          "wall_s": 7.88
+        }
+      },
+      "resources": {
+        "wall_s": 9.223,
+        "cpu_s": 24.016,
+        "cpu_percent_of_machine": 21.699,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1356.742,
+          "peak_working_set_mib": 1303.648,
+          "cpu_s": 24.016
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3243.82
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless-exposure",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.043,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\nikon-z-6-nef-lossless-exposure-r1.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 57,
+            "last_published_ms": 57,
+            "shown_ms": null
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 65,
+            "last_published_ms": 65,
+            "shown_ms": 67
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 250,
+        "window_loaded_ms": 827,
+        "first_frame_ms": 932,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 135,
+        "fit_preview": {
+          "visible_ms": 750,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.77,
+          "preview_s": 0.79
+        },
+        "first_raw_preview_ms": 1550,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 978,
+          "quick": 16,
+          "final": 1,
+          "shown_median_ms": 78,
+          "shown_p90_ms": 83,
+          "shown_max_ms": 107,
+          "frames": 17,
+          "published_median_ms": 76,
+          "published_max_ms": 106,
+          "service_median_ms": 69,
+          "final_after_release_ms": 138,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 7,
+          "ui_gap_max_ms": 11,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 7.4,
+          "ticks": 955,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 17,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 845.9,
+          "peak_commit_mib": 919.6,
+          "commit_mib": 336.5,
+          "cpu_s": 23.31,
+          "user_s": 19.48,
+          "kernel_s": 3.83,
+          "wall_s": 8.22
+        },
+        "edit_exposure=1": null,
+        "edit_exposure=1_published": 57,
+        "edit_contrast=20": 67,
+        "edit_contrast=20_published": 65
+      },
+      "resources": {
+        "wall_s": 9.043,
+        "cpu_s": 24.156,
+        "cpu_percent_of_machine": 22.261,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 919.625,
+          "peak_working_set_mib": 845.867,
+          "cpu_s": 24.156
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3225.016
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless-shadows",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.757,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\nikon-z-6-nef-lossless-shadows-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 245,
+        "window_loaded_ms": 828,
+        "first_frame_ms": 933,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 136,
+        "fit_preview": {
+          "visible_ms": 750,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.77,
+          "preview_s": 0.8
+        },
+        "first_raw_preview_ms": 940,
+        "drag": {
+          "label": "shadows",
+          "moves": 60,
+          "move_ms": 977,
+          "quick": 12,
+          "final": 1,
+          "shown_median_ms": 100,
+          "shown_p90_ms": 114,
+          "shown_max_ms": 153,
+          "frames": 13,
+          "published_median_ms": 98,
+          "published_max_ms": 151,
+          "service_median_ms": 92,
+          "final_after_release_ms": 164,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 8,
+          "ui_gap_max_ms": 11,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.8,
+          "ticks": 870,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 11,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 862.3,
+          "peak_commit_mib": 920.7,
+          "commit_mib": 337.5,
+          "cpu_s": 25.03,
+          "user_s": 20.73,
+          "kernel_s": 4.3,
+          "wall_s": 7.63
+        }
+      },
+      "resources": {
+        "wall_s": 8.757,
+        "cpu_s": 26.109,
+        "cpu_percent_of_machine": 24.845,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 920.742,
+          "peak_working_set_mib": 862.324,
+          "cpu_s": 26.109
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3193.434
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-exposure",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.594,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-exposure-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 44,
+            "last_published_ms": 44,
+            "shown_ms": 45
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 53,
+            "last_published_ms": 53,
+            "shown_ms": 55
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 236,
+        "window_loaded_ms": 813,
+        "first_frame_ms": 918,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 135,
+        "fit_preview": {
+          "visible_ms": 750,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.9,
+          "preview_s": 0.92
+        },
+        "first_raw_preview_ms": 1551,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 977,
+          "quick": 19,
+          "final": 1,
+          "shown_median_ms": 69,
+          "shown_p90_ms": 74,
+          "shown_max_ms": 76,
+          "frames": 20,
+          "published_median_ms": 67,
+          "published_max_ms": 72,
+          "service_median_ms": 60,
+          "final_after_release_ms": 113,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 8,
+          "ui_gap_max_ms": 10,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.9,
+          "ticks": 874,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 12,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 979.4,
+          "peak_commit_mib": 1054.3,
+          "commit_mib": 305.7,
+          "cpu_s": 21.2,
+          "user_s": 17.75,
+          "kernel_s": 3.45,
+          "wall_s": 7.7
+        },
+        "edit_exposure=1": 45,
+        "edit_exposure=1_published": 44,
+        "edit_contrast=20": 55,
+        "edit_contrast=20_published": 53
+      },
+      "resources": {
+        "wall_s": 8.594,
+        "cpu_s": 22.062,
+        "cpu_percent_of_machine": 21.394,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1054.258,
+          "peak_working_set_mib": 979.418,
+          "cpu_s": 22.062
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3186.223
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-shadows",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.783,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-shadows-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 229,
+        "window_loaded_ms": 860,
+        "first_frame_ms": 957,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 120,
+        "fit_preview": {
+          "visible_ms": 814,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.91,
+          "preview_s": 0.93
+        },
+        "first_raw_preview_ms": 1620,
+        "drag": {
+          "label": "shadows",
+          "moves": 60,
+          "move_ms": 978,
+          "quick": 13,
+          "final": 1,
+          "shown_median_ms": 95,
+          "shown_p90_ms": 107,
+          "shown_max_ms": 119,
+          "frames": 14,
+          "published_median_ms": 93,
+          "published_max_ms": 117,
+          "service_median_ms": 86,
+          "final_after_release_ms": 173,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 9,
+          "ui_gap_max_ms": 12,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 7.5,
+          "ticks": 988,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1324.8,
+          "peak_commit_mib": 1378,
+          "commit_mib": 307.7,
+          "cpu_s": 22.64,
+          "user_s": 18.67,
+          "kernel_s": 3.97,
+          "wall_s": 8.37
+        }
+      },
+      "resources": {
+        "wall_s": 9.783,
+        "cpu_s": 24.031,
+        "cpu_percent_of_machine": 20.47,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1378.02,
+          "peak_working_set_mib": 1324.828,
+          "cpu_s": 24.031
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3182.293
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless-exposure",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 9.119,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\nikon-z-6-nef-lossless-exposure-r2.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 58,
+            "last_published_ms": 58,
+            "shown_ms": 60
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 65,
+            "last_published_ms": 65,
+            "shown_ms": 66
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 257,
+        "window_loaded_ms": 846,
+        "first_frame_ms": 940,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 115,
+        "fit_preview": {
+          "visible_ms": 770,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.76,
+          "preview_s": 0.78
+        },
+        "first_raw_preview_ms": 1581,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 977,
+          "quick": 16,
+          "final": 1,
+          "shown_median_ms": 78,
+          "shown_p90_ms": 88,
+          "shown_max_ms": 107,
+          "frames": 17,
+          "published_median_ms": 75,
+          "published_max_ms": 105,
+          "service_median_ms": 68,
+          "final_after_release_ms": 129,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 9,
+          "ui_gap_max_ms": 11,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 7.4,
+          "ticks": 956,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 845.9,
+          "peak_commit_mib": 919.1,
+          "commit_mib": 335.9,
+          "cpu_s": 23.77,
+          "user_s": 20.39,
+          "kernel_s": 3.38,
+          "wall_s": 8.27
+        },
+        "edit_exposure=1": 60,
+        "edit_exposure=1_published": 58,
+        "edit_contrast=20": 66,
+        "edit_contrast=20_published": 65
+      },
+      "resources": {
+        "wall_s": 9.119,
+        "cpu_s": 24.625,
+        "cpu_percent_of_machine": 22.503,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 919.062,
+          "peak_working_set_mib": 845.926,
+          "cpu_s": 24.625
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3189.332
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless-shadows",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.799,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\nikon-z-6-nef-lossless-shadows-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 223,
+        "window_loaded_ms": 809,
+        "first_frame_ms": 915,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 121,
+        "fit_preview": {
+          "visible_ms": 751,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.77,
+          "preview_s": 0.79
+        },
+        "first_raw_preview_ms": 932,
+        "drag": {
+          "label": "shadows",
+          "moves": 60,
+          "move_ms": 979,
+          "quick": 12,
+          "final": 1,
+          "shown_median_ms": 104,
+          "shown_p90_ms": 118,
+          "shown_max_ms": 172,
+          "frames": 13,
+          "published_median_ms": 101,
+          "published_max_ms": 171,
+          "service_median_ms": 94,
+          "final_after_release_ms": 175,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 10,
+          "ui_gap_max_ms": 11,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.8,
+          "ticks": 860,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 8,
+          "gap_max_ms": 107,
+          "over_50": 1,
+          "over_100": 1
+        },
+        "process": {
+          "peak_working_set_mib": 882.3,
+          "peak_commit_mib": 937.8,
+          "commit_mib": 337.5,
+          "cpu_s": 24.38,
+          "user_s": 19.95,
+          "kernel_s": 4.42,
+          "wall_s": 7.64
+        }
+      },
+      "resources": {
+        "wall_s": 8.799,
+        "cpu_s": 25.531,
+        "cpu_percent_of_machine": 24.181,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 937.801,
+          "peak_working_set_mib": 882.285,
+          "cpu_s": 25.531
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3178.793
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-exposure",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.584,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-exposure-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 45,
+            "last_published_ms": 45,
+            "shown_ms": 46
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 53,
+            "last_published_ms": 53,
+            "shown_ms": 54
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 225,
+        "window_loaded_ms": 816,
+        "first_frame_ms": 920,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 129,
+        "fit_preview": {
+          "visible_ms": 811,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.87,
+          "preview_s": 0.89
+        },
+        "first_raw_preview_ms": 1616,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 977,
+          "quick": 19,
+          "final": 1,
+          "shown_median_ms": 69,
+          "shown_p90_ms": 77,
+          "shown_max_ms": 78,
+          "frames": 20,
+          "published_median_ms": 67,
+          "published_max_ms": 75,
+          "service_median_ms": 60,
+          "final_after_release_ms": 110,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 8,
+          "ui_gap_max_ms": 10,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.9,
+          "ticks": 886,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 979.4,
+          "peak_commit_mib": 1054.8,
+          "commit_mib": 306.4,
+          "cpu_s": 22.27,
+          "user_s": 18.75,
+          "kernel_s": 3.52,
+          "wall_s": 7.7
+        },
+        "edit_exposure=1": 46,
+        "edit_exposure=1_published": 45,
+        "edit_contrast=20": 54,
+        "edit_contrast=20_published": 53
+      },
+      "resources": {
+        "wall_s": 8.584,
+        "cpu_s": 23.109,
+        "cpu_percent_of_machine": 22.435,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1054.762,
+          "peak_working_set_mib": 979.434,
+          "cpu_s": 23.109
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3194.84
+        }
+      }
+    },
+    {
+      "name": "canon-eos-r5-cr3-raw-shadows",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.926,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\canon-eos-r5-cr3-raw-shadows-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 231,
+        "window_loaded_ms": 797,
+        "first_frame_ms": 898,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 132,
+        "fit_preview": {
+          "visible_ms": 872,
+          "width": 8191,
+          "height": 5463,
+          "engine_s": 0.87,
+          "preview_s": 0.9
+        },
+        "first_raw_preview_ms": 1057,
+        "drag": {
+          "label": "shadows",
+          "moves": 60,
+          "move_ms": 979,
+          "quick": 13,
+          "final": 1,
+          "shown_median_ms": 95,
+          "shown_p90_ms": 102,
+          "shown_max_ms": 113,
+          "frames": 14,
+          "published_median_ms": 91,
+          "published_max_ms": 112,
+          "service_median_ms": 85,
+          "final_after_release_ms": 166,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 9,
+          "ui_gap_max_ms": 11,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.8,
+          "ticks": 881,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 12,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 1327,
+          "peak_commit_mib": 1379,
+          "commit_mib": 305.2,
+          "cpu_s": 24.19,
+          "user_s": 19.42,
+          "kernel_s": 4.77,
+          "wall_s": 7.62
+        }
+      },
+      "resources": {
+        "wall_s": 8.926,
+        "cpu_s": 25.453,
+        "cpu_percent_of_machine": 23.764,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 1379.027,
+          "peak_working_set_mib": 1327.035,
+          "cpu_s": 25.453
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3175.367
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless-exposure",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.871,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\nikon-z-6-nef-lossless-exposure-r3.stderr.txt",
+      "metrics": {
+        "edits": [
+          {
+            "label": "exposure=1",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 58,
+            "last_published_ms": 58,
+            "shown_ms": 60
+          },
+          {
+            "label": "contrast=20",
+            "quick": 0,
+            "final": 1,
+            "first_published_ms": 66,
+            "last_published_ms": 66,
+            "shown_ms": 68
+          }
+        ],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 232,
+        "window_loaded_ms": 828,
+        "first_frame_ms": 926,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 121,
+        "fit_preview": {
+          "visible_ms": 750,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.75,
+          "preview_s": 0.78
+        },
+        "first_raw_preview_ms": 1565,
+        "drag": {
+          "label": "exposure",
+          "moves": 60,
+          "move_ms": 978,
+          "quick": 16,
+          "final": 1,
+          "shown_median_ms": 81,
+          "shown_p90_ms": 90,
+          "shown_max_ms": 102,
+          "frames": 17,
+          "published_median_ms": 78,
+          "published_max_ms": 100,
+          "service_median_ms": 71,
+          "final_after_release_ms": 135,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 9,
+          "ui_gap_max_ms": 11,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 7.1,
+          "ticks": 952,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 13,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 845.6,
+          "peak_commit_mib": 918.6,
+          "commit_mib": 335.7,
+          "cpu_s": 23.08,
+          "user_s": 19.52,
+          "kernel_s": 3.56,
+          "wall_s": 7.97
+        },
+        "edit_exposure=1": 60,
+        "edit_exposure=1_published": 58,
+        "edit_contrast=20": 68,
+        "edit_contrast=20_published": 66
+      },
+      "resources": {
+        "wall_s": 8.871,
+        "cpu_s": 23.922,
+        "cpu_percent_of_machine": 22.471,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 918.598,
+          "peak_working_set_mib": 845.621,
+          "cpu_s": 23.922
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3193.219
+        }
+      }
+    },
+    {
+      "name": "nikon-z-6-nef-lossless-shadows",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 8.696,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\edit\\nikon-z-6-nef-lossless-shadows-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [],
+        "errors": [],
+        "lens_database_loaded_ms": 221,
+        "window_loaded_ms": 816,
+        "first_frame_ms": 923,
+        "import": {
+          "added": 1,
+          "limited": 0,
+          "unsupported": 0,
+          "failed": 0
+        },
+        "first_thumbnail_ms": 119,
+        "fit_preview": {
+          "visible_ms": 750,
+          "width": 6048,
+          "height": 4024,
+          "engine_s": 0.75,
+          "preview_s": 0.78
+        },
+        "first_raw_preview_ms": 929,
+        "drag": {
+          "label": "shadows",
+          "moves": 60,
+          "move_ms": 978,
+          "quick": 12,
+          "final": 1,
+          "shown_median_ms": 103,
+          "shown_p90_ms": 114,
+          "shown_max_ms": 155,
+          "frames": 13,
+          "published_median_ms": 100,
+          "published_max_ms": 154,
+          "service_median_ms": 93,
+          "final_after_release_ms": 187,
+          "ui_gap_median_ms": 5,
+          "ui_gap_p99_ms": 9,
+          "ui_gap_max_ms": 10,
+          "ui_over_50": 0,
+          "ui_over_100": 0
+        },
+        "ui": {
+          "seconds": 6.8,
+          "ticks": 884,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 7,
+          "gap_max_ms": 94,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 876.7,
+          "peak_commit_mib": 938.4,
+          "commit_mib": 337.5,
+          "cpu_s": 24.91,
+          "user_s": 20.55,
+          "kernel_s": 4.36,
+          "wall_s": 7.59
+        }
+      },
+      "resources": {
+        "wall_s": 8.696,
+        "cpu_s": 25.984,
+        "cpu_percent_of_machine": 24.901,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 938.422,
+          "peak_working_set_mib": 876.68,
+          "cpu_s": 25.984
+        },
+        "descendants": [],
+        "samples": 1,
+        "sampled": {
+          "root_private_max_mib": 0,
+          "descendants_private_max_mib": 0,
+          "tree_private_max_mib": 0,
+          "descendants_max_live": 0,
+          "system_cpu_percent_mean": null,
+          "tree_cpu_percent_max": 0,
+          "system_available_min_mib": 3176.379
+        }
+      }
+    }
+  ]
+}

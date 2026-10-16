@@ -2,7 +2,7 @@
  "schema": "lucent.asset-manifest",
  "schema_version": 1,
  "id": "branding",
- "version": "1.0.1",
+ "version": "1.0.2",
  "minimum_app_version": "0.1.0",
  "content": {
   "schema": "lucent.branding",
@@ -191,8 +191,8 @@
   },
   {
    "path": "provenance.json",
-   "size": 1709,
-   "sha256": "ea1b2506a55dc091782dc43bce001f88867b2f5967354eb6e6f7847e11249a13"
+   "size": 2328,
+   "sha256": "fe05efe3f5a6a52ed32b13c4948173b58bc5230b63d0e9bea97cbdac224ece8a"
   },
   {
    "path": "windows/lucent.ico",

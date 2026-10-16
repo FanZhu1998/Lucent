@@ -1,0 +1,1333 @@
+{
+  "schema": "lucent.bench-scenario",
+  "version": 1,
+  "scenario": "batch-cancel",
+  "description": "A running batch cancelled as the Exports view does once N photos are done and another is being processed (--cancel-batch-after): stopped_after_ms runs from the request to the batch shown cancelled with nothing running (the interface applies batch events at most every 200 ms). The report is checked: exported photos have their files, cancelled ones none, no temporary file is left.",
+  "repetitions": 3,
+  "measured_at": "2026-10-15T19:09:41Z",
+  "quiet_before": {
+    "quiet": true,
+    "waited_s": 16.5,
+    "samples": [9.8,10.7,7.3,5.4,4.9,0.8,4.4,1.1],
+    "busiest_process_percent": [98,103,70,51,29,3,16,2],
+    "max_cpu_percent": 10,
+    "max_process_percent": 25,
+    "consecutive": 3,
+    "sample_ms": 2000,
+    "timeout_s": 300
+  },
+  "summary": {
+    "all-jpeg-cancel-after-2": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.batch_cancel.stopped_after_ms": {
+        "n": 3,
+        "median": 204,
+        "p95": 205,
+        "min": 200,
+        "max": 205,
+        "mean": 203,
+        "stdev": 2.646,
+        "cv": 0.013
+      },
+      "metrics.batch_cancel.running": {
+        "n": 3,
+        "median": 1,
+        "p95": 1,
+        "min": 1,
+        "max": 1,
+        "mean": 1,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.batch_timeline.exported": {
+        "n": 3,
+        "median": 2,
+        "p95": 2,
+        "min": 2,
+        "max": 2,
+        "mean": 2,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.batch_timeline.cancelled": {
+        "n": 3,
+        "median": 35,
+        "p95": 35,
+        "min": 35,
+        "max": 35,
+        "mean": 35,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.batch_scheduler.attempts": {
+        "n": 3,
+        "median": 4,
+        "p95": 4,
+        "min": 4,
+        "max": 4,
+        "mean": 4,
+        "stdev": 0,
+        "cv": 0
+      }
+    },
+    "smoke-tiff16-cancel-after-1": {
+      "runs": 3,
+      "failed_runs": 0,
+      "metrics.batch_cancel.stopped_after_ms": {
+        "n": 3,
+        "median": 203,
+        "p95": 205,
+        "min": 201,
+        "max": 205,
+        "mean": 203,
+        "stdev": 2,
+        "cv": 0.01
+      },
+      "metrics.batch_cancel.running": {
+        "n": 3,
+        "median": 1,
+        "p95": 1,
+        "min": 1,
+        "max": 1,
+        "mean": 1,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.batch_timeline.exported": {
+        "n": 3,
+        "median": 1,
+        "p95": 1,
+        "min": 1,
+        "max": 1,
+        "mean": 1,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.batch_timeline.cancelled": {
+        "n": 3,
+        "median": 4,
+        "p95": 4,
+        "min": 4,
+        "max": 4,
+        "mean": 4,
+        "stdev": 0,
+        "cv": 0
+      },
+      "metrics.batch_scheduler.attempts": {
+        "n": 3,
+        "median": 3,
+        "p95": 3,
+        "min": 3,
+        "max": 3,
+        "mean": 3,
+        "stdev": 0,
+        "cv": 0
+      }
+    }
+  },
+  "extra": null,
+  "runs": [
+    {
+      "name": "all-jpeg-cancel-after-2",
+      "repetition": 0,
+      "warmup": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.517,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\all-jpeg-cancel-after-2-warmup.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 4.658,
+            "done": 1,
+            "total": 37,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 36
+          },
+          {
+            "seconds": 6.768,
+            "done": 2,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 35
+          },
+          {
+            "seconds": 6.968,
+            "done": 37,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 279,
+        "window_loaded_ms": 890,
+        "first_frame_ms": 995,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 6.968,
+          "state": "cancelled",
+          "completed": 2,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 35,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-0"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-0\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 104,
+          "created_ms": 1567,
+          "first_done_ms": 3762,
+          "finished_ms": 6072,
+          "done": 37,
+          "exported": 2,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 35,
+          "seconds": 4.505,
+          "per_minute": 26.64
+        },
+        "batch_cancel": {
+          "requested_ms": 5872,
+          "done": 2,
+          "running": 1,
+          "stopped_after_ms": 200
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 4,
+          "completed": 2,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 9,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 10.2,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 248.4,
+          "peak_aggregate_commit_mib": 430.2,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 2,
+          "analysed": 0,
+          "skipped": 3,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 6.1,
+          "ticks": 1178,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 73,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 589.1,
+          "peak_commit_mib": 553,
+          "commit_mib": 193.9,
+          "cpu_s": 9.91,
+          "user_s": 7.77,
+          "kernel_s": 2.14,
+          "wall_s": 6.97
+        }
+      },
+      "resources": {
+        "wall_s": 7.517,
+        "cpu_s": 35.203,
+        "cpu_percent_of_machine": 39.025,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 552.953,
+          "peak_working_set_mib": 589.141,
+          "cpu_s": 10.016
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 378.48,
+            "peak_working_set_mib": 388.293,
+            "cpu_s": 25.188,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 31,
+        "sampled": {
+          "root_private_max_mib": 444.75,
+          "descendants_private_max_mib": 430.207,
+          "tree_private_max_mib": 624.008,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 49.271,
+          "tree_cpu_percent_max": 94.402,
+          "system_available_min_mib": 2634.016
+        }
+      },
+      "report_check": {
+        "entries": 40,
+        "outcomes": {
+          "exported": 2,
+          "cancelled": 35,
+          "skipped": 3
+        },
+        "exported": 2,
+        "attempts": {
+          "1": 4,
+          "0": 36
+        },
+        "problems": [],
+        "output_bytes": 4946508
+      },
+      "derived": {
+        "submission_s": 1.463,
+        "seconds_per_exported": 2.252
+      }
+    },
+    {
+      "name": "all-jpeg-cancel-after-2",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.171,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\all-jpeg-cancel-after-2-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 4.364,
+            "done": 1,
+            "total": 37,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 36
+          },
+          {
+            "seconds": 6.474,
+            "done": 2,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 35
+          },
+          {
+            "seconds": 6.678,
+            "done": 37,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 223,
+        "window_loaded_ms": 806,
+        "first_frame_ms": 902,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 6.678,
+          "state": "cancelled",
+          "completed": 2,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 35,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-1"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-1\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 99,
+          "created_ms": 1191,
+          "first_done_ms": 3556,
+          "finished_ms": 5870,
+          "done": 37,
+          "exported": 2,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 35,
+          "seconds": 4.679,
+          "per_minute": 25.65
+        },
+        "batch_cancel": {
+          "requested_ms": 5666,
+          "done": 2,
+          "running": 1,
+          "stopped_after_ms": 204
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 4,
+          "completed": 2,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 10,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 10.22,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 248.6,
+          "peak_aggregate_commit_mib": 430.3,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 2,
+          "analysed": 0,
+          "skipped": 3,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 5.9,
+          "ticks": 1139,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 73,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 589.3,
+          "peak_commit_mib": 554.2,
+          "commit_mib": 193.3,
+          "cpu_s": 10.22,
+          "user_s": 8.14,
+          "kernel_s": 2.08,
+          "wall_s": 6.68
+        }
+      },
+      "resources": {
+        "wall_s": 7.171,
+        "cpu_s": 35.641,
+        "cpu_percent_of_machine": 41.415,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 554.219,
+          "peak_working_set_mib": 589.266,
+          "cpu_s": 10.359
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 378.449,
+            "peak_working_set_mib": 388.375,
+            "cpu_s": 25.281,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 29,
+        "sampled": {
+          "root_private_max_mib": 554.16,
+          "descendants_private_max_mib": 430.348,
+          "tree_private_max_mib": 623.598,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 52.389,
+          "tree_cpu_percent_max": 92.96,
+          "system_available_min_mib": 2616.477
+        }
+      },
+      "report_check": {
+        "entries": 40,
+        "outcomes": {
+          "exported": 2,
+          "cancelled": 35,
+          "skipped": 3
+        },
+        "exported": 2,
+        "attempts": {
+          "1": 4,
+          "0": 36
+        },
+        "problems": [],
+        "output_bytes": 4946508
+      },
+      "derived": {
+        "submission_s": 1.092,
+        "seconds_per_exported": 2.34
+      }
+    },
+    {
+      "name": "smoke-tiff16-cancel-after-1",
+      "repetition": 1,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 18.66,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\smoke-tiff16-cancel-after-1-r1.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 1.089,
+            "done": 0,
+            "total": 5,
+            "completed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 5
+          },
+          {
+            "seconds": 17.836,
+            "done": 1,
+            "total": 5,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 4
+          },
+          {
+            "seconds": 18.042,
+            "done": 5,
+            "total": 5,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 256,
+        "window_loaded_ms": 843,
+        "first_frame_ms": 938,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 18.042,
+          "state": "cancelled",
+          "completed": 1,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 4,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-smoke-tiff16-cancel-after-1-1"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-smoke-tiff16-cancel-after-1-1\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 98,
+          "created_ms": 234,
+          "first_done_ms": 16990,
+          "finished_ms": 17191,
+          "done": 5,
+          "exported": 1,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 4,
+          "seconds": 16.957,
+          "per_minute": 3.54
+        },
+        "batch_cancel": {
+          "requested_ms": 16990,
+          "done": 1,
+          "running": 1,
+          "stopped_after_ms": 201
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 3,
+          "completed": 1,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 66,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 16.67,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 778.7,
+          "peak_aggregate_commit_mib": 778.7,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 1,
+          "analysed": 0,
+          "skipped": 0,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 17.2,
+          "ticks": 3413,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 22,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 163.1,
+          "peak_commit_mib": 127.6,
+          "commit_mib": 123.7,
+          "cpu_s": 2.84,
+          "user_s": 1.73,
+          "kernel_s": 1.11,
+          "wall_s": 18.04
+        }
+      },
+      "resources": {
+        "wall_s": 18.66,
+        "cpu_s": 39.953,
+        "cpu_percent_of_machine": 17.843,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 127.566,
+          "peak_working_set_mib": 163.055,
+          "cpu_s": 2.984
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 778.715,
+            "peak_working_set_mib": 786.945,
+            "cpu_s": 36.969,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 75,
+        "sampled": {
+          "root_private_max_mib": 124.676,
+          "descendants_private_max_mib": 778.707,
+          "tree_private_max_mib": 901.949,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 26.821,
+          "tree_cpu_percent_max": 80.006,
+          "system_available_min_mib": 2316.145
+        }
+      },
+      "report_check": {
+        "entries": 5,
+        "outcomes": {
+          "exported": 1,
+          "cancelled": 4
+        },
+        "exported": 1,
+        "attempts": {
+          "1": 3,
+          "0": 2
+        },
+        "problems": [],
+        "output_bytes": 215890799
+      },
+      "derived": {
+        "submission_s": 0.136,
+        "seconds_per_exported": 16.957
+      }
+    },
+    {
+      "name": "all-jpeg-cancel-after-2",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 7.189,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\all-jpeg-cancel-after-2-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 4.352,
+            "done": 1,
+            "total": 37,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 36
+          },
+          {
+            "seconds": 6.427,
+            "done": 2,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 35
+          },
+          {
+            "seconds": 6.632,
+            "done": 37,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 240,
+        "window_loaded_ms": 824,
+        "first_frame_ms": 925,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 6.632,
+          "state": "cancelled",
+          "completed": 2,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 35,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-2"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-2\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 103,
+          "created_ms": 1189,
+          "first_done_ms": 3526,
+          "finished_ms": 5806,
+          "done": 37,
+          "exported": 2,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 35,
+          "seconds": 4.617,
+          "per_minute": 25.99
+        },
+        "batch_cancel": {
+          "requested_ms": 5601,
+          "done": 2,
+          "running": 1,
+          "stopped_after_ms": 205
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 4,
+          "completed": 2,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 10,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 10.21,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 248.5,
+          "peak_aggregate_commit_mib": 430.2,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 2,
+          "analysed": 0,
+          "skipped": 3,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 5.8,
+          "ticks": 1124,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 70,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 590.7,
+          "peak_commit_mib": 554.5,
+          "commit_mib": 194.8,
+          "cpu_s": 9.39,
+          "user_s": 7.5,
+          "kernel_s": 1.89,
+          "wall_s": 6.63
+        }
+      },
+      "resources": {
+        "wall_s": 7.189,
+        "cpu_s": 34.844,
+        "cpu_percent_of_machine": 40.392,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 554.461,
+          "peak_working_set_mib": 590.672,
+          "cpu_s": 9.531
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 378.578,
+            "peak_working_set_mib": 388.324,
+            "cpu_s": 25.312,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 30,
+        "sampled": {
+          "root_private_max_mib": 446.266,
+          "descendants_private_max_mib": 430.234,
+          "tree_private_max_mib": 624.957,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 52.844,
+          "tree_cpu_percent_max": 94.639,
+          "system_available_min_mib": 2614.461
+        }
+      },
+      "report_check": {
+        "entries": 40,
+        "outcomes": {
+          "exported": 2,
+          "cancelled": 35,
+          "skipped": 3
+        },
+        "exported": 2,
+        "attempts": {
+          "1": 4,
+          "0": 36
+        },
+        "problems": [],
+        "output_bytes": 4946508
+      },
+      "derived": {
+        "submission_s": 1.086,
+        "seconds_per_exported": 2.308
+      }
+    },
+    {
+      "name": "smoke-tiff16-cancel-after-1",
+      "repetition": 2,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 18.712,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\smoke-tiff16-cancel-after-1-r2.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 1.049,
+            "done": 0,
+            "total": 5,
+            "completed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 5
+          },
+          {
+            "seconds": 17.815,
+            "done": 1,
+            "total": 5,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 4
+          },
+          {
+            "seconds": 18.02,
+            "done": 5,
+            "total": 5,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 228,
+        "window_loaded_ms": 807,
+        "first_frame_ms": 905,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 18.02,
+          "state": "cancelled",
+          "completed": 1,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 4,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-smoke-tiff16-cancel-after-1-2"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-smoke-tiff16-cancel-after-1-2\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 101,
+          "created_ms": 239,
+          "first_done_ms": 17006,
+          "finished_ms": 17211,
+          "done": 5,
+          "exported": 1,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 4,
+          "seconds": 16.972,
+          "per_minute": 3.54
+        },
+        "batch_cancel": {
+          "requested_ms": 17006,
+          "done": 1,
+          "running": 1,
+          "stopped_after_ms": 205
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 3,
+          "completed": 1,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 66,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 16.68,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 778.9,
+          "peak_aggregate_commit_mib": 778.9,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 1,
+          "analysed": 0,
+          "skipped": 0,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 17.2,
+          "ticks": 3417,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 25,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 163.8,
+          "peak_commit_mib": 127.8,
+          "commit_mib": 124.1,
+          "cpu_s": 2.66,
+          "user_s": 1.7,
+          "kernel_s": 0.95,
+          "wall_s": 18.02
+        }
+      },
+      "resources": {
+        "wall_s": 18.712,
+        "cpu_s": 39.812,
+        "cpu_percent_of_machine": 17.731,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 127.832,
+          "peak_working_set_mib": 163.797,
+          "cpu_s": 2.781
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 778.918,
+            "peak_working_set_mib": 787.215,
+            "cpu_s": 37.031,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 75,
+        "sampled": {
+          "root_private_max_mib": 125.082,
+          "descendants_private_max_mib": 778.918,
+          "tree_private_max_mib": 902.402,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 26.836,
+          "tree_cpu_percent_max": 79.704,
+          "system_available_min_mib": 2305.02
+        }
+      },
+      "report_check": {
+        "entries": 5,
+        "outcomes": {
+          "exported": 1,
+          "cancelled": 4
+        },
+        "exported": 1,
+        "attempts": {
+          "1": 3,
+          "0": 2
+        },
+        "problems": [],
+        "output_bytes": 215890799
+      },
+      "derived": {
+        "submission_s": 0.138,
+        "seconds_per_exported": 16.972
+      }
+    },
+    {
+      "name": "all-jpeg-cancel-after-2",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 6.934,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\all-jpeg-cancel-after-2-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 4.58,
+            "done": 1,
+            "total": 37,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 36
+          },
+          {
+            "seconds": 6.535,
+            "done": 2,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 35
+          },
+          {
+            "seconds": 6.736,
+            "done": 37,
+            "total": 37,
+            "completed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 250,
+        "window_loaded_ms": 843,
+        "first_frame_ms": 942,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 6.736,
+          "state": "cancelled",
+          "completed": 2,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 35,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-3"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-all-jpeg-cancel-after-2-3\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 99,
+          "created_ms": 1197,
+          "first_done_ms": 3733,
+          "finished_ms": 5888,
+          "done": 37,
+          "exported": 2,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 35,
+          "seconds": 4.691,
+          "per_minute": 25.58
+        },
+        "batch_cancel": {
+          "requested_ms": 5688,
+          "done": 2,
+          "running": 1,
+          "stopped_after_ms": 200
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 4,
+          "completed": 2,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 10,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 10.23,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 248.7,
+          "peak_aggregate_commit_mib": 430.4,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 2,
+          "analysed": 0,
+          "skipped": 3,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 5.9,
+          "ticks": 1139,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 77,
+          "over_50": 1,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 589.9,
+          "peak_commit_mib": 553.7,
+          "commit_mib": 193.1,
+          "cpu_s": 9.53,
+          "user_s": 7.52,
+          "kernel_s": 2.02,
+          "wall_s": 6.74
+        }
+      },
+      "resources": {
+        "wall_s": 6.934,
+        "cpu_s": 35.234,
+        "cpu_percent_of_machine": 42.348,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 553.711,
+          "peak_working_set_mib": 589.918,
+          "cpu_s": 9.672
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 378.34,
+            "peak_working_set_mib": 388.309,
+            "cpu_s": 25.562,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 29,
+        "sampled": {
+          "root_private_max_mib": 553.648,
+          "descendants_private_max_mib": 429.445,
+          "tree_private_max_mib": 622.477,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 54.351,
+          "tree_cpu_percent_max": 90.008,
+          "system_available_min_mib": 2616.176
+        }
+      },
+      "report_check": {
+        "entries": 40,
+        "outcomes": {
+          "exported": 2,
+          "cancelled": 35,
+          "skipped": 3
+        },
+        "exported": 2,
+        "attempts": {
+          "1": 4,
+          "0": 36
+        },
+        "problems": [],
+        "output_bytes": 4946508
+      },
+      "derived": {
+        "submission_s": 1.098,
+        "seconds_per_exported": 2.346
+      }
+    },
+    {
+      "name": "smoke-tiff16-cancel-after-1",
+      "repetition": 3,
+      "warmup": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "seconds": 18.519,
+      "log": "build\\rel-0.1.0-perf-bench\\logs\\batch-cancel\\smoke-tiff16-cancel-after-1-r3.stderr.txt",
+      "metrics": {
+        "edits": [],
+        "batch_progress": [
+          {
+            "seconds": 1.072,
+            "done": 0,
+            "total": 5,
+            "completed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 5
+          },
+          {
+            "seconds": 17.826,
+            "done": 1,
+            "total": 5,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 4
+          },
+          {
+            "seconds": 18.029,
+            "done": 5,
+            "total": 5,
+            "completed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "remaining": 0
+          }
+        ],
+        "errors": [],
+        "lens_database_loaded_ms": 239,
+        "window_loaded_ms": 823,
+        "first_frame_ms": 920,
+        "batch_id": 1,
+        "batch_finished": {
+          "seconds": 18.029,
+          "state": "cancelled",
+          "completed": 1,
+          "skipped": 0,
+          "failed": 0,
+          "cancelled": 4,
+          "review": 0,
+          "folder": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-smoke-tiff16-cancel-after-1-3"
+        },
+        "batch_report_html": "build\\rel-0.1.0-perf-bench\\batch-cancel\\out-smoke-tiff16-cancel-after-1-3\\Lucent-batch-1-report.html",
+        "batch_timeline": {
+          "submit_ms": 97,
+          "created_ms": 235,
+          "first_done_ms": 16998,
+          "finished_ms": 17201,
+          "done": 5,
+          "exported": 1,
+          "failed": 0,
+          "skipped": 0,
+          "cancelled": 4,
+          "seconds": 16.966,
+          "per_minute": 3.54
+        },
+        "batch_cancel": {
+          "requested_ms": 16998,
+          "done": 1,
+          "running": 1,
+          "stopped_after_ms": 203
+        },
+        "batch_scheduler": {
+          "max_workers": 2,
+          "peak_active_workers": 2,
+          "worker_starts": 2,
+          "attempts": 3,
+          "completed": 1,
+          "retried": 0,
+          "failed": 0,
+          "deferred_for_memory": 66,
+          "deferred_for_interactive": 0,
+          "calibrated": 1,
+          "bytes_per_pixel": 16.67,
+          "total_budget_mib": 6095.4,
+          "worker_budget_mib": 4559.4,
+          "aggregate_limit_mib": 4559.4,
+          "peak_worker_commit_mib": 778.7,
+          "peak_aggregate_commit_mib": 778.7,
+          "aggregate_limit_hits": 0,
+          "exclusive_attempts": 0,
+          "idle_workers_released": 0
+        },
+        "batch_report": {
+          "exported": 1,
+          "analysed": 0,
+          "skipped": 0,
+          "failed": 0,
+          "review": 0
+        },
+        "ui": {
+          "seconds": 17.2,
+          "ticks": 3416,
+          "gap_median_ms": 5,
+          "gap_p99_ms": 6,
+          "gap_max_ms": 22,
+          "over_50": 0,
+          "over_100": 0
+        },
+        "process": {
+          "peak_working_set_mib": 163.9,
+          "peak_commit_mib": 127.4,
+          "commit_mib": 123.6,
+          "cpu_s": 2.78,
+          "user_s": 1.77,
+          "kernel_s": 1.02,
+          "wall_s": 18.03
+        }
+      },
+      "resources": {
+        "wall_s": 18.519,
+        "cpu_s": 40.078,
+        "cpu_percent_of_machine": 18.034,
+        "root": {
+          "name": "Lucent.exe",
+          "peak_commit_mib": 127.355,
+          "peak_working_set_mib": 163.867,
+          "cpu_s": 2.875
+        },
+        "descendants": [
+          {
+            "name": "lucent-worker.exe",
+            "processes": 2,
+            "peak_commit_mib": 778.746,
+            "peak_working_set_mib": 787.082,
+            "cpu_s": 37.203,
+            "exit_codes": [0,0]
+          }
+        ],
+        "samples": 74,
+        "sampled": {
+          "root_private_max_mib": 124.613,
+          "descendants_private_max_mib": 778.746,
+          "tree_private_max_mib": 901.766,
+          "descendants_max_live": 2,
+          "system_cpu_percent_mean": 26.796,
+          "tree_cpu_percent_max": 80.413,
+          "system_available_min_mib": 2345.238
+        }
+      },
+      "report_check": {
+        "entries": 5,
+        "outcomes": {
+          "exported": 1,
+          "cancelled": 4
+        },
+        "exported": 1,
+        "attempts": {
+          "1": 3,
+          "0": 2
+        },
+        "problems": [],
+        "output_bytes": 215890799
+      },
+      "derived": {
+        "submission_s": 0.138,
+        "seconds_per_exported": 16.966
+      }
+    }
+  ]
+}
