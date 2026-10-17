@@ -317,17 +317,42 @@ $bin = '.\build\dev\bin\Lucent.exe'
   valid; there is no fallback), else found on `PATH`, in the uninstall registry ("Inno Setup 6" /
   "Inno Setup version 6.x", its `InstallLocation`), or as `Inno Setup 6` under Program Files or
   `%LOCALAPPDATA%\Programs`. A compiler outside those standard folders causes a warning; the
-  manifest records the compiler's path, version and SHA-256. The reference machine has 6.7.3 (a
+  manifest records the compiler's path, version and SHA-256. Its engine version is read before the
+  licences are written (an empty script compiled without output), because `THIRD-PARTY-NOTICES.txt`
+  names it; `-StageOnly` needs no compiler but uses one it finds, else the notices name Inno Setup
+  without a version. The reference machine has 6.7.3 (a
   portable copy registered by another project), whose compiler reports "Non-commercial use only";
   Inno Setup's commercial terms are reviewed before a public release.
 - **Microsoft's `vc_redist.x64.exe`**, taken from the Visual Studio installation that
   `dev-env.ps1` enters (`VCToolsRedistDir`; on the reference machine 14.44.35211). Override with
   `-VCRedist` or the CMake cache variable `LUCENT_VC_REDIST`. It must carry Microsoft's valid
-  Authenticode signature.
-- **The source archives of libjpeg-turbo and PCRE2** in vcpkg's downloads folder
-  (`%VCPKG_ROOT%\downloads`, or `VCPKG_DOWNLOADS`): two licence texts the ports do not install are
-  taken from them. They are there when the ports were built on the machine, not after a pure
-  binary-cache restore; then run `vcpkg install --only-downloads` for those ports.
+  Authenticode signature, and it must be the redistributable whose licence the policy records
+  (`vcRedistributable.reviewed`: version and SHA-256; another one stops packaging until its
+  `license.rtf` is read again). While the owner's review of the conditions under which Lucent
+  redistributes it is pending (`vcRedistributable.termsReview`), packaging warns.
+- **The source archives of the shipped ports** in vcpkg's downloads folder (`%VCPKG_ROOT%\downloads`,
+  or `VCPKG_DOWNLOADS`): those with licence texts or parts to take (libjpeg-turbo, PCRE2 with its
+  sljit archive, LibRaw, FreeType, libtiff, HarfBuzz, nlohmann-json, Lensfun and GNU gettext), and,
+  since the gate-8 review, round 2, every port whose recipe patches its source, because each patch's
+  licence is read from the files it changes (also Qt Base, GLib, GNU libiconv, libpng, Brotli, bzip2,
+  Little CMS, MD4C, SQLite and zlib, and LibRaw-cmake's archive), and the LGPL libraries' (Qt
+  Declarative and Qt SVG too). Licence texts the ports do not install (`README.ijg`, `LICENCE.md`),
+  the notices of the libraries' parts under their own licences (`installer\license-policy.json`,
+  `parts`) and the files the patches change are taken from them, each archive checked against the
+  SHA-512 vcpkg recorded, and the LGPL libraries' archives go into the corresponding-source archive.
+  They are there when the ports were built on the machine, not after a pure binary-cache restore;
+  then run `vcpkg install --only-downloads` for those ports. vcpkg's own `LICENSE.txt` comes from the
+  pinned checkout (`VCPKG_ROOT`), checked against the registry baseline. Three licence files come from
+  the toolchain, checked against the SHA-256 values the policy pins for the reviewed versions: the
+  C++ standard library's headers of the MSVC toolset that built the programs (`toolchainLibraries`;
+  another toolset stops packaging until its headers are reviewed), the Windows SDK's
+  `cppwinrt\LICENSE.txt` (C++/WinRT, compiled into Qt's files; `toolchainLibraries.cppwinrt`, the SDK
+  found through `WindowsSdkDir` or the registry's `KitsRoot10`; another SDK or C++/WinRT version
+  stops packaging until it is reviewed) and Inno Setup's `license.txt` beside the compiler
+  (`distribution.installerTool`; also checked by its git blob in Inno Setup's published source).
+  Files of published sources that no vcpkg archive holds (the licence of RemObjects Pascal Script and
+  the source of the LZMA SDK 4.40 decoder inside Inno Setup, Apache Tika's NOTICE for Qt) are in the
+  repository, `installer\third-party`, pinned by their git blob ids (`thirdPartySources`).
 - **spdx-tools** to validate the SBOM (required for a release, release checklist gate 6), pinned
   with every wheel's SHA-256 in `tools\requirements-spdx-tools.txt`:
   `& "$env:USERPROFILE\dev\toolsenv\Scripts\python.exe" -m pip install --require-hashes --no-deps -r tools\requirements-spdx-tools.txt`.
@@ -358,7 +383,7 @@ prints the channel and records it in the manifest.
 | Audit | Every import resolves to the folder, Windows or the Visual C++ runtime, and every root DLL is imported; the required Qt plugins and every QML module Lucent uses (with the plugin DLL its `qmldir` names) are present; every file is Lucent's or unmodified from a vcpkg port; one GUI executable, x64 only. Errors stop the run | `audit.txt`, `audit.json` |
 | Smoke run | The staged `Lucent.exe` starts with `PATH` reduced to Windows' folders and a temporary `--data-root`, saves a screenshot and must exit with 0, without Qt or QML loading errors and without changing the folder; it must report the camera support database of the folder and the update channel the build tree recorded | `smoke\` |
 | Sign | Only with `LUCENT_SIGN_CERT_SHA1` set (see below): `Lucent.exe` and `lucent-worker.exe`, each signature verified | |
-| Licences | `stage\licenses\`: copyright files of the shipped ports, missing licence texts, Qt's LGPL-3.0 and GPL-3.0, `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` (beginning with the terms of Lucent's logo, from `assets\branding\provenance.json`, which must record them; with the third-party code inside Qt from Qt's own SBOMs, and the libraries linked statically into `Lucent.exe`), `Lucent.spdx.json` (SPDX 2.3, checked structurally and by `pyspdxtools` when available; the programs are `MIT AND` the logo's `LicenseRef-`); `stage\Lucent-files.txt`, the installed-file list that the next version's upgrade uses | `Lucent-Setup-<version>-x64.spdx.json` |
+| Licences | `stage\licenses\`: copyright files of the shipped ports, missing licence texts, the notices of every component's parts under their own licences, from its verified source archive (for example LibRaw's DCB/FBDD, X3F and Adobe DNG SDK code in `licenses\libraw`, FreeType's drivers in `licenses\freetype`) or, for the C++ standard library compiled into the programs, from the reviewed toolset (`licenses\msvc-stl`), C++/WinRT's licence from the Windows SDK (`licenses\cppwinrt`), Inno Setup's `license.txt` with the licences of the code of others inside it and the LZMA SDK 4.40 decoder's source (`licenses\inno-setup`), the lines of Apache Tika's NOTICE for Qt (`licenses\qtbase\Apache-Tika-NOTICE.txt`), Qt's LGPL-3.0 and GPL-3.0, vcpkg's licence beside the overlay recipes that ship (`vcpkg-LICENSE.txt`), `LGPL-NOTICE.txt`, `THIRD-PARTY-NOTICES.txt` (beginning with the terms of Lucent's logo, from `assets\branding\provenance.json`, which must record them; with the third-party code inside Qt from Qt's own SBOMs, which each Qt component's licence must cover, the libraries linked statically into the programs, every bundled data asset, and the Visual C++ redistributable's and Inno Setup's versions), `Lucent.spdx.json` (SPDX 2.3, checked structurally and by `pyspdxtools` when available; the programs are `MIT AND` the logo's `LicenseRef-` and the licences of the code compiled or linked into each; every file but the licence texts and notices carries its licence, a patch that of the files it changes (NOASSERTION where their archive states none); packages for the parts, the compiler's library, C++/WinRT, Inno Setup and the code inside it); `stage\Lucent-files.txt`, the installed-file list that the next version's upgrade uses | `Lucent-Setup-<version>-x64.spdx.json` |
 | Builder paths | Every byte of every file of the folder is scanned for the build machine's folders: the user profile, the repository, the build tree, the vcpkg root, installed tree, buildtrees, packages and downloads folders, and any `X:\Users\<name>\` path, as 8-bit or UTF-16 text, with either separator and in any letter case. A hit (a PDB path in a DLL's debug directory, a `__FILE__` string, a path in a text file) stops the run with the file and byte offset. Setup and the manifest are scanned too | `builder-paths.txt`, `builder-paths.json` |
 | Installer | `installer\lucent.iss` with the version from CMake; Setup and the uninstaller signed when signing is configured | `Lucent-Setup-<version>-x64.exe`, `.exe.sha256`, `iscc.log` |
 | Manifest | Version, git commit, signing (certificate, test or release, timestamp, every signature checked), the update channel (and what `-UpdateChannel` declared), toolchain, audit summary (including the builder-path scan), SBOM summary, the RAW extensions of "Open with Lucent", every installed file with its SHA-256, the installer's size and SHA-256 (none with `-StageOnly`) | `Lucent-Setup-<version>-x64.manifest.json` |

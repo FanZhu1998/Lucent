@@ -27,8 +27,8 @@ machine of [setup](../development/setup.md)). `<v>` is the version being release
 | 4 | Qualification data | `lucent-qualify --tier all` from the clean build; compare with the committed table | 0 expectation mismatches; the same outcomes as the committed report, which a clean build of the release's code produced |
 | 5 | Performance (regression) | `tools\bench\Invoke-LucentBench.ps1`, `Test-BenchBudgets.ps1` | `Test-BenchBudgets.ps1` exits 0 (every scenario started on a quiet machine), or each exceedance is explained in the release notes |
 | 6 | Package | `tools\package.ps1 -Fresh -RunTests -UpdateChannel none` | Exit code 0; manifest `gitDirty` false, `gitCommit` the release commit, audit and builder-path errors 0 |
-| 7 | Corresponding source | `installer\tests\Test-SourcePackage.ps1 -PackageManifest ...` | Exit code 0 (every LGPL library's archives and recipe present, every hash as recorded) |
-| 8 | Licence review | Read `THIRD-PARTY-NOTICES.txt`, `LGPL-NOTICE.txt`, the ledger, `assets\branding\provenance.json` | No component, version or licence differs from the [ledger](../legal/third-party-notices.md); the LGPL notice names the archive and lists each library's modifications; the logo's licence terms are recorded and `THIRD-PARTY-NOTICES.txt` states them |
+| 7 | Corresponding source | `installer\tests\Test-SourcePackage.ps1 -PackageManifest ...` | Exit code 0 (every LGPL library's archives and recipe present, every hash as recorded, vcpkg's and Lucent's licences beside the recipes; the installation folder's licences as step 7 lists them) |
+| 8 | Licence review | Read `THIRD-PARTY-NOTICES.txt`, `LGPL-NOTICE.txt`, the ledger, `assets\branding\provenance.json` | No component, version or licence differs from the [ledger](../legal/third-party-notices.md); the LGPL notice names the archive and lists each library's modifications; the logo's licence terms are recorded and `THIRD-PARTY-NOTICES.txt` states them; the notices name the redistributable's and Inno Setup's versions with Inno Setup's licence file, every data asset, every part of a component under a licence of its own with the file of its notice and terms (the compiler's library, the Windows SDK's C++/WinRT and the code inside Inno Setup among them), and vcpkg's licence beside its recipes; the owner's open decisions (the redistributable's Distributable Code conditions, the pinned sources) are recorded |
 | 9 | Installer on the release machine | `installer\tests\Test-InstalledPackage.ps1 ... -RuntimeOutcomes -NewerInstaller` (and `-PreviousInstaller`) | Exit code 0, every check passed (install, same-version repair, upgrade, refused downgrade) |
 | 10 | Clean machine, offline | Windows Sandbox: `tools\Test-CleanMachine.ps1`, then the manual steps ([clean-machine.md](clean-machine.md)) | The script exits with 0 (`<gate>\host-check.json` passed); every manual step as described, the declined and the accepted elevation prompt on a Windows that asks for consent |
 | 11 | Signing | Only when a certificate exists (until then: skipped, release unsigned) | Every signature verified by `tools\package.ps1` and `Test-InstalledPackage.ps1 -SignerThumbprint` |
@@ -191,9 +191,36 @@ powershell -NoProfile -File installer\tests\Test-SourcePackage.ps1 -PackageManif
 
 It checks the archive beside the manifest against it: name, size and SHA-256; exactly the files the
 manifest lists; for every component the manifest marks `correspondingSource` (every LGPL library)
-its source archives by SHA-512 and its recipe files by SHA-256; no component with a licence that
+its source archives by SHA-512 and its recipe files by SHA-256; vcpkg's licence
+(`licenses/vcpkg-LICENSE.txt`) and Lucent's beside the recipes; no component with a licence that
 leaves no choice but a copyleft one is unmarked; the archive's form (sorted, stored, fixed time,
-`SHA256SUMS.txt` complete).
+`SHA256SUMS.txt` complete); that each library's note, as the package states it (the manifest's
+`components[].note`, or for an older manifest its `THIRD-PARTY-NOTICES.txt`; never the working
+tree's policy), names every patch and script of its recipe that changes more than build files; and
+that `MANIFEST.json` lists a recipe's scripts with its patches (GNU libintl's `bashify.cmake`). With
+the installation folder beside the manifest (`stage\`), it also checks the licences step 8 reads
+(ADR 0024, amendments of 2026-10-16): `THIRD-PARTY-NOTICES.txt` names the Visual C++
+redistributable's and Inno Setup's versions as the manifest records them, every bundled asset, and
+both programs as the home of compiled-in code (and `LGPL-NOTICE.txt` that neither links LGPL code
+statically); each component's parts under their own licences, as the manifest records them, have
+their notices in `licenses\<port>\` and their licences in its expression; the compiler's library
+(`msvc-stl`) is listed with its notices from the reviewed headers; Inno Setup's `license.txt` ships
+with the SHA-256 the manifest records; `licenses\vcpkg-LICENSE.txt` is beside the shipped recipes;
+the SBOM concludes a licence for every file but the licence texts and notices (each licence once, a
+recipe file the same in the port's package as in the installation), gives each component's packages
+its licence, has a package for Inno Setup and gives no part its library's version; and each Qt
+component's licence covers the third-party code Qt's SBOM records inside it. Since the gate-8 review,
+round 2 (ADR 0024, amendment of that name): the Windows SDK's code the manifest records (C++/WinRT)
+ships with its licence file and is a package of the binary that holds it; copyleft code inside Qt
+has its Source Code Form named at a commit; Khronos' headers are `MIT-Khronos-old`, and the NOTICE
+files the notices name ship; the redistributable's licence terms are named (the check prints the
+owner's review of the conditions under which Lucent redistributes it, as the manifest records it);
+every part inside Inno Setup has its file, its notice and, under a copyleft licence, its source, and
+is a package that Inno Setup's contains; each patch has the same licence in the archive's
+`MANIFEST.json` and in the SBOM, and the patches the review named are no longer their library's
+licence; each program's file in the SBOM carries its whole licence, and its version resource excepts
+the logo and third-party code; Qt Declarative's QML source files are counted; the notices supply no
+licence words; and the archive's README says where the licence texts its archives lack are.
 
 **Pass:** exit code 0. Then open `README.txt` in the archive: the version, the registry commit, the
 libraries and the rebuild command are this release's. Optional: package again into another folder,
@@ -209,11 +236,42 @@ linked statically or compiled into the programs, a copyleft licence without a so
 alternative under a `LicenseRef-` licence, such as a vendor's commercial terms, is no choice Lucent
 has), GPL or AGPL code without an exception even with a source provision (unless an ADR accepted it),
 a missing licence text and, for a commercial distribution, an Inno Setup whose banner does not state
-a commercial licence (ADR 0003 and ADR 0024, amendments of 2026-10-15). What remains is a reading:
+a commercial licence (ADR 0003 and ADR 0024, amendments of 2026-10-15); a part of a library compiled
+under a licence its concluded expression leaves out, a part's terms not found in the verified source
+archive, vcpkg's licence not verified at the registry baseline, a note that leaves out a patch
+changing more than build files, and a Setup compiled by another Inno Setup than the notices name
+(ADR 0024, amendment of 2026-10-16); third-party code that Qt's SBOM records inside a Qt component's
+files and its licence does not cover, a part's licence text not found in the archive or in the
+other component's licence file named for it, a recipe script the policy does not name, and another
+MSVC toolset, C++ standard library header or Inno Setup `license.txt` than the policy reviewed
+(ADR 0024, amendment "the gate-8 review, round 1"); a part whose licence text the policy writes out
+(`terms`), a file of `installer\third-party` without its pinned git blob id, a patch that changes a
+file whose licence neither its SPDX line nor a rule of the policy gives, copyleft code inside a Qt
+file without its Source Code Form or with one at another commit than Qt's record, a correction of
+Qt's record without its evidence, another Windows SDK, C++/WinRT version or licence file than the
+policy reviewed, a part of Inno Setup that the compiler's files do not hold or a copyleft one without
+its source, and another Visual C++ redistributable than the one whose licence was read (ADR 0024,
+amendment "the gate-8 review, round 2"). What remains is a reading:
 
 - `build\rel-<v>\package\stage\licenses\THIRD-PARTY-NOTICES.txt` lists the same components, versions
   and licences as the [ledger](../legal/third-party-notices.md)'s release table, and the credit lines
-  (FreeType, IJG, libtiff's LZW code, the Lensfun lens database, Inno Setup).
+  (FreeType, IJG, libtiff's LZW code, the Lensfun lens database, Inno Setup). It names the Visual C++
+  redistributable and Inno Setup with the versions the package manifest records
+  (`vcRedistributable.version`, `toolchain.innoSetupVersion`), every bundled data asset under "Data"
+  (Lucent's own, such as the camera support database, too), every part of a component under a
+  licence of its own with the file of its notice and terms in `licenses\<component>\` (the ledger's
+  section "Code under licences of its own inside the shipped files" lists them, and the code present
+  but not compiled), and the licences of the vcpkg recipes that ship (`licenses\vcpkg-LICENSE.txt`
+  beside them). Each part's file says where each of its texts comes from: the component's source
+  archive, the toolset's header for the compiler's library (`licenses\msvc-stl`), Inno Setup's
+  published source for its parts, or, where the archive names a licence without its text, another
+  component's licence file from a verified source that holds it (the MIT text of LibRaw's Adobe DNG
+  SDK code is nlohmann-json's). No licence text is Lucent's own words (since the gate-8 review,
+  round 2, which withdrew the only exception). Inno Setup's licence is
+  `licenses\inno-setup\license.txt`, and the code of others inside its loader and engine is listed
+  with its licences in `licenses\inno-setup` (the LZMA SDK 4.40 decoder with its source); C++/WinRT,
+  the Windows SDK's code in Qt Base's files, is listed with Qt Base, its licence in
+  `licenses\cppwinrt`; the notices name the Visual C++ redistributable's licence terms.
 - `LGPL-NOTICE.txt` names `Lucent-<v>-corresponding-source.zip` with the size and SHA-256 of step 6,
   and gives every library a "Modified" entry: each patch its recipe applies to the upstream source,
   with the files it changes and who made it when (vcpkg's dated by the registry commit, Lucent's
@@ -225,9 +283,13 @@ a commercial licence (ADR 0003 and ADR 0024, amendments of 2026-10-15). What rem
 - The logo's licence terms are decided by the project owner and recorded: `licence` in
   `assets\branding\provenance.json` holds them (their `LicenseRef-` identifier, a name, the text and
   the date of the decision), the asset's README states them, and so do the top of
-  `THIRD-PARTY-NOTICES.txt` and the SBOM (`Lucent.exe`, `lucent-worker.exe` and Lucent's package are
-  `MIT AND` that identifier). The logo is not covered by the MIT License; packaging refuses a logo
-  whose terms are not recorded. **Met for 0.1.0:** the owner decided on 2026-10-15 (all rights
+  `THIRD-PARTY-NOTICES.txt` and the SBOM (Lucent's package is `MIT AND` that identifier, and
+  `Lucent.exe` and `lucent-worker.exe` are `MIT AND` that identifier and the licences of the code
+  compiled or linked into each; until the gate-8 review, round 2, this sentence and the SBOM gave
+  the programs `MIT AND` the identifier alone). The programs' version resources and Setup's
+  copyright line keep "Copyright (c) 2026 Fan Zhu. MIT License." (the owner's decision of
+  2026-10-15); the notices state the exceptions. The logo is not covered by the MIT License; packaging refuses a
+  logo whose terms are not recorded. **Met for 0.1.0:** the owner decided on 2026-10-15 (all rights
   reserved; others may show the logo, unmodified, only to refer to Lucent; the GNU LGPL's rights are
   not limited; `LicenseRef-Lucent-Logo`),
   recorded as branding 1.0.2 ([ADR 0025](../adr/0025-branding.md), amendment of 2026-10-15). What
@@ -241,9 +303,19 @@ a commercial licence (ADR 0003 and ADR 0024, amendments of 2026-10-15). What rem
   provenance (the asset's README, "Replacing the logo").
 - `installer\license-policy.json` "distribution" still describes the release: free, MIT, not sold
   (`commercial: false`), unsigned or signed as built.
+- The owner's decisions that the gate-8 review, round 2, left open are recorded (the ledger's
+  gap 15): the review of the conditions of the Visual Studio 2022 Build Tools' licence for
+  Distributable Code, under which a release redistributes `vc_redist.x64.exe` (run silently) and links
+  the runtime's startup code (`vcRedistributable.termsReview` in `installer\license-policy.json`:
+  `status` "reviewed", the date and what the conditions require; while it is "pending" packaging
+  warns and step 7 prints it); and the acceptance of the sources verified by pinned values instead of
+  a source archive or the vcpkg registry (the SHA-256 values of the MSVC headers, Inno Setup's
+  `license.txt` and the Windows SDK's `cppwinrt\LICENSE.txt`, and the git blob ids of the files in
+  `installer\third-party`), with the elections and judgements the ledger lists there. **Open for
+  0.1.0.** Record them in a commit and start again at step 1.
 
-**Pass:** no difference; otherwise update the ledger and the policy in a commit and start again at
-step 1.
+**Pass:** no difference, and the owner's decisions recorded; otherwise update the ledger and the
+policy in a commit and start again at step 1.
 
 ## 9. Installer on the release machine
 

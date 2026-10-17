@@ -30,7 +30,11 @@ ports\<port>\       the vcpkg build recipe ("port") of each library: portfile.cm
                     portfile says) is listed with that library ("Modified"): the files it changes,
                     and who made it and when (vcpkg's patches as they are in its registry at that
                     commit; the Lucent project's own, named lucent-*.patch, with the date each
-                    states; they also mark the files they change)
+                    states; they also mark the files they change). So is each script of a recipe
+                    that portfile.cmake runs on the library's files before the build (GNU libintl's
+                    bashify.cmake rewrites its configure script). Other steps of a recipe, such as
+                    copying build files into the source tree or rewriting the files the build
+                    generates, are in its portfile.cmake
 triplets\           the vcpkg triplet @TRIPLET@ (the build settings): 64-bit x64, shared
                     libraries (DLLs), the dynamic Microsoft C runtime (/MD), release builds only,
                     and the linker and compiler options that keep the build machine's folders out of
@@ -41,6 +45,12 @@ build\<port>\       vcpkg_abi_info.txt: vcpkg's record of what went into each bu
 lucent\             Lucent's vcpkg.json and vcpkg-configuration.json: the registry commit, the
                     features Lucent asks for, and its overlay folders (cmake\ports and
                     cmake\triplets in Lucent's source are ports\ and triplets\ here)
+licenses\           vcpkg-LICENSE.txt: vcpkg's licence, the MIT License
+                    (@VCPKG_COPYRIGHT@), LICENSE.txt of the vcpkg registry at
+                    the commit named below; it covers vcpkg's recipes in ports\.
+                    Lucent-LICENSE.txt: Lucent's licence, the MIT License
+                    (@LUCENT_COPYRIGHT@); it covers the Lucent project's overlay ports
+                    and patches, triplets\ and lucent\@LICENCE_TEXTS@
 
 When this archive was made, every file in sources\ was checked: its SHA-512 is the one vcpkg
 verified before building the library, and the one the library's recipe pins (for vcpkg's own
@@ -121,8 +131,20 @@ Lucent's own source
 Licences
 --------
 
-Each library keeps its own licence: its texts are in its source archive, and in licenses\<port>\ in
-Lucent's installation folder, where licenses\LGPL-NOTICE.txt names this archive. vcpkg's recipes are
-under the MIT License (Copyright (c) Microsoft Corporation). The Lucent project's overlay ports and
-triplet are under the MIT License (Copyright (c) 2026 Fan Zhu); a library built with its patches
-remains under the library's own licence.
+Each library keeps its own licence. Its texts are in its source archive where that archive holds
+them. Where it does not (a licence the archive names without its text, or code of others inside the
+library under a licence whose text the archive lacks), the text is in another archive here, in
+licenses\ here (listed under Contents), or in Lucent's installation folder, whose
+licenses\THIRD-PARTY-NOTICES.txt lists each part of a library under a licence of its own with the
+file of its notice; each such file says where its licence's text comes from. For example, the
+LGPL-2.1 of the TRE code inside Lensfun is not in Lensfun's archive (LibRaw's archive here holds it,
+as LICENSE.LGPL), and the MIT text of LibRaw's Adobe DNG SDK code is not in LibRaw's archive
+(Lucent's installation folder holds it, as nlohmann-json's licence). licenses\LGPL-NOTICE.txt in
+that folder names this archive. vcpkg's recipes are under the MIT License
+(@VCPKG_COPYRIGHT@; licenses\vcpkg-LICENSE.txt in this archive). The Lucent
+project's overlay ports, patches and triplet are under the MIT License
+(@LUCENT_COPYRIGHT@; licenses\Lucent-LICENSE.txt in this archive). A patch's own lines
+are under its author's licence (vcpkg's or the Lucent project's MIT License); the lines it quotes
+and changes stay under the licences of the files they come from, which MANIFEST.json records for
+each patch (components[].modifications[]: licence, quotes). A library built with patches remains
+under its own licence.

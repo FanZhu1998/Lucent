@@ -31,11 +31,29 @@
        and verifies each signature: the configured certificate's thumbprint, an offline
        WinVerifyTrust result, the timestamp.
     5. Writes licenses\: Lucent's licence, the copyright file of every shipped vcpkg port, licence
-       texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, the licence text of every third-party data
-       asset (the lens database's CC BY-SA 3.0, installer\license-policy.json "assets"),
-       THIRD-PARTY-NOTICES.txt (beginning with the terms of Lucent's logo, which is not covered by the
-       MIT License, from assets\branding\provenance.json, ADR 0025; including the third-party code
-       inside Qt from Qt's own SBOM and the libraries linked statically into Lucent's executables).
+       texts vcpkg lacks, the Qt LGPL-3.0 and GPL-3.0 texts, the terms of a library's parts under their
+       own licences, verbatim from its verified source archive (LibRaw's DCB/FBDD, X3F and Adobe DNG
+       SDK code; installer\license-policy.json "parts"), vcpkg's licence (LICENSE.txt of the registry at
+       the baseline, verified by its git blob) beside the vcpkg recipes that ship, the licence text of
+       every third-party data asset (the lens database's CC BY-SA 3.0, installer\license-policy.json
+       "assets"), THIRD-PARTY-NOTICES.txt (beginning with the terms of Lucent's logo, which is not
+       covered by the MIT License, from assets\branding\provenance.json, ADR 0025; including the
+       third-party code inside Qt from Qt's own SBOM, the libraries linked statically into Lucent's
+       executables, every bundled data asset, and the Visual C++ redistributable's and Inno Setup's
+       versions as the package manifest records them; W12 gate-8 reading of 2026-10-16). Since its
+       review, round 1: the parts of FreeType, PCRE2 (its JIT compiler, the port's second archive),
+       nlohmann-json, Lensfun, libtiff, HarfBuzz, libjpeg-turbo and GNU libintl under their own
+       licences too; the third-party code of Qt's SBOM checked against each Qt component's licence;
+       the notices of the compiler's own C++ library code inside the programs, verbatim from the
+       toolset's headers whose SHA-256 the policy pins ("toolchainLibraries"); and Inno Setup's
+       licence, the compiler's license.txt (licenses\inno-setup\license.txt, its SHA-256 reviewed).
+       Since its round 2: Qt's records reviewed (Khronos' licence, Tika's NOTICE lines, the Public
+       Suffix List's Source Code Form at its commit), C++/WinRT in Qt's files with the Windows SDK's
+       licence file (licenses\cppwinrt), the code of others inside Inno Setup with its licences and
+       the LZMA SDK 4.40 decoder's source (licenses\inno-setup), every licence text from a verified
+       source (no words Lucent supplies), and the redistributable's licence terms named; packaging
+       stops when the redistributable is not the one whose terms were read
+       (vcRedistributable.reviewed) and warns while the owner's review of them is pending.
        Then the corresponding source (W12, ADR 0024): Lucent-<version>-corresponding-source.zip beside
        the installer, holding for every shipped library whose licence needs a source provision (the
        LGPL libraries; installer\license-policy.json "lgpl"/"correspondingSource") the upstream
@@ -46,11 +64,17 @@
        stored entries with a fixed time) and is checked again by reading it back
        (Test-CorrespondingSourcePackage). Packaging stops when a shipped port's licence leaves no
        choice but a copyleft licence and the policy provides no source for it, or when a provided port
-       is missing from the archive. LGPL-NOTICE.txt then names the archive with its size and SHA-256.
+       is missing from the archive, and when a library's note leaves out a patch that changes more
+       than build files (Test-ModificationNotes). The archive also holds vcpkg's and Lucent's
+       licences beside the recipes, and the licence texts that files it conveys need and their own
+       archives lack (the GPL-2.0 of LibRaw-cmake's CMakeLists.txt); its MANIFEST.json gives each
+       patch the licence of the files it changes (Get-PatchLicences, the gate-8 review, round 2).
+       LGPL-NOTICE.txt then names the archive with its size and SHA-256.
        Last come Lucent-files.txt (the installed-file list that the next version's Setup uses to
        upgrade) and the SBOM Lucent.spdx.json (SPDX 2.3, checked structurally, and with pyspdxtools
-       when it is available; Lucent's programs are "MIT AND" the logo's licence reference, whose
-       text it gives).
+       when it is available; Lucent's programs carry their whole licence: "MIT AND" the logo's
+       licence reference, whose text it gives, and the licences of the code compiled or linked into
+       each).
     6. Scans every byte of every file of the folder for the build machine's folders (W12): the user
        profile, the repository, the build tree, the vcpkg root, installed tree, buildtrees, packages
        and downloads folders, and any X:\Users\<name>\ path, in 8-bit and UTF-16 text, either
@@ -63,7 +87,9 @@
        the package manifest and the corresponding-source archive's own files (README, MANIFEST.json,
        recipes, triplet, build records; the upstream archives are verified by SHA-512 instead) are
        scanned the same way.
-    7. Compiles installer\lucent.iss with Inno Setup 6 (unless -StageOnly; Setup and the uninstaller
+    7. Compiles installer\lucent.iss with Inno Setup 6 (unless -StageOnly; the compiler's engine
+       version, read before step 5 because THIRD-PARTY-NOTICES.txt names it, must be the one that
+       compiles Setup; Setup and the uninstaller
        are signed when signing is configured, and Setup's signature is verified; the compiler's
        licence line is recorded (Get-InnoSetupLicence: the whole banner), and a distribution the
        policy calls commercial needs a compiler whose banner states a commercial licence: a
@@ -108,12 +134,14 @@
     Package the existing build tree without building.
 .PARAMETER StageOnly
     Stop after the folder, audit, smoke run, licences and SBOM; do not compile the installer. The
-    manifest then records no installer.
+    manifest then records no installer. An Inno Setup compiler is not required, but one that is found
+    is used for the version THIRD-PARTY-NOTICES.txt names (and recorded in the manifest).
 .PARAMETER OutputDir
     Where outputs go (default <BuildDir>\package).
 .PARAMETER Iscc
     Path of ISCC.exe; it must be valid (no fallback). Otherwise LUCENT_ISCC (also strict), PATH, the
-    uninstall registry and the standard Inno Setup folders are searched.
+    uninstall registry and the standard Inno Setup folders are searched. Its engine version is read
+    first by compiling an empty script without output (Get-InnoSetupEngine).
 .PARAMETER VCRedist
     Path of Microsoft's vc_redist.x64.exe (default: the one the build recorded from Visual Studio).
 .PARAMETER SpdxValidator
@@ -306,13 +334,26 @@ if ($vcpkgManifest.'version-semver' -cne $info.version) {
 }
 $msvc = if ($info.dumpbin -match '/MSVC/([0-9.]+)/') { $Matches[1] } else { 'unknown' }
 
-# Inno Setup is located before the slow steps, so a wrong -Iscc or LUCENT_ISCC fails at once.
+# Inno Setup is located before the slow steps, so a wrong -Iscc or LUCENT_ISCC fails at once. Its
+# engine version goes into THIRD-PARTY-NOTICES.txt, which Setup installs, so it is read now
+# (Get-InnoSetupEngine), and the compiler that compiles Setup must report the same (W12 gate-8 reading
+# of 2026-10-16). A -StageOnly run compiles no Setup and needs no compiler, but uses one it finds; the
+# notices then name Inno Setup without a version.
 $isccInfo = $null
-if (-not $StageOnly) {
-    $isccInfo = Find-InnoSetupCompiler -Path $Iscc
+try { $isccInfo = Find-InnoSetupCompiler -Path $Iscc }
+catch {
+    if (-not $StageOnly -or $Iscc -or $env:LUCENT_ISCC) { throw }
+    Write-Warning "No Inno Setup compiler was found, so THIRD-PARTY-NOTICES.txt of this -StageOnly folder names Inno Setup without its version and the manifest records no compiler. $($_.Exception.Message)"
+}
+if ($isccInfo) {
     if (-not $isccInfo.Standard) {
         Write-Warning "ISCC.exe is not in a standard Inno Setup 6 folder ($($isccInfo.Path), found via $($isccInfo.From)); pass -Iscc or set LUCENT_ISCC to choose the compiler explicitly. Its path and SHA-256 are recorded in the manifest."
     }
+    $isccEngine = Get-InnoSetupEngine -Path $isccInfo.Path
+    $isccInfo | Add-Member -NotePropertyName Version -NotePropertyValue $isccEngine.Version
+    $isccInfo | Add-Member -NotePropertyName Licence -NotePropertyValue $isccEngine.Licence.Line
+    Write-Host ("Inno Setup: {0}{1} ({2}, found via {3})" -f $isccEngine.Version, $(if ($isccEngine.Licence.Line) { ", $($isccEngine.Licence.Line)" } else { '' }),
+        $isccInfo.Path, $isccInfo.From)
 }
 
 # Lucent's logo (ADR 0025): the branding asset, its manifest and every file's size and SHA-256 verified
@@ -480,13 +521,65 @@ if ($vcVersionText -notmatch '^(\d+)\.(\d+)\.(\d+)') { throw "Unexpected redistr
 $vc = [pscustomobject]@{
     Path = $vcRedistPath; Version = $vcVersionText; Major = [int]$Matches[1]; Minor = [int]$Matches[2]; Build = [int]$Matches[3]
     Sha256 = (Get-Sha256 $vcRedistPath); Sha1 = (Get-Sha1 $vcRedistPath) }
+# The redistributable whose licence terms the policy names (the gate-8 review, round 2): another one stops
+# packaging until its terms are read again (vcRedistributable.reviewed), and the owner's review of the
+# conditions under which Lucent redistributes it is recorded there too (termsReview).
+$vcPolicy = $policy.vcRedistributable
+$vcReviewed = if ($vcPolicy.PSObject.Properties.Name -contains 'reviewed') { $vcPolicy.reviewed } else { $null }
+if (-not $vcReviewed -or [string]$vcReviewed.version -cne $vc.Version -or ([string]$vcReviewed.sha256).ToLowerInvariant() -ne $vc.Sha256) {
+    throw "$vcRedistPath is the Visual C++ redistributable $($vc.Version) (SHA-256 $($vc.Sha256)), but installer\license-policy.json names the licence terms of $(if ($vcReviewed) { "$($vcReviewed.version) (SHA-256 $($vcReviewed.sha256))" } else { 'no redistributable' }) (vcRedistributable.reviewed): read the terms the new one shows and record them."
+}
+$vcReview = if ($vcPolicy.PSObject.Properties.Name -contains 'termsReview') { $vcPolicy.termsReview } else { $null }
+if (-not $vcReview -or [string]$vcReview.status -cne 'reviewed') {
+    Write-Warning "The project owner has not recorded a review of the conditions under which Lucent redistributes Microsoft's Visual C++ redistributable and links the runtime's startup code (installer\license-policy.json vcRedistributable.termsReview: $(if ($vcReview) { $vcReview.status } else { 'none' })); release checklist gate 8 stays open until it is recorded."
+}
 
 Write-Step 'Writing licences, notices, the installed-file list and the SBOM'
 $downloads = if ($env:VCPKG_DOWNLOADS) { $env:VCPKG_DOWNLOADS } else { Join-Path $env:VCPKG_ROOT 'downloads' }
 $assetLicences = @(Get-AssetLicences -StageDir $stage -Info $info -Policy $policy)
+# Inno Setup's licence, from the compiler that makes Setup (verified against the reviewed SHA-256), and the
+# code of the compiler's own libraries inside the programs (W12 gate-8 review, round 1).
+$innoLicence = Get-InnoSetupLicenceFile -Iscc $isccInfo -Policy $policy
+# The code of others inside Inno Setup's loader, engine and uninstaller, with their licences (and the LZMA SDK
+# 4.40 decoder's source), from the compiler and Inno Setup's published source; the code of the toolchain's
+# libraries in every shipped binary (C++/WinRT of the Windows SDK in Qt's files) (the gate-8 review, round 2).
+$innoParts = @(Get-InnoSetupParts -Iscc $isccInfo -Policy $policy -RepoRoot $repoRoot)
+$toolchainLibraries = @(Get-ToolchainLibraries -Info $info -Policy $policy -StageDir $stage -Report $report)
 $components = New-LicenseBundle -StageDir $stage -Info $info -Report $report -Policy $policy -RepoRoot $repoRoot `
     -DownloadsDir $downloads -NoticesDir (Join-Path $installerDir 'notices') -LogoLicence $logoLicence -StaticLibraries $staticLibraries `
-    -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT -Baseline $vcpkgBaseline -GitCommit $gitCommit
+    -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT -Baseline $vcpkgBaseline -GitCommit $gitCommit `
+    -VcRedist $vc -InnoSetupVersion $(if ($isccInfo) { $isccInfo.Version } else { '' }) -InnoSetupLicence $innoLicence -InnoSetupParts $innoParts `
+    -ToolchainLibraries $toolchainLibraries
+# What the notices now state beyond the components (W12 gate-8 reading of 2026-10-16 and its review, round 1).
+foreach ($component in @($components | Where-Object { @($_.Parts).Count -gt 0 })) {
+    Write-Host ("    {0} ({1}): the notices of {2} part(s) from its source archive ({3})" -f $component.Port, $component.LicenseConcluded, @($component.Parts).Count,
+        ((@($component.Parts) | ForEach-Object { "$($_.Name): $($_.Licence), $($_.File)$(if (-not $_.Compiled) { ', source only' })" }) -join '; '))
+}
+foreach ($component in @($components | Where-Object { $_.QtSbom })) {
+    $skipped = @($component.QtSbom.Attributions | Where-Object { ($_.PSObject.Properties.Name -contains 'Compiled') -and -not $_.Compiled })
+    Write-Host ("    {0} ({1}): {2} third-party records of Qt's SBOM, each covered by the licence{3}" -f $component.Port, $component.LicenseConcluded,
+        (@($component.QtSbom.Attributions).Count - $skipped.Count), $(if ($skipped.Count) { "; not compiled in this build: $((@($skipped) | ForEach-Object { $_.Name }) -join ', ')" } else { '' }))
+}
+foreach ($library in $toolchainLibraries) {
+    $where = if (($library.PSObject.Properties.Name -contains 'Binaries') -and @($library.Binaries).Count) { "in $(@($library.Binaries) -join ', ') ($((@($library.Inside) | ForEach-Object { $_.Port }) -join ', ')); its licence in licenses\$($library.LicenceFile.File), $($library.LicenceFile.Source)" }
+             elseif (@($library.Programs).Count) { "in $(@($library.Programs) -join ', '); notices of $(@($library.Parts | Where-Object { $_.Compiled }).Count) part(s) in licenses\$($library.Id)" }
+             else { 'in no shipped file: nothing of it is listed' }
+    Write-Host ("    {0} {1} ({2}): {3}" -f $library.Id, $library.Version, $library.LicenseConcluded, $where)
+}
+Write-Host ("    Inno Setup's licence: {0}" -f $(if ($innoLicence) { "licenses\inno-setup\license.txt, the compiler's license.txt (SHA-256 $($innoLicence.Sha256), as reviewed for $($innoLicence.Version)$(if ($innoLicence.Published) { "; $($innoLicence.Published)" }))" } else { 'not included (no compiler was found)' }))
+foreach ($part in $innoParts) {
+    Write-Host ("    Inside Inno Setup ({0}): {1}{2}, {3} ({4}{5})" -f $part.Inside, $part.Name, $(if ($part.Version) { " $($part.Version)" } else { '' }), $part.Licence, $part.File,
+        $(if (@($part.SourceFiles).Count) { "; source: $(@($part.SourceFiles).Count) files in licenses\$([System.IO.Path]::GetDirectoryName([string]@($part.SourceFiles)[0].File))" } else { '' }))
+}
+$derivedPatches = @($components | Where-Object { ($_.PSObject.Properties.Name -contains 'PatchLicences') -and $_.PatchLicences } | ForEach-Object { @($_.PatchLicences.Values) })
+Write-Host ("    The licences of {0} patches derived from the files they change ({1} quoting lines whose licence their archive does not state)" -f $derivedPatches.Count,
+    @($derivedPatches | Where-Object { [string]$_.Licence -ceq 'NOASSERTION' }).Count)
+$shippedRecipes = @($components | ForEach-Object { $_.RecipeRef } | Where-Object { $_ -and ($_.PSObject.Properties.Name -contains 'ShippedRecipe') })
+if ($shippedRecipes.Count -gt 0) {
+    Write-Host ("    vcpkg's licence beside the shipped recipes ({0}): licenses\vcpkg-LICENSE.txt, LICENSE.txt of the registry at {1}" -f
+        (($shippedRecipes | ForEach-Object { $_.ShippedRecipe }) -join ', '), $vcpkgBaseline)
+}
+Write-Host ("    THIRD-PARTY-NOTICES.txt names {0} {1} and {2}" -f $policy.vcRedistributable.name, $vc.Version, $(if ($isccInfo) { $isccInfo.Version } else { 'Inno Setup (no compiler found: no version)' }))
 
 # The corresponding source of the LGPL libraries (W12, ADR 0024): written, then read back and checked
 # against vcpkg's record of every library that needs it, before the LGPL notice names it.
@@ -512,7 +605,16 @@ foreach ($record in $sourcePackage.Components) {
         $(if ($record.IsOverlay) { "Lucent overlay ($($record.Recipe.lucentSource))" } else { 'vcpkg registry port at the baseline' }))
 }
 foreach ($tool in $sourcePackage.BuildTools) { Write-Host "    Build tool recipe: $($tool.Port) $($tool.Version) (Lucent overlay $($tool.LucentSource))" }
-Write-Host "    Read back with System.IO.Compression: every expected archive and recipe file present, every hash as recorded"
+Write-Host "    Read back with System.IO.Compression: every expected archive and recipe file present, every hash as recorded, vcpkg's and Lucent's licences beside them"
+# The notes THIRD-PARTY-NOTICES.txt repeats name every patch that changes more than build files (W12
+# gate-8 reading of 2026-10-16: qtbase's note left out four patches that change C++ code).
+$noteProblems = @(Test-ModificationNotes -Components @($sourcePackage.Components) -Policy $policy)
+if ($noteProblems.Count -gt 0) {
+    foreach ($problem in $noteProblems) { Write-Host "    ERROR: $problem" -ForegroundColor Red }
+    throw "installer\license-policy.json leaves $($noteProblems.Count) patch(es) that change more than build files out of the libraries' notes."
+}
+Write-Host ("    Every patch or script that changes more than build files is named in its library's note ({0} patches and scripts checked)" -f
+    (@($sourcePackage.Components | ForEach-Object { @($_.Modifications) }) | Where-Object { $_ }).Count)
 Write-LgplNotice -StageDir $stage -Info $info -Components $components -NoticesDir (Join-Path $installerDir 'notices') `
     -SourcePackage $sourcePackage -Baseline $vcpkgBaseline -GitCommit $gitCommit
 
@@ -520,11 +622,15 @@ $sbomRelative = 'licenses\Lucent.spdx.json'
 $sbomPath = Join-Path $stage $sbomRelative
 $listed = Write-InstalledFileList -StageDir $stage -Version $info.version -AlsoList @($sbomRelative)
 $sbom = New-PackageSbom -Path $sbomPath -Info $info -Components $components -Report $report -StageDir $stage `
-    -GitCommit $gitCommit -VcRedist $vc -Policy $policy -LogoLicence $logoLicence -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT
+    -GitCommit $gitCommit -VcRedist $vc -Policy $policy -LogoLicence $logoLicence -AssetLicences $assetLicences -VcpkgRoot $env:VCPKG_ROOT `
+    -Baseline $vcpkgBaseline -ToolchainLibraries $toolchainLibraries -InnoSetupVersion $(if ($isccInfo) { $isccInfo.Version } else { '' }) -InnoSetupLicence $innoLicence `
+    -InnoSetupParts $innoParts
 Test-InstalledFileList -StageDir $stage
-$attributions = @($components | Where-Object { $_.QtSbom } | ForEach-Object { $_.QtSbom.Attributions }).Count
+$qtAttributions = @($components | Where-Object { $_.QtSbom } | ForEach-Object { $_.QtSbom.Attributions } | Where-Object { $_ })
+$attributions = @($qtAttributions | Where-Object { -not ($_.PSObject.Properties.Name -contains 'Compiled') -or $_.Compiled }).Count
+$notCompiledAttributions = $qtAttributions.Count - $attributions
 Write-Host ("    {0} components ({1})" -f $components.Count, (($components | ForEach-Object { "$($_.Port) $($_.Version)" }) -join ', '))
-Write-Host ("    {0} third-party components inside the shipped Qt files (from Qt's SBOMs)" -f $attributions)
+Write-Host ("    {0} third-party components inside the shipped Qt files (from Qt's SBOMs){1}" -f $attributions, $(if ($notCompiledAttributions -gt 0) { "; $notCompiledAttributions more recorded there but not compiled in this build" } else { '' }))
 Write-Host ("    Data assets: {0}" -f ((@($assetLicences) | ForEach-Object { "$($_.Id) $($_.Version) ($($_.Concluded))" }) -join ', '))
 Write-Host ("    Installed-file list: {0} files" -f $listed)
 Write-Host ("    SBOM: {0} packages, {1} files, {2} relationships; structural check passed" -f $sbom.Packages, $sbom.Files, $sbom.Relationships)
@@ -628,15 +734,20 @@ if (-not $StageOnly) {
         $compile.Output | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
         throw "ISCC failed ($($compile.ExitCode)); see $(Join-Path $OutputDir 'iscc.log')."
     }
-    $engine = @($compile.Output | ForEach-Object { if ($_ -match '^Compiler engine version: (.+)$') { $Matches[1] } }) | Select-Object -First 1
-    if ($engine) { $isccInfo | Add-Member -NotePropertyName Version -NotePropertyValue $engine.Trim() }
+    # The engine that compiled Setup must be the one THIRD-PARTY-NOTICES.txt names (Get-InnoSetupEngine,
+    # before the licences were written; W12 gate-8 reading of 2026-10-16).
+    $engine = Get-InnoSetupEngineVersion -Output ([string[]]@($compile.Output))
+    if ($engine -cne $isccInfo.Version) {
+        Remove-Item -LiteralPath $installerPath -Force
+        throw "Setup was compiled by $(if ($engine) { $engine } else { 'a compiler that states no engine version' }), but THIRD-PARTY-NOTICES.txt names $($isccInfo.Version); see $(Join-Path $OutputDir 'iscc.log')."
+    }
     # The compiler states its licence in its banner ("Non-commercial use only" for the free edition).
     # Its non-commercial terms cover Lucent's free distribution (ADR 0024), not a commercial one, which
     # needs a licence the banner positively states as commercial (W12 review LIC-6: an unrecognised
     # banner fails a commercial distribution instead of passing it).
     $isccLicenceRecord = Get-InnoSetupLicence -Output ([string[]]@($compile.Output))
     $isccLicence = $isccLicenceRecord.Line
-    $isccInfo | Add-Member -NotePropertyName Licence -NotePropertyValue $isccLicence
+    $isccInfo.Licence = $isccLicence
     $licenceCheck = Test-InnoSetupLicence -Licence $isccLicenceRecord -Commercial ([bool]$distribution.commercial)
     foreach ($warning in $licenceCheck.Warnings) { Write-Warning $warning }
     if (@($licenceCheck.Errors).Count -gt 0) {
@@ -741,6 +852,8 @@ $manifest = [ordered]@{
             archives = @($_.Archives | ForEach-Object { [ordered]@{ file = $_.file; url = $_.url; size = $_.size; sha512 = $_.sha512; sha256 = $_.sha256 } })
             recipe = [ordered]@{ folder = $_.Recipe.folder; origin = $_.Recipe.origin; files = @($_.Recipe.files) } } })
         buildTools = @($sourcePackage.BuildTools | ForEach-Object { [ordered]@{ port = $_.Port; version = $_.Version; recipe = $_.Recipe.folder } })
+        # Licence texts the archive adds for the files it conveys (the gate-8 review, round 2).
+        licenceTexts = @($sourcePackage.LicenceTexts)
         files = @($sourcePackage.Entries) }
     distribution = [ordered]@{
         model = $distribution.model; lucentLicence = $distribution.lucentLicence; commercial = $distribution.commercial
@@ -758,7 +871,14 @@ $manifest = [ordered]@{
     updateChannel = $(if ($compiledChannel) { [ordered]@{ name = $compiledChannel.name; manifestUrl = $compiledChannel.manifestUrl
         keyIds = @($compiledChannel.keyIds); publisherThumbprints = @($compiledChannel.publisherThumbprints) } } else { $null })
     updateChannelDeclared = $(if ($UpdateChannel) { $UpdateChannel } else { $null })
-    vcRedistributable = [ordered]@{ file = 'vc_redist.x64.exe'; version = $vc.Version; sha256 = $vc.Sha256 }
+    # The terms the redistributable shows when run on its own, which Setup's silent run does not display, and
+    # the state of the owner's review of the conditions under which Lucent redistributes it (the gate-8 review,
+    # round 2).
+    vcRedistributable = [ordered]@{ file = 'vc_redist.x64.exe'; version = $vc.Version; sha256 = $vc.Sha256
+        licenceTerms = [string]$vcReviewed.licenceName; eulaId = [string]$vcReviewed.eulaId
+        termsReview = $(if ($vcReview) { [string]$vcReview.status } else { $null }) }
+    # The Inno Setup compiler: the one that compiled Setup, or with -StageOnly the one found, whose engine
+    # version THIRD-PARTY-NOTICES.txt names (none found: all null).
     toolchain = [ordered]@{
         msvc = $msvc; qt = $info.qtVersion; vcpkgTriplet = $info.vcpkgTriplet
         vcpkgBaseline = $vcpkgBaseline
@@ -766,6 +886,11 @@ $manifest = [ordered]@{
         innoSetupVersion = $(if ($isccInfo -and ($isccInfo.PSObject.Properties.Name -contains 'Version')) { $isccInfo.Version } else { $null })
         innoSetupSha256 = $(if ($isccInfo) { $isccInfo.Sha256 } else { $null })
         innoSetupLicence = $(if ($isccInfo -and ($isccInfo.PSObject.Properties.Name -contains 'Licence')) { $isccInfo.Licence } else { $null })
+        # The compiler's license.txt that ships as licenses\inno-setup\license.txt (W12 gate-8 review, round 1).
+        innoSetupLicenceFile = $(if ($innoLicence) { [ordered]@{ file = 'licenses\inno-setup\license.txt'; sha256 = $innoLicence.Sha256; published = $innoLicence.Published } } else { $null })
+        # The code of others inside Inno Setup's loader, engine and uninstaller (the gate-8 review, round 2).
+        innoSetupParts = @($innoParts | ForEach-Object { [ordered]@{ name = $_.Name; version = $_.Version; licence = $_.Licence; declared = $_.Declared; inside = $_.Inside
+            file = "licenses\$($_.File)"; notice = $_.Notice; sourceFiles = @(@($_.SourceFiles) | ForEach-Object { "licenses\$($_.File)" }) } })
         innoSetupStandardInstall = $(if ($isccInfo) { $isccInfo.Standard } else { $null }) }
     audit = [ordered]@{
         errors = $report.Errors.Count; warnings = @($report.Warnings)
@@ -785,8 +910,22 @@ $manifest = [ordered]@{
     sbom = [ordered]@{ file = 'licenses\Lucent.spdx.json'; packages = $sbom.Packages; files = $sbom.Files; validatedBy = $(if ($sbomValidated) { 'pyspdxtools' } else { 'structural check only' }) }
     fileAssociations = [ordered]@{ progId = 'Lucent.RawPhoto'; extensions = @($extensions | ForEach-Object { ".$_" })
         openWithProgids = 'only for extensions that already have a default program at install time' }
+    # Each component's note as THIRD-PARTY-NOTICES.txt repeats it, and its parts under their own licences,
+    # so gate 7 checks what the package ships, not the working tree's policy (W12 gate-8 review, round 1).
     components = @($components | ForEach-Object { [ordered]@{ port = $_.Port; version = $_.Version; licence = $_.LicenseConcluded; linkage = $_.Linkage
-        correspondingSource = ($sourceProvisionPorts -contains $_.Port) } })
+        correspondingSource = ($sourceProvisionPorts -contains $_.Port)
+        note = $(if ($_.Comment) { [string]$_.Comment } else { $null })
+        parts = @(@($_.Parts) | Where-Object { $_ } | ForEach-Object { [ordered]@{ name = $_.Name; version = $(if ($_.Version) { [string]$_.Version } else { $null })
+            licence = $_.Licence; file = "licenses\$($_.File)"; compiled = [bool]$_.Compiled } }) } })
+    # The compiler's own libraries inside the programs, with their parts (W12 gate-8 review, round 1).
+    toolchainLibraries = @($toolchainLibraries | ForEach-Object { [ordered]@{ id = $_.Id; name = $_.Name; version = $_.Version; licence = $_.LicenseConcluded
+        programs = @($_.Programs)
+        # A Windows SDK library: the binaries that hold it, their ports and its licence file (the gate-8 review, round 2).
+        kit = $(if ($_.PSObject.Properties.Name -contains 'Kit') { $_.Kit } else { $null })
+        binaries = @(if ($_.PSObject.Properties.Name -contains 'Binaries') { $_.Binaries })
+        inside = @(if ($_.PSObject.Properties.Name -contains 'Inside') { @($_.Inside) | ForEach-Object { [ordered]@{ port = $_.Port; files = @($_.Files) } } })
+        licenceFile = $(if ($_.PSObject.Properties.Name -contains 'LicenceFile') { [ordered]@{ file = "licenses\$($_.LicenceFile.File)"; sha256 = $_.LicenceFile.Sha256; source = $_.LicenceFile.Source } } else { $null })
+        parts = @(@($_.Parts) | ForEach-Object { [ordered]@{ name = $_.Name; licence = $_.Licence; member = $_.Member; sha256 = $_.Sha256; file = "licenses\$($_.File)"; compiled = [bool]$_.Compiled } }) } })
     staticLibraries = @($components | ForEach-Object { $_.StaticLibraries } | Where-Object { $_ } | ForEach-Object { [ordered]@{ library = $_.Path; licence = $_.LicenseConcluded } })
     files = $files
 }
