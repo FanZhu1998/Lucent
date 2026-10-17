@@ -9,24 +9,40 @@ contains (tools/package.ps1), so it names exactly the components that ship.
 @LUCENT_LOGO@
 
 - "DLL" components are separate files in the installation folder. "Compiled in" components are
-  header-only libraries whose code is part of Lucent.exe; code "linked statically into Lucent.exe"
-  is named with its own licence.
-- The full copyright and licence text of each component is in the folder named after it, in
-  copyright.txt (copied from the component's vcpkg package) and any further files listed.
+  header-only libraries, and parts of the compiler's own libraries, whose code is part of
+  @PROGRAMS@; code "linked statically" into a program is named
+  with that program and its own licence.
+- A component's parts under licences of their own are listed with it, each with the file of its
+  notice and terms in the folder named after the component. Each file says where its texts come
+  from: the component's source archive (for the compiler's library, its header in the compiler
+  that built Lucent; for Inno Setup, its published source), or, where that archive names a
+  licence without its text, another component's licence file in this folder that holds it.
+- The full copyright and licence text of each vcpkg component is in the folder named after it, in
+  copyright.txt (copied from the component's vcpkg package) and any further files listed. The
+  compiler's library (msvc-stl) and the Windows SDK's code inside Qt's files (C++/WinRT) are no
+  vcpkg components: msvc-stl's folder holds the notices of its parts (its note says why its
+  compiled code needs no licence text), cppwinrt's the licence of C++/WinRT.
 - Qt compiles code from other projects into its own files (Unicode data, hash functions, the Public
   Suffix List and more). Each Qt component lists that code with its copyright holders, licence and
-  source, as recorded by Qt's own software bill of materials.
+  source, as recorded by Qt's own software bill of materials; where that record falls short, the
+  list says so (a licence the code carries instead, the lines of its NOTICE, where the Source Code
+  Form of copyleft code is). Qt Base also lists the code of the Windows SDK compiled into its files.
 - LGPL-NOTICE.txt explains the LGPL libraries (Qt, LibRaw, Lensfun and the GLib libraries it uses):
   your right to replace them, and their corresponding source, the archive
   Lucent-@VERSION@-corresponding-source.zip published next to Lucent's installer.
-- Data that Lucent ships under the terms of its authors (the Lensfun lens database, used unmodified
-  under CC BY-SA 3.0) is listed under "Data" with its licence text in the folder named after it.
+- The data Lucent ships is listed under "Data" with its licence: Lucent's own data under Lucent's
+  MIT License, and data under the terms of its authors (the Lensfun lens database, used unmodified
+  under CC BY-SA 3.0) with its licence text in the folder named after it.
 - Lucent.spdx.json is the software bill of materials (SPDX 2.3) of this installation.
 - The Microsoft Visual C++ Runtime is not part of this folder. If the computer needed it, Lucent
-  Setup ran Microsoft's own redistributable installer, under Microsoft's licence terms.
-- Lucent Setup and its uninstaller (unins000.exe) are made with Inno Setup, copyright Jordan
-  Russell and Martijn Laan (https://www.innosetup.com), used unmodified under the Inno Setup
-  License for the non-commercial distribution of free software.
+  Setup ran Microsoft's own redistributable installer, unmodified and without its window:
+  @VC_REDIST@ (vc_redist.x64.exe). Microsoft's licence terms for it are the
+  @VC_REDIST_TERMS@, which that installer shows when it is run on its own.
+- Lucent Setup and its uninstaller (unins000.exe) are made with @INNO_SETUP@, copyright
+  Jordan Russell and Martijn Laan (https://www.innosetup.com), used unmodified under the Inno
+  Setup License for the non-commercial distribution of free software.
+@INNO_SETUP_LICENCE@
+@RECIPES@
 
 Required notices
 ----------------

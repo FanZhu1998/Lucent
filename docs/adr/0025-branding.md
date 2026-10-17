@@ -545,7 +545,9 @@ to keep the conventional copyright notice.
     the SPDX list). They cover the master, every derivative, and the logo as the programs, Setup and
     the README show it. The provenance facts (the Context, decision 1) stay as they are, and so do the
     programs' version information (`LegalCopyright` "Copyright (c) 2026 Fan Zhu. MIT License.", item
-    23) and Setup's `AppCopyright`.
+    23) and Setup's `AppCopyright`, as the owner decided on 2026-10-15 when asked whether to mention
+    the logo there. (The gate-8 review, round 2, proposed adding the exceptions to those lines; they
+    stay as decided, and the notices and the SBOM state the exceptions: ADR 0024, decision 41.)
 28. **`provenance.json`'s licence is an object** (decisions 1, 2 and 12). The schema stays
     "lucent.branding-provenance" version 1, extended compatibly: `licence` is `null` while the owner
     has not decided, the terms as text (the form version 1 had, still accepted), or an object of
@@ -565,7 +567,9 @@ to keep the conventional copyright notice.
     `lucent-worker.exe`, Setup and its uninstaller; Lucent's window, Help > About and Setup's wizard)
     and states the terms, once, before the third-party list. The SBOM gives `Lucent.exe`,
     `lucent-worker.exe` and Lucent's package the licence `MIT AND LicenseRef-Lucent-Logo` (for the
-    package concluded and declared), with the terms as an extracted licensing info.
+    package concluded and declared), with the terms as an extracted licensing info. (Since the gate-8
+    review, round 2, ADR 0024 decision 41, each program's file also names the licences of the code
+    compiled or linked into it.)
     `Lucent-LICENSE.txt` stays the MIT text of `LICENSE`, and `LGPL-NOTICE.txt` ("Lucent's own code
     ... MIT License") is unchanged. Packaging refuses a logo whose terms are undecided (`null`) or
     recorded as text alone (no identifier for the SBOM), as it refuses a component whose licence is

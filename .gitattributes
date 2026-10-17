@@ -28,3 +28,7 @@
 
 # vcpkg overlay ports are hashed byte for byte by vcpkg; keep LF everywhere so ABI hashes match on every machine.
 cmake/ports/** text eol=lf
+
+# Third-party files pinned by their git blob ids (installer/license-policy.json, thirdPartySources): stored and
+# checked out byte for byte, whatever their line endings.
+installer/third-party/** -text

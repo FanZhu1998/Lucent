@@ -4,7 +4,7 @@ Lucent @VERSION@: libraries under the GNU Lesser General Public License
 Lucent's own code is distributed under the MIT License (Lucent-LICENSE.txt in this folder).
 Lucent uses the libraries listed below under the GNU Lesser General Public License (LGPL). Each
 one is a separate DLL in Lucent's installation folder that Lucent loads dynamically when it runs.
-No LGPL-licensed code is linked statically into Lucent.exe.
+No LGPL-licensed code is linked statically into @PROGRAMS@.
 @STATIC_LINKED@
 Your rights
 -----------
@@ -43,7 +43,9 @@ the SHA-512 value shown. A recipe is identified by the git tree hash of its port
 vcpkg registry (https://github.com/microsoft/vcpkg) and, when the registry commit Lucent builds
 against (@VCPKG_BASELINE@) holds exactly that tree, by a link to the port folder at that commit.
 A port that Lucent overlays (vcpkg's recipe with Lucent's build changes) is installed with Lucent
-in the folder named for it (licenses\<port>\recipe).
+in the folder named for it (licenses\<port>\recipe); vcpkg's files of it are under vcpkg's MIT
+License (vcpkg-LICENSE.txt in this folder), the Lucent project's changes under Lucent's
+(Lucent-LICENSE.txt).
 
 Modified libraries: where a library's recipe patches its upstream source, the library is a
 modified version of it. Every patch its recipe names (portfile.cmake; a few apply only on other
@@ -51,8 +53,12 @@ platforms or with features Lucent does not use, as the portfile says) is listed 
 library ("Modified"), with the files it changes and who made the change and when: vcpkg's patches
 as they are in its registry at the commit above (dated by that commit), and the Lucent project's
 own patches, named lucent-*.patch, with the date each states (it also marks the files it changes).
-A library whose entry says "Modified: no" is built from its upstream source archive as released.
-The archives and recipes are also listed in machine-readable form in Lucent.spdx.json (SPDX 2.3),
-and, with these patches, in MANIFEST.json inside the archive above.
+A recipe can also change the library's build scripts with a script of its own that portfile.cmake
+runs before the build; such a script is listed with the patches, with the files it changes. Other
+steps of a recipe, such as copying build files into the source tree or rewriting the files the
+build generates (Makefiles), are part of the recipe as built, in its port folder. A library whose
+entry says "Modified: no" is built from its upstream source archive as released. The archives and
+recipes are also listed in machine-readable form in Lucent.spdx.json (SPDX 2.3), and, with these
+patches and scripts, in MANIFEST.json inside the archive above.
 
 @COMPONENTS@

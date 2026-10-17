@@ -18,9 +18,26 @@
                                   the licence text the verified asset carries and its provenance
                                   record (the Lensfun lens database, W13, ADR 0023).
     - New-LicenseBundle           writes licenses\ (Lucent's licence, each shipped port's copyright
-                                  file, licence texts missing from vcpkg, the third-party code inside
-                                  Qt from Qt's own SBOM, the licence texts of third-party data assets,
-                                  notices file, which begins with the terms of Lucent's logo, ADR 0025).
+                                  file, licence texts missing from vcpkg, the terms of a library's
+                                  parts under their own licences from its verified source archive,
+                                  vcpkg's licence beside the vcpkg recipes that ship, the third-party
+                                  code inside Qt from Qt's own SBOM, the licence texts of third-party
+                                  data assets, notices file, which begins with the terms of Lucent's
+                                  logo, ADR 0025, and names the Visual C++ redistributable's and Inno
+                                  Setup's versions; W12 gate-8 reading of 2026-10-16). Since its
+                                  review, round 1: parts from any of a port's archives with their
+                                  licence texts, Qt's third-party code checked against each Qt
+                                  component's licence (Test-AttributionLicences), the compiler's own
+                                  library code in the programs (Get-ToolchainLibraries) and Inno
+                                  Setup's licence (Get-InnoSetupLicenceFile). Since its round 2:
+                                  Qt's records reviewed against the policy (Resolve-AttributionPolicy:
+                                  a corrected licence, NOTICE lines, the Source Code Form of copyleft
+                                  code), the Windows SDK's code in Qt's files (Get-WindowsSdkLibrary,
+                                  C++/WinRT), the code of others inside Inno Setup with its licences
+                                  and the LZMA SDK 4.40 decoder's source (Get-InnoSetupParts), each
+                                  patch's licence from the files it changes (Get-PatchLicences) and
+                                  files of published sources Lucent keeps in installer\third-party
+                                  (Get-ThirdPartySourceFile).
     - New-CorrespondingSourcePackage, Test-CorrespondingSourcePackage
                                   write and independently check Lucent-<version>-corresponding-
                                   source.zip: the upstream source archives, vcpkg recipes, triplet
@@ -31,16 +48,26 @@
                                   whatever the policy provides; Get-LicenceKind), as a deterministic
                                   archive (New-DeterministicZip; every order ordinal,
                                   ConvertTo-OrdinalOrder) with every patch a recipe applies to its
-                                  library's source (Get-RecipeModifications) (W12, ADR 0024).
+                                  library's source (Get-RecipeModifications) (W12, ADR 0024), each
+                                  with its licence, and the licence texts that files it conveys need
+                                  and their own archives lack (licenceTexts; the gate-8 review,
+                                  round 2).
     - Write-LgplNotice            writes licenses\LGPL-NOTICE.txt, which names that archive and each
                                   library's modifications.
-    - Get-InnoSetupLicence, Test-InnoSetupLicence
-                                  the licence an Inno Setup compiler's banner states, and whether it
-                                  covers the distribution the policy records (ADR 0024).
+    - Get-InnoSetupLicence, Test-InnoSetupLicence, Get-InnoSetupEngine
+                                  the licence an Inno Setup compiler's banner states, whether it
+                                  covers the distribution the policy records (ADR 0024), and its
+                                  engine version before Setup is compiled.
+    - Test-ModificationNotes      the notes of the libraries with a source provision name every patch
+                                  that changes more than build files (W12 gate-8 reading of
+                                  2026-10-16).
     - New-PackageSbom             aggregates vcpkg's per-port SPDX documents and Qt's SBOMs into one
                                   SPDX 2.3 SBOM, with a package for each third-party data asset and
                                   the terms of Lucent's logo inside its programs, and checks it
-                                  structurally.
+                                  structurally; since the gate-8 review, round 2, each program's
+                                  file carries its whole licence (Get-ProgramLicences), each patch
+                                  its own, and the code of others inside Qt and Inno Setup is
+                                  listed as packages they contain.
     - Write-InstalledFileList     writes Lucent-files.txt, the list the next Setup's upgrade uses.
     - Get-BuilderPathRules, New-BuilderPathScanner, Invoke-BuilderPathAudit
                                   scan every shipped file (and the installer, and the package
@@ -1245,6 +1272,9 @@ function Get-QtSbomFacts {
                 License = $licence
                 Copyright = $(if ($package.ContainsKey('PackageCopyrightText')) { $package.PackageCopyrightText.Trim() } else { 'NOASSERTION' })
                 DownloadLocation = $(if ($package.ContainsKey('PackageDownloadLocation')) { $package.PackageDownloadLocation } else { 'NOASSERTION' })
+                # The upstream package URL Qt records first (its others name Qt's own repository): the commit
+                # of the Public Suffix List (the gate-8 review, round 2).
+                Purl = $(if ($package.ContainsKey('ExternalRef') -and [string]$package.ExternalRef -match 'purl\s+(\S+)') { $Matches[1] } else { $null })
                 Files = New-Object System.Collections.Generic.List[string] }
         }
         foreach ($file in $targets[$relationship.From].Files) { if (-not $attributions[$relationship.To].Files.Contains($file)) { $attributions[$relationship.To].Files.Add($file) } }
@@ -1315,6 +1345,1014 @@ function Get-SourceArchive {
         }
     }
     return $null
+}
+
+# The members of the source archives listed in this session, and the texts read from them, by archive path
+# and size (an archive is verified before it is read, Get-SourceArchive; the gate-8 review, round 2: the
+# licences of the files a patch changes are read from qtbase's 50 MB archive, which tar decompresses whole
+# for every listing and every extraction).
+$script:SourceArchiveListings = @{}
+$script:SourceArchiveTexts = @{}
+
+function Get-SourceArchiveKey {
+    # An archive's path, size and time: what the session's listings and texts are kept by.
+    param([Parameter(Mandatory)][string]$Archive)
+    $item = Get-Item -LiteralPath $Archive
+    return ($item.FullName.ToLowerInvariant() + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks)
+}
+
+function Get-SourceArchiveListing {
+    # The member names of an upstream source archive (tar -tf), listed once per archive and session.
+    param([Parameter(Mandatory)][string]$Archive)
+    $key = Get-SourceArchiveKey $Archive
+    if (-not $script:SourceArchiveListings.ContainsKey($key)) {
+        $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+        $members = @(& $tar -tf $Archive)
+        if ($LASTEXITCODE -ne 0) { throw "tar could not list $Archive" }
+        $script:SourceArchiveListings[$key] = $members
+    }
+    return $script:SourceArchiveListings[$key]
+}
+
+function Read-SourceArchiveMembers {
+    <#
+    .SYNOPSIS
+        The texts of members of an upstream source archive, by their paths below the archive's top folder,
+        extracted with one tar run (Windows' tar) and kept for the session; a member the archive does not
+        hold (or that is no regular file) is left out. The caller verifies the archive first
+        (Get-SourceArchive).
+    .OUTPUTS
+        A hashtable: member path -> text.
+    #>
+    param([Parameter(Mandatory)][string]$Archive, [AllowEmptyCollection()][string[]]$Members = @())
+    $result = @{}
+    $prefix = (Get-SourceArchiveKey $Archive) + '|'
+    $listing = @(Get-SourceArchiveListing -Archive $Archive)
+    $byMember = @{}
+    foreach ($name in $listing) {
+        if ($name -match '^[^/]+/(.+[^/])$' -and -not $byMember.ContainsKey($Matches[1])) { $byMember[$Matches[1]] = $name }
+    }
+    $wanted = New-Object System.Collections.Generic.List[string]
+    foreach ($member in @($Members | Where-Object { $_ } | Select-Object -Unique)) {
+        if ($script:SourceArchiveTexts.ContainsKey($prefix + $member)) { $result[$member] = $script:SourceArchiveTexts[$prefix + $member]; continue }
+        if ($byMember.ContainsKey($member)) { $wanted.Add($member) }
+    }
+    if ($wanted.Count -eq 0) { return $result }
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-licence-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $temp | Out-Null
+    try {
+        # A few dozen paths per run keep the command line short.
+        for ($start = 0; $start -lt $wanted.Count; $start += 40) {
+            $chunk = @($wanted[$start..([Math]::Min($start + 39, $wanted.Count - 1))] | ForEach-Object { $byMember[$_] })
+            & $tar -xf $Archive -C $temp @chunk
+            if ($LASTEXITCODE -ne 0) { throw "tar could not extract $($chunk -join ', ') from $Archive" }
+        }
+        foreach ($member in $wanted) {
+            $path = Join-Path $temp (ConvertTo-NativePath $byMember[$member])
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }   # a link or a folder
+            $text = [System.IO.File]::ReadAllText($path)
+            $script:SourceArchiveTexts[$prefix + $member] = $text
+            $result[$member] = $text
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return $result
+}
+
+function Read-SourceArchiveMember {
+    <#
+    .SYNOPSIS
+        The text of one member of an upstream source archive, by its path below the archive's top
+        folder ("README.ijg", "src/demosaic/dcb_demosaic.cpp"), read with Windows' tar; $null when the
+        archive holds no such member. The caller verifies the archive first (Get-SourceArchive).
+    #>
+    param([Parameter(Mandatory)][string]$Archive, [Parameter(Mandatory)][string]$Member)
+    $texts = Read-SourceArchiveMembers -Archive $Archive -Members @($Member)
+    if ($texts.ContainsKey($Member)) { return $texts[$Member] }
+    return $null
+}
+
+function Find-SourceArchiveMember {
+    <#
+    .SYNOPSIS
+        The text of a member of a port's upstream source archives (Read-SourceArchiveMember), from the
+        first archive that holds it; each archive is found in vcpkg's downloads folder and its SHA-512
+        checked against vcpkg's record first (Get-SourceArchive). $null when none holds it.
+    .PARAMETER SourceName
+        Only the source of that name (vcpkg's resource name, such as "zherczeg/sljit"): a port built from
+        several archives names the one that holds a part (the W12 gate-8 review, round 1: PCRE2's JIT
+        compiler is the second archive of its port).
+    .OUTPUTS
+        Text, Archive (the archive's file name), Sha512 and Source (the source's name).
+    #>
+    param([AllowEmptyCollection()][object[]]$Sources = @(), [Parameter(Mandatory)][string]$Member, [Parameter(Mandatory)][string]$DownloadsDir,
+          [string]$SourceName)
+    foreach ($source in $Sources) {
+        if ($SourceName -and [string]$source.Name -cne $SourceName) { continue }
+        $archive = Get-SourceArchive -Resource $source.Resource -DownloadsDir $DownloadsDir
+        if (-not $archive) { continue }
+        $text = Read-SourceArchiveMember -Archive $archive -Member $Member
+        if ($null -ne $text) {
+            return [pscustomobject]@{ Text = $text; Archive = [System.IO.Path]::GetFileName($archive); Sha512 = ([string]$source.Sha512).ToLowerInvariant(); Source = [string]$source.Name }
+        }
+    }
+    return $null
+}
+
+function Get-LicenceExcerpt {
+    <#
+    .SYNOPSIS
+        The lines of a text from the line that contains -First to the next line that contains -Last
+        (both included; ordinal), exactly as they are: the terms of a part of a library inside one of
+        its source files (installer\license-policy.json "parts"; W12 gate-8 reading of 2026-10-16).
+        -First must be on exactly one line, so the excerpt cannot move to another notice unnoticed.
+        With -LastWholeLine the last line is the next one whose text, trimmed, is -Last (a notice that
+        ends with a word that occurs in its earlier lines, such as "SOFTWARE"; the W12 gate-8 review,
+        round 1).
+    .OUTPUTS
+        Lines, and FirstLine and LastLine (1-based).
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text, [Parameter(Mandatory)][string]$First, [Parameter(Mandatory)][string]$Last,
+          [switch]$LastWholeLine)
+    $lines = $Text -split "`r?`n"
+    $starts = New-Object System.Collections.Generic.List[int]
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].IndexOf($First, [System.StringComparison]::Ordinal) -ge 0) { $starts.Add($i) } }
+    if ($starts.Count -ne 1) { throw "'$First' is on $($starts.Count) lines, not on one." }
+    $end = -1
+    for ($i = $starts[0]; $i -lt $lines.Count; $i++) {
+        $hit = if ($LastWholeLine) { [string]::Equals($lines[$i].Trim(), $Last, [System.StringComparison]::Ordinal) } else { $lines[$i].IndexOf($Last, [System.StringComparison]::Ordinal) -ge 0 }
+        if ($hit) { $end = $i; break }
+    }
+    if ($end -lt 0) { throw "No line from '$First' on $(if ($LastWholeLine) { 'is' } else { 'contains' }) '$Last'." }
+    return [pscustomobject]@{ Lines = @($lines[$starts[0]..$end]); FirstLine = $starts[0] + 1; LastLine = $end + 1 }
+}
+
+function Get-LicenceCopyright {
+    # The first "Copyright ..." line of a licence text (the holder line of an MIT licence), trimmed, or
+    # $null.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    foreach ($line in ($Text -split "`r?`n")) { if ($line.Trim() -match '^Copyright\b') { return $line.Trim() } }
+    return $null
+}
+
+function Test-LicenceInExpression {
+    <#
+    .SYNOPSIS
+        Whether an SPDX expression names a licence ("MIT") or a licence with its exception
+        ("GPL-3.0-or-later WITH Bison-exception-2.2") as a term of its own (ordinal). A licence named
+        without an exception does not match the same licence with one.
+    #>
+    param([Parameter(Mandatory)][string]$Licence, [AllowEmptyString()][string]$Expression)
+    $tokens = @([regex]::Matches([string]$Expression, '\(|\)|[^\s()]+') | ForEach-Object { $_.Value })
+    $wanted = @($Licence -split '\s+' | Where-Object { $_ })
+    if ($wanted.Count -eq 0) { return $false }
+    for ($i = 0; $i -le $tokens.Count - $wanted.Count; $i++) {
+        $match = $true
+        for ($j = 0; $j -lt $wanted.Count; $j++) { if ($tokens[$i + $j] -cne $wanted[$j]) { $match = $false; break } }
+        if (-not $match) { continue }
+        if ($wanted.Count -eq 1 -and $i + 1 -lt $tokens.Count -and $tokens[$i + 1] -ceq 'WITH') { continue }
+        return $true
+    }
+    return $false
+}
+
+function Test-LicenceCovered {
+    <#
+    .SYNOPSIS
+        Whether a licence expression of code inside a component (a part, or third-party code that Qt's
+        SBOM records) is covered by the component's concluded expression: an alternative of it (OR)
+        whose every term (AND) the concluded expression names (Test-LicenceInExpression). "FTL OR
+        GPL-2.0-only" is covered by an expression that names FTL (the election); "X11 AND HPND" needs
+        both. An expression with parentheses needs every licence it names.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Licence, [AllowEmptyString()][string]$Expression)
+    if (-not $Licence -or $Licence -in 'NOASSERTION', 'NONE') { return $false }
+    if ($Licence -match '[()]') {
+        foreach ($id in (Get-LicenseIds $Licence)) { if (-not (Test-LicenceInExpression -Licence $id -Expression $Expression)) { return $false } }
+        return $true
+    }
+    foreach ($alternative in ($Licence -split '\s+OR\s+')) {
+        $terms = @($alternative -split '\s+AND\s+' | Where-Object { $_.Trim() })
+        if (@($terms | Where-Object { -not (Test-LicenceInExpression -Licence $_.Trim() -Expression $Expression) }).Count -eq 0) { return $true }
+    }
+    return $false
+}
+
+function Test-PartLicences {
+    <#
+    .SYNOPSIS
+        Errors in a port's parts under their own licences (installer\license-policy.json "parts"; W12
+        gate-8 reading of 2026-10-16, extended by its review, round 1). Each part names its name,
+        copyright line, licence (one SPDX identifier, or one with its exception: "GPL-3.0-or-later WITH
+        Bison-exception-2.2"), the member of the source archive and the first and last line of its
+        notice there, and the file it is written to (a plain .txt name, unique). Optional: "version"
+        (the part's own), "source" (the name of the port's source archive that holds it), "lastWhole"
+        (the last line is the one whose trimmed text is "last"), "text" (the licence's text from a member
+        of the same archive: member, first and last for an excerpt, and "about", what the excerpt is when
+        it is not the licence's whole text), "textIn" (licence files of this folder that hold its text:
+        file, below licenses\, a marker line that must be in it, and "holds", what that file holds).
+        "terms" (the licence's words as Lucent supplied them, for a licence the archive names without its
+        text) is refused since the gate-8 review, round 2: every licence text comes from a verified source.
+        Every part compiled into the shipped files ("compiled" is not false) must have its licence in the
+        port's concluded expression: LibRaw's MIT code was missing from "LGPL-2.1-only AND BSD-3-Clause"
+        until the gate-8 reading.
+    #>
+    param([Parameter(Mandatory)][string]$Port, [Parameter(Mandatory)][AllowEmptyString()][string]$Concluded, [AllowEmptyCollection()][object[]]$Parts = @())
+    $errors = New-Object System.Collections.Generic.List[string]
+    $files = @{}
+    foreach ($part in $Parts) {
+        $fields = @($part.PSObject.Properties | ForEach-Object Name)
+        $label = if ($fields -contains 'name' -and $part.name) { "'$($part.name)'" } else { '(unnamed)' }
+        $missing = @('name', 'copyright', 'licence', 'member', 'first', 'last', 'as' | Where-Object { $fields -notcontains $_ -or -not [string]$part.$_ })
+        if ($missing.Count -gt 0) { $errors.Add("installer\license-policy.json: the part $label of $Port has no $($missing -join ', ')."); continue }
+        if ([string]$part.licence -cnotmatch '^[A-Za-z0-9.+-]+( WITH [A-Za-z0-9.+-]+)?$') { $errors.Add("installer\license-policy.json: the part $label of $Port names '$($part.licence)', not one SPDX licence identifier (with its exception, if any).") }
+        if ([string]$part.as -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$') { $errors.Add("installer\license-policy.json: the part $label of $Port is written to '$($part.as)', not a plain .txt file name.") }
+        elseif ($files.ContainsKey(([string]$part.as).ToLowerInvariant())) { $errors.Add("installer\license-policy.json: two parts of $Port are written to $($part.as).") }
+        else { $files[([string]$part.as).ToLowerInvariant()] = $true }
+        # A licence's text comes from a verified source, never from words Lucent supplies (the gate-8 review,
+        # round 2: the MIT text of LibRaw's Adobe DNG SDK code was the policy's "terms").
+        if ($fields -contains 'terms') { $errors.Add("installer\license-policy.json: the part $label of $Port gives its licence's words as 'terms'; a licence text comes from a verified source: a member of the same archive ('text') or another component's licence file ('textIn').") }
+        if ($fields -contains 'version' -and -not [string]$part.version) { $errors.Add("installer\license-policy.json: the part $label of $Port has an empty version.") }
+        if ($fields -contains 'text') {
+            $textFields = if ($part.text) { @($part.text.PSObject.Properties | ForEach-Object Name) } else { @() }
+            if ($textFields -notcontains 'member' -or -not [string]$part.text.member) { $errors.Add("installer\license-policy.json: the text of the part $label of $Port names no member of the source archive.") }
+            if (($textFields -contains 'first') -ne ($textFields -contains 'last')) { $errors.Add("installer\license-policy.json: the text of the part $label of $Port names a first line without a last one, or a last without a first.") }
+            if ($textFields -contains 'about' -and -not [string]$part.text.about) { $errors.Add("installer\license-policy.json: the text of the part $label of $Port has an empty 'about'.") }
+        }
+        if ($fields -contains 'textIn') {
+            foreach ($where in @($part.textIn)) {
+                $whereFields = if ($where) { @($where.PSObject.Properties | ForEach-Object Name) } else { @() }
+                if ($whereFields -notcontains 'file' -or [string]$where.file -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\\[A-Za-z0-9][A-Za-z0-9._-]*$' -or $whereFields -notcontains 'marker' -or -not [string]$where.marker) {
+                    $errors.Add("installer\license-policy.json: the part $label of $Port names a licence file that is not '<folder>\<file>' below licenses\ with a marker line.")
+                }
+                elseif ($whereFields -contains 'holds' -and -not [string]$where.holds) { $errors.Add("installer\license-policy.json: the part $label of $Port says nothing of what $($where.file) holds ('holds' is empty).") }
+            }
+        }
+        $compiled = -not ($fields -contains 'compiled' -and $part.compiled -eq $false)
+        if ($compiled -and -not (Test-LicenceInExpression -Licence ([string]$part.licence) -Expression $Concluded)) {
+            $errors.Add("installer\license-policy.json: the part $label of $Port is compiled into its files under $($part.licence), but the port's concluded licence '$Concluded' does not name $($part.licence).")
+        }
+    }
+    return $errors.ToArray()
+}
+
+function Test-AttributionLicences {
+    <#
+    .SYNOPSIS
+        Errors in the third-party code Qt's own SBOM records inside a Qt component's shipped files (the
+        W12 gate-8 review, round 1): every attribution this build compiles must be covered by the
+        component's concluded expression (Test-LicenceCovered), as a part's licence must be; an
+        attribution the policy names as not compiled (ports.<port>.attributionsNotCompiled: its id, the
+        part of Qt's SBOM package name after "_Attribution_", and why) is left out, and such a name
+        must be one Qt's SBOM records for the shipped files.
+    #>
+    param([Parameter(Mandatory)][string]$Port, [Parameter(Mandatory)][AllowEmptyString()][string]$Concluded,
+          [AllowEmptyCollection()][object[]]$Attributions = @(), [hashtable]$NotCompiled = @{})
+    $errors = New-Object System.Collections.Generic.List[string]
+    $keys = @{}
+    foreach ($attribution in @($Attributions | Where-Object { $_ })) {
+        $key = if ([string]$attribution.Id -match '_Attribution_(.+)$') { $Matches[1] } else { [string]$attribution.Id }
+        $keys[$key] = $true
+        if ($NotCompiled.ContainsKey($key)) { continue }
+        if (-not (Test-LicenceCovered -Licence ([string]$attribution.License) -Expression $Concluded)) {
+            $errors.Add("installer\license-policy.json: Qt's SBOM records $($attribution.Name) ($($attribution.License)) inside $(@($attribution.Files) -join ', ') of $Port, but the port's concluded licence '$Concluded' does not cover it: add its licence (with the election, for a choice), or name it in ports.$Port.attributionsNotCompiled with the reason this build does not compile it.")
+        }
+    }
+    foreach ($key in @(ConvertTo-OrdinalOrder -Items @($NotCompiled.Keys))) {
+        if (-not $keys.ContainsKey($key)) { $errors.Add("installer\license-policy.json: ports.$Port.attributionsNotCompiled names $key, which Qt's SBOM does not record inside the shipped files of $Port.") }
+    }
+    return $errors.ToArray()
+}
+
+function Resolve-AttributionPolicy {
+    <#
+    .SYNOPSIS
+        Applies the policy's review of the third-party code Qt's SBOM records inside a Qt component (the gate-8
+        review, round 2) to Get-QtSbomFacts's attributions, in place, and checks it against the verified
+        sources:
+        - ports.<port>.attributionLicences.<id>: the licence the code carries where Qt's SBOM records another
+          ("qtSbom", which must still be Qt's record, and "licence"), shown by "evidence": lines of a member of
+          the port's verified source archive (member, line) or of a third-party source's file (source, file,
+          line; Get-ThirdPartySourceFile). Khronos' OpenGL headers are MIT-Khronos-old, as Qt's REUSE.toml
+          says, where Qt's SBOM says MIT; Tika's MIME types add the OGL-UK-3.0 of the PRONOM definitions that
+          Tika's NOTICE names. "texts" says where the text of a licence is that Qt's copyright files lack.
+        - ports.<port>.attributionNotices.<id>: the code's NOTICE lines (Apache-2.0 section 4(d)): excerpts
+          (first, last) of a third-party source's file, written to licenses\<port>\<as> with their provenance.
+        - ports.<port>.attributionSources.<id>: the Source Code Form of code under a copyleft licence
+          (MPL-2.0 section 3.2(a): the Public Suffix List, of which Qt's archive holds only the generated
+          psl_data.cpp): repository, commit and file; the commit must be the version of the package URL Qt's
+          SBOM records.
+        Every compiled attribution under a copyleft licence (Test-CopyleftLicence) needs its source named,
+        and every id must be one Qt's SBOM records for the component's shipped files.
+    .OUTPUTS
+        Errors, and Notices (File, below licenses\, and Text) to write.
+    #>
+    param([Parameter(Mandatory)][string]$Port, $Entry, [AllowEmptyCollection()][object[]]$Attributions = @(), [AllowEmptyCollection()][object[]]$Sources = @(),
+          [string]$DownloadsDir, $Policy, [string]$RepoRoot)
+    $errors = New-Object System.Collections.Generic.List[string]
+    $notices = New-Object System.Collections.Generic.List[object]
+    $byKey = @{}
+    foreach ($attribution in @($Attributions | Where-Object { $_ })) {
+        $key = if ($attribution.PSObject.Properties.Name -contains 'Key' -and $attribution.Key) { [string]$attribution.Key } elseif ([string]$attribution.Id -match '_Attribution_(.+)$') { $Matches[1] } else { [string]$attribution.Id }
+        $byKey[$key] = $attribution
+    }
+    $section = { param([string]$Name) if ($Entry -and ($Entry.PSObject.Properties.Name -contains $Name) -and $Entry.$Name) { @($Entry.$Name.PSObject.Properties) } else { @() } }
+    # Members of the port's verified archives, read once.
+    $archiveText = {
+        param([string]$Member)
+        foreach ($source in @($Sources | Where-Object { $_ })) {
+            $path = $null
+            try { $path = Get-SourceArchive -Resource $source.Resource -DownloadsDir $DownloadsDir } catch { $path = $null }
+            if (-not $path) { continue }
+            $texts = Read-SourceArchiveMembers -Archive $path -Members @($Member)
+            if ($texts.ContainsKey($Member)) { return [pscustomobject]@{ Text = [string]$texts[$Member]; Where = "$Member of $([System.IO.Path]::GetFileName($path))" } }
+        }
+        return $null
+    }
+    $thirdParty = {
+        param([string]$Source, [string]$File)
+        try { $found = Get-ThirdPartySourceFile -Policy $Policy -RepoRoot $RepoRoot -Source $Source -File $File; return [pscustomobject]@{ Text = $found.Text; Where = $found.Provenance } }
+        catch { $errors.Add($_.Exception.Message); return $null }
+    }
+    foreach ($name in 'attributionLicences', 'attributionNotices', 'attributionSources') {
+        foreach ($property in (& $section $name)) {
+            if (-not $byKey.ContainsKey($property.Name)) { $errors.Add("installer\license-policy.json: ports.$Port.$name names $($property.Name), which Qt's SBOM does not record inside the shipped files of $Port.") }
+        }
+    }
+    foreach ($property in (& $section 'attributionLicences')) {
+        if (-not $byKey.ContainsKey($property.Name)) { continue }
+        $attribution = $byKey[$property.Name]
+        $review = $property.Value
+        $fields = @($review.PSObject.Properties | ForEach-Object Name)
+        if ($fields -notcontains 'qtSbom' -or $fields -notcontains 'licence' -or $fields -notcontains 'evidence' -or $fields -notcontains 'comment') {
+            $errors.Add("installer\license-policy.json: ports.$Port.attributionLicences.$($property.Name) needs qtSbom, licence, evidence and comment."); continue
+        }
+        if ([string]$attribution.License -cne [string]$review.qtSbom) {
+            $errors.Add("Qt's SBOM records $($attribution.Name) of $Port under '$($attribution.License)', but installer\license-policy.json reviewed its record '$($review.qtSbom)' (attributionLicences.$($property.Name)): review it again."); continue
+        }
+        $shown = $true
+        foreach ($item in @($review.evidence | Where-Object { $_ })) {
+            $itemFields = @($item.PSObject.Properties | ForEach-Object Name)
+            $found = if ($itemFields -contains 'source') { & $thirdParty ([string]$item.source) ([string]$item.file) } else { & $archiveText ([string]$item.member) }
+            if (-not $found -or $found.Text.IndexOf([string]$item.line, [System.StringComparison]::Ordinal) -lt 0) {
+                $errors.Add("installer\license-policy.json: ports.$Port.attributionLicences.$($property.Name) gives $($attribution.Name) the licence $($review.licence), shown by the line '$($item.line)', which $(if ($found) { $found.Where } else { 'the named file' }) does not hold.")
+                $shown = $false
+            }
+        }
+        if (-not $shown) { continue }
+        $attribution | Add-Member -NotePropertyName QtLicense -NotePropertyValue ([string]$attribution.License) -Force
+        $attribution | Add-Member -NotePropertyName LicenceNote -NotePropertyValue ([string]$review.comment) -Force
+        $attribution.License = [string]$review.licence
+        $elsewhere = @{}
+        if ($fields -contains 'texts' -and $review.texts) { foreach ($text in $review.texts.PSObject.Properties) { $elsewhere[$text.Name] = [string]$text.Value } }
+        $attribution | Add-Member -NotePropertyName TextsElsewhere -NotePropertyValue $elsewhere -Force
+    }
+    foreach ($property in (& $section 'attributionNotices')) {
+        if (-not $byKey.ContainsKey($property.Name)) { continue }
+        $attribution = $byKey[$property.Name]
+        $review = $property.Value
+        $fields = @($review.PSObject.Properties | ForEach-Object Name)
+        if ($fields -notcontains 'source' -or $fields -notcontains 'file' -or $fields -notcontains 'excerpts' -or $fields -notcontains 'as' -or [string]$review.as -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$') {
+            $errors.Add("installer\license-policy.json: ports.$Port.attributionNotices.$($property.Name) needs source, file, excerpts and as (a plain .txt name)."); continue
+        }
+        $found = $null
+        try { $found = Get-ThirdPartySourceFile -Policy $Policy -RepoRoot $RepoRoot -Source ([string]$review.source) -File ([string]$review.file) } catch { $errors.Add($_.Exception.Message); continue }
+        $lines = New-Object System.Collections.Generic.List[string]
+        $title = "$Port $($attribution.Name)$(if ($attribution.Version) { " $($attribution.Version)" }): NOTICE"
+        $lines.Add($title)
+        $lines.Add('=' * $title.Length)
+        $lines.Add('')
+        if ($fields -contains 'comment' -and $review.comment) { foreach ($line in ((Format-Paragraph -Text ([string]$review.comment)) -split "`n")) { $lines.Add($line) }; $lines.Add('') }
+        $ok = $true
+        foreach ($excerpt in @($review.excerpts | Where-Object { $_ })) {
+            try { $taken = Get-LicenceExcerpt -Text $found.Text -First ([string]$excerpt.first) -Last ([string]$excerpt.last) }
+            catch { $errors.Add("installer\license-policy.json: ports.$Port.attributionNotices.$($property.Name): $($_.Exception.Message) ($($found.Provenance))"); $ok = $false; break }
+            $span = Format-LineSpan $taken.FirstLine $taken.LastLine
+            foreach ($line in ((Format-Paragraph -Text "$($span.Substring(0, 1).ToUpperInvariant())$($span.Substring(1)) of $($found.Provenance), verbatim:") -split "`n")) { $lines.Add($line) }
+            $lines.Add('')
+            foreach ($line in $taken.Lines) { $lines.Add($line) }
+            $lines.Add('')
+        }
+        if (-not $ok) { continue }
+        $file = "$Port\$($review.as)"
+        $notices.Add([pscustomobject]@{ File = $file; Text = (($lines -join "`n").TrimEnd() + "`n") })
+        $attribution | Add-Member -NotePropertyName NoticeFile -NotePropertyValue $file -Force
+    }
+    foreach ($property in (& $section 'attributionSources')) {
+        if (-not $byKey.ContainsKey($property.Name)) { continue }
+        $attribution = $byKey[$property.Name]
+        $review = $property.Value
+        $fields = @($review.PSObject.Properties | ForEach-Object Name)
+        if ($fields -notcontains 'repository' -or $fields -notcontains 'commit' -or $fields -notcontains 'file' -or [string]$review.commit -notmatch '^[0-9a-f]{40}$' -or [string]$review.repository -notmatch '^https://github\.com/[^/\s]+/[^/\s]+$') {
+            $errors.Add("installer\license-policy.json: ports.$Port.attributionSources.$($property.Name) needs repository (https://github.com/<owner>/<repository>), commit (40 hexadecimal digits) and file."); continue
+        }
+        if (-not $attribution.Purl -or [string]$attribution.Purl -notmatch ('@' + [regex]::Escape([string]$review.commit) + '(\?|$)')) {
+            $errors.Add("Qt's SBOM records $($attribution.Name) of $Port as $(if ($attribution.Purl) { $attribution.Purl } else { 'no package URL' }), not as commit $($review.commit) that installer\license-policy.json names as its Source Code Form (attributionSources.$($property.Name)): review it again."); continue
+        }
+        $url = "$($review.repository)/blob/$($review.commit)/$($review.file)"
+        $attribution | Add-Member -NotePropertyName SourceCodeForm -NotePropertyValue ([pscustomobject]@{
+            Repository = [string]$review.repository; Commit = [string]$review.commit; File = [string]$review.file; Url = $url
+            Comment = $(if ($fields -contains 'comment') { [string]$review.comment } else { $null }) }) -Force
+    }
+    foreach ($attribution in @($Attributions | Where-Object { $_ -and (-not ($_.PSObject.Properties.Name -contains 'Compiled') -or $_.Compiled) })) {
+        if ((Test-CopyleftLicence ([string]$attribution.License)) -and -not ($attribution.PSObject.Properties.Name -contains 'SourceCodeForm')) {
+            $errors.Add("Qt's SBOM records $($attribution.Name) ($($attribution.License)) inside $(@($attribution.Files) -join ', ') of $Port, but installer\license-policy.json names no Source Code Form for it: record where its source is (ports.$Port.attributionSources), as its copyleft licence requires.")
+        }
+    }
+    return [pscustomobject]@{ Errors = $errors.ToArray(); Notices = $notices.ToArray() }
+}
+
+function Format-LineSpan {
+    # "line 7" or "lines 5 to 9": the lines of a file an excerpt takes.
+    param([Parameter(Mandatory)][int]$First, [Parameter(Mandatory)][int]$Last)
+    if ($First -eq $Last) { return "line $First" }
+    return "lines $First to $Last"
+}
+
+function Format-PartLicenceText {
+    <#
+    .SYNOPSIS
+        The file licenses\<port>\<as> of one part of a library under its own licence: the part (with its
+        own version, if the policy gives one), where its notice comes from (the member and lines of the
+        verified source archive), the lines themselves, verbatim, and the licence's text: from a member
+        of the same archive (-TextExcerpt, the policy's "text", introduced by its "about" when the excerpt
+        is not the licence's whole text), or the licence files of this folder that hold it (the policy's
+        "textIn", each with what it holds). Each says where its text comes from (W12 gate-8 review, round
+        1). Since its round 2 no text is Lucent's own words: the Adobe DNG SDK code's MIT text, which
+        LibRaw's archive names without its text, is nlohmann-json's licence file.
+    .PARAMETER TextExcerpt
+        Lines (and FirstLine and LastLine, for an excerpt; none for a whole member) of the licence's text
+        from -TextMember of the same archive.
+    #>
+    param([Parameter(Mandatory)]$Part, [Parameter(Mandatory)][string]$Port, [Parameter(Mandatory)][string]$Version,
+          [Parameter(Mandatory)][string]$ArchiveName, [Parameter(Mandatory)][string]$ArchiveSha512, [Parameter(Mandatory)]$Excerpt,
+          $TextExcerpt, [string]$TextMember)
+    $fields = @($Part.PSObject.Properties | ForEach-Object Name)
+    $partVersion = if ($fields -contains 'version' -and $Part.version) { ", version $($Part.version)" } else { '' }
+    $title = "$Port $($Version): $($Part.name)$partVersion, $($Part.licence)"
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add($title)
+    $lines.Add('=' * $title.Length)
+    $lines.Add('')
+    if ($fields -contains 'comment' -and $Part.comment) {
+        foreach ($line in ((Format-Paragraph -Text $Part.comment) -split "`n")) { $lines.Add($line) }
+        $lines.Add('')
+    }
+    # Assigned, not an if's value: an empty array would become $null.
+    $textIn = @()
+    if ($fields -contains 'textIn') { $textIn = @($Part.textIn | Where-Object { $_ }) }
+    # A text excerpt with "about" is not the licence's text (Frank Cringle's copyright in libtiff's fax
+    # decoder, Hedley's own header): the notice is then the terms, unless the text comes from elsewhere.
+    $about = $null
+    if ($fields -contains 'text' -and $Part.text -and ($Part.text.PSObject.Properties.Name -contains 'about') -and $Part.text.about) { $about = [string]$Part.text.about }
+    $more = ($null -ne $TextExcerpt -and -not $about) -or $textIn.Count -gt 0
+    $where = "$(Format-LineSpan $Excerpt.FirstLine $Excerpt.LastLine), in $ArchiveName (SHA-512 $ArchiveSha512), the source archive $Port was built from:"
+    $lead = if ($more) { "What $($Part.member) says of it, $where" } else { "Its terms as $($Part.member) states them, $where" }
+    foreach ($line in ((Format-Paragraph -Text $lead) -split "`n")) { $lines.Add($line) }
+    $lines.Add('')
+    foreach ($line in $Excerpt.Lines) { $lines.Add($line) }
+    if ($null -ne $TextExcerpt) {
+        $lines.Add('')
+        $span = if (($TextExcerpt.PSObject.Properties.Name -contains 'FirstLine') -and $TextExcerpt.FirstLine) { "$(Format-LineSpan $TextExcerpt.FirstLine $TextExcerpt.LastLine) of $TextMember" } else { $TextMember }
+        # A licence with an exception: the archive's text is the licence's, which the exception amends.
+        $what = if ($about) { $about } elseif ([string]$Part.licence -match '^(\S+) WITH (\S+)$') { "The text of the $($Matches[1]) licence (without $($Matches[2]), its exception)" } else { "The text of the $($Part.licence) licence" }
+        foreach ($line in ((Format-Paragraph -Text "$what, $span in the same archive:") -split "`n")) { $lines.Add($line) }
+        $lines.Add('')
+        foreach ($line in @($TextExcerpt.Lines)) { $lines.Add($line) }
+    }
+    if ($textIn.Count -gt 0) {
+        $lines.Add('')
+        # Each file with what it holds (the policy's "holds"), or the line its text is found at.
+        $names = Format-NameList @($textIn | ForEach-Object {
+            $held = if (($_.PSObject.Properties.Name -contains 'holds') -and $_.holds) { [string]$_.holds } else { "at '$($_.marker)'" }
+            "$([string]$_.file) ($held)" })
+        $whose = if ($textIn.Count -eq 1) { "in another component's file" } else { "in other components' files" }
+        foreach ($line in ((Format-Paragraph -Text "The text of the $($Part.licence) licence ships in this installation's licence folder, $($whose): $names.") -split "`n")) { $lines.Add($line) }
+    }
+    return (($lines -join "`n") + "`n")
+}
+
+function Get-VcpkgLicence {
+    <#
+    .SYNOPSIS
+        vcpkg's licence (the MIT License, Copyright (c) Microsoft Corporation): LICENSE.txt of the pinned
+        registry checkout, verified as the file of the registry baseline commit, whose git blob id the
+        bytes must have (after a checkout that changed its line endings, the same text with the other
+        line endings: the result is the blob's bytes either way). vcpkg's port recipes ship in the
+        installation (Lucent's overlay ports, licenses\<port>\recipe) and in the corresponding-source
+        archive, so its licence ships with them (W12 gate-8 reading of 2026-10-16).
+    .OUTPUTS
+        Bytes (the blob's), Text, BlobId, Copyright (its copyright line) and Source.
+    #>
+    param([Parameter(Mandatory)][string]$VcpkgRoot, [Parameter(Mandatory)][string]$Baseline)
+    $path = Join-Path $VcpkgRoot 'LICENSE.txt'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "vcpkg's licence $path is missing: vcpkg's recipes cannot ship without it." }
+    $probe = Invoke-NativeCommand -FilePath 'git' -Arguments @('-C', $VcpkgRoot, 'rev-parse', "$($Baseline):LICENSE.txt")
+    if ($probe.ExitCode -ne 0 -or @($probe.Output).Count -eq 0 -or ([string]$probe.Output[0]).Trim() -notmatch '^[0-9a-f]{40}$') {
+        throw "The vcpkg checkout $VcpkgRoot holds no LICENSE.txt at the registry baseline $Baseline."
+    }
+    $blob = ([string]$probe.Output[0]).Trim()
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    if ((Get-GitBlobId $bytes) -ne $blob) {
+        $text = $script:Latin1.GetString($bytes)
+        $other = if ($text.Contains("`r`n")) { $text.Replace("`r`n", "`n") } else { $text.Replace("`n", "`r`n") }
+        $bytes = $script:Latin1.GetBytes($other)
+        if ((Get-GitBlobId $bytes) -ne $blob) { throw "$path is not vcpkg's LICENSE.txt of the registry baseline $Baseline (git blob $blob)." }
+    }
+    $text = (New-Object System.Text.UTF8Encoding($false)).GetString($bytes)
+    $copyright = Get-LicenceCopyright -Text $text
+    if ($text -notmatch '(?m)^\s*MIT License' -or $text -notmatch 'Permission is hereby granted' -or -not $copyright) {
+        throw "$path (vcpkg's LICENSE.txt at $Baseline) is not the MIT License with a copyright line."
+    }
+    return [pscustomobject]@{ Bytes = $bytes; Text = $text; BlobId = $blob; Copyright = $copyright; Source = "LICENSE.txt of the vcpkg registry at commit $Baseline (git blob $blob)" }
+}
+
+function Get-ThirdPartySourceFile {
+    <#
+    .SYNOPSIS
+        A file of a third-party project's published source that Lucent keeps in installer\third-party\ for
+        packaging, which never downloads (installer\license-policy.json "thirdPartySources"; the gate-8
+        review, round 2: Pascal Script's licence and the LZMA SDK 4.40 decoder's source from Inno Setup
+        6.7.3's published source, the lines of Apache Tika's NOTICE that Qt's MIME types need). The policy
+        names the source's repository and commit and pins each file by its git blob id; the kept bytes must
+        have that id, or the same text with the other line endings, which gives the blob's bytes.
+    .OUTPUTS
+        Bytes (the blob's), Text, Blob, Path (the kept file) and Provenance (the file, repository, commit
+        and blob, for the notices).
+    #>
+    param([Parameter(Mandatory)]$Policy, [Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$File)
+    $sources = if ($Policy.PSObject.Properties.Name -contains 'thirdPartySources') { $Policy.thirdPartySources } else { $null }
+    $entry = if ($sources -and ($sources.PSObject.Properties.Name -contains $Source)) { $sources.$Source } else { $null }
+    if (-not $entry) { throw "installer\license-policy.json names no thirdPartySources.$Source." }
+    $fields = @($entry.PSObject.Properties | ForEach-Object Name)
+    foreach ($field in 'repository', 'commit', 'folder', 'files') {
+        if ($fields -notcontains $field -or -not $entry.$field) { throw "installer\license-policy.json: thirdPartySources.$Source has no $field." }
+    }
+    if ([string]$entry.commit -notmatch '^[0-9a-f]{40}$') { throw "installer\license-policy.json: thirdPartySources.$Source names no commit (40 hexadecimal digits)." }
+    $blob = if ($entry.files.PSObject.Properties.Name -contains $File) { [string]$entry.files.$File } else { '' }
+    if ($blob -notmatch '^[0-9a-f]{40}$') { throw "installer\license-policy.json: thirdPartySources.$Source pins no git blob id for $File." }
+    $path = Join-Path (Join-Path $RepoRoot (ConvertTo-NativePath ([string]$entry.folder))) (ConvertTo-NativePath $File)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$path, $File of $($entry.repository) at $($entry.commit), is missing (installer\third-party\README.md)." }
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    if ((Get-GitBlobId $bytes) -ne $blob) {
+        $text = $script:Latin1.GetString($bytes)
+        $other = if ($text.Contains("`r`n")) { $text.Replace("`r`n", "`n") } else { $text.Replace("`n", "`r`n") }
+        $bytes = $script:Latin1.GetBytes($other)
+        if ((Get-GitBlobId $bytes) -ne $blob) { throw "$path is not $File of $($entry.repository) at commit $($entry.commit) (git blob $blob)." }
+    }
+    $tag = if ($fields -contains 'tag' -and $entry.tag) { ", tag $($entry.tag)" } else { '' }
+    return [pscustomobject]@{
+        Bytes = $bytes; Text = (New-Object System.Text.UTF8Encoding($false)).GetString($bytes); Blob = $blob; Path = $path
+        Provenance = "$File of $($entry.repository) at commit $($entry.commit)$tag (git blob $blob)" }
+}
+
+function Get-RecipeFileLicence {
+    <#
+    .SYNOPSIS
+        The licence of one file of a vcpkg recipe that ships in the installation (an overlay port of
+        Lucent's, licenses\<port>\recipe; W12 gate-8 reading of 2026-10-16), from its status against
+        vcpkg's port at the registry baseline (Compare-OverlayPort):
+        - unchanged, or line endings only: vcpkg's file, under vcpkg's MIT License;
+        - changed (the portfiles): vcpkg's MIT file with the Lucent project's changes, which are under
+          Lucent's MIT License: MIT, with both copyright lines;
+        - added (the lucent-*.patch files): the Lucent project's, MIT;
+        - registry (a file of a registry port that is not the port at the baseline, which only the SBOM
+          names; W12 gate-8 review, round 1): vcpkg's, MIT.
+        A patch (*.patch, *.diff) also quotes and changes lines of the library's source, which stay under
+        the library's licence: "MIT AND <the library's licence>", its terms once each ("MIT" for an MIT
+        library), a choice (OR) in parentheses.
+    .OUTPUTS
+        Licence (an SPDX expression), Copyright (one holder per line) and Comment.
+    #>
+    param([Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][string]$Status, [Parameter(Mandatory)][string]$Port,
+          [string]$LibraryLicence = '', [Parameter(Mandatory)][string]$VcpkgCopyright, [Parameter(Mandatory)][string]$LucentCopyright,
+          [string]$Baseline, $QuotedLicence = $null, [string]$QuotedText = '', [switch]$Derived)
+    $commit = if ($Baseline -and $Baseline.Length -ge 8) { "registry commit $($Baseline.Substring(0, 8))" } else { 'the registry baseline' }
+    switch ($Status) {
+        'registry' { $holders = @($VcpkgCopyright); $what = "vcpkg's file of its port $Port (a port tree of its registry); under vcpkg's MIT License (vcpkg-LICENSE.txt)" }
+        'unchanged' { $holders = @($VcpkgCopyright); $what = "vcpkg's file of its port $Port at $commit, unchanged; under vcpkg's MIT License (vcpkg-LICENSE.txt)" }
+        'line endings' { $holders = @($VcpkgCopyright); $what = "vcpkg's file of its port $Port at $commit, with other line endings only; under vcpkg's MIT License (vcpkg-LICENSE.txt)" }
+        'changed' { $holders = @($VcpkgCopyright, $LucentCopyright); $what = "vcpkg's file of its port $Port at $commit with the Lucent project's changes: vcpkg's file under vcpkg's MIT License (vcpkg-LICENSE.txt), the changes under Lucent's (Lucent-LICENSE.txt)" }
+        'added' { $holders = @($LucentCopyright); $what = "the Lucent project's file, added to vcpkg's port $Port; under Lucent's MIT License (Lucent-LICENSE.txt)" }
+        default { throw "The recipe file $File of $Port has the status '$Status'; a shipped recipe file is unchanged, has other line endings, or is changed or added by the Lucent project." }
+    }
+    $licence = 'MIT'
+    if ($File -match '\.(patch|diff)$' -and $Derived) {
+        # The licences of the files the patch changes (Get-PatchLicences; the gate-8 review, round 2).
+        if ([string]$QuotedLicence -ceq 'NOASSERTION') {
+            $licence = 'NOASSERTION'
+            $what += ". A patch: its own lines are MIT, but it quotes and changes lines of $Port's source whose licence $Port's source archive states nowhere ($QuotedText)"
+        }
+        elseif (-not $QuotedLicence) { $what += ". A patch that quotes no line of $Port's source (it creates the files it changes)" }
+        else {
+            $licence = Join-LicenceTerms @('MIT', [string]$QuotedLicence)
+            $what += ". A patch: the lines of $Port's source it quotes and changes stay under the licences of the files they come from ($QuotedText)"
+        }
+    }
+    elseif ($File -match '\.(patch|diff)$') {
+        if (-not $LibraryLicence) { throw "The recipe file $File of $Port is a patch, but neither the licences of the files it changes nor the library's licence were given." }
+        $terms = New-Object System.Collections.Generic.List[string]
+        $terms.Add('MIT')
+        # The operators are upper case: "LGPL-2.1-or-later" is no choice.
+        if ($LibraryLicence -cmatch '\sOR\s|[()]') { $terms.Add("($LibraryLicence)") }
+        else { foreach ($term in ($LibraryLicence -csplit '\s+AND\s+')) { if ($term.Trim() -and -not $terms.Contains($term.Trim())) { $terms.Add($term.Trim()) } } }
+        $licence = $terms -join ' AND '
+        $what += ". A patch: the lines of $Port's source it quotes and changes stay under $LibraryLicence"
+    }
+    return [pscustomobject]@{ Licence = $licence; Copyright = ($holders -join "`n"); Comment = "$what." }
+}
+
+function Split-LicenceConjunction {
+    <#
+    .SYNOPSIS
+        The top-level AND terms of an SPDX expression, parentheses respected ("A AND (B OR C) AND D WITH E"
+        gives "A", "(B OR C)", "D WITH E"). An expression with a top-level OR (a choice) is one term, in
+        parentheses (the gate-8 review, round 2: the licences of patches and programs join several).
+    #>
+    param([AllowEmptyString()][string]$Expression)
+    $tokens = @([regex]::Matches([string]$Expression, '\(|\)|[^\s()]+') | ForEach-Object { $_.Value })
+    if ($tokens.Count -eq 0) { return @() }
+    $depth = 0
+    $hasOr = $false
+    foreach ($token in $tokens) { if ($token -eq '(') { $depth++ } elseif ($token -eq ')') { $depth-- } elseif ($depth -eq 0 -and $token -ceq 'OR') { $hasOr = $true } }
+    $render = { param([string[]]$Part) ((($Part -join ' ') -replace '\( ', '(') -replace ' \)', ')') }
+    if ($hasOr) { return @('(' + (& $render $tokens) + ')') }
+    $terms = New-Object System.Collections.Generic.List[string]
+    $current = New-Object System.Collections.Generic.List[string]
+    $depth = 0
+    foreach ($token in $tokens) {
+        if ($token -eq '(') { $depth++ } elseif ($token -eq ')') { $depth-- }
+        if ($depth -eq 0 -and $token -ceq 'AND') { if ($current.Count) { $terms.Add((& $render $current.ToArray())) }; $current.Clear(); continue }
+        $current.Add($token)
+    }
+    if ($current.Count) { $terms.Add((& $render $current.ToArray())) }
+    return $terms.ToArray()
+}
+
+function Join-LicenceTerms {
+    # SPDX expressions joined with AND, each term once, in the order given (Split-LicenceConjunction): the
+    # licence of a patch (MIT and the licences of the lines it quotes) or of a program (MIT, the logo's terms
+    # and the licences of the code compiled into it; the gate-8 review, round 2).
+    param([AllowEmptyCollection()][string[]]$Expressions = @())
+    $terms = New-Object System.Collections.Generic.List[string]
+    foreach ($expression in @($Expressions | Where-Object { $_ -and $_.Trim() })) {
+        foreach ($term in (Split-LicenceConjunction $expression)) { if (-not $terms.Contains($term)) { $terms.Add($term) } }
+    }
+    return ($terms -join ' AND ')
+}
+
+function Select-ElectedLicence {
+    <#
+    .SYNOPSIS
+        The licence Lucent uses of a file's SPDX expression (patch licences; the gate-8 review, round 2): an
+        alternative (OR) under a LicenseRef- or DocumentRef- licence is dropped (no choice Lucent has, such as
+        Qt's commercial licence); one alternative left is the licence; of several, the one the library's own
+        licence names (-LibraryLicence: Lucent's election, LGPL-3.0-only for Qt's code under
+        "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only"). $null when no alternative or several remain, or the
+        expression nests a choice in parentheses (a rule of the policy then names the licence).
+    #>
+    param([Parameter(Mandatory)][string]$Expression, [string]$LibraryLicence)
+    $expression = $Expression.Trim()
+    if ($expression -cnotmatch '\sOR\s') { return $expression }
+    if ($expression -match '[()]') { return $null }
+    $alternatives = @($expression -csplit '\s+OR\s+' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '^(LicenseRef|DocumentRef)-' })
+    if ($alternatives.Count -eq 1) { return $alternatives[0] }
+    if ($alternatives.Count -eq 0 -or -not $LibraryLicence) { return $null }
+    $named = @($alternatives | Where-Object { Test-LicenceCovered -Licence $_ -Expression $LibraryLicence })
+    if ($named.Count -eq 1) { return $named[0] }
+    return $null
+}
+
+function Test-PathPattern {
+    # Whether a path (forward slashes) matches a pattern: ** any characters, * any but /, ? one but /
+    # (ordinal, case sensitive).
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Pattern)
+    $regex = [regex]::Escape($Pattern).Replace('\*\*', [string][char]1).Replace('\*', '[^/]*').Replace('\?', '[^/]').Replace([string][char]1, '.*')
+    return [regex]::IsMatch($Path, '^' + $regex + '$')
+}
+
+function ConvertTo-NoticeText {
+    # A file's first lines as one line of words: comment leaders (#, //, /*, *, ;) and the white space around
+    # them removed, so a licence statement is found whatever its line breaks and comment style (patch
+    # licences; the gate-8 review, round 2).
+    param([AllowEmptyString()][string]$Text, [int]$Lines = 60)
+    $all = @(([string]$Text) -split "`r?`n")
+    $words = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt [Math]::Min($Lines, $all.Count); $i++) {
+        $line = ($all[$i] -replace '^\s*(/\*+|\*+|//+|#+|;+)?\s*', '') -replace '\s*\*+/\s*$', ''
+        if ($line.Trim()) { $words.Add($line.Trim()) }
+    }
+    return (($words -join ' ') -replace '\s+', ' ')
+}
+
+function Get-PatchFileChanges {
+    # The files a unified diff changes (as Get-PatchedFiles names them), each with whether the patch creates
+    # it (its "---" line is /dev/null): a created file quotes nothing of the library's source.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $records = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    $previous = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line.StartsWith('--- ')) { $previous = $line.Substring(4); continue }
+        if (-not $line.StartsWith('+++ ')) { continue }
+        $path = $line.Substring(4)
+        $created = [bool]($previous -and $previous -match '^/dev/null')
+        if ($path -match '^/dev/null') { $path = $previous }
+        if (-not $path) { continue }
+        $path = ($path -split "`t")[0].Trim().Trim('"')
+        $slash = $path.IndexOf('/')
+        if ($slash -ge 0) { $path = $path.Substring($slash + 1) }
+        if ($path -and -not $seen.ContainsKey($path)) { $seen[$path] = $true; $records.Add([pscustomobject]@{ Path = $path; Created = $created }) }
+    }
+    return $records.ToArray()
+}
+
+function Test-FileLicenceRules {
+    <#
+    .SYNOPSIS
+        Errors in a port's rules for the licences of the files its patches change that state none in an SPDX
+        line (installer\license-policy.json ports.<port>.fileLicences; the gate-8 review, round 2). Each rule
+        names "files" (patterns), "licence" (an SPDX expression, or NOASSERTION when the archive states
+        none), the "statement" (one text or several) that the file's own notice holds or the "evidence" (a
+        member of the same archive and a line it holds) that shows it, and a "comment"; "source" names the
+        archive of a port built from several.
+    #>
+    param([Parameter(Mandatory)][string]$Port, [AllowEmptyCollection()][object[]]$Rules = @())
+    $errors = New-Object System.Collections.Generic.List[string]
+    $index = 0
+    foreach ($rule in @($Rules)) {
+        $index++
+        $fields = if ($rule) { @($rule.PSObject.Properties | ForEach-Object Name) } else { @() }
+        $what = "installer\license-policy.json: ports.$Port.fileLicences, rule $index,"
+        if ($fields -notcontains 'files' -or @($rule.files | Where-Object { [string]$_ }).Count -eq 0) { $errors.Add("$what names no files."); continue }
+        if ($fields -notcontains 'licence' -or [string]$rule.licence -notmatch '^(NOASSERTION|[A-Za-z0-9.+()-]+( (AND|OR|WITH) [A-Za-z0-9.+()-]+)*)$') { $errors.Add("$what names no licence (an SPDX expression, or NOASSERTION when the archive states none).") }
+        # Assigned, not an if's value: an empty array would become $null.
+        $statements = @()
+        if ($fields -contains 'statement') { $statements = @($rule.statement | Where-Object { [string]$_ }) }
+        $evidence = @()
+        if ($fields -contains 'evidence') { $evidence = @($rule.evidence | Where-Object { $_ }) }
+        if ($statements.Count -eq 0 -and $evidence.Count -eq 0) { $errors.Add("$what shows its licence by no statement of the file and no evidence of the archive.") }
+        foreach ($item in $evidence) {
+            $itemFields = @($item.PSObject.Properties | ForEach-Object Name)
+            if ($itemFields -notcontains 'member' -or -not [string]$item.member -or $itemFields -notcontains 'line' -or -not [string]$item.line) { $errors.Add("$what has evidence without its member or line.") }
+        }
+        if ($fields -notcontains 'comment' -or -not [string]$rule.comment) { $errors.Add("$what does not say why (comment).") }
+    }
+    return $errors.ToArray()
+}
+
+function Get-PatchLicences {
+    <#
+    .SYNOPSIS
+        The licence of the lines every patch of a recipe quotes from its library's source, derived from the
+        files it changes (the gate-8 review, round 2: one library licence was given to every patch of a
+        port, so qtbase's patches of macdeployqt and windeployqt, whose files are under
+        "LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0", were LGPL, and LibRaw's patches
+        of LibRaw-cmake's build files were LibRaw's).
+    .DESCRIPTION
+        A patch holds its author's lines (vcpkg's and the Lucent project's, MIT: Get-RecipeFileLicence) and
+        the lines it quotes from each file it changes, which stay under that file's licence. Every patch the
+        portfile names (as Get-RecipeModifications finds them) is read; each file it changes is looked up in
+        the port's verified source archives (Get-SourceArchive; the one that holds it, or a rule's "source"):
+        - its SPDX-License-Identifier line, in its first 60 lines, gives its licence, with Lucent's election
+          (Select-ElectedLicence);
+        - without one, the first rule of the policy (ports.<port>.fileLicences, Test-FileLicenceRules) whose
+          "files" match it gives the licence, checked against the archive: each "statement" in the file's own
+          first lines (ConvertTo-NoticeText), each "evidence" line in the member it names;
+        - a file the patch creates quotes nothing.
+        A file whose licence neither its SPDX line nor a rule gives, a statement or evidence the archive does
+        not hold, a rule that contradicts a file's SPDX line and a file several archives hold without a rule
+        that names one all stop packaging.
+    .OUTPUTS
+        An ordered dictionary: the patch's path in the recipe ("fix.patch", "patches/a.diff") -> Patch,
+        Licence (the quoted lines' licences joined with AND, each once; $null when the patch quotes nothing;
+        NOASSERTION when a file's licence is stated nowhere), Files (Path, Licence, How) and Text (the files
+        with their licences, for the SBOM's comment).
+    #>
+    param([Parameter(Mandatory)][string]$Port, [Parameter(Mandatory)][string]$RecipeFolder, [AllowEmptyCollection()][object[]]$Sources = @(),
+          [Parameter(Mandatory)][string]$DownloadsDir, [AllowEmptyCollection()][object[]]$Rules = @(), [string]$LibraryLicence)
+    $result = [ordered]@{}
+    $portfilePath = Join-Path $RecipeFolder 'portfile.cmake'
+    $portfileText = if (Test-Path -LiteralPath $portfilePath -PathType Leaf) { [System.IO.File]::ReadAllText($portfilePath) } else { '' }
+    $patches = @(ConvertTo-OrdinalOrder -Items @(Get-ChildItem -LiteralPath $RecipeFolder -Recurse -File | Where-Object { $_.Name -match '\.(patch|diff)$' }) -Property FullName |
+        Where-Object { $portfileText -match ('(?<![\w.-])' + [regex]::Escape($_.Name) + '(?![\w.-])') })
+    if ($patches.Count -eq 0) { return $result }
+    $rules = @($Rules | Where-Object { $_ })
+    $ruleProblems = @(Test-FileLicenceRules -Port $Port -Rules $rules)
+    if ($ruleProblems.Count -gt 0) { throw ($ruleProblems -join ' ') }
+
+    # The port's archives, verified, with their members.
+    $archives = New-Object System.Collections.Generic.List[object]
+    foreach ($source in @($Sources | Where-Object { $_ })) {
+        $path = Get-SourceArchive -Resource $source.Resource -DownloadsDir $DownloadsDir
+        if (-not $path) {
+            throw "The licences of the files that the patches of $Port change are read from its source archive $($source.Name) ($($source.Location)), which is not in $DownloadsDir. Run 'vcpkg install --only-downloads' for the port (it fetches the archive the port pins), or build the port once from source."
+        }
+        $members = @{}
+        foreach ($name in @(Get-SourceArchiveListing -Archive $path)) { if ($name -match '^[^/]+/(.+[^/])$') { $members[$Matches[1]] = $true } }
+        $archives.Add([pscustomobject]@{ Name = [string]$source.Name; Path = $path; File = [System.IO.Path]::GetFileName($path); Members = $members })
+    }
+
+    # Each file of each patch: the archive that holds it and the rule that may give its licence.
+    $plans = New-Object System.Collections.Generic.List[object]
+    $reads = @{}
+    foreach ($patch in $patches) {
+        $relative = (Get-RelativePathText -Root $RecipeFolder -Path $patch.FullName).Replace('\', '/')
+        foreach ($change in @(Get-PatchFileChanges -Text ([System.IO.File]::ReadAllText($patch.FullName)))) {
+            $holding = @($archives | Where-Object { $_.Members.ContainsKey($change.Path) })
+            $rule = $null
+            foreach ($candidate in $rules) {
+                if (-not @(@($candidate.files) | Where-Object { Test-PathPattern -Path $change.Path -Pattern ([string]$_) }).Count) { continue }
+                $named = if (($candidate.PSObject.Properties.Name -contains 'source') -and $candidate.source) { [string]$candidate.source } else { '' }
+                if ($named -and $holding.Count -gt 0 -and -not @($holding | Where-Object { $_.Name -ceq $named }).Count) { continue }
+                $rule = $candidate
+                break
+            }
+            $named = if ($rule -and ($rule.PSObject.Properties.Name -contains 'source') -and $rule.source) { [string]$rule.source } else { '' }
+            if ($named) { $holding = @($archives | Where-Object { $_.Name -ceq $named }) }
+            if ($holding.Count -gt 1 -and -not $change.Created) {
+                throw "installer\license-policy.json: $($change.Path), which $relative of $Port changes, is in several of its source archives ($(@($holding | ForEach-Object Name) -join ', ')); name the one the patch applies to in a ports.$Port.fileLicences rule (source)."
+            }
+            $archive = if ($holding.Count -gt 0) { $holding[0] } else { $null }
+            if ($archive -and $archive.Members.ContainsKey($change.Path)) {
+                if (-not $reads.ContainsKey($archive.Path)) { $reads[$archive.Path] = New-Object System.Collections.Generic.List[string] }
+                $reads[$archive.Path].Add($change.Path)
+            }
+            if ($rule -and ($rule.PSObject.Properties.Name -contains 'evidence') -and $archive) {
+                foreach ($item in @($rule.evidence | Where-Object { $_ })) {
+                    if (-not $reads.ContainsKey($archive.Path)) { $reads[$archive.Path] = New-Object System.Collections.Generic.List[string] }
+                    $reads[$archive.Path].Add([string]$item.member)
+                }
+            }
+            $plans.Add([pscustomobject]@{ Patch = $relative; Change = $change; Archive = $archive; Rule = $rule })
+        }
+    }
+    $texts = @{}
+    foreach ($path in @($reads.Keys)) { $texts[$path] = Read-SourceArchiveMembers -Archive $path -Members $reads[$path].ToArray() }
+
+    # The licence of each file, then of each patch.
+    $files = [ordered]@{}
+    foreach ($plan in $plans) {
+        if (-not $files.Contains($plan.Patch)) { $files[$plan.Patch] = New-Object System.Collections.Generic.List[object] }
+        $change = $plan.Change
+        if ($change.Created) { $files[$plan.Patch].Add([pscustomobject]@{ Path = $change.Path; Licence = $null; How = 'created by the patch' }); continue }
+        $text = $null
+        if ($plan.Archive -and $texts.ContainsKey($plan.Archive.Path) -and $texts[$plan.Archive.Path].ContainsKey($change.Path)) { $text = [string]$texts[$plan.Archive.Path][$change.Path] }
+        $where = if ($plan.Archive) { $plan.Archive.File } else { "$Port's source archives" }
+        $spdx = $null
+        if ($null -ne $text) {
+            $head = (@($text -split "`r?`n") | Select-Object -First 60) -join "`n"
+            if ($head -match '(?m)SPDX-License-Identifier:\s*(.+?)\s*(\*/|-->)?\s*$') { $spdx = $Matches[1].Trim() }
+        }
+        $rule = $plan.Rule
+        if ($spdx) {
+            $elected = Select-ElectedLicence -Expression $spdx -LibraryLicence $LibraryLicence
+            if ($rule -and [string]$rule.licence -cne [string]$elected) {
+                $alternatives = @($spdx -csplit '\s+OR\s+' | ForEach-Object { $_.Trim() })
+                if (-not $elected -and $alternatives -ccontains [string]$rule.licence) { $elected = [string]$rule.licence }
+                else { throw "installer\license-policy.json: ports.$Port.fileLicences gives $($change.Path) the licence $($rule.licence), but its SPDX line in $where says '$spdx'." }
+            }
+            if (-not $elected) { throw "The SPDX line of $($change.Path) in $where, which $($plan.Patch) of $Port changes, is '$spdx', a choice the library's licence ($LibraryLicence) does not settle: record Lucent's election in a ports.$Port.fileLicences rule." }
+            $files[$plan.Patch].Add([pscustomobject]@{ Path = $change.Path; Licence = $elected; How = $(if ($elected -ceq $spdx) { 'its SPDX line' } else { "its SPDX line '$spdx', of which Lucent uses $elected" }) })
+            continue
+        }
+        if (-not $rule) {
+            throw "The licence of $($change.Path), which $($plan.Patch) of $Port changes, is not stated by an SPDX line in $where$(if ($null -eq $text) { ' (which does not hold it)' }): record it in installer\license-policy.json, ports.$Port.fileLicences, with the statement of the file or the evidence of the archive that shows it."
+        }
+        $notice = ConvertTo-NoticeText -Text $(if ($null -ne $text) { $text } else { '' })
+        $statements = @()
+        if ($rule.PSObject.Properties.Name -contains 'statement') { $statements = @($rule.statement | Where-Object { [string]$_ }) }
+        foreach ($statement in $statements) {
+            $wanted = ([string]$statement -replace '\s+', ' ').Trim()
+            if ($null -eq $text -or $notice.IndexOf($wanted, [System.StringComparison]::Ordinal) -lt 0) {
+                throw "installer\license-policy.json: ports.$Port.fileLicences gives $($change.Path) the licence $($rule.licence) because its notice says '$wanted', but $(if ($null -eq $text) { "$where does not hold the file" } else { "its first lines in $where do not" })."
+            }
+        }
+        $evidence = @()
+        if ($rule.PSObject.Properties.Name -contains 'evidence') { $evidence = @($rule.evidence | Where-Object { $_ }) }
+        foreach ($item in $evidence) {
+            $evidenceText = $null
+            if ($plan.Archive -and $texts.ContainsKey($plan.Archive.Path) -and $texts[$plan.Archive.Path].ContainsKey([string]$item.member)) { $evidenceText = [string]$texts[$plan.Archive.Path][[string]$item.member] }
+            if ($null -eq $evidenceText -or $evidenceText.IndexOf([string]$item.line, [System.StringComparison]::Ordinal) -lt 0) {
+                throw "installer\license-policy.json: ports.$Port.fileLicences gives $($change.Path) the licence $($rule.licence), shown by the line '$($item.line)' of $($item.member), but $(if ($null -eq $evidenceText) { "$where holds no $($item.member)" } else { "$($item.member) in $where holds no such line" })."
+            }
+        }
+        $files[$plan.Patch].Add([pscustomobject]@{ Path = $change.Path; Licence = [string]$rule.licence; How = [string]$rule.comment })
+    }
+    # (Each list read with ToArray(): @() of a generic list taken from an ordered dictionary fails in Windows
+    # PowerShell 5.1 with "Argument types do not match".)
+    foreach ($pair in $files.GetEnumerator()) {
+        $patch = [string]$pair.Key
+        $records = $pair.Value.ToArray()
+        $stated = @($records | Where-Object { $_.Licence })
+        $licence = if (@($stated | Where-Object { $_.Licence -ceq 'NOASSERTION' }).Count -gt 0) { 'NOASSERTION' }
+                   elseif ($stated.Count -eq 0) { $null }
+                   else { Join-LicenceTerms @(ConvertTo-OrdinalOrder -Items @($stated | ForEach-Object { [string]$_.Licence }) -Unique) }
+        $describe = @($records | ForEach-Object { "$($_.Path): $(if ($_.Licence) { $_.Licence } else { 'none' }) ($($_.How))" }) -join '; '
+        $result[$patch] = [pscustomobject]@{ Patch = $patch; Licence = $licence; Files = $records; Text = $describe }
+    }
+    return $result
+}
+
+function Get-ProgramLicences {
+    <#
+    .SYNOPSIS
+        The licence of each of Lucent's programs as a whole (the gate-8 review, round 2: Lucent.exe and
+        lucent-worker.exe were "MIT AND" the logo's terms in the SBOM, whose own STATIC_LINK relationships
+        put code of others into them): -OwnLicence (Lucent's code and logo) and the concluded licence of
+        every header-only library compiled into the programs (Linkage "compiled-in"), every library linked
+        statically into that program (its Executables) and every compiler library whose code the program
+        holds (Get-ToolchainLibraries: Programs), each term once (Join-LicenceTerms).
+    .OUTPUTS
+        A hashtable by the program's file name in lower case: Licence and Inside (Name, Licence of each).
+    #>
+    param([Parameter(Mandatory)]$Info, [AllowEmptyCollection()][object[]]$Components = @(), [AllowEmptyCollection()][object[]]$ToolchainLibraries = @(),
+          [Parameter(Mandatory)][string]$OwnLicence)
+    $result = @{}
+    foreach ($program in @(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ })) {
+        $inside = New-Object System.Collections.Generic.List[object]
+        foreach ($component in @($Components | Where-Object { $_ })) {
+            $linkage = if ($component.PSObject.Properties.Name -contains 'Linkage') { [string]$component.Linkage } else { '' }
+            if ($linkage -eq 'compiled-in') { $inside.Add([pscustomobject]@{ Name = "$($component.Port) $($component.Version)"; Licence = [string]$component.LicenseConcluded }) }
+            foreach ($static in @($component.StaticLibraries | Where-Object { $_ })) {
+                $programs = @()
+                if ($static.PSObject.Properties.Name -contains 'Executables') { $programs = @($static.Executables | Where-Object { $_ }) }
+                if ($programs.Count -eq 0 -or $programs -contains $program) { $inside.Add([pscustomobject]@{ Name = "$($static.Name) ($($static.File))"; Licence = [string]$static.LicenseConcluded }) }
+            }
+        }
+        foreach ($library in @($ToolchainLibraries | Where-Object { $_ })) {
+            if (@($library.Programs) -contains $program) { $inside.Add([pscustomobject]@{ Name = "$($library.Id) $($library.Version)"; Licence = [string]$library.LicenseConcluded }) }
+        }
+        $result[([string]$program).ToLowerInvariant()] = [pscustomobject]@{
+            Licence = (Join-LicenceTerms (@($OwnLicence) + @($inside | ForEach-Object { $_.Licence }))); Inside = $inside.ToArray() }
+    }
+    return $result
+}
+
+function Get-OwnFileLicence {
+    <#
+    .SYNOPSIS
+        The licence, copyright and comment the SBOM gives one file of Lucent's own package (a file of the
+        installation folder that is no vcpkg port's file; New-PackageSbom):
+        - Lucent's programs: -ProgramLicence (MIT AND the logo's terms, ADR 0025), or, since the gate-8 review,
+          round 2, the program's whole licence from -ProgramLicences (Get-ProgramLicences);
+        - the files of a third-party data asset: its licence (Get-AssetLicences), except Lucent's own
+          files in it (MIT);
+        - a file of a vcpkg recipe that ships (licenses\<port>\recipe): Get-RecipeFileLicence's licence;
+        - the other files of licenses\ (licence texts and notices): NOASSERTION;
+        - everything else is Lucent's own, under the MIT License: its bundled data, qt.conf and
+          Lucent-files.txt (both were NOASSERTION until the W12 gate-8 reading of 2026-10-16).
+    .PARAMETER Recipes
+        The shipped recipes: ShippedRecipe (licenses\<port>\recipe) and RecipeFiles (File, with forward
+        slashes; Licence, Copyright, Comment), as New-LicenseBundle records them in a component's
+        RecipeRef.
+    .OUTPUTS
+        Licence, Copyright, Comment, Asset (a third-party asset's id, or $null) and Program.
+    #>
+    param([Parameter(Mandatory)][string]$Relative, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)][string]$ProgramLicence,
+          [hashtable]$ProgramLicences = @{}, [AllowEmptyCollection()][object[]]$AssetLicences = @(), [AllowEmptyCollection()][object[]]$Recipes = @(),
+          [hashtable]$PartSources = @{})
+    $result = [pscustomobject]@{ Licence = 'NOASSERTION'; Copyright = 'NOASSERTION'; Comment = $null; Asset = $null; Program = $false }
+    if ($Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $Relative) {
+        $result.Licence = if ($ProgramLicences.ContainsKey($Relative.ToLowerInvariant())) { [string]$ProgramLicences[$Relative.ToLowerInvariant()].Licence } else { $ProgramLicence }
+        $result.Program = $true
+        return $result
+    }
+    foreach ($asset in @($AssetLicences | Where-Object { $_ -and $_.ThirdParty })) {
+        $prefix = $asset.Folder + '\'
+        if (-not $Relative.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (@($asset.LucentFiles) -contains $Relative.Substring($prefix.Length).Replace('\', '/')) { $result.Licence = 'MIT'; return $result }
+        $result.Licence = $asset.Concluded
+        $result.Copyright = $asset.Copyright
+        $result.Asset = $asset.Id
+        return $result
+    }
+    foreach ($recipe in @($Recipes | Where-Object { $_ })) {
+        $prefix = $recipe.ShippedRecipe + '\'
+        if (-not $Relative.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $inside = $Relative.Substring($prefix.Length).Replace('\', '/')
+        $file = @($recipe.RecipeFiles | Where-Object { [string]$_.File -ceq $inside }) | Select-Object -First 1
+        if (-not $file) { throw "$Relative is in the shipped recipe $($recipe.ShippedRecipe), but not in the overlay port it was copied from." }
+        $result.Licence = $file.Licence
+        $result.Copyright = $file.Copyright
+        $result.Comment = $file.Comment
+        return $result
+    }
+    # The source of a part under a copyleft licence that ships with its notice (the LZMA SDK 4.40 decoder of
+    # Inno Setup's loader, licenses\inno-setup\LzmaDecode; the gate-8 review, round 2): the part's licence.
+    if ($PartSources.ContainsKey($Relative.ToLowerInvariant())) {
+        $source = $PartSources[$Relative.ToLowerInvariant()]
+        $result.Licence = [string]$source.Licence
+        $result.Copyright = [string]$source.Copyright
+        $result.Comment = [string]$source.Comment
+        return $result
+    }
+    if ($Relative -like 'licenses\*') { return $result }
+    $result.Licence = 'MIT'
+    return $result
 }
 
 function Get-CopyrightSection {
@@ -1413,7 +2451,8 @@ function Get-AssetLicences {
         required, and its files get that licence in the SBOM except those named lucentFiles (Lucent's
         own description of the data, MIT) and the manifest. A provenance.json the asset holds (its
         upstream source, archive SHA-256 and commit) is read into the record. Every other asset is
-        Lucent's own (MIT). Returns one record per asset.
+        Lucent's own (MIT), named in THIRD-PARTY-NOTICES.txt by its "lucentAssets" entry (name and
+        comment; else by its id). Returns one record per asset.
     #>
     param(
         [Parameter(Mandatory)][string]$StageDir,
@@ -1422,6 +2461,8 @@ function Get-AssetLicences {
     $records = New-Object System.Collections.Generic.List[object]
     $policyAssets = $null
     if ($Policy.PSObject.Properties.Name -contains 'assets') { $policyAssets = $Policy.assets }
+    $lucentAssets = $null
+    if ($Policy.PSObject.Properties.Name -contains 'lucentAssets') { $lucentAssets = $Policy.lucentAssets }
     foreach ($asset in @($Info.assets)) {
         if (-not $asset) { continue }
         $folder = Join-Path $StageDir "assets\$($asset.id)"
@@ -1434,6 +2475,11 @@ function Get-AssetLicences {
             Id = $asset.id; Version = $manifest.version; Folder = "assets\$($asset.id)"
             ThirdParty = [bool]$entry; Name = $asset.id; Concluded = 'MIT'; LicenseFile = $null; LucentFiles = @('manifest.json')
             Homepage = $null; Copyright = $null; Notices = @(); Comment = $null; Provenance = $null }
+        if (-not $entry -and $lucentAssets -and ($lucentAssets.PSObject.Properties.Name -contains $asset.id)) {
+            $own = $lucentAssets.($asset.id)
+            if ($own.PSObject.Properties.Name -contains 'name' -and $own.name) { $record.Name = $own.name }
+            if ($own.PSObject.Properties.Name -contains 'comment' -and $own.comment) { $record.Comment = $own.comment }
+        }
         if ($entry) {
             foreach ($field in 'name', 'concluded', 'licenseFile', 'copyright') {
                 if (-not ($entry.PSObject.Properties.Name -contains $field) -or -not $entry.$field) {
@@ -1462,6 +2508,495 @@ function Get-AssetLicences {
     return $records.ToArray()
 }
 
+function Format-DataNotices {
+    <#
+    .SYNOPSIS
+        The "Data" section of THIRD-PARTY-NOTICES.txt: every bundled data asset with its licence, in the
+        ordinal order of their ids. A third-party asset with its holders, source, modifications and its
+        licence text in licenses\<id>\; Lucent's own under Lucent's MIT License (W12 gate-8 reading of
+        2026-10-16: the camera support database was not named).
+    #>
+    param([AllowEmptyCollection()][object[]]$AssetLicences = @())
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($asset in @(ConvertTo-OrdinalOrder -Items @($AssetLicences) -Property Id)) {
+        $lines.Add("$($asset.Name), asset $($asset.Id) $($asset.Version), in $($asset.Folder)")
+        $lines.Add("  Licence: $($asset.Concluded)")
+        if (-not $asset.ThirdParty) {
+            $lines.Add("  Lucent's own data, under Lucent's MIT License (Lucent-LICENSE.txt in this folder).")
+            if ($asset.Comment) { $lines.Add("  Note: $($asset.Comment)") }
+            $lines.Add('')
+            continue
+        }
+        $lines.Add("  $($asset.Copyright)")
+        if ($asset.Homepage) { $lines.Add("  Home page: $($asset.Homepage)") }
+        if ($asset.Provenance) {
+            $source = $asset.Provenance.source
+            $lines.Add("  Source: $($source.archive_url) (SHA-256 $($source.archive_sha256)), retrieved $($source.retrieved),")
+            $lines.Add("          generated from $($source.repository) commit $($source.commit) ($($source.commit_date))")
+            $lines.Add("  Modifications: $($asset.Provenance.modifications)")
+        }
+        if ($asset.Comment) { $lines.Add("  Note: $($asset.Comment)") }
+        $lines.Add("  Licence text: $($asset.Id)\$($asset.LicenseFile) (also $($asset.Folder)\$($asset.LicenseFile))")
+        $lines.Add('')
+    }
+    if ($lines.Count -eq 0) { $lines.Add('(none)') }
+    return $lines.ToArray()
+}
+
+function Format-RecipeNotice {
+    <#
+    .SYNOPSIS
+        The THIRD-PARTY-NOTICES.txt item on the vcpkg recipes the installation holds (Lucent's overlay
+        ports, licenses\<port>\recipe; W12 gate-8 reading of 2026-10-16): vcpkg's files are under vcpkg's
+        MIT License, whose text ships beside them (vcpkg-LICENSE.txt), the Lucent project's changes under
+        Lucent's; a patch's quoted lines stay under the licences of the files they come from (since the
+        gate-8 review, round 2, which derives them, Get-PatchLicences). Empty when no recipe ships.
+    #>
+    param([AllowEmptyCollection()][string[]]$Folders = @(), [string]$Baseline, $VcpkgLicence)
+    $folders = @($Folders | Where-Object { $_ })
+    if ($folders.Count -eq 0) { return '' }
+    $text = "The build recipes in $(Format-NameList @(ConvertTo-OrdinalOrder -Items $folders)) are vcpkg's ports of those libraries (https://github.com/microsoft/vcpkg, registry commit $Baseline) with the Lucent project's changes. vcpkg's files are under vcpkg's MIT License ($($VcpkgLicence.Copyright); vcpkg-LICENSE.txt in this folder, LICENSE.txt of the vcpkg registry at that commit), the Lucent project's changes and files under Lucent's MIT License (Lucent-LICENSE.txt). The lines of a library's files that a patch quotes and changes stay under the licences of those files (Lucent.spdx.json gives each patch its licence)."
+    return ((Format-IndentedText -Prefix '- ' -Text $text) -join "`n")
+}
+
+function Complete-ThirdPartyNotices {
+    <#
+    .SYNOPSIS
+        THIRD-PARTY-NOTICES.txt from its template (installer\notices\THIRD-PARTY-NOTICES.txt.in): the
+        title, the terms of Lucent's logo, the credit lines, the components and the data, Microsoft's
+        Visual C++ redistributable and the Inno Setup compiler with the versions the package manifest
+        records (vcRedistributable.version and toolchain.innoSetupVersion; W12 gate-8 reading of
+        2026-10-16), and the vcpkg recipes that ship (Format-RecipeNotice; its line is left out when
+        none ships). Without a compiler (a -StageOnly run that found none) Inno Setup is named without a
+        version. The programs Lucent ships (-Programs, "Lucent.exe and lucent-worker.exe") are named
+        where the notices say what is compiled into them, and -InnoSetupNote (lines of their own) says
+        where Inno Setup's licence text is and what its binaries contain (W12 gate-8 review, round 1).
+        -RedistributableTerms names Microsoft's licence terms for the redistributable, which Setup runs
+        without its window (the gate-8 review, round 2). Every placeholder must be filled; a bullet of the
+        introduction that a filled-in name makes wider than 100 columns is wrapped again.
+    #>
+    param([Parameter(Mandatory)][string]$Template, [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][AllowEmptyString()][string]$Logo,
+          [AllowEmptyCollection()][string[]]$Notices = @(), [AllowEmptyCollection()][string[]]$Components = @(), [AllowEmptyCollection()][string[]]$Data = @(),
+          [Parameter(Mandatory)][string]$Redistributable, [AllowEmptyString()][string]$InnoSetup, [AllowEmptyString()][string]$Recipes,
+          [Parameter(Mandatory)][string]$Programs, [AllowEmptyString()][string]$InnoSetupNote,
+          [string]$RedistributableTerms = "Microsoft Software License Terms for the Microsoft Visual C++ Redistributable")
+    $required = [ordered]@{ '@LUCENT_LOGO@' = "the terms of Lucent's logo"; '@VC_REDIST@' = "the Visual C++ redistributable's version"
+                            '@VC_REDIST_TERMS@' = "Microsoft's licence terms for the redistributable, which Setup's silent run does not display"
+                            '@INNO_SETUP@' = "Inno Setup's version"; '@RECIPES@' = 'the licence of the vcpkg recipes that ship'
+                            '@PROGRAMS@' = 'which programs hold the compiled-in code'; '@INNO_SETUP_LICENCE@' = "where Inno Setup's licence text is" }
+    foreach ($pair in $required.GetEnumerator()) {
+        if (-not $Template.Contains($pair.Key)) { throw "THIRD-PARTY-NOTICES.txt.in has no $($pair.Key): the notices would not state $($pair.Value)." }
+    }
+    $text = Set-TemplateTitle -Template $Template -Version $Version
+    # The recipes' item and Inno Setup's note are lines of their own; without them the lines go.
+    $text = if ($Recipes) { $text.Replace('@RECIPES@', $Recipes) } else { $text.Replace("@RECIPES@`n", '').Replace('@RECIPES@', '') }
+    $text = if ($InnoSetupNote) { $text.Replace('@INNO_SETUP_LICENCE@', $InnoSetupNote) } else { $text.Replace("@INNO_SETUP_LICENCE@`n", '').Replace('@INNO_SETUP_LICENCE@', '') }
+    $notices = @($Notices | Where-Object { $_ })
+    if ($notices.Count -eq 0) { $notices = @('(none)') }
+    $replacements = [ordered]@{
+        '@LUCENT_LOGO@' = $Logo
+        '@VC_REDIST_TERMS@' = $RedistributableTerms
+        '@VC_REDIST@' = $Redistributable
+        '@INNO_SETUP@' = $(if ($InnoSetup) { $InnoSetup } else { 'Inno Setup' })
+        '@PROGRAMS@' = $Programs
+        '@NOTICES@' = ($notices -join "`n")
+        '@COMPONENTS@' = ($Components -join "`n").TrimEnd()
+        '@DATA@' = ($Data -join "`n").TrimEnd() }
+    foreach ($pair in $replacements.GetEnumerator()) { $text = $text.Replace([string]$pair.Key, [string]$pair.Value) }
+    if ($text -cmatch '@[A-Z_]+@') { throw "THIRD-PARTY-NOTICES.txt.in has a placeholder that was not filled: $($Matches[0])" }
+    # A bullet of the introduction that a long name makes wider than 100 columns (the redistributable's
+    # licence terms) is wrapped again as one paragraph; the others stay as the template wraps them.
+    $split = $text.IndexOf("`nRequired notices`n", [System.StringComparison]::Ordinal)
+    if ($split -gt 0) {
+        $introLines = @($text.Substring(0, $split) -split "`n")
+        $wrapped = New-Object System.Collections.Generic.List[string]
+        $i = 0
+        while ($i -lt $introLines.Count) {
+            if (-not $introLines[$i].StartsWith('- ')) { $wrapped.Add($introLines[$i]); $i++; continue }
+            $end = $i + 1
+            while ($end -lt $introLines.Count -and $introLines[$end].StartsWith('  ')) { $end++ }
+            $bullet = @($introLines[$i..($end - 1)])
+            # A bullet with a list of its own (indented further) keeps its lines.
+            if (@($bullet | Where-Object { $_.Length -gt 100 }).Count -gt 0 -and @($bullet | Where-Object { $_.StartsWith('    ') }).Count -eq 0) {
+                $joined = (@($bullet | ForEach-Object { $_.Trim() }) -join ' ').Substring(2)
+                foreach ($line in (Format-IndentedText -Prefix '- ' -Text $joined)) { $wrapped.Add($line) }
+            }
+            else { foreach ($line in $bullet) { $wrapped.Add($line) } }
+            $i = $end
+        }
+        $text = ($wrapped -join "`n") + $text.Substring($split)
+    }
+    return $text
+}
+
+function Get-InnoSetupLicenceFile {
+    <#
+    .SYNOPSIS
+        The licence of the Inno Setup compiler that makes Setup, whose loader and setup engine are inside
+        Setup and whose uninstaller (unins000.exe) Setup installs (W12 gate-8 review, round 1): the
+        compiler's license.txt beside ISCC.exe, verified against the SHA-256 installer\license-policy.json
+        reviewed for that version (distribution.installerTool: reviewedVersion, licenseFile,
+        licenseSha256). Another version, or another text, stops packaging until it is reviewed. $null
+        without a compiler (a -StageOnly run that found none).
+    .PARAMETER Iscc
+        Find-InnoSetupCompiler's result with the engine version (Version, "Inno Setup 6.7.3").
+    .OUTPUTS
+        Text, Sha256, Version ("6.7.3"), Path and Copyright (its copyright lines, one per line).
+    #>
+    param($Iscc, [Parameter(Mandatory)]$Policy)
+    if (-not $Iscc) { return $null }
+    $tool = $Policy.distribution.installerTool
+    $fields = @($tool.PSObject.Properties | ForEach-Object Name)
+    foreach ($field in 'reviewedVersion', 'licenseFile', 'licenseSha256') {
+        if ($fields -notcontains $field -or -not [string]$tool.$field) { throw "installer\license-policy.json: distribution.installerTool has no $field (the Inno Setup version whose licence was reviewed, its licence file and that file's SHA-256)." }
+    }
+    $engine = if ($Iscc.PSObject.Properties.Name -contains 'Version') { [string]$Iscc.Version } else { '' }
+    $version = if ($engine -match '(\d+\.\d+(\.\d+)*)') { $Matches[1] } else { '' }
+    if ($version -cne [string]$tool.reviewedVersion) {
+        throw "The Inno Setup compiler is $(if ($engine) { $engine } else { 'of an unknown version' }), but installer\license-policy.json reviewed the licence of Inno Setup $($tool.reviewedVersion) (distribution.installerTool): review its $($tool.licenseFile) and record the version and the file's SHA-256."
+    }
+    $path = Join-Path (Split-Path -Parent ([string]$Iscc.Path)) ([string]$tool.licenseFile)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "The Inno Setup compiler's licence $path is missing." }
+    $sha = Get-Sha256 $path
+    if ($sha -ne ([string]$tool.licenseSha256).ToLowerInvariant()) {
+        throw "$path has the SHA-256 $sha, not the $($tool.licenseSha256) that installer\license-policy.json reviewed for Inno Setup $($tool.reviewedVersion)."
+    }
+    # The same file as Inno Setup's published source holds it at the reviewed version's tag (the gate-8
+    # review, round 2): its git blob id there, which the policy records with the commit.
+    $published = $null
+    if (($fields -contains 'licenseGitBlob') -and $tool.licenseGitBlob) {
+        $blob = Get-GitBlobId ([System.IO.File]::ReadAllBytes($path))
+        if ($blob -ne [string]$tool.licenseGitBlob) { throw "$path (git blob $blob) is not license.txt of Inno Setup's published source at $($tool.sourceTag) (git blob $($tool.licenseGitBlob)), as installer\license-policy.json records it." }
+        $published = "license.txt of $($tool.sourceRepository) at commit $($tool.sourceCommit), tag $($tool.sourceTag) (git blob $blob)"
+    }
+    $text = [System.IO.File]::ReadAllText($path)
+    $copyright = @(($text -split "`r?`n") | Where-Object { $_ -match '^\s*(Portions )?Copyright\b' } | ForEach-Object { $_.Trim() })
+    return [pscustomobject]@{ Text = $text; Sha256 = $sha; Version = $version; Path = $path; Copyright = ($copyright -join "`n"); Published = $published }
+}
+
+function Get-InnoSetupParts {
+    <#
+    .SYNOPSIS
+        The code of others inside Inno Setup's loader, setup engine and uninstaller, as the compiler that
+        makes Lucent Setup holds it (installer\license-policy.json distribution.installerTool.parts; the
+        gate-8 review, round 2: their terms were unestablished, the ledger's gap 13).
+    .DESCRIPTION
+        Each part names the compiler's files that hold it ("in": SetupLdr.e32 and SetupLdr.e64 are Setup's
+        loader; Setup.e32 is the setup engine inside Setup, which Setup also installs as the uninstaller
+        unins000.exe) and a text its code carries there ("probe": its copyright string or one of its
+        messages), which one of them must hold, as 8-bit or UTF-16 text. Its licence ("licence", with
+        "declared" when Lucent elects one of the terms the code offers) has its text:
+        - from a file of Inno Setup's published source that Lucent keeps ("text": source, file, and first
+          and last for an excerpt; Get-ThirdPartySourceFile), quoted verbatim;
+        - in the probe itself, when the code states its terms there ("statement": "probe": the LZMA SDK's
+          "Public domain");
+        - or in another component's licence file ("textIn", as a part of a port).
+        A part under a copyleft licence ships its source ("sourceFiles": source, folder and files, each a kept
+        file of the published source), written to licenses\inno-setup\<folder>\; without it packaging stops.
+        "notice" is a line the notices must carry, and "noticeProbe" a text of it the engine must hold (Pascal
+        Script's licence asks for a line naming it and where it can be found, which Inno Setup's About box
+        gives).
+    .OUTPUTS
+        One record per part: Name, Version, Licence, Declared, Copyright, Inside (the places that hold it),
+        Holding (the compiler's files), File (inno-setup\<as>), Text (that file), ExtractedText (the text of
+        its LicenseRef- licence), SourceFiles (File below licenses\, Bytes), Notice, TextIn and Comment.
+        None without a compiler.
+    #>
+    param($Iscc, [Parameter(Mandatory)]$Policy, [Parameter(Mandatory)][string]$RepoRoot)
+    if (-not $Iscc) { return @() }
+    $tool = $Policy.distribution.installerTool
+    if (-not ($tool.PSObject.Properties.Name -contains 'parts') -or -not $tool.parts) { return @() }
+    $folder = Split-Path -Parent ([string]$Iscc.Path)
+    $engine = if ($Iscc.PSObject.Properties.Name -contains 'Version' -and $Iscc.Version) { [string]$Iscc.Version } else { 'Inno Setup' }
+    $places = @{ 'SetupLdr.e32' = "Setup's loader"; 'SetupLdr.e64' = "Setup's loader"; 'Setup.e32' = 'the setup engine inside Lucent Setup and its uninstaller, unins000.exe' }
+    $records = New-Object System.Collections.Generic.List[object]
+    $files = @{}
+    foreach ($part in @($tool.parts | Where-Object { $_ })) {
+        $fields = @($part.PSObject.Properties | ForEach-Object Name)
+        foreach ($field in 'name', 'copyright', 'licence', 'in', 'probe', 'as', 'comment') {
+            if ($fields -notcontains $field -or -not $part.$field) { throw "installer\license-policy.json: a part of distribution.installerTool.parts ($(if ($fields -contains 'name') { $part.name } else { 'unnamed' })) has no $field." }
+        }
+        if ([string]$part.as -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$' -or $files.ContainsKey(([string]$part.as).ToLowerInvariant())) { throw "installer\license-policy.json: the part '$($part.name)' of Inno Setup is written to '$($part.as)', not a plain .txt file name of its own." }
+        $files[([string]$part.as).ToLowerInvariant()] = $true
+        $holding = @(@($part.in) | Where-Object { $path = Join-Path $folder ([string]$_); (Test-Path -LiteralPath $path -PathType Leaf) -and $null -ne (Find-TextIn -Path $path -Text ([string]$part.probe)) })
+        if ($holding.Count -eq 0) { throw "installer\license-policy.json names '$($part.name)' inside Inno Setup's $(@($part.in) -join ', '), but none of these files of the compiler $folder holds '$($part.probe)': review the compiler's parts." }
+        if ($fields -contains 'noticeProbe' -and $part.noticeProbe -and $null -eq (Find-TextIn -Path (Join-Path $folder ([string]@($holding)[0])) -Text ([string]$part.noticeProbe))) {
+            throw "installer\license-policy.json: the notice of '$($part.name)' names '$($part.noticeProbe)', which $(@($holding)[0]) of the compiler does not hold."
+        }
+        $inside = Format-NameList @(@($holding | ForEach-Object { $places[[string]$_] }) | Select-Object -Unique)
+        $version = if ($fields -contains 'version' -and $part.version) { [string]$part.version } else { $null }
+        $declared = if ($fields -contains 'declared' -and $part.declared) { [string]$part.declared } else { [string]$part.licence }
+        $title = "Inno Setup $(($engine -replace '^Inno Setup\s*', '')): $($part.name)$(if ($version) { ", version $version" }), $($part.licence)"
+        $lines = New-Object System.Collections.Generic.List[string]
+        $lines.Add($title)
+        $lines.Add('=' * $title.Length)
+        $lines.Add('')
+        foreach ($line in ((Format-Paragraph -Text ([string]$part.comment)) -split "`n")) { $lines.Add($line) }
+        $lines.Add('')
+        foreach ($line in ((Format-Paragraph -Text "$(Format-NameList @($holding)) of the $engine compiler that made Lucent Setup ($inside) $(if (@($holding).Count -eq 1) { 'holds' } else { 'hold' }) it and $(if (@($holding).Count -eq 1) { 'carries' } else { 'carry' }) the text '$($part.probe)'.") -split "`n")) { $lines.Add($line) }
+        $extracted = $null
+        if ($fields -contains 'text' -and $part.text) {
+            $found = Get-ThirdPartySourceFile -Policy $Policy -RepoRoot $RepoRoot -Source ([string]$part.text.source) -File ([string]$part.text.file)
+            $textFields = @($part.text.PSObject.Properties | ForEach-Object Name)
+            $taken = if ($textFields -contains 'first') { Get-LicenceExcerpt -Text $found.Text -First ([string]$part.text.first) -Last ([string]$part.text.last) } else { [pscustomobject]@{ Lines = @($found.Text -split "`r?`n"); FirstLine = $null; LastLine = $null } }
+            $about = if ($textFields -contains 'about' -and $part.text.about) { [string]$part.text.about } else { "Its licence's text" }
+            $lines.Add('')
+            foreach ($line in ((Format-Paragraph -Text "$about, $(if ($taken.FirstLine) { "$(Format-LineSpan $taken.FirstLine $taken.LastLine) of " })$($found.Provenance), Inno Setup's published source of that version, verbatim:") -split "`n")) { $lines.Add($line) }
+            $lines.Add('')
+            foreach ($line in @($taken.Lines)) { $lines.Add($line) }
+            $extracted = (@($taken.Lines) -join "`n").TrimEnd()
+        }
+        elseif ($fields -contains 'statement' -and [string]$part.statement -ceq 'probe') {
+            $lines.Add('')
+            foreach ($line in ((Format-Paragraph -Text "The code states its terms in that text itself; no licence text applies to it.") -split "`n")) { $lines.Add($line) }
+            $extracted = [string]$part.probe
+        }
+        $textIn = @()
+        if ($fields -contains 'textIn') { $textIn = @($part.textIn | Where-Object { $_ }) }
+        if ($textIn.Count -gt 0) {
+            $names = Format-NameList @($textIn | ForEach-Object { "$([string]$_.file) ($(if (($_.PSObject.Properties.Name -contains 'holds') -and $_.holds) { [string]$_.holds } else { "at '$($_.marker)'" }))" })
+            $lines.Add('')
+            foreach ($line in ((Format-Paragraph -Text "The text of the $($part.licence) licence ships in this installation's licence folder, in $(if ($textIn.Count -eq 1) { "another component's file" } else { "other components' files" }): $names.") -split "`n")) { $lines.Add($line) }
+        }
+        if (-not $extracted -and $textIn.Count -eq 0) { throw "installer\license-policy.json: the part '$($part.name)' of Inno Setup gives no text of its licence (text, statement or textIn)." }
+        $sources = New-Object System.Collections.Generic.List[object]
+        if ($fields -contains 'sourceFiles' -and $part.sourceFiles) {
+            $kept = @()
+            foreach ($file in @($part.sourceFiles.files | Where-Object { $_ })) {
+                $found = Get-ThirdPartySourceFile -Policy $Policy -RepoRoot $RepoRoot -Source ([string]$part.sourceFiles.source) -File ([string]$file)
+                $sources.Add([pscustomobject]@{ File = "inno-setup\$($part.sourceFiles.folder)\$([System.IO.Path]::GetFileName([string]$file))"; Bytes = $found.Bytes; Provenance = $found.Provenance })
+                $kept += [System.IO.Path]::GetFileName([string]$file)
+            }
+            $published = $Policy.thirdPartySources.([string]$part.sourceFiles.source)
+            $lines.Add('')
+            foreach ($line in ((Format-Paragraph -Text "Its complete source, as Inno Setup's published source holds it for this version ($(@($part.sourceFiles.files)[0] -replace '/[^/]+$', '/') of $($published.repository) at commit $($published.commit)), is in inno-setup\$($part.sourceFiles.folder)\ in this folder: $(Format-NameList $kept), each with the git blob id that commit gives it.") -split "`n")) { $lines.Add($line) }
+        }
+        if ((Test-CopyleftLicence ([string]$part.licence)) -and $sources.Count -eq 0) {
+            throw "installer\license-policy.json: the part '$($part.name)' of Inno Setup is under $($part.licence), a copyleft licence, but ships no source (sourceFiles)."
+        }
+        $notice = if ($fields -contains 'notice' -and $part.notice) { [string]$part.notice } else { $null }
+        $records.Add([pscustomobject]@{
+            Name = [string]$part.name; Version = $version; Licence = [string]$part.licence; Declared = $declared; Copyright = [string]$part.copyright
+            Inside = $inside; Holding = @($holding); Probe = [string]$part.probe; File = "inno-setup\$($part.as)"; Text = (($lines -join "`n").TrimEnd() + "`n")
+            ExtractedText = $extracted; SourceFiles = $sources.ToArray(); Notice = $notice; TextIn = $textIn; Comment = [string]$part.comment })
+    }
+    return $records.ToArray()
+}
+
+function Find-BytesIn {
+    # Whether $Pattern occurs in the bytes of a file (one character per byte, ordinal).
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][byte[]]$Pattern)
+    $haystack = $script:Latin1.GetString([System.IO.File]::ReadAllBytes($Path))
+    return ($haystack.IndexOf($script:Latin1.GetString($Pattern), [System.StringComparison]::Ordinal) -ge 0)
+}
+
+function Find-TextIn {
+    <#
+    .SYNOPSIS
+        Whether a file's bytes hold a text, as 8-bit characters or as UTF-16 (little endian), and, with
+        -VersionAfter, the version that follows it ("C++/WinRT version:2.0.250303.1"; the gate-8 review,
+        round 2). Returns $null when the text is not there, else the version (or '' without -VersionAfter).
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Text, [switch]$VersionAfter)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $narrow = $script:Latin1.GetString($bytes)
+    $at = $narrow.IndexOf($Text, [System.StringComparison]::Ordinal)
+    if ($at -ge 0) {
+        if (-not $VersionAfter) { return '' }
+        $match = [regex]::Match($narrow.Substring($at + $Text.Length, [Math]::Min(64, $narrow.Length - $at - $Text.Length)), '^[0-9]+(\.[0-9]+)*')
+        return $match.Value
+    }
+    $wide = $script:Latin1.GetString([System.Text.Encoding]::Unicode.GetBytes($Text))
+    if ($narrow.IndexOf($wide, [System.StringComparison]::Ordinal) -ge 0) { return '' }
+    return $null
+}
+
+function Get-WindowsKitsRoot {
+    # The Windows SDK's root folder (Windows Kits\10): the developer environment's WindowsSdkDir, else the
+    # registry's KitsRoot10, else the standard folder. $null when none exists.
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if ($env:WindowsSdkDir) { $candidates.Add($env:WindowsSdkDir) }
+    foreach ($key in 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots') {
+        $value = Get-ItemProperty -LiteralPath $key -Name 'KitsRoot10' -ErrorAction SilentlyContinue
+        if ($value -and $value.KitsRoot10) { $candidates.Add([string]$value.KitsRoot10) }
+    }
+    if (${env:ProgramFiles(x86)}) { $candidates.Add((Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10')) }
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath (Join-Path $candidate 'Include') -PathType Container) { return [System.IO.Path]::GetFullPath($candidate).TrimEnd('\') }
+    }
+    return $null
+}
+
+function Get-WindowsSdkLibrary {
+    <#
+    .SYNOPSIS
+        Code of a library of the Windows SDK compiled into shipped binaries (installer\license-policy.json
+        toolchainLibraries.<id> with "kit": "windows-sdk"; the gate-8 review, round 2: C++/WinRT, whose
+        templates Qt compiles into Qt6Core.dll and qwindows.dll, was named by no shipped file). The policy
+        records the reviewed SDK ("reviewedSdk") and library version ("reviewedVersion"), the licence file
+        below the SDK's Include\<sdk>\ folder pinned by SHA-256 ("licenseFile", "licenseSha256"), a header
+        that must state the version ("versionFile", "versionLine"), the text every binary holding the code
+        carries before its version ("probe"), and the ports whose binaries may hold it ("inside"). Every
+        shipped binary is probed: one that holds the code must carry the reviewed version and belong to a
+        port the policy names; another SDK, licence file, version or binary stops packaging until it is
+        reviewed.
+    .OUTPUTS
+        Id, Name, Version, Kit ("Windows SDK <version>"), LicenseConcluded, LicenseDeclared, Copyright,
+        Homepage, Comment, Programs (empty: no program may hold it), Parts (empty), Binaries (the files that
+        hold it, ordinal), Inside (Port and Files of each port whose files hold it) and LicenceFile (Path,
+        File below licenses\, Sha256).
+    #>
+    param([Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)]$Entry, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)][string]$StageDir, $Report = $null)
+    $fields = @($Entry.PSObject.Properties | ForEach-Object Name)
+    foreach ($field in 'name', 'reviewedSdk', 'reviewedVersion', 'declared', 'concluded', 'copyright', 'licenseFile', 'licenseSha256', 'versionFile', 'versionLine', 'probe', 'inside') {
+        if ($fields -notcontains $field -or -not $Entry.$field) { throw "installer\license-policy.json: toolchainLibraries.$Id has no $field." }
+    }
+    $kits = Get-WindowsKitsRoot
+    if (-not $kits) { throw "The Windows SDK was not found (WindowsSdkDir, the registry's KitsRoot10): the licence of $($Entry.name) (toolchainLibraries.$Id) cannot be taken from it." }
+    $include = Join-Path $kits "Include\$($Entry.reviewedSdk)"
+    $licencePath = Join-Path $include (ConvertTo-NativePath ([string]$Entry.licenseFile))
+    if (-not (Test-Path -LiteralPath $licencePath -PathType Leaf)) { throw "$licencePath is missing: installer\license-policy.json reviewed $($Entry.name) in the Windows SDK $($Entry.reviewedSdk) (toolchainLibraries.$Id)." }
+    $sha = Get-Sha256 $licencePath
+    if ($sha -ne ([string]$Entry.licenseSha256).ToLowerInvariant()) { throw "$licencePath has the SHA-256 $sha, not the $($Entry.licenseSha256) that installer\license-policy.json reviewed (toolchainLibraries.$Id): review the licence." }
+    $versionPath = Join-Path $include (ConvertTo-NativePath ([string]$Entry.versionFile))
+    if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf) -or [System.IO.File]::ReadAllText($versionPath).IndexOf([string]$Entry.versionLine, [System.StringComparison]::Ordinal) -lt 0) {
+        throw "$versionPath does not state '$($Entry.versionLine)': the Windows SDK $($Entry.reviewedSdk) is not the one installer\license-policy.json reviewed for $($Entry.name) $($Entry.reviewedVersion) (toolchainLibraries.$Id)."
+    }
+    # Every shipped binary (the audit's PE files, else the folder's DLLs and executables) and its port.
+    $ports = @{}
+    $binaries = @()
+    if ($Report -and ($Report.PSObject.Properties.Name -contains 'Files')) {
+        foreach ($file in @($Report.Files)) { if ($file.Path -match '\.(dll|exe)$') { $ports[([string]$file.Path).ToLowerInvariant()] = $(if ($file.Origin -eq 'vcpkg') { [string]$file.Port } else { 'lucent' }) } }
+        $binaries = @($Report.Files | Where-Object { $_.Path -match '\.(dll|exe)$' } | ForEach-Object { [string]$_.Path })
+    }
+    else {
+        $binaries = @(Get-ChildItem -LiteralPath $StageDir -Recurse -File | Where-Object { $_.Name -match '\.(dll|exe)$' } | ForEach-Object { Get-RelativePathText -Root $StageDir -Path $_.FullName })
+    }
+    $allowed = @($Entry.inside | ForEach-Object { [string]$_ })
+    $holding = New-Object System.Collections.Generic.List[string]
+    $inside = [ordered]@{}
+    foreach ($binary in @(ConvertTo-OrdinalOrder -Items $binaries)) {
+        $found = Find-TextIn -Path (Join-Path $StageDir $binary) -Text ([string]$Entry.probe) -VersionAfter
+        if ($null -eq $found) { continue }
+        if ($found -cne [string]$Entry.reviewedVersion) {
+            throw "$binary holds $($Entry.name) $(if ($found) { $found } else { 'of an unknown version' }) ('$($Entry.probe)'), but installer\license-policy.json reviewed $($Entry.reviewedVersion) (toolchainLibraries.$Id): review the new version's licence."
+        }
+        $port = if ($ports.ContainsKey($binary.ToLowerInvariant())) { $ports[$binary.ToLowerInvariant()] } else { '(unknown)' }
+        if ($allowed -notcontains $port) {
+            throw "$binary ($port) holds $($Entry.name) $found, but installer\license-policy.json names it only inside $($allowed -join ', ') (toolchainLibraries.$Id.inside): review where it is compiled and record its licence there."
+        }
+        $holding.Add($binary)
+        if (-not $inside.Contains($port)) { $inside[$port] = New-Object System.Collections.Generic.List[string] }
+        $inside[$port].Add($binary)
+    }
+    return [pscustomobject]@{
+        Id = $Id; Name = [string]$Entry.name; Version = [string]$Entry.reviewedVersion; Kit = "Windows SDK $($Entry.reviewedSdk)"
+        LicenseConcluded = [string]$Entry.concluded; LicenseDeclared = [string]$Entry.declared; Copyright = [string]$Entry.copyright
+        Homepage = $(if ($fields -contains 'homepage') { [string]$Entry.homepage } else { $null })
+        Comment = $(if ($fields -contains 'comment') { [string]$Entry.comment } else { $null })
+        Programs = @(); Parts = @(); Binaries = $holding.ToArray()
+        Inside = @($inside.Keys | ForEach-Object { [pscustomobject]@{ Port = [string]$_; Files = $inside[$_].ToArray() } })
+        LicenceFile = [pscustomobject]@{ Path = $licencePath; File = "$Id\LICENSE.txt"; Sha256 = $sha; Source = "$($Entry.licenseFile) of the Windows SDK $($Entry.reviewedSdk)" } }
+}
+
+function Get-ToolchainLibraries {
+    <#
+    .SYNOPSIS
+        The code of the compiler's own libraries inside Lucent's programs (installer\license-policy.json
+        "toolchainLibraries"; W12 gate-8 review, round 1): the Microsoft C++ Standard Library of the MSVC
+        toolset that built them. Its headers are Apache-2.0 WITH LLVM-exception, whose exception waives
+        the notice conditions for code compiled from them, but parts of them carry notices of their own:
+        std::format's Unicode tables Unicode, Inc.'s, which must appear in the documentation, and the
+        code derived from {fmt} and Ryu theirs (both waive object code). Each part's notice is taken
+        verbatim from the toolset's header, whose SHA-256 the policy pins for the reviewed toolset:
+        another toolset or another header stops packaging until it is reviewed. A part with a "probe" (a
+        char32_t table of its header) is compiled in when that table's first eight values are in a
+        program; the library's other parts are compiled in when any probe is.
+        Since the gate-8 review, round 2, a library of the Windows SDK ("kit": "windows-sdk") too:
+        Get-WindowsSdkLibrary (C++/WinRT, compiled into Qt's files).
+    .OUTPUTS
+        One record per library: Id, Name, Version (the toolset), LicenseConcluded, LicenseDeclared,
+        Copyright, Homepage, Comment, Programs (the programs that hold a probed table) and Parts (Name,
+        Version, Licence, Copyright, Member, Lines, Sha256, File (<id>\<as>, below licenses\), Text (the
+        file's content), Compiled, Comment); a Windows SDK library also Kit, Binaries, Inside and
+        LicenceFile (Get-WindowsSdkLibrary).
+    .PARAMETER Report
+        The audit (Invoke-LayoutAudit): the shipped binaries and their ports, which a Windows SDK library's
+        probe reads.
+    #>
+    param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)]$Policy, [Parameter(Mandatory)][string]$StageDir, $Report = $null)
+    if (-not ($Policy.PSObject.Properties.Name -contains 'toolchainLibraries') -or -not $Policy.toolchainLibraries) { return @() }
+    $bin = Split-Path -Parent (ConvertTo-NativePath ([string]$Info.dumpbin))
+    $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $bin))
+    $toolset = Split-Path -Leaf $root
+    $programs = @(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ })
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($property in $Policy.toolchainLibraries.PSObject.Properties) {
+        $id = $property.Name
+        $entry = $property.Value
+        $fields = @($entry.PSObject.Properties | ForEach-Object Name)
+        if ($fields -contains 'kit' -and [string]$entry.kit -ceq 'windows-sdk') {
+            $records.Add((Get-WindowsSdkLibrary -Id $id -Entry $entry -Info $Info -StageDir $StageDir -Report $Report))
+            continue
+        }
+        foreach ($field in 'name', 'reviewedToolset', 'declared', 'concluded', 'copyright', 'parts') {
+            if ($fields -notcontains $field -or -not $entry.$field) { throw "installer\license-policy.json: toolchainLibraries.$id has no $field." }
+        }
+        if ($toolset -cne [string]$entry.reviewedToolset) {
+            throw "Lucent's programs were built with the MSVC toolset $toolset, but installer\license-policy.json reviewed the notices of $($entry.name) in $($entry.reviewedToolset) (toolchainLibraries.$id): review the headers of the new toolset and record their SHA-256."
+        }
+        $probeFound = New-Object System.Collections.Generic.List[string]
+        $parts = New-Object System.Collections.Generic.List[object]
+        $problems = @(Test-PartLicences -Port $id -Concluded ([string]$entry.concluded) -Parts @($entry.parts))
+        if ($problems.Count -gt 0) { throw ($problems -join ' ') }
+        foreach ($part in @($entry.parts)) {
+            $partFields = @($part.PSObject.Properties | ForEach-Object Name)
+            if ($partFields -notcontains 'sha256' -or [string]$part.sha256 -notmatch '^[0-9a-fA-F]{64}$') { throw "installer\license-policy.json: the part '$($part.name)' of toolchainLibraries.$id pins no SHA-256 of $($part.member)." }
+            $path = Join-Path $root (ConvertTo-NativePath ([string]$part.member))
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$path, which holds the notice of $($part.name), is missing from the MSVC toolset $toolset." }
+            $sha = Get-Sha256 $path
+            if ($sha -ne ([string]$part.sha256).ToLowerInvariant()) { throw "$path has the SHA-256 $sha, not the $($part.sha256) that installer\license-policy.json reviewed (toolchainLibraries.$id): review its notice." }
+            $text = [System.IO.File]::ReadAllText($path)
+            $excerpt = Get-LicenceExcerpt -Text $text -First $part.first -Last $part.last -LastWholeLine:([bool]($partFields -contains 'lastWhole' -and $part.lastWhole))
+            $probed = $null
+            if ($partFields -contains 'probe' -and $part.probe) {
+                $table = [regex]::Match($text, [regex]::Escape([string]$part.probe) + '\s*\[\s*\]\s*=\s*\{([^}]*)\}')
+                $values = @()
+                if ($table.Success) { $values = @([regex]::Matches($table.Groups[1].Value, '0x[0-9A-Fa-f]+') | Select-Object -First 8 | ForEach-Object { [Convert]::ToUInt32($_.Value.Substring(2), 16) }) }
+                if ($values.Count -lt 8) { throw "$path holds no table $($part.probe) with eight values to probe Lucent's programs for." }
+                $pattern = New-Object byte[] 32
+                for ($i = 0; $i -lt 8; $i++) { [System.BitConverter]::GetBytes([uint32]$values[$i]).CopyTo($pattern, 4 * $i) }
+                $probed = @($programs | Where-Object { Find-BytesIn -Path (Join-Path $StageDir $_) -Pattern $pattern })
+                foreach ($program in $probed) { if (-not $probeFound.Contains($program)) { $probeFound.Add($program) } }
+            }
+            $parts.Add([pscustomobject]@{
+                Name = $part.name; Version = $(if ($partFields -contains 'version') { [string]$part.version } else { $null }); Licence = $part.licence
+                Copyright = $part.copyright; Member = $part.member; Lines = "$($excerpt.FirstLine)-$($excerpt.LastLine)"; Sha256 = $sha
+                File = "$id\$($part.as)"; Probed = $probed; Compiled = $false; Excerpt = $excerpt
+                Comment = $(if ($partFields -contains 'comment') { $part.comment } else { $null }) })
+        }
+        foreach ($part in $parts) {
+            $part.Compiled = if ($null -ne $part.Probed) { @($part.Probed).Count -gt 0 } else { $probeFound.Count -gt 0 }
+            $title = "$id $($toolset): $($part.Name), $($part.Licence)"
+            $lines = New-Object System.Collections.Generic.List[string]
+            $lines.Add($title)
+            $lines.Add('=' * $title.Length)
+            $lines.Add('')
+            if ($part.Comment) { foreach ($line in ((Format-Paragraph -Text $part.Comment) -split "`n")) { $lines.Add($line) }; $lines.Add('') }
+            foreach ($line in ((Format-Paragraph -Text "Its notice as $($part.Member) of the MSVC toolset $toolset states it, $(Format-LineSpan $part.Excerpt.FirstLine $part.Excerpt.LastLine) (the header's SHA-256 $($part.Sha256), as installer\license-policy.json reviewed it), the toolset that compiled $(Format-NameList $programs):") -split "`n")) { $lines.Add($line) }
+            $lines.Add('')
+            foreach ($line in $part.Excerpt.Lines) { $lines.Add($line) }
+            $part | Add-Member -NotePropertyName Text -NotePropertyValue (($lines -join "`n") + "`n")
+        }
+        $records.Add([pscustomobject]@{
+            Id = $id; Name = $entry.name; Version = $toolset; LicenseConcluded = $entry.concluded; LicenseDeclared = $entry.declared
+            Copyright = $entry.copyright; Homepage = $(if ($fields -contains 'homepage') { $entry.homepage } else { $null })
+            Comment = $(if ($fields -contains 'comment') { $entry.comment } else { $null })
+            Programs = @(ConvertTo-OrdinalOrder -Items $probeFound.ToArray()); Parts = $parts.ToArray() })
+    }
+    return $records.ToArray()
+}
+
 function New-LicenseBundle {
     <#
     .SYNOPSIS
@@ -1470,14 +3005,41 @@ function New-LicenseBundle {
         For each shipped port and each header-only direct dependency: its copyright file, licence
         texts named by installer\license-policy.json, credit lines, the libraries the executable links
         statically (each must be reviewed in the policy), and for Qt ports the third-party code inside
-        the shipped Qt files as recorded by Qt's own SBOM. For each third-party data asset
-        (Get-AssetLicences): licenses\<asset id>\ with its licence text, its credit lines and its
-        provenance. Then THIRD-PARTY-NOTICES.txt, which begins with Lucent's own terms: the MIT
-        License, except Lucent's logo, whose terms it states once, before the third-party list, as
-        the branding asset records them (-LogoLicence: Get-BrandingLicence of
-        tools\branding\LucentBranding.psm1; ADR 0025, amendment of 2026-10-15). LGPL-NOTICE.txt
-        follows from Write-LgplNotice, after the corresponding-source package it names
+        the shipped Qt files as recorded by Qt's own SBOM. A port's parts under their own licences
+        (the policy's "parts": LibRaw's DCB/FBDD, X3F and Adobe DNG SDK code) get their terms, verbatim
+        from the verified source archive, in licenses\<port>\ (Test-PartLicences, Get-LicenceExcerpt;
+        W12 gate-8 reading of 2026-10-16). A vcpkg recipe that ships (an overlay port of Lucent's,
+        licenses\<port>\recipe) has the licence of each of its files recorded (Get-RecipeFileLicence)
+        and vcpkg's licence beside it, licenses\vcpkg-LICENSE.txt (Get-VcpkgLicence). For each
+        third-party data asset (Get-AssetLicences): licenses\<asset id>\ with its licence text, its
+        credit lines and its provenance. Then THIRD-PARTY-NOTICES.txt (Complete-ThirdPartyNotices),
+        which begins with Lucent's own terms: the MIT License, except Lucent's logo, whose terms it
+        states once, before the third-party list, as the branding asset records them (-LogoLicence:
+        Get-BrandingLicence of tools\branding\LucentBranding.psm1; ADR 0025, amendment of 2026-10-15);
+        it names the Visual C++ redistributable (-VcRedist) and Inno Setup (-InnoSetupVersion) with
+        their versions, and every bundled data asset, Lucent's own too. LGPL-NOTICE.txt follows from
+        Write-LgplNotice, after the corresponding-source package it names
         (New-CorrespondingSourcePackage).
+        Since the W12 gate-8 review, round 1: a part may be taken from one of a port's several archives,
+        with its licence's text from another member of that archive or from a licence file other
+        components ship (checked once every file is written); third-party code that Qt's SBOM records
+        must be covered by the Qt component's concluded licence unless the policy names it as not
+        compiled (Test-AttributionLicences), and the notices list such code apart; the code of the
+        compiler's own libraries in the programs (-ToolchainLibraries, Get-ToolchainLibraries) is listed
+        as a component with its parts' notices in licenses\<id>\; and Inno Setup's licence
+        (-InnoSetupLicence, Get-InnoSetupLicenceFile) ships as licenses\inno-setup\license.txt.
+    .PARAMETER VcRedist
+        The redistributable Setup carries: Version, as the package manifest records it
+        (vcRedistributable.version).
+    .PARAMETER InnoSetupVersion
+        The compiler engine's version ("Inno Setup 6.7.3", Get-InnoSetupEngine), as the package
+        manifest records it (toolchain.innoSetupVersion); empty when no compiler was found (-StageOnly).
+    .PARAMETER InnoSetupLicence
+        Get-InnoSetupLicenceFile's record of that compiler's licence; $null without a compiler.
+    .PARAMETER InnoSetupParts
+        Get-InnoSetupParts's records of the code of others inside that compiler's loader and engine (the
+        gate-8 review, round 2): each part's licence file and source in licenses\inno-setup\, its notice
+        line, and the licence files of other components that hold its text.
     #>
     param(
         [Parameter(Mandatory)][string]$StageDir,
@@ -1488,6 +3050,11 @@ function New-LicenseBundle {
         [Parameter(Mandatory)][string]$DownloadsDir,
         [Parameter(Mandatory)][string]$NoticesDir,
         [Parameter(Mandatory)]$LogoLicence,
+        [Parameter(Mandatory)]$VcRedist,
+        [AllowEmptyString()][string]$InnoSetupVersion = '',
+        $InnoSetupLicence = $null,
+        [AllowEmptyCollection()][object[]]$InnoSetupParts = @(),
+        [AllowEmptyCollection()][object[]]$ToolchainLibraries = @(),
         [AllowEmptyCollection()][object[]]$StaticLibraries = @(),
         [AllowEmptyCollection()][object[]]$AssetLicences = @(),
         [string]$VcpkgRoot,
@@ -1500,7 +3067,12 @@ function New-LicenseBundle {
     $tripletDir = Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet
     $index = Get-VcpkgFileIndex -InstalledDir (ConvertTo-NativePath $Info.vcpkgInstalledDir) -Triplet $Info.vcpkgTriplet
 
-    Copy-Item -LiteralPath (Join-Path $RepoRoot 'LICENSE') -Destination (Join-Path $licenses 'Lucent-LICENSE.txt')
+    $lucentLicencePath = Join-Path $RepoRoot 'LICENSE'
+    Copy-Item -LiteralPath $lucentLicencePath -Destination (Join-Path $licenses 'Lucent-LICENSE.txt')
+    $lucentCopyright = Get-LicenceCopyright -Text ([System.IO.File]::ReadAllText($lucentLicencePath))
+    if (-not $lucentCopyright) { throw "$lucentLicencePath has no copyright line." }
+    $vcpkgLicence = $null   # Get-VcpkgLicence, once a vcpkg recipe ships
+    $pendingTextIn = New-Object System.Collections.Generic.List[object]   # parts' licence texts in other components' files
 
     $components = New-Object System.Collections.Generic.List[object]
     $dynamicPorts = @($Report.Ports)
@@ -1520,6 +3092,20 @@ function New-LicenseBundle {
         if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'concluded')) { $concluded = $policyEntry.concluded }
         if ($concluded -eq 'NOASSERTION') {
             throw "No licence is known for shipped port $($port): vcpkg declares none. Add a reviewed entry to installer\license-policy.json."
+        }
+        # What the library's authors offer it under, where the port's declaration falls short (LibRaw's
+        # vcpkg port leaves out the MIT code its COPYRIGHT names; W12 gate-8 reading of 2026-10-16).
+        $offered = $vcpkgLicense
+        if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'declared')) { $offered = $policyEntry.declared }
+        # The licence of the library's own code, without its parts and the third-party code inside it: the
+        # licence of the lines a patch of its recipe quotes (Get-RecipeFileLicence), which must be part of
+        # the concluded licence (W12 gate-8 review, round 1).
+        $libraryLicence = $concluded
+        if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'libraryLicence') -and $policyEntry.libraryLicence) {
+            $libraryLicence = [string]$policyEntry.libraryLicence
+            if (-not (Test-LicenceCovered -Licence $libraryLicence -Expression $concluded)) {
+                throw "installer\license-policy.json: ports.$port.libraryLicence '$libraryLicence' is not part of the port's concluded licence '$concluded'."
+            }
         }
 
         $portDir = Join-Path $licenses $port
@@ -1548,35 +3134,72 @@ function New-LicenseBundle {
             }
             if ($policyEntry.PSObject.Properties.Name -contains 'supplementaryFiles') {
                 foreach ($supplementary in $policyEntry.supplementaryFiles) {
-                    $extracted = $false
-                    foreach ($source in $sources) {
-                        $archive = Get-SourceArchive -Resource $source.Resource -DownloadsDir $DownloadsDir
-                        if (-not $archive) { continue }
-                        $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-                        $members = & $tar -tf $archive
-                        if ($LASTEXITCODE -ne 0) { throw "tar could not list $archive" }
-                        $member = $members | Where-Object { $_ -match ('^[^/]+/' + [regex]::Escape($supplementary.member) + '$') } | Select-Object -First 1
-                        if (-not $member) { continue }
-                        $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-licence-' + [guid]::NewGuid().ToString('N'))
-                        New-Item -ItemType Directory -Path $temp | Out-Null
-                        try {
-                            & $tar -xf $archive -C $temp $member
-                            if ($LASTEXITCODE -ne 0) { throw "tar could not extract $member from $archive" }
-                            $text = [System.IO.File]::ReadAllText((Join-Path $temp (ConvertTo-NativePath $member)))
-                            Write-TextFile -Path (Join-Path $portDir $supplementary.member) -Text $text
-                        }
-                        finally {
-                            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
-                        }
-                        $texts.Add("$port\$($supplementary.member)")
-                        $extracted = $true
-                        break
-                    }
-                    if (-not $extracted) {
+                    $found = Find-SourceArchiveMember -Sources $sources -Member $supplementary.member -DownloadsDir $DownloadsDir
+                    if (-not $found) {
                         throw "Could not take $($supplementary.member) of port $port from its source archive: the archive is not in $DownloadsDir (vcpkg keeps sources only for ports it built on this machine). Run 'vcpkg install --only-downloads' for the port, or build it once from source."
                     }
+                    Write-TextFile -Path (Join-Path $portDir $supplementary.member) -Text $found.Text
+                    $texts.Add("$port\$($supplementary.member)")
                 }
             }
+        }
+
+        # Parts of the library under their own licences (the policy's "parts"; W12 gate-8 reading of
+        # 2026-10-16: LibRaw's DCB/FBDD, X3F and Adobe DNG SDK code, whose terms its copyright file only
+        # names). Each part's terms, verbatim from the verified source archive, go into a file of their
+        # own, with its licence's text from the same archive or another component's licence file (since the
+        # gate-8 review, round 2, never words Lucent supplies). Every compiled part's licence must be in the
+        # concluded expression.
+        $parts = New-Object System.Collections.Generic.List[object]
+        $policyParts = @()
+        if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'parts')) { $policyParts = @($policyEntry.parts | Where-Object { $_ }) }
+        $partProblems = @(Test-PartLicences -Port $port -Concluded $concluded -Parts $policyParts)
+        if ($partProblems.Count -gt 0) { throw ($partProblems -join ' ') }
+        foreach ($part in $policyParts) {
+            $partFields = @($part.PSObject.Properties | ForEach-Object Name)
+            # A port built from several archives names the one that holds the part (PCRE2's JIT compiler
+            # is its second archive; W12 gate-8 review, round 1).
+            $sourceName = if ($partFields -contains 'source') { [string]$part.source } else { '' }
+            $found = Find-SourceArchiveMember -Sources $sources -Member $part.member -DownloadsDir $DownloadsDir -SourceName $sourceName
+            if (-not $found) {
+                throw "Could not take the terms of $($part.name) ($($part.member)) of port $port from its source archive$(if ($sourceName) { " $sourceName" }): the archive is not in $DownloadsDir, or holds no $($part.member). Run 'vcpkg install --only-downloads' for the port, or review installer\license-policy.json (ports.$port.parts)."
+            }
+            $excerpt = $null
+            try { $excerpt = Get-LicenceExcerpt -Text $found.Text -First $part.first -Last $part.last -LastWholeLine:([bool]($partFields -contains 'lastWhole' -and $part.lastWhole)) }
+            catch { throw "installer\license-policy.json: the terms of $($part.name) of port $port were not found in $($part.member) of $($found.Archive): $($_.Exception.Message)" }
+            # The licence's text, or what its "about" says the excerpt is, from a member of the same archive
+            # (the policy's "text").
+            $textExcerpt = $null
+            $textMember = $null
+            if ($partFields -contains 'text') {
+                $textMember = [string]$part.text.member
+                $textFound = Find-SourceArchiveMember -Sources $sources -Member $textMember -DownloadsDir $DownloadsDir -SourceName $found.Source
+                if (-not $textFound) { throw "installer\license-policy.json: the text of the licence of $($part.name) of port $port, $textMember, is not in $($found.Archive)." }
+                $textFields = @($part.text.PSObject.Properties | ForEach-Object Name)
+                if ($textFields -contains 'first') {
+                    try { $textExcerpt = Get-LicenceExcerpt -Text $textFound.Text -First $part.text.first -Last $part.text.last }
+                    catch { throw "installer\license-policy.json: the text of the licence of $($part.name) of port $port was not found in $textMember of $($found.Archive): $($_.Exception.Message)" }
+                }
+                else { $textExcerpt = [pscustomobject]@{ Lines = @(($textFound.Text -split "`r?`n") | ForEach-Object { $_ }) } }
+            }
+            # Licence files of other components that hold its text (the policy's "textIn"), checked once
+            # every component's files are written.
+            foreach ($where in @(if ($partFields -contains 'textIn') { $part.textIn })) {
+                if ($where) { $pendingTextIn.Add([pscustomobject]@{ Port = $port; Part = $part.name; File = [string]$where.file; Marker = [string]$where.marker }) }
+            }
+            Write-TextFile -Path (Join-Path $portDir $part.as) -Text (Format-PartLicenceText -Part $part -Port $port -Version $version -ArchiveName $found.Archive -ArchiveSha512 $found.Sha512 -Excerpt $excerpt -TextExcerpt $textExcerpt -TextMember $textMember)
+            $texts.Add("$port\$($part.as)")
+            # Where the file's texts come from, for the SBOM: the archive's members, the licence files of
+            # other components.
+            $textSources = @(@($textMember) + @(if ($partFields -contains 'textIn') { @($part.textIn | ForEach-Object { [string]$_.file }) }) | Where-Object { $_ })
+            $textFrom = if ($textSources.Count -gt 0) { $textSources -join ', ' } else { [string]$part.member }
+            $parts.Add([pscustomobject]@{
+                Name = $part.name; Version = $(if ($partFields -contains 'version') { [string]$part.version } else { $null })
+                Licence = $part.licence; Copyright = $part.copyright; File = "$port\$($part.as)"; Member = $part.member
+                Lines = "$($excerpt.FirstLine)-$($excerpt.LastLine)"; Archive = $found.Archive; Source = $found.Source
+                TextFrom = $textFrom
+                Compiled = -not ($partFields -contains 'compiled' -and $part.compiled -eq $false)
+                Comment = $(if ($partFields -contains 'comment') { $part.comment } else { $null }) })
         }
 
         # Libraries of this port linked statically into the executable: each needs a reviewed entry.
@@ -1604,6 +3227,31 @@ function New-LicenseBundle {
             (Get-RelativePathText -Root $tripletDir -Path $_.Source).Replace('\', '/') })
         $extraTargets = @($statics | Where-Object { $_.QtSbomPackage } | ForEach-Object { [pscustomobject]@{ Name = $_.QtSbomPackage; File = $_.File } })
         $qtSbom = Get-QtSbomFacts -TripletDir $tripletDir -Port $port -Version $version -ShippedSources $shippedSources -ExtraTargets $extraTargets
+        if ($qtSbom) {
+            # The third-party code Qt's SBOM records inside the shipped files is compiled in, unless the
+            # policy names it as not compiled with the reason (ports.<port>.attributionsNotCompiled: Qt's
+            # SBOM records the Vulkan Memory Allocator for Qt6Gui.dll whether or not Vulkan is built); what
+            # is compiled in must be covered by the concluded licence (W12 gate-8 review, round 1).
+            $notCompiled = @{}
+            if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'attributionsNotCompiled') -and $policyEntry.attributionsNotCompiled) {
+                foreach ($property in $policyEntry.attributionsNotCompiled.PSObject.Properties) { $notCompiled[$property.Name] = [string]$property.Value }
+            }
+            foreach ($attribution in $qtSbom.Attributions) {
+                $key = if ([string]$attribution.Id -match '_Attribution_(.+)$') { $Matches[1] } else { [string]$attribution.Id }
+                $attribution | Add-Member -NotePropertyName Key -NotePropertyValue $key -Force
+                $attribution | Add-Member -NotePropertyName Compiled -NotePropertyValue (-not $notCompiled.ContainsKey($key)) -Force
+                $attribution | Add-Member -NotePropertyName NotCompiledReason -NotePropertyValue $(if ($notCompiled.ContainsKey($key)) { $notCompiled[$key] } else { $null }) -Force
+            }
+            # The policy's review of Qt's records (the gate-8 review, round 2): the licence the code carries
+            # where Qt's SBOM records another, its NOTICE lines, the Source Code Form of copyleft code.
+            $attributionReview = Resolve-AttributionPolicy -Port $port -Entry $policyEntry -Attributions @($qtSbom.Attributions) -Sources $sources `
+                -DownloadsDir $DownloadsDir -Policy $Policy -RepoRoot $RepoRoot
+            if (@($attributionReview.Errors).Count -gt 0) { throw (@($attributionReview.Errors) -join ' ') }
+            # (Listed with the code they belong to, not among the component's licence texts.)
+            foreach ($notice in @($attributionReview.Notices)) { Write-TextFile -Path (Join-Path $licenses $notice.File) -Text $notice.Text }
+            $attributionProblems = @(Test-AttributionLicences -Port $port -Concluded $concluded -Attributions @($qtSbom.Attributions) -NotCompiled $notCompiled)
+            if ($attributionProblems.Count -gt 0) { throw ($attributionProblems -join ' ') }
+        }
         foreach ($static in $statics) {
             if (-not $static.QtSbomPackage) { continue }
             if (-not $qtSbom) { throw "$($static.Path): the policy names Qt SBOM package $($static.QtSbomPackage), but port $port has no Qt SBOM." }
@@ -1618,10 +3266,10 @@ function New-LicenseBundle {
             Port = $port; Version = $version; PortVersion = $portPackage.versionInfo
             Homepage = $(if ($portPackage.PSObject.Properties.Name -contains 'homepage') { $portPackage.homepage } else { $null })
             Recipe = $portPackage.downloadLocation
-            LicenseDeclared = $vcpkgLicense; LicenseConcluded = $concluded
+            LicenseDeclared = $offered; VcpkgDeclared = $vcpkgLicense; LicenseConcluded = $concluded; LibraryLicence = $libraryLicence
             Comment = $(if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'comment')) { $policyEntry.comment } else { $null })
             Linkage = $linkage; Files = $files; LicenceTexts = @($texts); Notices = $notices; Lgpl = $lgpl
-            StaticLibraries = $statics.ToArray(); QtSbom = $qtSbom; RecipeRef = $null
+            StaticLibraries = $statics.ToArray(); QtSbom = $qtSbom; RecipeRef = $null; Parts = $parts.ToArray()
             Sources = @($sources | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Location = $_.Location; Sha512 = $_.Sha512; Resource = $_.Resource } })
             Spdx = $spdx })
         $components[$components.Count - 1].RecipeRef = Get-RecipeReference -Component $components[$components.Count - 1] -VcpkgRoot $VcpkgRoot -Baseline $Baseline -RepoRoot $RepoRoot
@@ -1629,13 +3277,42 @@ function New-LicenseBundle {
         # source, with Lucent's patches. It is part of the "scripts used to control compilation" of an
         # LGPL library, so the recipe itself ships in the licence bundle (licenses\<port>\recipe\), and
         # the notice and the SBOM point at that copy, which needs no published source repository.
+        # vcpkg's files of it are under vcpkg's MIT License, whose text ships beside it
+        # (vcpkg-LICENSE.txt), and each file's licence is recorded for the SBOM (W12 gate-8 reading of
+        # 2026-10-16: the 14 recipe files were NOASSERTION, and vcpkg's licence did not ship).
         $recipeRef = $components[$components.Count - 1].RecipeRef
+        # The licence of the lines each patch of the recipe quotes, from the files it changes (Get-PatchLicences;
+        # the gate-8 review, round 2: one library licence was given to every patch of a port). The recipe as
+        # vcpkg built it: Lucent's overlay port, or the registry's port at the baseline.
+        $patchLicences = [ordered]@{}
+        $patchFolder = if ($recipeRef -and $recipeRef.OverlayPath) { $recipeRef.OverlayPath } elseif ($VcpkgRoot) { Join-Path $VcpkgRoot "ports\$port" } else { $null }
+        if ($patchFolder -and (Test-Path -LiteralPath $patchFolder -PathType Container)) {
+            $fileRules = @()
+            if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'fileLicences')) { $fileRules = @($policyEntry.fileLicences | Where-Object { $_ }) }
+            $patchLicences = Get-PatchLicences -Port $port -RecipeFolder $patchFolder -Sources $sources -DownloadsDir $DownloadsDir -Rules $fileRules -LibraryLicence $libraryLicence
+        }
+        $components[$components.Count - 1] | Add-Member -NotePropertyName PatchLicences -NotePropertyValue $patchLicences
         if ($recipeRef -and $recipeRef.OverlayPath) {
+            if (-not $VcpkgRoot -or -not $Baseline) { throw "Port $port ships its recipe (Lucent's overlay port $($recipeRef.Overlay)), but no vcpkg checkout and registry baseline were given to verify vcpkg's files and licence against." }
+            if (-not $vcpkgLicence) { $vcpkgLicence = Get-VcpkgLicence -VcpkgRoot $VcpkgRoot -Baseline $Baseline }
             $recipeDir = Join-Path $portDir 'recipe'
             Copy-Item -LiteralPath $recipeRef.OverlayPath -Destination $recipeDir -Recurse
             $recipeRef | Add-Member -NotePropertyName ShippedRecipe -NotePropertyValue "licenses\$port\recipe"
+            $comparison = Compare-OverlayPort -OverlayPath $recipeRef.OverlayPath -Port $port -VcpkgRoot $VcpkgRoot -Baseline $Baseline
+            $recipeFiles = @(@($comparison.Files) | Where-Object { $_.Status -ne 'removed' } | ForEach-Object {
+                $quoted = if ($patchLicences.Contains($_.File)) { $patchLicences[$_.File] } else { $null }
+                $licence = if ($quoted) {
+                    Get-RecipeFileLicence -File $_.File -Status $_.Status -Port $port -Derived -QuotedLicence $quoted.Licence -QuotedText $quoted.Text `
+                        -VcpkgCopyright $vcpkgLicence.Copyright -LucentCopyright $lucentCopyright -Baseline $Baseline
+                } else {
+                    Get-RecipeFileLicence -File $_.File -Status $_.Status -Port $port -LibraryLicence $libraryLicence `
+                        -VcpkgCopyright $vcpkgLicence.Copyright -LucentCopyright $lucentCopyright -Baseline $Baseline
+                }
+                [pscustomobject]@{ File = $_.File; Status = $_.Status; Licence = $licence.Licence; Copyright = $licence.Copyright; Comment = $licence.Comment } })
+            $recipeRef | Add-Member -NotePropertyName RecipeFiles -NotePropertyValue $recipeFiles
         }
     }
+    if ($vcpkgLicence) { Write-TextFile -Path (Join-Path $licenses 'vcpkg-LICENSE.txt') -Text $vcpkgLicence.Text }
 
     # Every licence named for code inside the Qt files (or linked statically) must have its text in
     # one of the shipped Qt copyright files.
@@ -1646,11 +3323,14 @@ function New-LicenseBundle {
         }
     }
     foreach ($component in @($components | Where-Object { $_.QtSbom })) {
-        $named = @($component.QtSbom.Attributions | ForEach-Object { [pscustomobject]@{ What = $_.Name; License = $_.License } }) +
-                 @($component.StaticLibraries | ForEach-Object { [pscustomobject]@{ What = $_.Name; License = $_.LicenseConcluded } })
+        # A licence the policy's review adds (the gate-8 review, round 2) may say where its text is instead
+        # (the OGL-UK-3.0 of Tika's PRONOM definitions asks for a link, which Tika's NOTICE gives).
+        $named = @($component.QtSbom.Attributions | ForEach-Object { [pscustomobject]@{ What = $_.Name; License = $_.License
+                     Elsewhere = $(if ($_.PSObject.Properties.Name -contains 'TextsElsewhere') { $_.TextsElsewhere } else { @{} }) } }) +
+                 @($component.StaticLibraries | ForEach-Object { [pscustomobject]@{ What = $_.Name; License = $_.LicenseConcluded; Elsewhere = @{} } })
         foreach ($item in $named) {
             foreach ($id in (Get-LicenseIds $item.License)) {
-                if (-not $qtSections.ContainsKey($id)) {
+                if (-not $qtSections.ContainsKey($id) -and -not $item.Elsewhere.ContainsKey($id)) {
                     throw "The licence $id of '$($item.What)' (inside port $($component.Port)) has no text in the shipped Qt copyright files."
                 }
             }
@@ -1659,6 +3339,21 @@ function New-LicenseBundle {
 
     # LGPL-NOTICE.txt is written by Write-LgplNotice once the corresponding-source package exists
     # (W12, ADR 0024): the notice names that archive with its size and SHA-256.
+
+    # Code of a Windows SDK library compiled into a component's shipped files (the gate-8 review, round 2:
+    # C++/WinRT in Qt6Core.dll and qwindows.dll): its licence ships byte for byte as licenses\<id>\LICENSE.txt,
+    # and the component's licence must cover it.
+    foreach ($library in @($ToolchainLibraries | Where-Object { $_ -and ($_.PSObject.Properties.Name -contains 'Inside') -and @($_.Inside).Count -gt 0 })) {
+        New-Item -ItemType Directory -Path (Join-Path $licenses $library.Id) -Force | Out-Null
+        Copy-Item -LiteralPath $library.LicenceFile.Path -Destination (Join-Path $licenses $library.LicenceFile.File)
+        foreach ($place in @($library.Inside)) {
+            $component = @($components | Where-Object { $_.Port -ceq $place.Port }) | Select-Object -First 1
+            if (-not $component) { throw "$($library.Name) is compiled into $(@($place.Files) -join ', ') of $($place.Port), which is not a shipped component." }
+            if (-not (Test-LicenceCovered -Licence $library.LicenseConcluded -Expression $component.LicenseConcluded)) {
+                throw "installer\license-policy.json: $($library.Name) ($($library.LicenseConcluded)) is compiled into $(@($place.Files) -join ', ') of $($place.Port), but the port's concluded licence '$($component.LicenseConcluded)' does not cover it."
+            }
+        }
+    }
 
     # Third-party notices.
     $noticeLines = New-Object System.Collections.Generic.List[string]
@@ -1674,8 +3369,10 @@ function New-LicenseBundle {
         if ($component.Linkage -eq 'dynamic') {
             $dlls = @($component.Files | Where-Object { $_ -match '\.dll$' })
             foreach ($line in (Format-WrappedList -Prefix "  $($kind): " -Items $dlls)) { $listLines.Add($line) }
-            $other = $component.Files.Count - $dlls.Count
-            if ($other -gt 0) { $listLines.Add("  Other files: $other (QML module definitions and type information)") }
+            $other = @($component.Files | Where-Object { $_ -notmatch '\.dll$' })
+            if ($other.Count -gt 0) {
+                foreach ($line in (Format-IndentedText -Prefix '  ' -Text "Other files ($($other.Count)): $(Format-OtherFiles -Files $other)")) { $listLines.Add($line) }
+            }
         }
         elseif ($component.Linkage -eq 'compiled-in') {
             $listLines.Add("  $($kind): part of $(Get-LucentExecutablesText $Info)")
@@ -1685,45 +3382,138 @@ function New-LicenseBundle {
             foreach ($line in ($static.Copyright -split "`r?`n")) { if ($line.Trim()) { $listLines.Add("    $($line.Trim())") } }
             if ($static.Comment) { $listLines.Add("    $($static.Comment)") }
         }
-        $listLines.Add('  Licence text: ' + ($component.LicenceTexts -join ', '))
+        # The parts under their own licences, each with its terms' file (W12 gate-8 reading of 2026-10-16),
+        # in the DLLs or, for a header-only library, in the programs (W12 gate-8 review, round 1).
+        $inside = if ($component.Linkage -eq 'dynamic') { Format-NameList @($component.Files | Where-Object { $_ -match '\.dll$' }) } else { Get-LucentExecutablesText $Info }
+        foreach ($line in (Format-PartLines -Parts @($component.Parts) -Inside $inside)) { $listLines.Add($line) }
+        foreach ($line in (Format-WrappedList -Prefix '  Licence text: ' -Items @($component.LicenceTexts))) { $listLines.Add($line) }
         if ($component.QtSbom -and $component.QtSbom.Attributions.Count -gt 0) {
+            $compiledCode = @($component.QtSbom.Attributions | Where-Object { -not ($_.PSObject.Properties.Name -contains 'Compiled') -or $_.Compiled })
+            $notCompiledCode = @($component.QtSbom.Attributions | Where-Object { ($_.PSObject.Properties.Name -contains 'Compiled') -and -not $_.Compiled })
             $listLines.Add("  Third-party code inside these Qt files, as recorded by Qt's own SBOM ($([System.IO.Path]::GetFileName($component.QtSbom.Path))).")
             $listLines.Add('  Each licence text is the section of that name in the Qt copyright.txt files of this folder:')
-            foreach ($attribution in $component.QtSbom.Attributions) {
+            foreach ($attribution in $compiledCode) {
                 $what = $attribution.Name + $(if ($attribution.Version) { " $($attribution.Version)" } else { '' })
                 $listLines.Add("    $what, in $(@($attribution.Files) -join ', '): $($attribution.License)")
+                # The policy's review where Qt's record falls short (the gate-8 review, round 2).
+                if (($attribution.PSObject.Properties.Name -contains 'QtLicense') -and $attribution.QtLicense) {
+                    foreach ($line in (Format-IndentedText -Prefix '      ' -Text "(Qt's SBOM records $($attribution.QtLicense). $($attribution.LicenceNote))")) { $listLines.Add($line) }
+                }
                 foreach ($line in ($attribution.Copyright -split "`r?`n")) { if ($line.Trim() -and $line.Trim() -ne 'NOASSERTION') { $listLines.Add("      $($line.Trim())") } }
                 if ($attribution.DownloadLocation -and $attribution.DownloadLocation -notin 'NOASSERTION', 'NONE') { $listLines.Add("      Source: $($attribution.DownloadLocation)") }
+                if (($attribution.PSObject.Properties.Name -contains 'SourceCodeForm') -and $attribution.SourceCodeForm) {
+                    $form = $attribution.SourceCodeForm
+                    foreach ($line in (Format-IndentedText -Prefix '      ' -Text "Source Code Form ($($attribution.License)): $($form.File) of $($form.Repository) at commit $($form.Commit) ($($form.Url)).$(if ($form.Comment) { " $($form.Comment)" })")) { $listLines.Add($line) }
+                }
+                if (($attribution.PSObject.Properties.Name -contains 'NoticeFile') -and $attribution.NoticeFile) { $listLines.Add("      NOTICE: $($attribution.NoticeFile)") }
+                if (($attribution.PSObject.Properties.Name -contains 'TextsElsewhere') -and $attribution.TextsElsewhere.Count -gt 0) {
+                    foreach ($id in @(ConvertTo-OrdinalOrder -Items @($attribution.TextsElsewhere.Keys))) {
+                        foreach ($line in (Format-IndentedText -Prefix '      ' -Text "$($id): $($attribution.TextsElsewhere[$id])")) { $listLines.Add($line) }
+                    }
+                }
             }
+            if ($notCompiledCode.Count -gt 0) {
+                $listLines.Add("  Recorded by Qt's SBOM for these files, but not compiled in this build:")
+                foreach ($attribution in $notCompiledCode) {
+                    $what = $attribution.Name + $(if ($attribution.Version) { " $($attribution.Version)" } else { '' })
+                    foreach ($line in (Format-IndentedText -Prefix '    ' -Text "$what ($($attribution.License)), recorded for $(@($attribution.Files) -join ', '): $($attribution.NotCompiledReason)")) { $listLines.Add($line) }
+                }
+            }
+        }
+        # Code of a Windows SDK library compiled into these files, which no SBOM of the component records
+        # (the gate-8 review, round 2: C++/WinRT in Qt6Core.dll and qwindows.dll).
+        foreach ($library in @($ToolchainLibraries | Where-Object { $_ -and ($_.PSObject.Properties.Name -contains 'Inside') })) {
+            $place = @($library.Inside | Where-Object { $_.Port -ceq $component.Port }) | Select-Object -First 1
+            if (-not $place) { continue }
+            $listLines.Add("  Code of the $($library.Kit) compiled into these files:")
+            foreach ($line in (Format-IndentedText -Prefix '    ' -Text "$($library.Name) $($library.Version), in $(Format-NameList @($place.Files)): $($library.LicenseConcluded) ($($library.LicenceFile.File), $($library.LicenceFile.Source))")) { $listLines.Add($line) }
+            foreach ($line in (($library.Copyright -split ';\s+(?=Copyright\b)') | Where-Object { $_.Trim() })) { $listLines.Add("      $($line.Trim())") }
+            if ($library.Comment) { foreach ($line in (Format-IndentedText -Prefix '      ' -Text $library.Comment)) { $listLines.Add($line) } }
         }
         $listLines.Add('')
     }
+    # The code of the compiler's own libraries inside the programs (W12 gate-8 review, round 1): the C++
+    # standard library's parts that carry notices of their own, each notice in licenses\<id>\.
+    foreach ($library in @($ToolchainLibraries | Where-Object { $_ -and @($_.Parts | Where-Object { $_.Compiled }).Count -gt 0 })) {
+        $libraryDir = Join-Path $licenses $library.Id
+        New-Item -ItemType Directory -Path $libraryDir -Force | Out-Null
+        $libraryTexts = New-Object System.Collections.Generic.List[string]
+        foreach ($part in @($library.Parts | Where-Object { $_.Compiled })) {
+            Write-TextFile -Path (Join-Path $licenses $part.File) -Text $part.Text
+            $libraryTexts.Add($part.File)
+        }
+        $programs = Format-NameList @($library.Programs)
+        $listLines.Add("$($library.Id) $($library.Version)")
+        $listLines.Add("  Licence: $($library.LicenseConcluded)")
+        if ($library.LicenseDeclared -ne $library.LicenseConcluded) { $listLines.Add("  Offered under: $($library.LicenseDeclared)") }
+        $listLines.Add("  Note: $($library.Name). $($library.Comment)")
+        if ($library.Homepage) { $listLines.Add("  Home page: $($library.Homepage)") }
+        $listLines.Add("  Compiled in: part of $programs")
+        foreach ($line in (Format-PartLines -Parts @($library.Parts | Where-Object { $_.Compiled }) -Inside $programs)) { $listLines.Add($line) }
+        foreach ($line in (Format-WrappedList -Prefix '  Licence text: ' -Items $libraryTexts.ToArray())) { $listLines.Add($line) }
+        $listLines.Add('')
+    }
+    # A part's licence text in another component's file (the policy's "textIn") must be there.
+    foreach ($pending in $pendingTextIn) {
+        $path = Join-Path $licenses $pending.File
+        $content = if (Test-Path -LiteralPath $path -PathType Leaf) { [System.IO.File]::ReadAllText($path) } else { '' }
+        if ($content.IndexOf($pending.Marker, [System.StringComparison]::Ordinal) -lt 0) {
+            throw "installer\license-policy.json: the licence text of $($pending.Part) of $($pending.Port) is to be in licenses\$($pending.File), but that file $(if ($content) { "holds no line '$($pending.Marker)'" } else { 'is not in this installation' })."
+        }
+    }
+    # Inno Setup's licence, as the compiler that makes Setup carries it (W12 gate-8 review, round 1), and the
+    # code of others inside its loader, engine and uninstaller with their licences and, for the LZMA SDK 4.40
+    # decoder in its loader, its source (Get-InnoSetupParts; the gate-8 review, round 2).
+    $innoNote = if ($InnoSetupLicence) {
+        # Byte for byte, so the copy has the SHA-256 that was reviewed and the package manifest records.
+        New-Item -ItemType Directory -Path (Join-Path $licenses 'inno-setup') -Force | Out-Null
+        Copy-Item -LiteralPath $InnoSetupLicence.Path -Destination (Join-Path $licenses 'inno-setup\license.txt')
+        "Its text is inno-setup\license.txt in this folder, the license.txt of the compiler that made Setup$(if ($InnoSetupLicence.PSObject.Properties.Name -contains 'Published' -and $InnoSetupLicence.Published) { " (the same file as $($InnoSetupLicence.Published))" })."
+    } else { "Its text is not in this folder: no Inno Setup compiler was found when this folder was made." }
+    foreach ($part in @($InnoSetupParts | Where-Object { $_ })) {
+        Write-TextFile -Path (Join-Path $licenses $part.File) -Text $part.Text
+        # The source exactly as published (its line endings too).
+        foreach ($source in @($part.SourceFiles)) {
+            $target = Join-Path $licenses $source.File
+            New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+            [System.IO.File]::WriteAllBytes($target, [byte[]]$source.Bytes)
+        }
+        if ($part.Notice) { $noticeLines.Add("- $($part.Notice)") }
+        foreach ($where in @($part.TextIn)) { $pendingTextIn.Add([pscustomobject]@{ Port = 'inno-setup'; Part = $part.Name; File = [string]$where.file; Marker = [string]$where.marker }) }
+    }
+    foreach ($pending in @($pendingTextIn | Where-Object { $_.Port -ceq 'inno-setup' })) {
+        $path = Join-Path $licenses $pending.File
+        $content = if (Test-Path -LiteralPath $path -PathType Leaf) { [System.IO.File]::ReadAllText($path) } else { '' }
+        if ($content.IndexOf($pending.Marker, [System.StringComparison]::Ordinal) -lt 0) {
+            throw "installer\license-policy.json: the licence text of $($pending.Part) of Inno Setup is to be in licenses\$($pending.File), but that file $(if ($content) { "holds no line '$($pending.Marker)'" } else { 'is not in this installation' })."
+        }
+    }
+    # The parts are listed as a component's parts are, each with its copyright lines.
+    $innoLineList = New-Object System.Collections.Generic.List[string]
+    foreach ($line in (Format-IndentedText -Prefix '  ' -Text $innoNote)) { $innoLineList.Add($line) }
+    if ($InnoSetupLicence -and @($InnoSetupParts | Where-Object { $_ }).Count -gt 0) {
+        $innoLineList.Add('  Code of others inside Inno Setup, each with the file of its licence in inno-setup\ in this folder:')
+        foreach ($part in @($InnoSetupParts | Where-Object { $_ })) {
+            $partSource = if (@($part.SourceFiles).Count -gt 0) { "; its source in $([System.IO.Path]::GetDirectoryName([string]@($part.SourceFiles)[0].File))\" } else { '' }
+            $wrappedPart = @((Format-Paragraph -Text "$($part.Name)$(if ($part.Version) { ", version $($part.Version)" }), in $($part.Inside): $($part.Licence) ($($part.File)$partSource)" -Width 94) -split "`n")
+            for ($i = 0; $i -lt $wrappedPart.Count; $i++) { $innoLineList.Add($(if ($i -eq 0) { '    ' } else { '      ' }) + $wrappedPart[$i]) }
+            foreach ($holder in @(([string]$part.Copyright) -split ';\s+(?=Copyright\b)')) {
+                foreach ($line in @((Format-Paragraph -Text $holder -Width 92) -split "`n")) { $innoLineList.Add('      ' + $line) }
+            }
+        }
+    }
+    $innoLines = $innoLineList -join "`n"
     # Third-party data assets (W13, ADR 0023): the licence text the verified asset carries, credit
-    # lines and where the data came from.
-    $dataLines = New-Object System.Collections.Generic.List[string]
+    # lines and where the data came from. The "Data" section names Lucent's own assets too (W12 gate-8
+    # reading of 2026-10-16; Format-DataNotices).
     foreach ($asset in @($AssetLicences | Where-Object { $_.ThirdParty })) {
         $assetDir = Join-Path $licenses $asset.Id
         New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
         $text = [System.IO.File]::ReadAllText((Join-Path $StageDir "$($asset.Folder)\$($asset.LicenseFile)"))
         Write-TextFile -Path (Join-Path $assetDir $asset.LicenseFile) -Text $text
         foreach ($notice in $asset.Notices) { $noticeLines.Add("- $notice") }
-        $dataLines.Add("$($asset.Name), asset $($asset.Id) $($asset.Version), in $($asset.Folder)")
-        $dataLines.Add("  Licence: $($asset.Concluded)")
-        $dataLines.Add("  $($asset.Copyright)")
-        if ($asset.Homepage) { $dataLines.Add("  Home page: $($asset.Homepage)") }
-        if ($asset.Provenance) {
-            $source = $asset.Provenance.source
-            $dataLines.Add("  Source: $($source.archive_url) (SHA-256 $($source.archive_sha256)), retrieved $($source.retrieved),")
-            $dataLines.Add("          generated from $($source.repository) commit $($source.commit) ($($source.commit_date))")
-            $dataLines.Add("  Modifications: $($asset.Provenance.modifications)")
-        }
-        if ($asset.Comment) { $dataLines.Add("  Note: $($asset.Comment)") }
-        $dataLines.Add("  Licence text: $($asset.Id)\$($asset.LicenseFile) (also $($asset.Folder)\$($asset.LicenseFile))")
-        $dataLines.Add('')
     }
-    if ($dataLines.Count -eq 0) { $dataLines.Add('(none)') }
-
-    if ($noticeLines.Count -eq 0) { $noticeLines.Add('(none)') }
+    $dataLines = @(Format-DataNotices -AssetLicences @($AssetLicences))
 
     # Lucent's own notice, before the third-party list (ADR 0025, amendment of 2026-10-15): its logo is
     # not covered by the MIT License, and its terms, as the branding asset's provenance.json records them,
@@ -1736,12 +3526,78 @@ function New-LicenseBundle {
     $logoLines.Add('')
     foreach ($line in ((Format-Paragraph -Text $LogoLicence.Text -Width 96) -split "`n")) { $logoLines.Add("    $line") }
 
+    # The Visual C++ redistributable and Inno Setup with the versions the package manifest records, and
+    # the licences of the vcpkg recipes that ship (W12 gate-8 reading of 2026-10-16).
     $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'THIRD-PARTY-NOTICES.txt.in'))
-    if (-not $template.Contains('@LUCENT_LOGO@')) { throw "THIRD-PARTY-NOTICES.txt.in has no @LUCENT_LOGO@: the notices would not state the terms of Lucent's logo." }
-    $noticesText = (Set-TemplateTitle -Template $template -Version $Info.version).Replace('@LUCENT_LOGO@', ($logoLines -join "`n")).Replace('@NOTICES@', ($noticeLines -join "`n")).Replace('@COMPONENTS@', ($listLines -join "`n").TrimEnd()).Replace('@DATA@', ($dataLines -join "`n").TrimEnd())
+    $recipeFolders = @($components | ForEach-Object { $_.RecipeRef } | Where-Object { $_ -and ($_.PSObject.Properties.Name -contains 'ShippedRecipe') } | ForEach-Object { $_.ShippedRecipe })
+    # Microsoft's terms for the redistributable, which Setup runs silently (the gate-8 review, round 2): as
+    # the policy names them for the redistributable it reviewed.
+    $vcTerms = if ($Policy.vcRedistributable.PSObject.Properties.Name -contains 'reviewed' -and $Policy.vcRedistributable.reviewed) {
+        "$($Policy.vcRedistributable.reviewed.licenceName) (EULA ID $($Policy.vcRedistributable.reviewed.eulaId))" } else { 'Microsoft Software License Terms for the Microsoft Visual C++ Redistributable' }
+    $noticesText = Complete-ThirdPartyNotices -Template $template -Version $Info.version -Logo ($logoLines -join "`n") -Notices $noticeLines.ToArray() `
+        -Components $listLines.ToArray() -Data $dataLines -Redistributable "$($Policy.vcRedistributable.name) $($VcRedist.Version)" -InnoSetup $InnoSetupVersion `
+        -Recipes (Format-RecipeNotice -Folders $recipeFolders -Baseline $Baseline -VcpkgLicence $vcpkgLicence) `
+        -Programs (Get-LucentExecutablesText $Info) -InnoSetupNote $innoLines -RedistributableTerms $vcTerms
     Write-TextFile -Path (Join-Path $licenses 'THIRD-PARTY-NOTICES.txt') -Text $noticesText
 
     return $components
+}
+
+function Format-OtherFiles {
+    <#
+    .SYNOPSIS
+        What a component's files that are not DLLs are, counted by kind, for the notices (the gate-8 review,
+        round 2: Qt Declarative's 212 were called module definitions and type information, but 174 of them
+        are QML source files): "174 QML source files (.qml), 19 module definitions (qmldir) and 19 type
+        information files (.qmltypes)".
+    #>
+    param([AllowEmptyCollection()][string[]]$Files = @())
+    $qml = 0; $qmldir = 0; $qmltypes = 0
+    $others = New-Object System.Collections.Generic.List[string]
+    foreach ($file in @($Files | Where-Object { $_ })) {
+        $leaf = [System.IO.Path]::GetFileName([string]$file)
+        if ($leaf -match '\.qml$') { $qml++ }
+        elseif ($leaf -ceq 'qmldir') { $qmldir++ }
+        elseif ($leaf -match '\.qmltypes$') { $qmltypes++ }
+        else { $others.Add($leaf) }
+    }
+    $plural = { param([int]$Count, [string]$One, [string]$Many) if ($Count -eq 1) { "1 $One" } else { "$Count $Many" } }
+    $items = New-Object System.Collections.Generic.List[string]
+    if ($qml) { $items.Add((& $plural $qml 'QML source file (.qml)' 'QML source files (.qml)')) }
+    if ($qmldir) { $items.Add((& $plural $qmldir 'module definition (qmldir)' 'module definitions (qmldir)')) }
+    if ($qmltypes) { $items.Add((& $plural $qmltypes 'type information file (.qmltypes)' 'type information files (.qmltypes)')) }
+    if ($others.Count) {
+        $extensions = @(ConvertTo-OrdinalOrder -Unique -Items @($others | ForEach-Object { $extension = [System.IO.Path]::GetExtension($_); if ($extension) { $extension } else { $_ } }))
+        $items.Add((& $plural $others.Count "other file ($($extensions -join ', '))" "other files ($($extensions -join ', '))"))
+    }
+    return (Format-NameList $items.ToArray())
+}
+
+function Format-PartLines {
+    <#
+    .SYNOPSIS
+        The notices' lines on a component's parts under their own licences, each with the file of its
+        notice and terms (W12 gate-8 reading of 2026-10-16; worded by its review, round 1, for terms that
+        are not all the archive's: the Adobe DNG SDK code's MIT text is Lucent's): its name and own
+        version, whether it is compiled into -Inside (the DLLs, or the programs), its licence and file,
+        then its copyright holders, one to a line, as the Qt components list theirs.
+    #>
+    param([AllowEmptyCollection()][object[]]$Parts = @(), [Parameter(Mandatory)][AllowEmptyString()][string]$Inside)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $items = @($Parts | Where-Object { $_ })
+    if ($items.Count -eq 0) { return $lines.ToArray() }
+    $lines.Add('  Parts under their own licences, each with the file of its notice and terms:')
+    foreach ($part in $items) {
+        $hasVersion = ($part.PSObject.Properties.Name -contains 'Version') -and $part.Version
+        $what = [string]$part.Name + $(if ($hasVersion) { ", version $($part.Version)" } else { '' })
+        $where = if ($part.Compiled) { "in $Inside" } else { "in its source only, not compiled into $Inside" }
+        $wrapped = @((Format-Paragraph -Text "$what, $($where): $($part.Licence) ($($part.File))" -Width 94) -split "`n")
+        for ($i = 0; $i -lt $wrapped.Count; $i++) { $lines.Add($(if ($i -eq 0) { '    ' } else { '      ' }) + $wrapped[$i]) }
+        foreach ($holder in @(([string]$part.Copyright) -split ';\s+(?=Copyright\b)')) {
+            foreach ($line in @((Format-Paragraph -Text $holder -Width 92) -split "`n")) { $lines.Add('      ' + $line) }
+        }
+    }
+    return $lines.ToArray()
 }
 
 # --- SBOM ----------------------------------------------------------------------------------------
@@ -1830,6 +3686,20 @@ function New-PackageSbom {
         the MIT License (ADR 0025, amendment of 2026-10-15): the programs, and Lucent's package, are
         "MIT AND <the logo's licence reference>", whose text hasExtractedLicensingInfos gives as the
         branding asset records it (-LogoLicence: Get-BrandingLicence).
+        Since the W12 gate-8 review, round 1: the files of vcpkg's port packages carry licences too (the
+        recipe files as Get-RecipeFileLicence concludes them, the shipped binaries their component's
+        licence), so NOASSERTION is left for the licence texts and notices among Lucent's files and for
+        the upstream source archives' packages only; a part's package has its own version or none; only
+        the Qt SBOM's third-party code this build compiles is a package; the compiler's own libraries
+        inside the programs (-ToolchainLibraries) are packages linked statically into Lucent; and Inno
+        Setup, whose loader is in Setup and whose uninstaller Setup installs, is a package with its
+        version (-InnoSetupVersion) and licence (-InnoSetupLicence, or the policy's description).
+        Since its round 2: each program's file carries the licences of the code compiled or linked into it
+        (Get-ProgramLicences); a recipe's patch, the licences of the files it changes (Get-PatchLicences);
+        Qt's records as the policy reviews them (Resolve-AttributionPolicy: the licence where Qt's differs,
+        the Source Code Form's commit as the download location of copyleft code); a Windows SDK library
+        compiled into a component's files is a package that component's binary package contains; and the
+        code of others inside Inno Setup (-InnoSetupParts) are packages its package contains.
     #>
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -1842,7 +3712,12 @@ function New-PackageSbom {
         [Parameter(Mandatory)]$Policy,
         [Parameter(Mandatory)]$LogoLicence,
         [AllowEmptyCollection()][object[]]$AssetLicences = @(),
-        [string]$VcpkgRoot)
+        [AllowEmptyCollection()][object[]]$ToolchainLibraries = @(),
+        [AllowEmptyString()][string]$InnoSetupVersion = '',
+        $InnoSetupLicence = $null,
+        [AllowEmptyCollection()][object[]]$InnoSetupParts = @(),
+        [string]$VcpkgRoot,
+        [string]$Baseline)
 
     $packages = New-Object System.Collections.Generic.List[object]
     $files = New-Object System.Collections.Generic.List[object]
@@ -1867,37 +3742,48 @@ function New-PackageSbom {
     $ownFiles = @(ConvertTo-OrdinalOrder -Items $ownFiles -Property Relative)
     $lucentId = 'SPDXRef-Lucent'
     # Lucent's logo is inside its programs (their icon; Lucent.exe's window icon and About logo) and is
-    # not covered by the MIT License (ADR 0025): the programs are MIT and the logo's terms.
+    # not covered by the MIT License (ADR 0025): Lucent's own work is MIT and the logo's terms.
     $programLicence = "MIT AND $($LogoLicence.Id)"
+    # Each program's file carries the full expression of what it contains (the gate-8 review, round 2: they
+    # were "MIT AND" the logo's terms though the SBOM links code of others into them): Lucent's, the logo's,
+    # and the licences of the header-only libraries compiled into the programs, the libraries linked
+    # statically into each, and the compiler's library code each holds (Get-ProgramLicences).
+    $programLicences = Get-ProgramLicences -Info $Info -Components $Components -ToolchainLibraries $ToolchainLibraries -OwnLicence $programLicence
+    # The source files a part of Inno Setup ships with (Get-InnoSetupParts), with the part's licence.
+    $partSources = @{}
+    foreach ($part in @($InnoSetupParts | Where-Object { $_ })) {
+        foreach ($source in @($part.SourceFiles)) {
+            $partSources[("licenses\" + [string]$source.File).ToLowerInvariant()] = [pscustomobject]@{ Licence = $part.Licence; Copyright = $part.Copyright
+                Comment = "Source of $($part.Name) inside Inno Setup ($($part.Inside)), $($source.Provenance); under $($part.Licence) as Lucent redistributes it (licenses\$($part.File))." }
+        }
+    }
+    # The vcpkg recipes that ship (Lucent's overlay ports, licenses\<port>\recipe), with each file's
+    # licence as New-LicenseBundle recorded it (W12 gate-8 reading of 2026-10-16).
+    $recipes = @($Components | ForEach-Object { $_.RecipeRef } | Where-Object { $_ -and ($_.PSObject.Properties.Name -contains 'ShippedRecipe') })
     $ownEntries = New-Object System.Collections.Generic.List[object]
     $assetFileIds = @{}
     $counter = 0
     foreach ($file in $ownFiles) {
         $counter++
         $sha1 = Get-Sha1 $file.Full
-        $program = $file.Relative -ieq $Info.executable -or @($Info.helperExecutables) -contains $file.Relative
-        $licence = if ($program) { $programLicence } elseif ($file.Relative -like 'assets\*') { 'MIT' } else { 'NOASSERTION' }
-        $copyright = 'NOASSERTION'
-        # A third-party data asset's files carry its licence (W13, ADR 0023), except Lucent's own files in it.
-        foreach ($asset in @($AssetLicences | Where-Object { $_.ThirdParty })) {
-            $prefix = $asset.Folder + '\'
-            if ($file.Relative.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $inside = $file.Relative.Substring($prefix.Length).Replace('\', '/')
-                if (@($asset.LucentFiles) -notcontains $inside) {
-                    $licence = $asset.Concluded
-                    $copyright = $asset.Copyright
-                    if (-not $assetFileIds.ContainsKey($asset.Id)) { $assetFileIds[$asset.Id] = New-Object System.Collections.Generic.List[string] }
-                    $assetFileIds[$asset.Id].Add("SPDXRef-Lucent-file-$counter")
-                }
-            }
+        # Lucent's programs, a third-party data asset's files (W13, ADR 0023), the files of a shipped
+        # recipe, licence texts, and Lucent's own files (Get-OwnFileLicence).
+        $own = Get-OwnFileLicence -Relative $file.Relative -Info $Info -ProgramLicence $programLicence -ProgramLicences $programLicences -AssetLicences $AssetLicences -Recipes $recipes -PartSources $partSources
+        if ($own.Asset) {
+            if (-not $assetFileIds.ContainsKey($own.Asset)) { $assetFileIds[$own.Asset] = New-Object System.Collections.Generic.List[string] }
+            $assetFileIds[$own.Asset].Add("SPDXRef-Lucent-file-$counter")
         }
         $entry = [ordered]@{
             fileName = './' + $file.Relative.Replace('\', '/'); SPDXID = "SPDXRef-Lucent-file-$counter"
             checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $sha1 },
                           [ordered]@{ algorithm = 'SHA256'; checksumValue = (Get-Sha256 $file.Full) })
-            licenseConcluded = $licence
-            copyrightText = $copyright }
-        if ($program) { $entry.comment = "Contains Lucent's logo (branding $($LogoLicence.Version)), which is under $($LogoLicence.Id), not the MIT License." }
+            licenseConcluded = $own.Licence
+            copyrightText = $own.Copyright }
+        if ($own.Program) {
+            $inside = if ($programLicences.ContainsKey($file.Relative.ToLowerInvariant())) { $programLicences[$file.Relative.ToLowerInvariant()].Inside } else { @() }
+            $entry.comment = "Lucent's program: its code is under the MIT License, and it contains Lucent's logo (branding $($LogoLicence.Version)), which is under $($LogoLicence.Id), not the MIT License$(if (@($inside).Count -gt 0) { ", and code of others compiled or linked into it: $((@($inside) | ForEach-Object { "$($_.Name) ($($_.Licence))" }) -join '; ')" })."
+        }
+        elseif ($own.Comment) { $entry.comment = $own.Comment }
         $ownEntries.Add($entry)
     }
     $packages.Add([ordered]@{
@@ -1911,7 +3797,7 @@ function New-PackageSbom {
             packageVerificationCodeExcludedFiles = @($sbomFileName) }
         licenseConcluded = $programLicence; licenseDeclared = $programLicence
         copyrightText = 'Copyright (c) 2026 Fan Zhu'
-        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files (the executable, qt.conf, the installed-file list, the bundled data assets such as the camera support database, and the licence bundle) and the files of third-party data assets (the Lensfun lens database), which carry their own licence; the third-party binary files are listed under each component's binary package. Lucent's code is under the MIT License; its logo, inside $(Get-LucentExecutablesText $Info) (branding $($LogoLicence.Version)), is not: it is under $($LogoLicence.Id)." })
+        comment = "Installed layout of Lucent $($Info.version) for x64 Windows, built from commit $GitCommit. Contains Lucent's own files ($(Get-LucentExecutablesText $Info), each file concluded with Lucent's MIT License, its logo's terms and the licences of the code of others compiled or linked into it; and, MIT: qt.conf, the installed-file list, its own data assets such as the camera support database, and the description files of the third-party assets, their provenance.json and manifest.json), the notices Lucent writes and the licence texts of the components (NOASSERTION: they state and quote the components' licences), the files of third-party data assets (the Lensfun lens database) and the vcpkg recipes of the libraries Lucent builds from its overlay ports (licenses\<port>\recipe: vcpkg's files under vcpkg's MIT License, the Lucent project's changes under Lucent's), which carry their own licence; the third-party binary files are listed under each component's binary package. Lucent's code is under the MIT License; its logo, inside $(Get-LucentExecutablesText $Info) (branding $($LogoLicence.Version)), is not: it is under $($LogoLicence.Id)." })
     $ids[$lucentId] = $true
     Add-Relationship 'SPDXRef-DOCUMENT' 'DESCRIBES' $lucentId
     foreach ($entry in $ownEntries) {
@@ -1926,6 +3812,13 @@ function New-PackageSbom {
         $tripletRelative = Get-RelativePathText -Root (Join-Path (ConvertTo-NativePath $Info.vcpkgInstalledDir) $Info.vcpkgTriplet) -Path $file.Source
         $stagedBySource['./' + $tripletRelative.Replace('\', '/').ToLowerInvariant()] = $file
     }
+    # The recipe files of vcpkg's port packages get the licence their shipped copies get (W12 gate-8
+    # review, round 1: the glib and gettext-libintl recipe files were NOASSERTION there but concluded in
+    # licenses\<port>\recipe), and the binaries their component's: vcpkg's MIT for its files (copyright
+    # line from LICENSE.txt of the registry at the baseline, Get-VcpkgLicence), a patch also under its
+    # library's licence.
+    $vcpkgCopyright = 'NOASSERTION'
+    if ($VcpkgRoot -and $Baseline) { $vcpkgCopyright = (Get-VcpkgLicence -VcpkgRoot $VcpkgRoot -Baseline $Baseline).Copyright }
     $droppedRecipeFiles = 0
     $usedExtracted = @{}
     foreach ($component in $Components) {
@@ -1993,10 +3886,39 @@ function New-PackageSbom {
             $map[$file.SPDXID] = $newId
             $copy.SPDXID = $newId
             $copy.checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $sha1 }) + @($file.checksums | Where-Object { $_.algorithm -ne 'SHA1' })
-            if ($staged) { $copy.comment = 'Installed as ' + $staged.Path }
+            if ($staged) {
+                $copy.comment = 'Installed as ' + $staged.Path
+                $copy.licenseConcluded = $component.LicenseConcluded
+            }
+            else {
+                # A recipe file: as its shipped copy for an overlay port, else vcpkg's file of its port.
+                $recipeName = ($file.fileName -replace '^\./', '')
+                $shipped = $null
+                if ($component.RecipeRef -and ($component.RecipeRef.PSObject.Properties.Name -contains 'RecipeFiles')) {
+                    $shipped = @($component.RecipeRef.RecipeFiles | Where-Object { [string]$_.File -ceq $recipeName }) | Select-Object -First 1
+                }
+                if (-not $shipped) {
+                    $status = if ($component.RecipeRef -and $component.RecipeRef.AtBaseline) { 'unchanged' } else { 'registry' }
+                    $libraryOwn = if (($component.PSObject.Properties.Name -contains 'LibraryLicence') -and $component.LibraryLicence) { [string]$component.LibraryLicence } else { [string]$component.LicenseConcluded }
+                    # A patch: the licences of the files it changes (Get-PatchLicences; the gate-8 review, round 2).
+                    $derived = $null
+                    if (($component.PSObject.Properties.Name -contains 'PatchLicences') -and $component.PatchLicences -and $component.PatchLicences.Contains($recipeName)) { $derived = $component.PatchLicences[$recipeName] }
+                    $shipped = if ($derived) {
+                        Get-RecipeFileLicence -File $recipeName -Status $status -Port $component.Port -Derived -QuotedLicence $derived.Licence -QuotedText $derived.Text `
+                            -VcpkgCopyright $vcpkgCopyright -LucentCopyright $vcpkgCopyright -Baseline $Baseline
+                    } else {
+                        Get-RecipeFileLicence -File $recipeName -Status $status -Port $component.Port -LibraryLicence $libraryOwn `
+                            -VcpkgCopyright $vcpkgCopyright -LucentCopyright $vcpkgCopyright -Baseline $Baseline
+                    }
+                }
+                $copy.licenseConcluded = $shipped.Licence
+                $copy.copyrightText = $shipped.Copyright
+                $copy.comment = $shipped.Comment
+            }
             $files.Add($copy)
             $ids[$newId] = $true
         }
+        foreach ($id in (Get-LicenseIds $component.LicenseConcluded)) { if ($id -like 'LicenseRef-*') { $usedExtracted[$id] = $component } }
         foreach ($relationship in $component.Spdx.relationships) {
             if ($map.ContainsKey($relationship.spdxElementId) -and $map.ContainsKey($relationship.relatedSpdxElement)) {
                 Add-Relationship $map[$relationship.spdxElementId] $relationship.relationshipType $map[$relationship.relatedSpdxElement]
@@ -2024,18 +3946,47 @@ function New-PackageSbom {
             Add-Relationship $lucentId 'STATIC_LINK' $staticId
         }
 
-        # Third-party code inside the shipped Qt files, from Qt's own SBOM.
+        # Parts of the library under their own licences that are compiled into its shipped files
+        # (installer\license-policy.json "parts"; W12 gate-8 reading of 2026-10-16), inside its binary
+        # package, with the part's own version or none (W12 gate-8 review, round 1: they carried the
+        # library's).
+        $partDlls = if ($component.Linkage -eq 'dynamic') { Format-NameList @($component.Files | Where-Object { $_ -match '\.dll$' }) } else { Get-LucentExecutablesText $Info }
+        $componentParts = if ($component.PSObject.Properties.Name -contains 'Parts') { @($component.Parts) } else { @() }
+        foreach ($part in @($componentParts | Where-Object { $_ -and $_.Compiled })) {
+            $partId = $prefix + 'part-' + (ConvertTo-SpdxIdPart ([System.IO.Path]::GetFileNameWithoutExtension($part.File)))
+            $partEntry = [ordered]@{ name = $part.Name; SPDXID = $partId }
+            if (($part.PSObject.Properties.Name -contains 'Version') -and $part.Version) { $partEntry.versionInfo = [string]$part.Version }
+            $partEntry.downloadLocation = 'NOASSERTION'
+            $partEntry.filesAnalyzed = $false
+            $partEntry.licenseConcluded = $part.Licence
+            $partEntry.licenseDeclared = $part.Licence
+            $partEntry.copyrightText = $part.Copyright
+            $textFrom = if ($part.PSObject.Properties.Name -contains 'TextFrom') { [string]$part.TextFrom } else { [string]$part.Member }
+            $partEntry.comment = "Part of $($component.Port) $($component.Version) under its own licence, compiled into $partDlls. Its notice, from $($part.Member) (lines $($part.Lines)) of $($part.Archive), and its licence's text ($textFrom) are in licenses\$($part.File)."
+            $packages.Add($partEntry)
+            $ids[$partId] = $true
+            if ($map.ContainsKey('SPDXRef-binary')) { Add-Relationship $map['SPDXRef-binary'] 'CONTAINS' $partId }
+        }
+
+        # Third-party code inside the shipped Qt files, from Qt's own SBOM: what this build compiles.
         if ($component.QtSbom) {
-            foreach ($attribution in $component.QtSbom.Attributions) {
+            foreach ($attribution in @($component.QtSbom.Attributions | Where-Object { -not ($_.PSObject.Properties.Name -contains 'Compiled') -or $_.Compiled })) {
                 $attributionId = $prefix + 'qt-' + (ConvertTo-SpdxIdPart $attribution.Id)
                 $entry = [ordered]@{ name = $attribution.Name; SPDXID = $attributionId }
                 if ($attribution.Version) { $entry.versionInfo = $attribution.Version }
-                $entry.downloadLocation = $(if ($attribution.DownloadLocation) { $attribution.DownloadLocation } else { 'NOASSERTION' })
+                $form = if (($attribution.PSObject.Properties.Name -contains 'SourceCodeForm') -and $attribution.SourceCodeForm) { $attribution.SourceCodeForm } else { $null }
+                # The Source Code Form of copyleft code at its commit (the gate-8 review, round 2: the Public
+                # Suffix List's location served the current list, not this version).
+                $entry.downloadLocation = $(if ($form) { "git+$($form.Repository)@$($form.Commit)" } elseif ($attribution.DownloadLocation) { $attribution.DownloadLocation } else { 'NOASSERTION' })
+                if ($form) { $entry.sourceInfo = "The Source Code Form: $($form.File) of $($form.Repository) at commit $($form.Commit) ($($form.Url)).$(if ($form.Comment) { " $($form.Comment)" })" }
                 $entry.filesAnalyzed = $false
                 $entry.licenseConcluded = $attribution.License
                 $entry.licenseDeclared = 'NOASSERTION'
                 $entry.copyrightText = $(if ($attribution.Copyright) { $attribution.Copyright } else { 'NOASSERTION' })
-                $entry.comment = "Third-party code inside $(@($attribution.Files) -join ', '), as recorded by Qt's SBOM ($([System.IO.Path]::GetFileName($component.QtSbom.Path)), package $($attribution.Id))."
+                $entry.comment = "Third-party code inside $(@($attribution.Files) -join ', '), as recorded by Qt's SBOM ($([System.IO.Path]::GetFileName($component.QtSbom.Path)), package $($attribution.Id))." +
+                    $(if (($attribution.PSObject.Properties.Name -contains 'QtLicense') -and $attribution.QtLicense) { " Qt's SBOM records $($attribution.QtLicense); installer\license-policy.json concludes $($attribution.License): $($attribution.LicenceNote)" } else { '' }) +
+                    $(if ($form) { " Qt's SBOM gives the download location $($attribution.DownloadLocation); this version's Source Code Form is the commit above, the version of the package URL Qt's SBOM records." } else { '' }) +
+                    $(if (($attribution.PSObject.Properties.Name -contains 'NoticeFile') -and $attribution.NoticeFile) { " Its NOTICE lines are in licenses\$($attribution.NoticeFile)." } else { '' })
                 $packages.Add($entry)
                 $ids[$attributionId] = $true
                 foreach ($id in (Get-LicenseIds $attribution.License)) { if ($id -like 'LicenseRef-*') { $usedExtracted[$id] = $component } }
@@ -2083,9 +4034,106 @@ function New-PackageSbom {
         checksums = @([ordered]@{ algorithm = 'SHA1'; checksumValue = $VcRedist.Sha1 }, [ordered]@{ algorithm = 'SHA256'; checksumValue = $VcRedist.Sha256 })
         licenseConcluded = $Policy.vcRedistributable.licenseRef; licenseDeclared = $Policy.vcRedistributable.licenseRef
         copyrightText = 'Copyright (c) Microsoft Corporation'
-        comment = 'Bundled in Lucent Setup and run only when the installed Visual C++ runtime is older; not part of the installation folder.' })
+        # What Setup does with it (the gate-8 review, round 2: the text said its window shows the terms, but
+        # Setup runs it silently).
+        comment = 'Bundled in Lucent Setup and run by Setup silently (/install /quiet /norestart) only when the installed Visual C++ runtime is older, so its window and the licence terms it would show are not displayed; not part of the installation folder. installer\license-policy.json (vcRedistributable) names the terms and records their review.' })
     $ids[$vcId] = $true
     Add-Relationship $vcId 'RUNTIME_DEPENDENCY_OF' $lucentId
+
+    # The code of the compiler's own libraries inside the programs (W12 gate-8 review, round 1): the C++
+    # standard library of the MSVC toolset, linked statically into the programs, with its parts; and, since
+    # the round 2, a Windows SDK library compiled into a component's files (C++/WinRT in Qt's), contained
+    # by that component's binary package.
+    foreach ($library in @($ToolchainLibraries | Where-Object { $_ -and (@($_.Parts | Where-Object { $_.Compiled }).Count -gt 0 -or (($_.PSObject.Properties.Name -contains 'Binaries') -and @($_.Binaries).Count -gt 0)) })) {
+        $libraryId = 'SPDXRef-toolchain-' + (ConvertTo-SpdxIdPart $library.Id)
+        $libraryEntry = [ordered]@{ name = $library.Name; SPDXID = $libraryId; versionInfo = $library.Version
+            supplier = 'Organization: Microsoft Corporation'; downloadLocation = 'NOASSERTION' }
+        if ($library.Homepage) { $libraryEntry.homepage = $library.Homepage }
+        # No filesAnalyzed (as vcpkg's binary packages): a package with filesAnalyzed false may contain no
+        # element, and this one contains its parts' packages.
+        $libraryEntry.licenseConcluded = $library.LicenseConcluded
+        $libraryEntry.licenseDeclared = $library.LicenseDeclared
+        $libraryEntry.copyrightText = $library.Copyright
+        # Assigned, not an if's value: an empty array would become $null.
+        $inside = @()
+        if ($library.PSObject.Properties.Name -contains 'Inside') { $inside = @($library.Inside | Where-Object { $_ }) }
+        $libraryEntry.comment = if ($inside.Count -gt 0) {
+            "Compiled into $(Format-NameList @($library.Binaries)) ($((@($inside) | ForEach-Object { $_.Port }) -join ', ')) from the headers of the $($library.Kit); its licence is licenses\$($library.LicenceFile.File), $($library.LicenceFile.Source) (SHA-256 $($library.LicenceFile.Sha256)). $($library.Comment)"
+        } else { "Compiled into $(Format-NameList @($library.Programs)) from the headers of the MSVC toolset $($library.Version) that built them. $($library.Comment)" }
+        $packages.Add($libraryEntry)
+        $ids[$libraryId] = $true
+        if ($inside.Count -gt 0) {
+            foreach ($place in $inside) {
+                $binaryId = 'SPDXRef-' + (ConvertTo-SpdxIdPart ([string]$place.Port)) + '-binary'
+                if (-not $ids.ContainsKey($binaryId)) { throw "The SBOM has no binary package of $($place.Port), which holds $($library.Name)." }
+                Add-Relationship $binaryId 'CONTAINS' $libraryId
+            }
+        }
+        else { Add-Relationship $lucentId 'STATIC_LINK' $libraryId }
+        foreach ($part in @($library.Parts | Where-Object { $_.Compiled })) {
+            $partId = $libraryId + '-part-' + (ConvertTo-SpdxIdPart ([System.IO.Path]::GetFileNameWithoutExtension($part.File)))
+            $partEntry = [ordered]@{ name = $part.Name; SPDXID = $partId }
+            if ($part.Version) { $partEntry.versionInfo = [string]$part.Version }
+            $partEntry.downloadLocation = 'NOASSERTION'
+            $partEntry.filesAnalyzed = $false
+            $partEntry.licenseConcluded = $part.Licence
+            $partEntry.licenseDeclared = $part.Licence
+            $partEntry.copyrightText = $part.Copyright
+            $partEntry.comment = "Part of $($library.Name) under its own licence, compiled into $(Format-NameList @($library.Programs)). Its notice, from $($part.Member) (lines $($part.Lines)) of the MSVC toolset $($library.Version), SHA-256 $($part.Sha256), is in licenses\$($part.File)."
+            $packages.Add($partEntry)
+            $ids[$partId] = $true
+            Add-Relationship $libraryId 'CONTAINS' $partId
+        }
+    }
+
+    # Inno Setup (W12 gate-8 review, round 1): its loader and setup engine are inside Lucent Setup, and
+    # its uninstaller (unins000.exe) is installed into the installation folder by Setup (it is not in
+    # the staged folder this document lists), all unmodified, under the Inno Setup License: the
+    # license.txt of the compiler that made Setup, or, without a compiler, the policy's description.
+    $tool = $Policy.distribution.installerTool
+    $toolFields = @($tool.PSObject.Properties | ForEach-Object Name)
+    # The SPDX identifier of the Inno Setup License (InnoSetup), or a LicenseRef- whose text follows.
+    $innoRef = if ($toolFields -contains 'licenseId' -and $tool.licenseId) { [string]$tool.licenseId } else { 'LicenseRef-Inno-Setup' }
+    $innoId = 'SPDXRef-InnoSetup'
+    $innoEntry = [ordered]@{ name = [string]$tool.name; SPDXID = $innoId }
+    $innoVersion = if ($InnoSetupVersion -match '(\d+\.\d+(\.\d+)*)') { $Matches[1] } else { $null }
+    if ($innoVersion) { $innoEntry.versionInfo = $innoVersion }
+    $innoEntry.downloadLocation = $(if ($toolFields -contains 'sourceRepository' -and $toolFields -contains 'sourceCommit' -and $tool.sourceCommit) { "git+$($tool.sourceRepository)@$($tool.sourceCommit)" } else { 'NOASSERTION' })
+    # Without parts it contains nothing (filesAnalyzed false); with them it contains their packages, which a
+    # package whose files are not analysed may not (Test-SbomDocument).
+    if (@($InnoSetupParts).Count -eq 0) { $innoEntry.filesAnalyzed = $false }
+    $innoEntry.licenseConcluded = $innoRef
+    $innoEntry.licenseDeclared = $innoRef
+    $innoEntry.copyrightText = $(if ($InnoSetupLicence -and $InnoSetupLicence.Copyright) { $InnoSetupLicence.Copyright } else { 'NOASSERTION' })
+    $innoEntry.comment = ("Setup's loader and setup engine (inside Lucent Setup) and the uninstaller unins000.exe that Setup installs into the installation folder (not in the staged folder this document lists), unmodified, used under its $($tool.use) terms$(if ($innoVersion) { "; the version is the compiler engine's ($InnoSetupVersion), as the package manifest records it (toolchain.innoSetupVersion)" } else { '; no compiler was found when this folder was made, so no version is recorded' }). " +
+        "$(if ($InnoSetupLicence) { "Its licence's text is licenses\inno-setup\license.txt, the license.txt of that compiler (SHA-256 $($InnoSetupLicence.Sha256))$(if ($InnoSetupLicence.PSObject.Properties.Name -contains 'Published' -and $InnoSetupLicence.Published) { ", the same file as $($InnoSetupLicence.Published)" }). " } else { '' })" +
+        "$(if (@($InnoSetupParts).Count -gt 0) { 'The code of others inside it is listed as the packages it CONTAINS.' } elseif ($toolFields -contains 'contains' -and $tool.contains) { $tool.contains } else { '' })").Trim()
+    $packages.Add($innoEntry)
+    $ids[$innoId] = $true
+    Add-Relationship $lucentId 'CONTAINS' $innoId
+    # The code of others inside Inno Setup's loader, engine and uninstaller (Get-InnoSetupParts; the gate-8
+    # review, round 2), each with its licence; a LicenseRef- licence's text follows below.
+    $innoExtracted = @{}
+    foreach ($part in @($InnoSetupParts | Where-Object { $_ })) {
+        $partId = $innoId + '-part-' + (ConvertTo-SpdxIdPart ([System.IO.Path]::GetFileNameWithoutExtension(([string]$part.File).Replace('inno-setup\', ''))))
+        $partEntry = [ordered]@{ name = $part.Name; SPDXID = $partId }
+        if ($part.Version) { $partEntry.versionInfo = [string]$part.Version }
+        $partEntry.downloadLocation = 'NOASSERTION'
+        $partEntry.filesAnalyzed = $false
+        $partEntry.licenseConcluded = $part.Licence
+        $partEntry.licenseDeclared = $part.Declared
+        $partEntry.copyrightText = $part.Copyright
+        $partEntry.comment = "Inside $($part.Inside) ($(Format-NameList @($part.Holding)) of the compiler, which carry '$($part.Probe)'). Its licence's file is licenses\$($part.File)$(if (@($part.SourceFiles).Count -gt 0) { "; its source is in licenses\$([System.IO.Path]::GetDirectoryName([string]@($part.SourceFiles)[0].File))\" }). $($part.Comment)"
+        $packages.Add($partEntry)
+        $ids[$partId] = $true
+        Add-Relationship $innoId 'CONTAINS' $partId
+        foreach ($id in (Get-LicenseIds "$($part.Licence) $($part.Declared)")) {
+            if ($id -like 'LicenseRef-*' -and -not $innoExtracted.ContainsKey($id)) {
+                if (-not $part.ExtractedText) { throw "The SBOM uses $id for $($part.Name) inside Inno Setup, but installer\license-policy.json gives no text of it." }
+                $innoExtracted[$id] = [pscustomobject]@{ Name = $part.Name; Text = $part.ExtractedText; File = $part.File }
+            }
+        }
+    }
 
     # Licence texts of the LicenseRef identifiers used above (Qt's SBOM defines its own).
     $extractedInfos = New-Object System.Collections.Generic.List[object]
@@ -2093,11 +4141,25 @@ function New-PackageSbom {
         licenseId = $Policy.vcRedistributable.licenseRef
         name = $Policy.vcRedistributable.name
         extractedText = $Policy.vcRedistributable.licenseText })
+    if ($innoRef -like 'LicenseRef-*') {
+        $extractedInfos.Add([ordered]@{
+            licenseId = $innoRef
+            name = "$($tool.licence)"
+            extractedText = $(if ($InnoSetupLicence) { $InnoSetupLicence.Text } else { [string]$tool.licenceText })
+            comment = $(if ($InnoSetupLicence) { "license.txt of the Inno Setup $($InnoSetupLicence.Version) compiler that made Setup (SHA-256 $($InnoSetupLicence.Sha256), as installer\license-policy.json reviewed it)." } else { 'No Inno Setup compiler was found when this folder was made: the description installer\license-policy.json records (distribution.installerTool.licenceText).' }) })
+    }
     $extractedInfos.Add([ordered]@{
         licenseId = $LogoLicence.Id
         name = $LogoLicence.Name
         extractedText = $LogoLicence.Text
         comment = "The terms of Lucent's logo, decided by its owner on $($LogoLicence.Decided) and recorded in Lucent's source (assets/branding/provenance.json, branding $($LogoLicence.Version)). The logo is built into $(Format-NameList (@(@($Info.executable) + @($Info.helperExecutables) | Where-Object { $_ }) + @('Lucent Setup'))); THIRD-PARTY-NOTICES.txt states the same terms." })
+    foreach ($id in @(ConvertTo-OrdinalOrder -Items @($innoExtracted.Keys))) {
+        $extractedInfos.Add([ordered]@{
+            licenseId = $id
+            name = "The licence of $($innoExtracted[$id].Name) inside Inno Setup"
+            extractedText = $innoExtracted[$id].Text
+            comment = "As its verified source states it; licenses\$($innoExtracted[$id].File) says where it comes from." })
+    }
     foreach ($id in @(ConvertTo-OrdinalOrder -Items @($usedExtracted.Keys))) {
         $definition = $null
         foreach ($component in $Components) {
@@ -2794,6 +4856,44 @@ function Get-InnoSetupLicence {
     return [pscustomobject]@{ Line = $null; Kind = $null }
 }
 
+function Get-InnoSetupEngineVersion {
+    # The compiler engine's version a compiler's banner states ("Compiler engine version: Inno Setup
+    # 6.7.3" gives "Inno Setup 6.7.3"), or $null.
+    param([AllowEmptyCollection()][AllowNull()][string[]]$Output = @())
+    foreach ($line in @($Output)) { if ([string]$line -match '^\s*Compiler engine version:\s*(\S.*?)\s*$') { return $Matches[1] } }
+    return $null
+}
+
+function Get-InnoSetupEngine {
+    <#
+    .SYNOPSIS
+        The engine version and licence line of an Inno Setup compiler, before it compiles Setup:
+        THIRD-PARTY-NOTICES.txt, which Setup installs, names the version (W12 gate-8 reading of
+        2026-10-16), and ISCC states it only when it compiles ("/?" prints no engine version, and
+        ISCC.exe carries no file version). So an empty script is compiled with the output off (/O-) in
+        a new temporary folder, which is deleted again.
+    .OUTPUTS
+        Version ("Inno Setup 6.7.3"), Licence (Get-InnoSetupLicence of the banner) and Output.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('lucent-iscc-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $temp | Out-Null
+    try {
+        $probeScript = Join-Path $temp 'engine-version.iss'
+        [System.IO.File]::WriteAllText($probeScript, ("[Setup]`r`nAppName=Engine version`r`nAppVersion=1`r`nDefaultDirName={tmp}\EngineVersion`r`nOutputDir=$temp`r`n"), (New-Object System.Text.ASCIIEncoding))
+        $run = Invoke-NativeCommand -FilePath $Path -Arguments @('/O-', $probeScript)
+        $output = [string[]]@($run.Output)
+        $version = Get-InnoSetupEngineVersion -Output $output
+        if ($run.ExitCode -ne 0 -or -not $version) {
+            throw "$Path did not state its engine version when compiling an empty script without output (exit code $($run.ExitCode)): $((@($output) | Select-Object -Last 5) -join ' / ')"
+        }
+        return [pscustomobject]@{ Version = $version; Licence = (Get-InnoSetupLicence -Output $output); Output = $output }
+    }
+    finally {
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-InnoSetupLicence {
     <#
     .SYNOPSIS
@@ -3140,8 +5240,8 @@ function Test-CopyleftLicence {
 $script:CopyleftLicencePattern = '^(?:A|L)?GPL(?:-|$)|^(?:MPL|EPL|CDDL|EUPL|OSL|CPL|IPL|SPL|MS-RL|RPL|RPSL|QPL|APSL|NPL|CECILL|CC-BY-SA|ODbL|Sleepycat)(?:-|$)'
 $script:StrongCopyleftLicencePattern = '^A?GPL(?:-|$)'
 $script:PermissiveLicences = @('0BSD', 'AML', 'AML-glslang', 'Apache-1.1', 'Apache-2.0', 'blessing', 'BSD-1-Clause', 'BSD-2-Clause', 'BSD-2-Clause-Patent',
-    'BSD-3-Clause', 'BSD-3-Clause-Clear', 'BSD-4-Clause', 'BSD-Source-Code', 'BSL-1.0', 'bzip2-1.0.6', 'CC0-1.0', 'curl', 'FTL', 'HPND', 'HPND-sell-variant',
-    'ICU', 'IJG', 'Imlib2', 'Info-ZIP', 'ISC', 'Libpng', 'libpng-2.0', 'libtiff', 'MIT', 'MIT-0', 'MIT-CMU', 'MIT-Modern-Variant', 'NCSA', 'NTP', 'OpenSSL',
+    'BSD-3-Clause', 'BSD-3-Clause-Clear', 'BSD-4-Clause', 'BSD-4.3TAHOE', 'BSD-Source-Code', 'BSL-1.0', 'bzip2-1.0.6', 'CC0-1.0', 'curl', 'FTL', 'HPND', 'HPND-sell-variant',
+    'ICU', 'IJG', 'Imlib2', 'Info-ZIP', 'ISC', 'Libpng', 'libpng-2.0', 'libtiff', 'MIT', 'MIT-0', 'MIT-CMU', 'MIT-Khronos-old', 'MIT-Modern-Variant', 'MIT-open-group', 'NCSA', 'NTP', 'OGL-UK-3.0', 'OpenSSL',
     'PostgreSQL', 'PSF-2.0', 'Python-2.0', 'SSLeay-standalone', 'Unicode-3.0', 'Unicode-DFS-2015', 'Unicode-DFS-2016', 'Unlicense', 'W3C', 'W3C-20150513',
     'X11', 'Zlib', 'zlib-acknowledgement')
 # Get-LicenceKind's ranks: OR takes the highest rank above 0, AND the lowest.
@@ -3231,7 +5331,8 @@ function Get-SourceProvisionPlan {
             $licences.Add([pscustomobject]@{ What = "$($static.Name) linked from it ($($static.LicenseConcluded))"; Licence = $static.LicenseConcluded })
         }
         if (($component.PSObject.Properties.Name -contains 'QtSbom') -and $component.QtSbom) {
-            foreach ($attribution in $component.QtSbom.Attributions) {
+            # What this build compiles (W12 gate-8 review, round 1: the policy names Qt SBOM records it does not).
+            foreach ($attribution in @($component.QtSbom.Attributions | Where-Object { -not ($_.PSObject.Properties.Name -contains 'Compiled') -or $_.Compiled })) {
                 $licences.Add([pscustomobject]@{ What = "$($attribution.Name) inside it ($($attribution.License))"; Licence = $attribution.License })
             }
         }
@@ -3317,6 +5418,9 @@ function Test-CorrespondingSourcePackage {
           is listed in MANIFEST.json, and the archive holds each of its source archives in sources/
           (an entry whose SHA-512 is the one vcpkg verified), each recipe file in ports/<port>/ with
           the SHA-256 vcpkg recorded, and build/<port>/vcpkg_abi_info.txt.
+        - The licences of the recipes and of Lucent's files beside them (W12 gate-8 reading of
+          2026-10-16): licenses/vcpkg-LICENSE.txt and licenses/Lucent-LICENSE.txt, each the MIT License
+          with its copyright line.
     .OUTPUTS
         Errors, Size, Sha256, Entries (Name, Length, Sha256) and Manifest (the parsed MANIFEST.json).
     #>
@@ -3327,8 +5431,10 @@ function Test-CorrespondingSourcePackage {
     $readme = $root + 'README.txt'
     $manifestName = $root + 'MANIFEST.json'
     $sumsName = $root + 'SHA256SUMS.txt'
+    $licenceNames = [ordered]@{ ($root + 'licenses/vcpkg-LICENSE.txt') = "vcpkg's licence, which covers its port recipes in ports/"
+                                ($root + 'licenses/Lucent-LICENSE.txt') = "Lucent's licence, which covers its overlay ports, triplet and vcpkg manifest" }
     $entries = @()
-    try { $entries = @(Read-ZipArchiveEntries -Path $Path -Keep @($readme, $manifestName, $sumsName)) }
+    try { $entries = @(Read-ZipArchiveEntries -Path $Path -Keep (@($readme, $manifestName, $sumsName) + @($licenceNames.Keys))) }
     catch { $errors.Add("$Path is not a readable ZIP archive: $($_.Exception.Message)") }
     if ($entries.Count -eq 0 -and $errors.Count -eq 0) { $errors.Add("$Path holds no entry.") }
 
@@ -3349,6 +5455,14 @@ function Test-CorrespondingSourcePackage {
         if ($entries.Count -gt 0 -and -not $byName.ContainsKey($name.ToLowerInvariant())) { $errors.Add("$name is missing") }
     }
     $utf8 = New-Object System.Text.UTF8Encoding($false)
+    foreach ($pair in $licenceNames.GetEnumerator()) {
+        if ($entries.Count -eq 0) { break }
+        $relative = ([string]$pair.Key).Substring($root.Length)
+        if (-not $byName.ContainsKey(([string]$pair.Key).ToLowerInvariant())) { $errors.Add("$relative is missing: $($pair.Value) does not ship with them"); continue }
+        $content = $byName[([string]$pair.Key).ToLowerInvariant()].Content
+        $text = if ($null -ne $content) { $utf8.GetString([byte[]]$content) } else { '' }
+        if ($text -notmatch 'Permission is hereby granted' -or -not (Get-LicenceCopyright -Text $text)) { $errors.Add("$relative is not the MIT License with its copyright line") }
+    }
 
     # SHA256SUMS.txt: every other entry once, with its content's SHA-256.
     if ($byName.ContainsKey($sumsName.ToLowerInvariant())) {
@@ -3394,6 +5508,24 @@ function Test-CorrespondingSourcePackage {
         if ($names -contains 'components') {
             foreach ($component in @($manifest.components)) {
                 if ($component -is [System.Management.Automation.PSCustomObject] -and $component.PSObject.Properties['port']) { $listedPorts[[string]$component.port] = $component }
+            }
+        }
+        # The licence texts the archive adds for the files it conveys (the gate-8 review, round 2): each one
+        # listed is there, and a GPL-2.0 that a patch quotes (LibRaw-cmake's CMakeLists.txt) has its text.
+        $covered = @{}
+        foreach ($text in @(if ($names -contains 'licenceTexts') { $manifest.licenceTexts })) {
+            if (-not ($text -is [System.Management.Automation.PSCustomObject]) -or -not $text.PSObject.Properties['file']) { $errors.Add('MANIFEST.json lists a licence text without its file'); continue }
+            if (-not $byName.ContainsKey(($root + [string]$text.file).ToLowerInvariant())) { $errors.Add("MANIFEST.json lists the licence text $($text.file), which the archive does not hold") }
+            else { foreach ($id in @($text.covers)) { $covered[[string]$id] = [string]$text.file } }
+        }
+        foreach ($component in @($listedPorts.Values)) {
+            foreach ($modification in @(if ($component.PSObject.Properties['modifications']) { $component.modifications })) {
+                if (-not $modification -or -not $modification.PSObject.Properties['licence']) { continue }
+                foreach ($id in (Get-LicenseIds ([string]$modification.licence))) {
+                    if ($id -match '^GPL-2\.0' -and -not $covered.ContainsKey($id)) {
+                        $errors.Add("$([System.IO.Path]::GetFileName([string]$modification.patch)) of $($component.port) quotes lines under $id, but the archive holds no text of it (licenses/, MANIFEST.json licenceTexts)")
+                    }
+                }
             }
         }
     }
@@ -3566,20 +5698,7 @@ function Get-PatchedFiles {
     # line (the "---" line's for a deleted file) without its first component (a/, b/ or the source
     # folder) and time stamp.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
-    $files = New-Object System.Collections.Generic.List[string]
-    $previous = $null
-    foreach ($line in ($Text -split "`r?`n")) {
-        if ($line.StartsWith('--- ')) { $previous = $line.Substring(4); continue }
-        if (-not $line.StartsWith('+++ ')) { continue }
-        $path = $line.Substring(4)
-        if ($path -match '^/dev/null') { $path = $previous }
-        if (-not $path) { continue }
-        $path = ($path -split "`t")[0].Trim().Trim('"')
-        $slash = $path.IndexOf('/')
-        if ($slash -ge 0) { $path = $path.Substring($slash + 1) }
-        if ($path -and -not $files.Contains($path)) { $files.Add($path) }
-    }
-    return $files.ToArray()
+    return @(Get-PatchFileChanges -Text $Text | ForEach-Object { $_.Path })
 }
 
 function Get-RecipeModifications {
@@ -3598,12 +5717,18 @@ function Get-RecipeModifications {
         The recipe as built (Get-RecipeCopy): Name ("ports/<port>/<file>") and SourcePath.
     .PARAMETER Comparison
         Compare-OverlayPort's result, for a port Lucent overlays.
+    .PARAMETER ScriptedEdits
+        The scripts of the recipe that change the library's upstream files before the build, as the
+        policy names them (ports.<port>.scriptedEdits: script, changes, comment; W12 gate-8 review,
+        round 1: GNU libintl's recipe runs bashify.cmake, which rewrites gettext-runtime/configure).
+        Each is listed after the patches, as kind "script".
     .OUTPUTS
-        Ordered dictionaries: patch (its path in the archive), by ("vcpkg" or "the Lucent project"),
-        source, date (YYYY-MM-DD, or null when a Lucent patch states none), changes (the files).
+        Ordered dictionaries: patch (its path in the archive), kind ("patch" or "script"), by ("vcpkg"
+        or "the Lucent project"), source, date (YYYY-MM-DD, or null when a Lucent file states none),
+        changes (the files).
     #>
     param([Parameter(Mandatory)][string]$Port, [AllowEmptyCollection()][object[]]$RecipeFiles = @(), $Comparison,
-          [Parameter(Mandatory)][string]$Baseline, [string]$BaselineDate)
+          [Parameter(Mandatory)][string]$Baseline, [string]$BaselineDate, [AllowEmptyCollection()][object[]]$ScriptedEdits = @())
     $prefix = "ports/$Port/"
     $portfile = @($RecipeFiles | Where-Object { $_.Name -ceq "$($prefix)portfile.cmake" }) | Select-Object -First 1
     $portfileText = if ($portfile) { [System.IO.File]::ReadAllText($portfile.SourcePath) } else { '' }
@@ -3622,12 +5747,69 @@ function Get-RecipeModifications {
         if ($lucent) { $date = if ($text -match 'Changed by the Lucent project,\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null } }
         $records.Add([ordered]@{
             patch = $file.Name
+            kind = 'patch'
             by = $(if ($lucent) { 'the Lucent project' } else { 'vcpkg' })
             source = $(if ($lucent) { "Lucent's overlay port" } else { "the vcpkg registry at commit $Baseline" })
             date = $(if ($date) { $date } else { $null })
             changes = @(Get-PatchedFiles -Text $text) })
     }
+    foreach ($edit in @($ScriptedEdits | Where-Object { $_ })) {
+        $script = [string]$edit.script
+        $file = @($RecipeFiles | Where-Object { $_.Name -ceq "$prefix$script" }) | Select-Object -First 1
+        if (-not $file) { throw "installer\license-policy.json: ports.$Port.scriptedEdits names $script, which the recipe of $Port as built does not hold." }
+        if ($portfileText -notmatch ('(?<![\w.-])' + [regex]::Escape([System.IO.Path]::GetFileName($script)) + '(?![\w.-])')) {
+            throw "installer\license-policy.json: ports.$Port.scriptedEdits names $script, which portfile.cmake of $Port does not run."
+        }
+        $lucent = [bool]$Comparison -and $status.ContainsKey($script) -and $status[$script] -in 'added', 'changed'
+        $date = $BaselineDate
+        if ($lucent) { $date = if ([System.IO.File]::ReadAllText($file.SourcePath) -match 'Changed by the Lucent project,\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null } }
+        $records.Add([ordered]@{
+            patch = $file.Name
+            kind = 'script'
+            by = $(if ($lucent) { 'the Lucent project' } else { 'vcpkg' })
+            source = $(if ($lucent) { "Lucent's overlay port" } else { "the vcpkg registry at commit $Baseline" })
+            date = $(if ($date) { $date } else { $null })
+            changes = @($edit.changes | Where-Object { $_ } | ForEach-Object { [string]$_ }) })
+    }
     return $records.ToArray()
+}
+
+function Get-RecipeScripts {
+    <#
+    .SYNOPSIS
+        The scripts of a recipe that its portfile.cmake runs with "cmake -P" from the recipe's folder
+        (-P "${CMAKE_CURRENT_LIST_DIR}/<script>"): the scripts that can change the library's files
+        before the build (W12 gate-8 review, round 1). Each must be named in the policy's
+        scriptedEdits (Test-ScriptedEdits).
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$PortfileText)
+    return @(ConvertTo-OrdinalOrder -Unique -Items @([regex]::Matches($PortfileText, '-P\s+"?\$\{CMAKE_CURRENT_LIST_DIR\}/([^"\s)]+)') | ForEach-Object { $_.Groups[1].Value }))
+}
+
+function Test-ScriptedEdits {
+    <#
+    .SYNOPSIS
+        Errors when a recipe runs a script of its own (Get-RecipeScripts) that the policy does not name in
+        ports.<port>.scriptedEdits with the files it changes (W12 gate-8 review, round 1: GNU libintl's
+        bashify.cmake rewrites gettext-runtime/configure, and the notices listed only its patches).
+    #>
+    param([Parameter(Mandatory)][string]$Port, [Parameter(Mandatory)][AllowEmptyString()][string]$PortfileText, [AllowEmptyCollection()][object[]]$ScriptedEdits = @())
+    $errors = New-Object System.Collections.Generic.List[string]
+    $named = @{}
+    foreach ($edit in @($ScriptedEdits | Where-Object { $_ })) {
+        $fields = @($edit.PSObject.Properties | ForEach-Object Name)
+        if ($fields -notcontains 'script' -or -not [string]$edit.script -or $fields -notcontains 'changes' -or @($edit.changes | Where-Object { $_ }).Count -eq 0) {
+            $errors.Add("installer\license-policy.json: a scripted edit of $Port names no script, or no file it changes.")
+            continue
+        }
+        $named[[string]$edit.script] = $true
+    }
+    foreach ($script in (Get-RecipeScripts -PortfileText $PortfileText)) {
+        if (-not $named.ContainsKey($script)) {
+            $errors.Add("portfile.cmake of $Port runs its script $script before the build; name it and the files it changes in installer\license-policy.json (ports.$Port.scriptedEdits), so the notices list it with the patches.")
+        }
+    }
+    return $errors.ToArray()
 }
 
 function Format-RecipeModifications {
@@ -3641,14 +5823,59 @@ function Format-RecipeModifications {
     $lines = New-Object System.Collections.Generic.List[string]
     $first = $true
     foreach ($modification in $items) {
-        $who = if ($modification.by -eq 'the Lucent project') { "the Lucent project, $(if ($modification.date) { $modification.date } else { 'undated' })" }
-               else { "vcpkg's, as in its registry at commit $short of $(if ($modification.date) { $modification.date } else { 'an unknown date' })" }
+        $isScript = ($modification -is [System.Collections.IDictionary] -and $modification.Contains('kind') -and $modification['kind'] -eq 'script') -or
+                    ($modification -isnot [System.Collections.IDictionary] -and ($modification.PSObject.Properties.Name -contains 'kind') -and $modification.kind -eq 'script')
+        $who = if ($modification.by -eq 'the Lucent project') { "$(if ($isScript) { "the Lucent project's script" } else { 'the Lucent project' }), $(if ($modification.date) { $modification.date } else { 'undated' })" }
+               else { "vcpkg's$(if ($isScript) { ' script' }), as in its registry at commit $short of $(if ($modification.date) { $modification.date } else { 'an unknown date' })" }
+        if ($isScript) { $who += '; portfile.cmake runs it before the build' }
         $changes = @($modification.changes | Where-Object { $_ })
         $text = "$([System.IO.Path]::GetFileName([string]$modification.patch)) ($who) changes $(if ($changes.Count) { Format-NameList $changes } else { 'no file it names' })."
         foreach ($line in (Format-IndentedText -Prefix $(if ($first) { $Prefix } else { ' ' * $Prefix.Length }) -Text $text)) { $lines.Add($line) }
         $first = $false
     }
     return $lines.ToArray()
+}
+
+function Test-BuildFile {
+    # Whether a file a patch changes is a build file (CMake, Meson, autotools, pkg-config), not code.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+    $leaf = [System.IO.Path]::GetFileName($Path)
+    return ($leaf -match '^(CMakeLists\.txt|.+\.cmake(\.in)?|meson\.build|meson_options\.txt|meson\.options|Makefile(\.am|\.in)?|configure(\.ac|\.in)?|.+\.pc\.in)$')
+}
+
+function Test-ModificationNotes {
+    <#
+    .SYNOPSIS
+        Errors when the note of a library with a source provision (installer\license-policy.json
+        ports.<port>.comment, which THIRD-PARTY-NOTICES.txt repeats) leaves out a patch of its recipe that
+        changes more than build files (W12 gate-8 reading of 2026-10-16: qtbase's note summed up its 26
+        patches as CMake build files, md4c.diff and header patches, leaving out four that change C++
+        code). A patch whose files are all build files (Test-BuildFile) needs no mention; any other must
+        be named in the note, by its file name or by every other file it changes.
+    .PARAMETER Components
+        Port and Modifications (patch, changes) of each library, as New-CorrespondingSourcePackage
+        records them or MANIFEST.json holds them (components[].modifications).
+    .PARAMETER Where
+        Where the notes come from, for the messages: the policy (the default), or a package's own notes
+        (gate 7 checks those; W12 gate-8 review, round 1, R12).
+    #>
+    param([AllowEmptyCollection()][object[]]$Components = @(), [Parameter(Mandatory)]$Policy, [string]$Where)
+    $errors = New-Object System.Collections.Generic.List[string]
+    foreach ($component in @(ConvertTo-OrdinalOrder -Items @($Components | Where-Object { $_ }) -Property Port)) {
+        $names = @($component.PSObject.Properties | ForEach-Object Name)
+        if ($names -notcontains 'Modifications') { continue }
+        $entry = Get-PolicyEntry -Policy $Policy -Port ([string]$component.Port)
+        $note = if ($entry -and ($entry.PSObject.Properties.Name -contains 'comment')) { [string]$entry.comment } else { '' }
+        foreach ($modification in @($component.Modifications | Where-Object { $_ })) {
+            $patch = [System.IO.Path]::GetFileName([string]$modification.patch)
+            $code = @(@($modification.changes) | Where-Object { $_ -and -not (Test-BuildFile ([string]$_)) })
+            if ($code.Count -eq 0) { continue }
+            if ($note.Contains($patch) -or @($code | Where-Object { -not $note.Contains([string]$_) }).Count -eq 0) { continue }
+            $source = if ($Where) { "$($Where): the note of $($component.Port)" } else { "installer\license-policy.json: the note of $($component.Port) (ports.$($component.Port).comment)" }
+            $errors.Add("$source does not name $patch, which changes $(Format-NameList ([string[]]$code)); name the patch and what it changes.")
+        }
+    }
+    return $errors.ToArray()
 }
 
 function Format-StaticCodeText {
@@ -3698,10 +5925,12 @@ function New-CorrespondingSourcePackage {
         And: triplets/ (vcpkg-configuration.json "overlay-triplets"), lucent/vcpkg.json and
         lucent/vcpkg-configuration.json, the recipes of Lucent's other overlay ports that the build
         installed (build tools such as gettext; their archives are included only when a library's
-        already are), MANIFEST.json (all of it with hashes, and the build's other ports with the
-        hashes of their sources, not included), README.txt
-        (installer\notices\CORRESPONDING-SOURCE-README.txt.in) and SHA256SUMS.txt. The archive is
-        deterministic (New-DeterministicZip). Any problem stops before anything is written.
+        already are), the licences of the recipes and of Lucent's files (licenses/vcpkg-LICENSE.txt,
+        vcpkg's MIT License as the registry holds it at the baseline, Get-VcpkgLicence; and
+        licenses/Lucent-LICENSE.txt; W12 gate-8 reading of 2026-10-16), MANIFEST.json (all of it with
+        hashes, and the build's other ports with the hashes of their sources, not included),
+        README.txt (installer\notices\CORRESPONDING-SOURCE-README.txt.in) and SHA256SUMS.txt. The
+        archive is deterministic (New-DeterministicZip). Any problem stops before anything is written.
     .OUTPUTS
         File, Path, Size, Sha256, Root, Components (port, version, licence, archives, recipe, ...),
         Entries (path inside the archive, size, SHA-256) and Texts (the entries that are not
@@ -3761,6 +5990,37 @@ function New-CorrespondingSourcePackage {
         $entries.Add([pscustomobject]@{ Name = "lucent/$name"; SourcePath = (Join-Path $RepoRoot $name); Kind = 'lucent' })
     }
 
+    # The licences of what the archive copies besides the upstream archives (W12 gate-8 reading of
+    # 2026-10-16): vcpkg's MIT License for its port recipes in ports/, as LICENSE.txt of the registry at
+    # the baseline (the blob's bytes, so every machine writes the same), and Lucent's MIT License for its
+    # overlay ports and changes, the triplet and lucent/.
+    $vcpkgLicence = $null
+    try { $vcpkgLicence = Get-VcpkgLicence -VcpkgRoot $VcpkgRoot -Baseline $Baseline }
+    catch { $errors.Add($_.Exception.Message) }
+    $lucentLicencePath = Join-Path $RepoRoot 'LICENSE'
+    $lucentCopyright = Get-LicenceCopyright -Text ([System.IO.File]::ReadAllText($lucentLicencePath))
+    if (-not $lucentCopyright) { $errors.Add("$lucentLicencePath has no copyright line.") }
+    if ($vcpkgLicence) { $entries.Add([pscustomobject]@{ Name = 'licenses/vcpkg-LICENSE.txt'; Content = $vcpkgLicence.Bytes; Kind = 'licence' }) }
+    $entries.Add([pscustomobject]@{ Name = 'licenses/Lucent-LICENSE.txt'; SourcePath = $lucentLicencePath; Kind = 'licence' })
+    # Licence texts that the files the archive conveys need and their own archives lack (the gate-8 review,
+    # round 2: LibRaw-cmake's CMakeLists.txt, which LibRaw's patches quote, is GPL-2.0-or-later, and
+    # LibRaw-cmake's archive holds no GPL text): distribution.correspondingSource.licenceTexts, each a member
+    # of a shipped port's verified source archive.
+    $licenceTexts = New-Object System.Collections.Generic.List[object]
+    $sourcePolicy = $Policy.distribution.correspondingSource
+    $textEntries = if ($sourcePolicy -and ($sourcePolicy.PSObject.Properties.Name -contains 'licenceTexts')) { @($sourcePolicy.licenceTexts | Where-Object { $_ }) } else { @() }
+    foreach ($text in $textEntries) {
+        $fields = @($text.PSObject.Properties | ForEach-Object Name)
+        if ($fields -notcontains 'as' -or [string]$text.as -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$' -or $fields -notcontains 'port' -or $fields -notcontains 'member' -or $fields -notcontains 'covers' -or $fields -notcontains 'for') {
+            $errors.Add('installer\license-policy.json: an entry of distribution.correspondingSource.licenceTexts needs as (a plain .txt name), port, member, covers (licence identifiers) and for.'); continue
+        }
+        $owner = @($Components | Where-Object { $_.Port -ceq [string]$text.port }) | Select-Object -First 1
+        $found = if ($owner) { Find-SourceArchiveMember -Sources @($owner.Sources) -Member ([string]$text.member) -DownloadsDir $DownloadsDir } else { $null }
+        if (-not $found) { $errors.Add("installer\license-policy.json: the licence text $($text.as) of the corresponding source is $($text.member) of $($text.port)'s source archive, which $(if ($owner) { 'does not hold it or is not in vcpkg''s downloads folder' } else { 'is no shipped port' })."); continue }
+        $entries.Add([pscustomobject]@{ Name = "licenses/$($text.as)"; Content = $utf8.GetBytes($found.Text); Kind = 'licence' })
+        $licenceTexts.Add([ordered]@{ file = "licenses/$($text.as)"; covers = @($text.covers | ForEach-Object { [string]$_ }); from = "$($text.member) of $($found.Archive) (SHA-512 $($found.Sha512))"; for = [string]$text.for })
+    }
+
     # Which DLLs import which (the audit's dumpbin results), for "how Lucent loads them".
     $importers = @{}
     foreach ($pe in $Report.PeFiles) {
@@ -3789,8 +6049,30 @@ function New-CorrespondingSourcePackage {
         foreach ($file in $recipeCopy) { $entries.Add([pscustomobject]@{ Name = $file.Name; SourcePath = $file.SourcePath; Kind = 'recipe' }) }
         $comparison = $null
         if ($isOverlay) { $comparison = Compare-OverlayPort -OverlayPath $recipeFolder -Port $port -VcpkgRoot $VcpkgRoot -Baseline $Baseline }
-        # What the recipe changes in the library's upstream source, with who and when (LIC-1).
-        $modifications = @(Get-RecipeModifications -Port $port -RecipeFiles $recipeCopy -Comparison $comparison -Baseline $Baseline -BaselineDate $baselineDate)
+        # What the recipe changes in the library's upstream source, with who and when (LIC-1): its patches,
+        # and the scripts it runs on the library's files before the build, which the policy names (W12
+        # gate-8 review, round 1: libintl's bashify.cmake rewrites gettext-runtime/configure).
+        $policyEntry = Get-PolicyEntry -Policy $Policy -Port $port
+        $scriptedEdits = @()
+        if ($policyEntry -and ($policyEntry.PSObject.Properties.Name -contains 'scriptedEdits')) { $scriptedEdits = @($policyEntry.scriptedEdits | Where-Object { $_ }) }
+        $portfileCopy = @($recipeCopy | Where-Object { $_.Name -ceq "ports/$port/portfile.cmake" }) | Select-Object -First 1
+        if ($portfileCopy) {
+            foreach ($problem in (Test-ScriptedEdits -Port $port -PortfileText ([System.IO.File]::ReadAllText($portfileCopy.SourcePath)) -ScriptedEdits $scriptedEdits)) { $errors.Add($problem) }
+        }
+        $modifications = @()
+        try { $modifications = @(Get-RecipeModifications -Port $port -RecipeFiles $recipeCopy -Comparison $comparison -Baseline $Baseline -BaselineDate $baselineDate -ScriptedEdits $scriptedEdits) }
+        catch { $errors.Add($_.Exception.Message) }
+        # Each patch's licence: its author's lines MIT, the lines it quotes under the licences of the files
+        # they come from (Get-PatchLicences, as New-LicenseBundle derived them; the gate-8 review, round 2).
+        foreach ($modification in $modifications) {
+            $relative = ([string]$modification.patch).Substring("ports/$port/".Length)
+            if ($modification.kind -ne 'patch') { $modification['licence'] = 'MIT'; continue }
+            $derived = $null
+            if (($component.PSObject.Properties.Name -contains 'PatchLicences') -and $component.PatchLicences -and $component.PatchLicences.Contains($relative)) { $derived = $component.PatchLicences[$relative] }
+            if (-not $derived) { $errors.Add("$($port): the licences of the files $relative changes were not derived (Get-PatchLicences)."); continue }
+            $modification['licence'] = if ([string]$derived.Licence -ceq 'NOASSERTION') { 'NOASSERTION' } else { Join-LicenceTerms @('MIT', [string]$derived.Licence) }
+            $modification['quotes'] = @(@($derived.Files) | ForEach-Object { [ordered]@{ file = $_.Path; licence = $(if ($_.Licence) { [string]$_.Licence } else { $null }); how = [string]$_.How } })
+        }
 
         # The upstream source archives.
         $archives = New-Object System.Collections.Generic.List[object]
@@ -3950,12 +6232,17 @@ function New-CorrespondingSourcePackage {
         schema = $script:SourcePackageSchema; schemaVersion = 1
         product = 'Lucent'; productVersion = $Info.version; architecture = 'x64'
         installer = "Lucent-Setup-$($Info.version)-x64.exe"
-        description = "The corresponding source of the libraries Lucent $($Info.version) ships under the GNU LGPL, as built for that installer: upstream source archives (sources/), vcpkg recipes (ports/), the triplet (triplets/), vcpkg's build records (build/) and Lucent's vcpkg manifest (lucent/). See README.txt."
-        lucent = [ordered]@{ licence = 'MIT'; repository = $Info.homepage; commit = $GitCommit; uncommittedChanges = [bool]$GitDirty
+        description = "The corresponding source of the libraries Lucent $($Info.version) ships under the GNU LGPL, as built for that installer: upstream source archives (sources/), vcpkg recipes (ports/), the triplet (triplets/), vcpkg's build records (build/), Lucent's vcpkg manifest (lucent/) and the licences of vcpkg's recipes and Lucent's files (licenses/). See README.txt."
+        lucent = [ordered]@{ licence = 'MIT'; licenceFile = 'licenses/Lucent-LICENSE.txt'; copyright = $lucentCopyright
+            repository = $Info.homepage; commit = $GitCommit; uncommittedChanges = [bool]$GitDirty
             files = @('lucent/vcpkg.json', 'lucent/vcpkg-configuration.json') }
         vcpkg = [ordered]@{ registry = 'https://github.com/microsoft/vcpkg'; baseline = $Baseline
+            licence = 'MIT'; licenceFile = 'licenses/vcpkg-LICENSE.txt'; copyright = $vcpkgLicence.Copyright
+            licenceSource = "LICENSE.txt of the registry at the baseline, git blob $($vcpkgLicence.BlobId)"
             triplet = $Info.vcpkgTriplet; hostTriplet = $Info.vcpkgTriplet
             tripletFiles = @($tripletFiles | ForEach-Object { [ordered]@{ path = $_.Name; sha256 = $_.Sha256 } }) }
+        # Licence texts the conveyed files need that their own archives lack (the gate-8 review, round 2).
+        licenceTexts = $licenceTexts.ToArray()
         toolchain = [ordered]@{ msvc = $Msvc
             note = "The MSVC toolset of the build environment. vcpkg's ABI hash of every port covers the compiler it detected (triplet_abi in build/<port>/vcpkg_abi_info.txt), so a library restored from vcpkg's binary cache was built by the same compiler." }
         components = @($records | ForEach-Object { [ordered]@{
@@ -4042,6 +6329,10 @@ function New-CorrespondingSourcePackage {
         '@LUCENT_SOURCE@' = (Format-Paragraph ("Lucent is free software under the MIT License (licenses\Lucent-LICENSE.txt in its installation folder). Its source code, including its build files (CMake, vcpkg.json, cmake\ports, cmake\triplets) and the packaging scripts that made this archive (tools\package.ps1, installer\scripts\LucentPackaging.psm1), is published at $($Info.homepage). This version was built from commit $GitCommit" +
             $(if ($GitDirty) { ', with uncommitted changes: the recipes, triplet and vcpkg manifest in this archive are the ones it was built with.' } else { '.' })))
         '@STATIC_CODE@' = (Format-Paragraph (Format-StaticCodeText -Components $records.ToArray() -Info $Info))
+        '@LICENCE_TEXTS@' = $(if ($licenceTexts.Count -gt 0) { "`n" + ((@($licenceTexts | ForEach-Object {
+            (Format-IndentedText -Prefix '                    ' -Text "$([System.IO.Path]::GetFileName([string]$_.file)): $($_.for) ($($_.from))") -join "`n" })) -join "`n") } else { '' })
+        '@VCPKG_COPYRIGHT@' = $vcpkgLicence.Copyright
+        '@LUCENT_COPYRIGHT@' = $lucentCopyright
         '@BASELINE@' = $Baseline
         '@TRIPLET@' = $Info.vcpkgTriplet
         '@ROOT@' = $rootName }
@@ -4085,7 +6376,7 @@ function New-CorrespondingSourcePackage {
         [pscustomobject]@{ Name = "$($item.Name)/$rootName/$($_.Name)"; Bytes = $bytes } })
     return [pscustomobject]@{
         File = $item.Name; Path = $item.FullName; Size = $item.Length; Sha256 = (Get-Sha256 $item.FullName); Root = $rootName
-        Components = $records.ToArray(); BuildTools = $buildTools.ToArray()
+        Components = $records.ToArray(); BuildTools = $buildTools.ToArray(); LicenceTexts = $licenceTexts.ToArray()
         Entries = @($allSums | ForEach-Object { [ordered]@{ path = "$rootName/$($_.Name)"; size = $_.Size; sha256 = $_.Sha256 } })
         Texts = $texts }
 }
@@ -4119,7 +6410,10 @@ function Write-LgplNotice {
         $dlls = @($component.Files | Where-Object { $_ -match '\.dll$' })
         foreach ($line in (Format-WrappedList -Prefix '  DLLs: ' -Items $dlls)) { $componentLines.Add($line) }
         if ($component.Files.Count -gt $dlls.Count) {
-            $componentLines.Add("  and $($component.Files.Count - $dlls.Count) QML module files (qmldir, type information)")
+            # What they are, counted by kind (the gate-8 review, round 2: 174 of Qt Declarative's 212 are QML
+            # source files).
+            $others = @($component.Files | Where-Object { $_ -notmatch '\.dll$' })
+            foreach ($line in (Format-IndentedText -Prefix '  ' -Text "and $($others.Count) other files: $(Format-OtherFiles -Files $others)")) { $componentLines.Add($line) }
         }
         foreach ($source in $component.Sources) {
             $componentLines.Add("  Source: $(Format-SourceDownload $source.Location)")
@@ -4159,7 +6453,9 @@ function Write-LgplNotice {
     }
     $template = [System.IO.File]::ReadAllText((Join-Path $NoticesDir 'LGPL-NOTICE.txt.in'))
     $lgplText = Set-TemplateTitle -Template $template -Version $Info.version
+    if (-not $template.Contains('@PROGRAMS@')) { throw "LGPL-NOTICE.txt.in has no @PROGRAMS@: the notice would not say which programs hold no LGPL code (W12 gate-8 review, round 1)." }
     $replacements = [ordered]@{
+        '@PROGRAMS@' = (Get-LucentExecutablesText $Info)
         '@LICENCE_TEXTS@' = ($textLines -join "`n")
         '@COMPONENTS@' = ($componentLines -join "`n").TrimEnd()
         '@STATIC_LINKED@' = $staticNote
@@ -4196,4 +6492,11 @@ Export-ModuleMember -Function Read-LucentPackageInfo, Get-PeHeader, Get-PeDepend
     Test-LucentUpdateChannelPolicy, New-DeterministicZip, Test-CopyleftLicence, Get-SourceProvisionPlan,
     Get-SourceProvisionExpectation, ConvertFrom-SourcePackageRecord, Test-CorrespondingSourcePackage,
     New-CorrespondingSourcePackage, Write-LgplNotice, Format-SourceDownload, Get-RecipeCopy, Get-LicenceKind, ConvertTo-OrdinalOrder,
-    Get-PatchedFiles, Get-RecipeModifications, Format-RecipeModifications, Format-StaticCodeText, Get-InnoSetupLicence, Test-InnoSetupLicence
+    Get-PatchedFiles, Get-RecipeModifications, Format-RecipeModifications, Format-StaticCodeText, Get-InnoSetupLicence, Test-InnoSetupLicence,
+    Get-InnoSetupEngine, Get-InnoSetupEngineVersion, Get-LicenceExcerpt, Get-LicenceCopyright, Test-PartLicences, Format-PartLicenceText,
+    Read-SourceArchiveMember, Find-SourceArchiveMember, Get-VcpkgLicence, Get-RecipeFileLicence, Get-OwnFileLicence, Format-DataNotices, Format-RecipeNotice,
+    Complete-ThirdPartyNotices, Test-BuildFile, Test-ModificationNotes, Test-LicenceInExpression, Test-LicenceCovered, Test-AttributionLicences,
+    Get-InnoSetupLicenceFile, Get-ToolchainLibraries, Format-PartLines, Get-RecipeScripts, Test-ScriptedEdits,
+    Read-SourceArchiveMembers, Get-SourceArchiveListing, Get-PatchLicences, Get-PatchFileChanges, Select-ElectedLicence, Test-PathPattern,
+    ConvertTo-NoticeText, Test-FileLicenceRules, Split-LicenceConjunction, Join-LicenceTerms, Get-ThirdPartySourceFile, Resolve-AttributionPolicy,
+    Get-WindowsSdkLibrary, Find-TextIn, Get-WindowsKitsRoot, Get-InnoSetupParts, Get-ProgramLicences, Format-OtherFiles

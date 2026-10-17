@@ -23,7 +23,39 @@
     "\"strongCopyleftAdr\" names the ADR that accepted it (ADR 0003); copyleft code compiled into the programs",
     "(a header-only port) fails too, a file-level copyleft (MPL, EPL, CDDL) unless \"fileLevelCopyleftReview\"",
     "records its review (W12 review LIC-4). The patches a marked port's recipe applies are listed with their",
-    "files and dates in LGPL-NOTICE.txt and the archive (W12 review LIC-1)."
+    "files and dates in LGPL-NOTICE.txt and the archive (W12 review LIC-1); a port's \"comment\", which",
+    "THIRD-PARTY-NOTICES.txt repeats, must name every patch that changes more than build files. Since the W12",
+    "gate-8 reading of 2026-10-16: \"declared\" records what a library's authors offer it under where the port's",
+    "declaration falls short; \"parts\" names the parts of a library under their own licences, whose terms",
+    "packaging takes verbatim from the verified source archive (the member, from the line holding \"first\" to",
+    "the next holding \"last\") into licenses/<port>/<as>, with \"terms\" when the archive names a licence without",
+    "its text; a part compiled into the shipped files (\"compiled\" not false) must have its licence in",
+    "\"concluded\". \"lucentAssets\" names Lucent's own bundled assets (MIT) for THIRD-PARTY-NOTICES.txt's Data list.",
+    "Since the gate-8 review, round 1 (2026-10-16): a part may give its own \"version\", the \"source\" archive that holds it",
+    "(a port built from several), \"lastWhole\" (the last line is the one whose trimmed text is \"last\"), and its licence's text",
+    "as \"text\" (a member of the same archive, whole or from \"first\" to \"last\", with \"about\" when the excerpt is not the",
+    "licence's whole text) or \"textIn\" (licence files other components ship, each with a marker line that must be in it",
+    "and \"holds\", what the file holds); its licence may carry an exception (\"X WITH Y\"). The",
+    "third-party code Qt's own SBOM records inside a Qt component's shipped files must be covered by its \"concluded\" (an",
+    "election for a choice) unless \"attributionsNotCompiled\" names it with the reason this build does not compile it. A",
+    "recipe's own scripts that change the library's files before the build are named in \"scriptedEdits\" (script, changes),",
+    "listed with the patches. \"libraryLicence\" is the licence of a library's own code, without its parts and third-party",
+    "code (part of \"concluded\"): the licence of the lines its recipe's patches quote, for the SBOM's recipe files.",
+    "\"toolchainLibraries\" records the code of the compiler's own libraries inside Lucent's",
+    "programs (the C++ standard library of the reviewed MSVC toolset), its parts' notices pinned by the SHA-256 of the",
+    "headers that hold them; \"distribution.installerTool\" pins the licence file of the reviewed Inno Setup version.",
+    "Since the gate-8 review, round 2 (2026-10-16): a part's licence text comes from a verified source only (\"text\" or",
+    "\"textIn\"; \"terms\" is refused). \"fileLicences\" gives the licence of a file a patch changes that states none in an SPDX",
+    "line (files, licence or NOASSERTION, the statement of the file or the evidence of the archive that shows it, comment);",
+    "every patch's SBOM licence is MIT and the licences of the files it changes. \"attributionLicences\" corrects the licence",
+    "Qt's SBOM records for code inside Qt (qtSbom, licence, evidence, texts), \"attributionNotices\" takes its NOTICE lines,",
+    "\"attributionSources\" names the Source Code Form of copyleft code at the commit Qt's SBOM records. A toolchain library",
+    "with \"kit\": \"windows-sdk\" is code of the Windows SDK in shipped binaries (C++/WinRT), its licence pinned by SHA-256 and",
+    "every binary probed. \"thirdPartySources\" pins by git blob id the files of published sources kept in installer\\third-party",
+    "(packaging never downloads). \"distribution.installerTool.parts\" names the code of others inside Inno Setup with its",
+    "licence and, under a copyleft licence, its source; \"distribution.correspondingSource.licenceTexts\" adds licence texts",
+    "the archive's files need. \"vcRedistributable.reviewed\" names the terms of the reviewed redistributable, and",
+    "\"termsReview\" records the owner's review of the conditions under which Lucent redistributes it."
   ],
   "distribution": {
     "decided": "2026-10-10",
@@ -34,7 +66,16 @@
     "correspondingSource": {
       "provision": "archive-beside-installer",
       "file": "Lucent-<version>-corresponding-source.zip",
-      "comment": "The corresponding source of every shipped LGPL library (upstream archives verified by SHA-512, the vcpkg recipes and patches including Lucent's overlay ports, the triplet, vcpkg's build records and a README on rebuilding and relinking) is published next to each installer, from the same place and for as long as that installer is offered (LGPL-2.1 section 4; GPL-3.0 section 6(d), which LGPL-3.0 incorporates). licenses\\LGPL-NOTICE.txt names the archive with its size and SHA-256."
+      "comment": "The corresponding source of every shipped LGPL library (upstream archives verified by SHA-512, the vcpkg recipes and patches including Lucent's overlay ports, the triplet, vcpkg's build records and a README on rebuilding and relinking) is published next to each installer, from the same place and for as long as that installer is offered (LGPL-2.1 section 4; GPL-3.0 section 6(d), which LGPL-3.0 incorporates). licenses\\LGPL-NOTICE.txt names the archive with its size and SHA-256. Since the gate-8 review, round 2, the archive's licenses/ also holds the licence texts that files it conveys need and their own archives lack (licenceTexts).",
+      "licenceTexts": [
+        {
+          "as": "GPL-2.0-only.txt",
+          "port": "qtbase",
+          "member": "LICENSES/GPL-2.0-only.txt",
+          "covers": [ "GPL-2.0-only", "GPL-2.0-or-later" ],
+          "for": "the GNU GPL, version 2: LibRaw-cmake's CMakeLists.txt, which the archive conveys in LibRaw-LibRaw-cmake-*.tar.gz and LibRaw's patches quote, is under GPL-2.0-or-later, and LibRaw-cmake's archive holds no GPL text"
+        }
+      ]
     },
     "signing": {
       "release": "unsigned",
@@ -43,8 +84,88 @@
     "installerTool": {
       "name": "Inno Setup",
       "licence": "Inno Setup License",
+      "licenseId": "InnoSetup",
       "use": "non-commercial",
-      "comment": "The compiler used (6.7.3) reports \"Non-commercial use only\". Lucent's distribution is non-commercial (free, MIT, not sold), so those terms apply and no commercial licence is needed. Setup and its uninstaller keep Inno Setup's copyright notices; THIRD-PARTY-NOTICES.txt credits it. Packaging stops if \"commercial\" is true while the compiler reports non-commercial use."
+      "reviewedVersion": "6.7.3",
+      "licenseFile": "license.txt",
+      "licenseSha256": "2e5346868c2a18434489824e11d65c3031620f792fefc415d05f19cd441abf5c",
+      "sourceRepository": "https://github.com/jrsoftware/issrc",
+      "sourceTag": "is-6_7_3",
+      "sourceCommit": "4adf37ed7f3fd2bd11c6836ba056e3de170fbabf",
+      "licenseGitBlob": "ac4dfe9e6543a360c5422b6f1fb88075e8b6073d",
+      "contains": "Its loader holds the LZMA SDK 4.40 decoder, and its setup engine and uninstaller RemObjects Pascal Script, zlib and the LZMA SDK's later decoders, each listed with its licence (distribution.installerTool.parts); Lucent redistributes them unmodified.",
+      "licenceText": "The Inno Setup License: license.txt of the Inno Setup installation that compiled Lucent Setup. Its loader and setup engine are inside Lucent Setup, and its uninstaller (unins000.exe) is installed into Lucent's installation folder, unmodified, keeping Inno Setup's copyright notices.",
+      "comment": "The compiler used (6.7.3) reports \"Non-commercial use only\". Lucent's distribution is non-commercial (free, MIT, not sold), so those terms apply and no commercial licence is needed. Setup and its uninstaller keep Inno Setup's copyright notices; THIRD-PARTY-NOTICES.txt credits it with the engine version the compiler reports (since the W12 gate-8 reading of 2026-10-16). Since its review, round 1, the compiler's license.txt ships as licenses\\inno-setup\\license.txt, verified against licenseSha256 for reviewedVersion (another version or text stops packaging until it is reviewed), and the SBOM has a package for Inno Setup with that version and licence (InnoSetup, whose text license.txt is). Since its round 2, license.txt must also have the git blob id licenseGitBlob, the file's in Inno Setup's published source at the reviewed version's tag (sourceRepository, sourceTag, sourceCommit; the tag is signed by Martijn Laan), and the code of others inside the loader, engine and uninstaller is named with its licence (parts). Packaging stops if \"commercial\" is true while the compiler reports non-commercial use.",
+      "parts": [
+        {
+          "name": "RemObjects Pascal Script",
+          "copyright": "Copyright (C) 2000-2014 by Carlo Kok and RemObjects Software, LLC; Copyright (c) 2004-2010 by RemObjects Software",
+          "licence": "LicenseRef-RemObjects-Pascal-Script",
+          "in": [ "Setup.e32" ],
+          "probe": "RemObjects Pascal Script. Copyright (c) 2004-2010 by RemObjects Software",
+          "text": { "source": "inno-setup-6.7.3", "file": "Components/UniPs/LICENSE.md" },
+          "as": "RemObjects-Pascal-Script-LICENSE.txt",
+          "notice": "Lucent Setup and its uninstaller are made using RemObjects Pascal Script, which can be found at https://www.remobjects.com/ps.",
+          "noticeProbe": "https://www.remobjects.com/ps",
+          "comment": "The scripting engine of Inno Setup's setup engine, which runs inside Lucent Setup and as its uninstaller. Its licence (Components/UniPs/LICENSE.md of Inno Setup's published source; no SPDX identifier) lets it be used and redistributed with three conditions; the third asks for a visible line in a program's About box or documentation that it is made using RemObjects Pascal Script and where it can be found: Inno Setup's About box (in Setup's system menu) gives one, and THIRD-PARTY-NOTICES.txt carries one under Required notices, with the address the engine itself names."
+        },
+        {
+          "name": "zlib (deflate and inflate)",
+          "version": "1.3.1",
+          "copyright": "Copyright 1995-2024 Jean-loup Gailly and Mark Adler",
+          "licence": "Zlib",
+          "in": [ "Setup.e32" ],
+          "probe": " deflate 1.3.1 Copyright 1995-2024 Jean-loup Gailly and Mark Adler ",
+          "textIn": [
+            { "file": "zlib\\copyright.txt", "marker": "This software is provided 'as-is', without any express or implied", "holds": "zlib 1.3.2's licence, the zlib License, whose notice is required in source distributions only" }
+          ],
+          "as": "zlib-Zlib.txt",
+          "comment": "The zlib code in the setup engine's runtime library (Delphi's System.ZLib, which Inno Setup's engine and its PNG images use). The zlib License asks for no notice with binaries; it is named all the same."
+        },
+        {
+          "name": "LZMA SDK decoders (LZMA, LZMA2 and 7z)",
+          "version": "25.00",
+          "copyright": "Igor Pavlov : Public domain",
+          "licence": "LicenseRef-LZMA-SDK-Public-Domain",
+          "in": [ "Setup.e32" ],
+          "probe": "7z Decoder 25.00 : Igor Pavlov : Public domain : 2025-07-05",
+          "statement": "probe",
+          "as": "LZMA-SDK-decoders-public-domain.txt",
+          "comment": "Igor Pavlov's decoders of Setup's compressed files and 7-Zip archives in the setup engine (Inno Setup's ISLzmaDec.c compiles the LZMA SDK's LzmaDec.c and Lzma2Dec.c, whose headers say 'Igor Pavlov : Public domain'). Public domain: no licence applies and no notice is required; they are named all the same."
+        },
+        {
+          "name": "LZMA SDK size-optimized LZMA decoder",
+          "version": "4.40",
+          "copyright": "Copyright (c) 1999-2006 Igor Pavlov",
+          "licence": "LGPL-2.1-only",
+          "declared": "LicenseRef-LZMA-SDK-4.40",
+          "in": [ "SetupLdr.e32" ],
+          "probe": "lzma1smalldecompressor",
+          "text": {
+            "source": "inno-setup-6.7.3",
+            "file": "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecode.h",
+            "first": "LZMA SDK 4.40 Copyright (c) 1999-2006 Igor Pavlov (2006-05-01)",
+            "last": "to this file, however, are subject to the LGPL or CPL terms.",
+            "about": "Its terms, as its source states them"
+          },
+          "textIn": [
+            { "file": "gettext-libintl\\copyright.txt", "marker": "Version 2.1, February 1999", "holds": "the GNU LGPL, version 2.1, under which Lucent redistributes it" }
+          ],
+          "sourceFiles": {
+            "source": "inno-setup-6.7.3",
+            "folder": "LzmaDecode",
+            "files": [
+              "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecodeInno.c",
+              "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecodeSize.c",
+              "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecode.h",
+              "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaTypes.h",
+              "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/compile.bat"
+            ]
+          },
+          "as": "LZMA-SDK-4.40-decoder.txt",
+          "comment": "Setup's loader decompresses the setup engine with the older, size-optimized decoder of the LZMA SDK 4.40 (Inno Setup's Compression.LZMA1SmallDecompressor: LzmaDecodeInno.c, which includes LzmaDecodeSize.c; its object's code is in SetupLdr.e32, the loader of Lucent Setup, a 32-bit program; the compiler's 64-bit loader SetupLdr.e64 holds it too, but Lucent Setup is not made with it). Its files offer it under the GNU LGPL or the Common Public License, which Lucent may choose between, with an exception that lets code linked to it keep its own terms; changes to these files stay under the LGPL or the CPL. The LGPL, which names no version here and so lets any published version be chosen, is elected in its version 2.1 (the gate-8 review, round 2), whose text ships with GNU libintl; both licences ask that the source of the object code be made available, so its source ships here, as Inno Setup 6.7.3 publishes it."
+        }
+      ]
     }
   },
   "neverShipped": {
@@ -62,8 +183,69 @@
   "ports": {
     "qtbase": {
       "reviewedVersion": "6.11.1",
-      "concluded": "LGPL-3.0-only",
-      "comment": "Qt modules are used under LGPL-3.0-only, dynamically linked (ADR 0003, decision 3). vcpkg's recipe patches Qt's source (W12 review LIC-1): mostly its CMake build files, and md4c.diff (src/gui/text/qtextmarkdownimporter.cpp, in Qt6Gui.dll); clang-cl_source_location.patch, clang-cl_QGADGET_fix.diff and QTBUG-145703.patch change headers for clang-cl or static builds only. Every patch is listed with its files and the registry commit's date in LGPL-NOTICE.txt and the corresponding-source archive. The third-party code compiled into the shipped Qt files is listed with its holders and licences from Qt's own SBOM; the licence texts are sections of the port's copyright file.",
+      "concluded": "LGPL-3.0-only AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND CC0-1.0 AND FTL AND HPND AND Imlib2 AND LicenseRef-ICC-License AND LicenseRef-Lcs-Telegraphics AND LicenseRef-SHA1-Public-Domain AND MIT AND MIT-Khronos-old AND MPL-2.0 AND OGL-UK-3.0 AND Unicode-3.0 AND X11",
+      "libraryLicence": "LGPL-3.0-only AND BSD-3-Clause",
+      "attributionsNotCompiled": {
+        "vulkanmemoryallocator": "Qt's build attaches the Vulkan Memory Allocator's attribution to Qt Gui whatever its features (src/gui/CMakeLists.txt, ATTRIBUTION_FILE_DIR_PATHS), but only src/gui/rhi/qrhivulkan.cpp includes vk_mem_alloc.h, and that file is compiled only with Vulkan, which this build's configure summary reports off (Vulkan: no); its build log compiles no qrhivulkan.cpp."
+      },
+      "attributionLicences": {
+        "opengl-headers": {
+          "qtSbom": "MIT",
+          "licence": "MIT-Khronos-old",
+          "evidence": [ { "member": "src/gui/opengl/REUSE.toml", "line": "SPDX-License-Identifier = \"MIT-Khronos-old\"" } ],
+          "comment": "The headers (src/gui/opengl/qopenglext.h, Copyright (c) 2013-2018 The Khronos Group Inc.) and Qt's LICENSE.KHRONOS.txt carry the Khronos 'Materials' licence, which Qt's REUSE.toml for them names MIT-Khronos-old; its text is the section MIT-Khronos-old.txt of qtbase\\copyright.txt."
+        },
+        "opengl-es2-headers": {
+          "qtSbom": "MIT",
+          "licence": "MIT-Khronos-old",
+          "evidence": [ { "member": "src/gui/opengl/REUSE.toml", "line": "SPDX-License-Identifier = \"MIT-Khronos-old\"" } ],
+          "comment": "The header (src/gui/opengl/qopengles2ext.h, Copyright (c) 2013-2018 The Khronos Group Inc.) carries the Khronos 'Materials' licence, which Qt's REUSE.toml for it names MIT-Khronos-old; its text is the section MIT-Khronos-old.txt of qtbase\\copyright.txt."
+        },
+        "tika-mimetypes": {
+          "qtSbom": "Apache-2.0",
+          "licence": "Apache-2.0 AND OGL-UK-3.0",
+          "evidence": [ { "source": "apache-tika-408c26e1", "file": "NOTICE.txt", "line": "PRONOM is published" } ],
+          "texts": {
+            "OGL-UK-3.0": "the licence asks for its acknowledgement and, where possible, a link to it; both are the NOTICE lines in qtbase\\Apache-Tika-NOTICE.txt (http://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/)"
+          },
+          "comment": "Apache Tika's NOTICE at this commit says that tika-mimetypes.xml includes MIME type definitions adapted from The National Archives' PRONOM Technical Registry, published under the Open Government Licence 3.0; Qt's copy (src/corelib/mimetypes/3rdparty/tika-mimetypes.xml) holds PRONOM definitions, and Qt6Core.dll compiles it."
+        }
+      },
+      "attributionNotices": {
+        "tika-mimetypes": {
+          "source": "apache-tika-408c26e1",
+          "file": "NOTICE.txt",
+          "excerpts": [
+            { "first": "Apache Tika", "last": "The Apache Software Foundation (http://www.apache.org/)." },
+            { "first": "Tika-mimetypes.xml includes mimetype definitions", "last": "under the Open Government License 3.0" }
+          ],
+          "as": "Apache-Tika-NOTICE.txt",
+          "comment": "tika-mimetypes.xml, which Qt's SBOM records inside Qt6Core.dll, is licensed by the Apache Software Foundation under the Apache License 2.0 and refers to 'the NOTICE file distributed with this work'. Apache-2.0 section 4(d) asks a distribution to include the attribution notices of that NOTICE file that pertain to the work; Qt's archive holds no NOTICE of Tika's, so these are the lines of Apache Tika's NOTICE.txt at the commit Qt's SBOM records that pertain to the MIME type definitions (the others name Tika's parsers and server)."
+        }
+      },
+      "attributionSources": {
+        "psl-data": {
+          "repository": "https://github.com/publicsuffix/list",
+          "commit": "944fb53321606f08740f04ef7c386f64df34ff76",
+          "file": "public_suffix_list.dat",
+          "comment": "It is the file from which Qt generated src/3rdparty/libpsl/psl_data.cpp (its version 2026-01-16_13-11-47_UTC); qtbase's archive holds only the generated array, and MPL-2.0 section 3.2(a) asks that recipients be told where the Source Code Form is."
+        }
+      },
+      "fileLicences": [
+        {
+          "files": [ "cmake/3rdparty/extra-cmake-modules/**" ],
+          "licence": "BSD-3-Clause",
+          "evidence": [ { "member": "cmake/3rdparty/extra-cmake-modules/REUSE.toml", "line": "SPDX-License-Identifier = \"BSD-3-Clause\"" } ],
+          "comment": "KDE's extra-cmake-modules, which Qt's build system bundles; the REUSE.toml of that folder gives its files BSD-3-Clause"
+        },
+        {
+          "files": [ "cmake/qt.toolchain.cmake.in" ],
+          "licence": "BSD-3-Clause",
+          "evidence": [ { "member": "REUSE.toml", "line": "\"cmake/**.in\"" } ],
+          "comment": "a file of Qt's build system without a notice of its own; Qt's REUSE.toml gives the build system's files, cmake/**.in among them, BSD-3-Clause"
+        }
+      ],
+      "comment": "Qt modules are used under LGPL-3.0-only, dynamically linked (ADR 0003, decision 3). Qt compiles third-party code into the shipped files, which Qt's own SBOM records and the list below names; the licence covers each (the W12 gate-8 review, round 1), with Lucent's elections: FTL for the anti-aliasing rasterizer from FreeType 2 (FTL OR GPL-2.0-only), CC0-1.0 for BLAKE2 (CC0-1.0 OR Apache-2.0). The Vulkan Memory Allocator, which Qt's SBOM also records for Qt6Gui.dll, is not compiled in this build (Vulkan is off). Qt's bundled copies of zlib, PCRE2, FreeType, HarfBuzz, libjpeg, libpng, MD4C and double-conversion are not compiled: this build uses the system libraries, which ship as their own components; nor are its Unix, Apple, Android, WebAssembly, Wayland and X11 code, its D-Bus and SQL modules (off), or Qt Test, which does not ship. Qt's CMake build files are BSD-3-Clause. vcpkg's recipe patches Qt's source with 26 patches (W12 review LIC-1; their summary corrected by the W12 gate-8 reading of 2026-10-16). 18 change only CMake build files (use-shared-mime-info.patch applies only with a feature Lucent does not use). md4c.diff changes src/gui/text/qtextmarkdownimporter.cpp, in Qt6Gui.dll (it removes a compile-time assertion). silence-winrtbase-coroutine-warnings.diff adds a #define that silences a deprecation warning to src/corelib/platform/windows/qt_winrtbase_p.h, which Qt compiles where it uses C++/WinRT (configured in this build), and to its configure test. clang-cl_source_location.patch, clang-cl_QGADGET_fix.diff and QTBUG-145703.patch change headers in ways that take effect only with clang-cl or in static builds. use_inotify_on_freebsd.patch changes a condition for FreeBSD in src/corelib/io/qfilesystemwatcher.cpp; macdeployqt-symlinks.patch changes the macOS deployment tool macdeployqt (src/tools/macdeployqt/shared/shared.cpp), which is not built on Windows; windeployqt-webengine-debug-resources.patch changes the deployment tool windeployqt (src/tools/windeployqt/main.cpp), which Lucent's build runs but does not ship. Every patch is listed with its files and the registry commit's date in LGPL-NOTICE.txt and the corresponding-source archive; each patch's licence is that of the files it changes (the SBOM: macdeployqt-symlinks.patch and windeployqt-webengine-debug-resources.patch quote files under GPL-3.0-only with the Qt GPL exception, the commercial alternative being none Lucent holds). The third-party code compiled into the shipped Qt files is listed with its holders and licences from Qt's own SBOM; the licence texts are sections of the port's copyright file. Where Qt's SBOM falls short, the gate-8 review, round 2, corrects it: Khronos' OpenGL headers are MIT-Khronos-old (Qt's REUSE.toml), Apache Tika's MIME type definitions include PRONOM's under the Open Government Licence 3.0 and come with the lines of Tika's NOTICE that pertain to them, and the Public Suffix List's Source Code Form is public_suffix_list.dat at the commit Qt's SBOM records. The same review found code of the Windows SDK compiled into the Qt files: C++/WinRT (MIT), which Qt's build configures (QT_FEATURE_cpp_winrt), in Qt6Core.dll and qwindows.dll (toolchainLibraries.cppwinrt); Qt6Gui.dll's Direct3D 12 backend includes the SDK's d3d12.h and d3d12sdklayers.h (MIT) and dxcapi.h (University of Illinois/NCSA), which give it declarations and GUID constants only, no code, as the C++ library's thread headers do for Lucent's programs.",
       "lgpl": true,
       "extractSections": [
         { "section": "LGPL-3.0-only.txt", "as": "LGPL-3.0-only.txt" },
@@ -82,50 +264,327 @@
     },
     "qtdeclarative": {
       "reviewedVersion": "6.11.1",
-      "concluded": "LGPL-3.0-only",
-      "comment": "Qt QML and Qt Quick under LGPL-3.0-only (ADR 0003, decision 3).",
+      "concluded": "LGPL-3.0-only AND BSD-2-Clause AND MIT",
+      "libraryLicence": "LGPL-3.0-only",
+      "comment": "Qt QML and Qt Quick under LGPL-3.0-only (ADR 0003, decision 3), with the third-party code Qt's SBOM records inside the shipped files, which the licence covers (the W12 gate-8 review, round 1): the JavaScriptCore macro assembler, YARR and WTF in Qt6Qml.dll (BSD-2-Clause) and Yoga in Qt6QuickLayouts.dll (MIT). Its UDis86 disassembler is not compiled (WTF_USE_UDIS86=0: the disassembler feature is off), nor is the Material style's shadow code (MIT), whose module does not ship.",
       "lgpl": true
     },
     "qtsvg": {
       "reviewedVersion": "6.11.1",
-      "concluded": "LGPL-3.0-only",
-      "comment": "Qt SVG under LGPL-3.0-only (ADR 0003, decision 3).",
+      "concluded": "LGPL-3.0-only AND HPND-sell-variant",
+      "libraryLicence": "LGPL-3.0-only",
+      "comment": "Qt SVG under LGPL-3.0-only (ADR 0003, decision 3), with the arc code derived from XSVG in Qt6Svg.dll (HPND-sell-variant), which Qt's SBOM records and the licence covers (the W12 gate-8 review, round 1).",
       "lgpl": true
     },
     "libraw": {
       "reviewedVersion": "0.22.2",
-      "concluded": "LGPL-2.1-only AND BSD-3-Clause",
-      "comment": "LibRaw is offered under LGPL-2.1-only or CDDL-1.0; Lucent elects LGPL-2.1-only (ADR 0003, decision 2). The notices for dcraw, DCB/FBDD, the X3F tools and the Adobe DNG SDK code are in the port's copyright file.",
-      "lgpl": true
+      "declared": "(LGPL-2.1-only OR CDDL-1.0) AND BSD-3-Clause AND MIT",
+      "concluded": "LGPL-2.1-only AND BSD-3-Clause AND MIT",
+      "libraryLicence": "LGPL-2.1-only",
+      "comment": "LibRaw is offered under LGPL-2.1-only or CDDL-1.0; Lucent elects LGPL-2.1-only (ADR 0003, decision 2). Its COPYRIGHT names parts under their own licences, listed below with their notices from LibRaw's source archive (the W12 gate-8 reading of 2026-10-16): the DCB demosaic and FBDD denoise code (BSD-3-Clause) and code from the Adobe DNG SDK 1.4 (MIT; the archive names the licence without its text, so since the gate-8 review, round 2, the part's file points to the MIT texts that ship as nlohmann-json's licence files), both in raw_r.dll, and the X3F tools (BSD-3-Clause), which the port does not compile. vcpkg's port declares 'BSD-3-Clause AND (LGPL-2.1-only OR CDDL-1.0)', which leaves out the MIT code. LibRaw uses code from Dave Coffin's dcraw.c but, its COPYRIGHT says, none of its RESTRICTED code. Its Sony YCC and lossless JPEG decoders (src/decoders/sonycc.cpp, src/decompressors/losslessjpeg.cpp, internal/losslessjpeg.h, in raw_r.dll) are 'partially backported from DNGLab's rust code' (DNGLab, by Daniel Vogelbacher), as their headers say, under LibRaw's choice of LGPL-2.1 or CDDL-1.0; LibRaw's archive states no licence of DNGLab, whose repository states LGPL-2.1 (read for the gate-8 review, round 2), so Lucent's election of LGPL-2.1 fits it, while whether CDDL-1.0 is available for these files depends on DNGLab's licence. Its optional modules are not compiled (the port defines only USE_JPEG, USE_JPEG8, USE_LCMS2 and USE_ZLIB): the RawSpeed glue with RawSpeed's camera data (RawSpeed/rawspeed_xmldata.cpp, CC BY-SA 3.0, compiled only with USE_RAWSPEED), the Adobe DNG SDK, the GoPro GPR SDK and the Raspberry Pi decoder (the W12 gate-8 review, round 1). The port builds LibRaw with LibRaw-cmake's build files (its second archive): its CMakeLists.txt is GPL-2.0-or-later (Gilles Caulier's notice), its cmake/ files KDE's BSD scripts and files without a notice, which its BSD-3-Clause LICENSE covers; none of it is compiled except libraw_config.h, which LibRaw LLC's template cmake/data/libraw_config.h.cmake makes (LibRaw's own licence). vcpkg's dependencies.patch and fix-install.patch change those build files (CMakeLists.txt and cmake/), so they are under LibRaw-cmake's licences, not LibRaw's.",
+      "lgpl": true,
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt" ],
+          "source": "LibRaw/LibRaw-cmake",
+          "licence": "GPL-2.0-or-later",
+          "statement": [ "under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2, or (at your option) any later version." ],
+          "comment": "LibRaw-cmake's CMakeLists.txt, under Gilles Caulier's GPL-2.0-or-later notice"
+        },
+        {
+          "files": [ "cmake/**" ],
+          "source": "LibRaw/LibRaw-cmake",
+          "licence": "BSD-3-Clause",
+          "evidence": [ { "member": "LICENSE", "line": "Redistribution and use in source and binary forms, with or without" } ],
+          "comment": "LibRaw-cmake's files without a notice of their own (cmake/librawConfig.cmake.in, cmake/data/libraw.pc.cmake), which its LICENSE, a BSD-3-Clause text without a copyright line, covers"
+        }
+      ],
+      "parts": [
+        {
+          "name": "DCB demosaic and FBDD denoise",
+          "copyright": "Copyright (C) 2010, Jacek Gozdz",
+          "licence": "BSD-3-Clause",
+          "member": "src/demosaic/dcb_demosaic.cpp",
+          "first": "Copyright (C) 2010,  Jacek Gozdz",
+          "last": "(luis.sanz.rodriguez@gmail.com)",
+          "as": "DCB-FBDD-BSD-3-Clause.txt",
+          "comment": "LibRaw's COPYRIGHT: 'LibRaw uses DCB demosaic and FBDD denoise licensed under BSD-like 3-clause license'. The terms in src/demosaic/dcb_demosaic.cpp are BSD-3-Clause; FBDD is by Jacek Gozdz and Luis Sanz Rodriguez. Compiled into raw_r.dll."
+        },
+        {
+          "name": "Code from the Adobe DNG SDK",
+          "version": "1.4",
+          "copyright": "Copyright (c) 2005 Adobe Systems Incorporated",
+          "licence": "MIT",
+          "member": "COPYRIGHT",
+          "first": "LibRaw uses pieces of code from Adobe DNG SDK 1.4,",
+          "last": "licensed under MIT license",
+          "as": "Adobe-DNG-SDK-MIT.txt",
+          "textIn": [
+            {
+              "file": "nlohmann-json\\copyright.txt",
+              "marker": "Permission is hereby granted, free of charge, to any person obtaining a copy",
+              "holds": "nlohmann-json's licence, the MIT License: its LICENSE.MIT as vcpkg installs it from nlohmann-json's verified source archive"
+            },
+            {
+              "file": "nlohmann-json\\UTF-8-decoder-MIT.txt",
+              "marker": "Permission is hereby granted, free of charge, to any person obtaining a copy",
+              "holds": "the MIT License's text, lines 5 to 9 of LICENSES/MIT.txt in nlohmann-json's verified source archive"
+            }
+          ],
+          "comment": "LibRaw does not say which of its code this is. Its functions named as in the DNG SDK (DNG_HalfToFloat, DNG_FP24ToFloat, DecodeDeltaBytes and DecodeFPDelta in src/decoders/fp_dng.cpp, the floating-point DNG decoding) and the Phase One column fixes that src/decoders/load_mfbacks.cpp calls the 'DNG SDK version' are compiled into raw_r.dll. LibRaw's archive names the MIT licence without its text; until the gate-8 review, round 2, this file gave the licence's words as Lucent supplied them, and it now names the MIT texts of verified sources that ship in this folder."
+        },
+        {
+          "name": "Code partially backported from DNGLab (the Sony YCC and lossless JPEG decoders)",
+          "copyright": "Copyright (C) 2024-2025 Alex Tutubalin, LibRaw LLC",
+          "licence": "LGPL-2.1-only",
+          "member": "src/decoders/sonycc.cpp",
+          "first": "Copyright (C) 2024-2025 Alex Tutubalin, LibRaw LLC",
+          "last": "(See file LICENSE.CDDL provided in LibRaw distribution archive for details).",
+          "as": "DNGLab-derived-decoders.txt",
+          "textIn": [
+            {
+              "file": "libraw\\copyright.txt",
+              "marker": "Version 2.1, February 1999",
+              "holds": "LibRaw's LICENSE.LGPL, the GNU LGPL, version 2.1"
+            }
+          ],
+          "comment": "src/decoders/sonycc.cpp (here its header), src/decompressors/losslessjpeg.cpp and internal/losslessjpeg.h say that their code is 'partially backported from DNGLab's rust code' and that 'DNGLab was originally created in 2021 by Daniel Vogelbacher', and offer LibRaw's choice of LGPL-2.1 or CDDL-1.0; all are compiled into raw_r.dll (its build log). LibRaw's archive states no licence of DNGLab. DNGLab's repository (https://github.com/dnglab/dnglab) states LGPL-2.1 (its LICENSE, the LGPL 2.1, and rawler/Cargo.toml at tag v0.7.0, commit 8f9675c0919913809b37bb05fd44d4fef90ca8f4), read for the gate-8 review, round 2, but not a source Lucent ships. Lucent uses LibRaw under LGPL-2.1, which fits it; whether the CDDL-1.0 alternative is available for these files depends on DNGLab's licence."
+        },
+        {
+          "name": "X3F tools (Foveon X3F decoding)",
+          "copyright": "Copyright (c) 2010, Roland Karlsson",
+          "licence": "BSD-3-Clause",
+          "member": "internal/x3f_tools.h",
+          "first": "Library for accessing X3F Files",
+          "last": "SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.",
+          "as": "X3F-BSD-3-Clause.txt",
+          "compiled": false,
+          "comment": "LibRaw's COPYRIGHT: 'LibRaw uses X3F library to unpack Foveon Files, licensed BSD-style license'. The terms in internal/x3f_tools.h (the same as in src/x3f/x3f_parse_process.cpp and src/x3f/x3f_utils_patched.cpp) are BSD-3-Clause. Not compiled into raw_r.dll: vcpkg's port leaves LibRaw-cmake's ENABLE_X3FTOOLS off, its default, so USE_X3FTOOLS is undefined and the X3F sources compile to nothing. The code is in the source archive that Lucent publishes."
+        }
+      ]
     },
     "freetype": {
       "reviewedVersion": "2.14.3",
-      "concluded": "FTL",
-      "comment": "FreeType is offered under the FreeType License or GPL-2.0-or-later; Lucent elects the FreeType License (ADR 0003, decision 4).",
+      "declared": "(FTL OR GPL-2.0-or-later) AND MIT AND MIT-open-group",
+      "concluded": "FTL AND MIT AND MIT-open-group",
+      "libraryLicence": "FTL",
+      "comment": "FreeType is offered under the FreeType License or GPL-2.0-or-later; Lucent elects the FreeType License (ADR 0003, decision 4). Its LICENSE.TXT names parts under licences similar to the X Window System's, listed below with their notices from FreeType's source archive (the W12 gate-8 review, round 1): the BDF and PCF font drivers and src/base/fthash.c (MIT), compiled into freetype.dll (bdf.c, pcf.c and ftbase.c are in its build log; ftmodule.h registers bdf_driver_class and pcf_driver_class), and the PCF driver's pcfutil.c carries The Open Group's X11 notice (MIT-open-group). Not compiled: the HarfBuzz code of src/autofit (FT_CONFIG_OPTION_USE_HARFBUZZ is off), the zlib copy in src/gzip (FT_CONFIG_OPTION_SYSTEM_ZLIB: freetype.dll imports z.dll), the public-domain MD5 code (only with FT_DEBUG_LEVEL_TRACE), the dlg logging library (only with FT_DEBUG_LOGGING) and the gxvalid and otvalid modules. The Adobe Glyph List table of src/psnames/pstables.h carries FreeType's own notice.",
       "notices": [
         "Portions of this software are copyright (c) 2026 The FreeType Project (https://freetype.org). All rights reserved."
+      ],
+      "fileLicences": [
+        {
+          "files": [ "**" ],
+          "licence": "FTL",
+          "statement": [ "This file is part of the FreeType project" ],
+          "comment": "each file FreeType's patches change says it is part of the FreeType project and distributed under its licence (LICENSE.TXT: FTL or GPL-2.0-or-later); Lucent elects FTL (ADR 0003, decision 4)"
+        }
+      ],
+      "parts": [
+        {
+          "name": "BDF font driver (src/bdf)",
+          "copyright": "Copyright (C) 2001-2002 by Francesco Zappa Nardelli",
+          "licence": "MIT",
+          "member": "src/bdf/README",
+          "first": "Copyright (C) 2001-2002 by Francesco Zappa Nardelli",
+          "last": "SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+          "as": "BDF-driver-MIT.txt",
+          "comment": "The BDF driver's licence, as its README states it; the driver is compiled into freetype.dll."
+        },
+        {
+          "name": "BDF library from Mark Leisher's xmbdfed (bdflib.c, bdf.h)",
+          "copyright": "Copyright 2000 Computing Research Labs, New Mexico State University; Copyright 2001-2002, 2011 Francesco Zappa Nardelli",
+          "licence": "MIT",
+          "member": "src/bdf/README",
+          "first": "*** Portions of the driver (that is, bdflib.c and bdf.h):",
+          "last": "THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+          "as": "BDF-library-MIT.txt",
+          "comment": "The licence of the BDF driver's library (bdflib.c, bdf.h), as the driver's README states it; compiled into freetype.dll."
+        },
+        {
+          "name": "PCF font driver (src/pcf)",
+          "copyright": "Copyright (C) 2000 by Francesco Zappa Nardelli",
+          "licence": "MIT",
+          "member": "src/pcf/README",
+          "first": "Copyright (C) 2000 by Francesco Zappa Nardelli",
+          "last": "SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+          "as": "PCF-driver-MIT.txt",
+          "comment": "The PCF driver's licence, as its README states it; the driver is compiled into freetype.dll."
+        },
+        {
+          "name": "PCF utilities from X11 (pcfutil.c; Keith Packard, MIT X Consortium)",
+          "copyright": "Copyright 1990, 1994, 1998 The Open Group",
+          "licence": "MIT-open-group",
+          "member": "src/pcf/pcfutil.c",
+          "first": "Copyright 1990, 1994, 1998  The Open Group",
+          "last": "in this Software without prior written authorization from The Open Group.",
+          "as": "PCF-utilities-MIT-open-group.txt",
+          "comment": "Bit-order and byte-swapping helpers of the PCF driver, from X11's bitmap utilities; pcf.c includes pcfutil.c, compiled into freetype.dll."
+        },
+        {
+          "name": "Hash functions (src/base/fthash.c, fthash.h)",
+          "copyright": "Copyright 2000 Computing Research Labs, New Mexico State University; Copyright 2001-2015 Francesco Zappa Nardelli",
+          "licence": "MIT",
+          "member": "src/base/fthash.c",
+          "first": "Copyright 2000 Computing Research Labs, New Mexico State University",
+          "last": "THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+          "as": "fthash-MIT.txt",
+          "comment": "Part of the BDF driver in earlier FreeType versions (LICENSE.TXT); ftbase.c includes fthash.c, compiled into freetype.dll."
+        }
       ]
     },
     "libjpeg-turbo": {
       "reviewedVersion": "3.2.0",
+      "declared": "BSD-3-Clause AND IJG AND Zlib",
+      "concluded": "BSD-3-Clause AND IJG AND Zlib",
+      "libraryLicence": "BSD-3-Clause AND IJG",
+      "comment": "libjpeg-turbo's LICENSE.md: the libjpeg API library under the IJG License, the TurboJPEG API and the build system under BSD-3-Clause, and its SIMD extensions under the zlib License, which it calls subsumed by the IJG License in the libjpeg API library. The SIMD code is compiled into jpeg8.dll (WITH_SIMD; the jpeg library takes the simd objects), so the licence names it, with its notice below (the W12 gate-8 review, round 1). Not compiled into jpeg8.dll: libspng and the zlib copy, which only cjpeg and djpeg use, and the TurboJPEG API (turbojpeg.dll does not ship).",
       "notices": [
         "This software is based in part on the work of the Independent JPEG Group."
       ],
       "supplementaryFiles": [
-        { "member": "README.ijg", "reason": "The IJG licence text that LICENSE.md refers to; the port does not install it." }
+        {
+          "member": "README.ijg",
+          "reason": "The IJG licence text that LICENSE.md refers to; the port does not install it."
+        }
+      ],
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt", "release/**" ],
+          "licence": "BSD-3-Clause",
+          "evidence": [ { "member": "LICENSE.md", "line": "  build/test system." } ],
+          "comment": "the build system, which LICENSE.md puts under the Modified (3-clause) BSD License; its files carry no notice of their own"
+        }
+      ],
+      "parts": [
+        {
+          "name": "x86-64 SIMD extensions (simd/)",
+          "copyright": "Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB; Copyright (C) 2010, 2016, 2018-2019, 2024, D. R. Commander; Copyright (C) 2018, Matthieu Darbois; Copyright (C) 2018, Matthias R\u00e4ncker; Copyright (C) 2023, Aliaksiej Kandracienka; Copyright (C) 1999-2006, MIYASAKA Masaru; Copyright (C) 2015, Intel Corporation; Copyright (C) 2011, Nokia Corporation and/or its subsidiary(-ies); Copyright (C) 2016-2018, Loongson Technology Corporation Limited, BeiJing; Copyright (C) 2019, Google LLC; Copyright (C) 2020, Arm Limited; Copyright (C) 2025, Samsung Electronics Co., Ltd.; Copyright (C) 2014, Linaro Limited; Copyright (C) 2022, Institute of Software, Chinese Academy of Sciences",
+          "licence": "Zlib",
+          "member": "simd/nasm/jsimdext.inc",
+          "first": "; Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB",
+          "last": "; 3. This notice may not be removed or altered from any source distribution.",
+          "as": "SIMD-Zlib.txt",
+          "comment": "The notice of the SIMD extensions' common declarations, to which their other files refer ('see copyright notice in jsimdext.inc'); compiled into jpeg8.dll. The holders are those of the compiled SIMD files (the gate-8 review, round 2; until then only jsimdext.inc's six): jsimdext.inc's, and the further ones the other files name under the same zlib License, some with other years: Intel Corporation (jcolsamp.inc and the ten AVX2 files), Nokia, Loongson, Google, Arm and Samsung (simd/jsimd.c), Linaro and the Institute of Software, Chinese Academy of Sciences (simd/jsimdint.h)."
+        }
       ]
     },
     "pcre2": {
       "reviewedVersion": "10.47",
-      "concluded": "BSD-3-Clause WITH PCRE2-exception",
+      "declared": "BSD-3-Clause WITH PCRE2-exception AND BSD-2-Clause",
+      "concluded": "BSD-3-Clause WITH PCRE2-exception AND BSD-2-Clause",
+      "libraryLicence": "BSD-3-Clause WITH PCRE2-exception",
+      "comment": "PCRE2's LICENCE.md: the library under the BSD licence with an exemption for binary library-like packages (BSD-3-Clause WITH PCRE2-exception), and its just-in-time compiler 'separately licensed under the \"2-clause BSD\" licence': the code of deps/sljit, which vcpkg's port takes from an archive of its own (zherczeg/sljit at 45f910b7) and this build compiles into pcre2-8.dll and pcre2-16.dll (features core and jit, PCRE2_SUPPORT_JIT ON; pcre2_jit_compile.c includes sljitLir.c), with its LICENSE below (the W12 gate-8 review, round 1). The Unicode property tables of pcre2_ucd.c, generated from Unicode data files, carry PCRE2's own notice.",
       "supplementaryFiles": [
-        { "member": "LICENCE.md", "reason": "The installed copyright file only points to this file of the PCRE2 distribution." }
+        {
+          "member": "LICENCE.md",
+          "reason": "The installed copyright file only points to this file of the PCRE2 distribution."
+        }
+      ],
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt" ],
+          "source": "PCRE2Project/pcre2",
+          "licence": "BSD-3-Clause WITH PCRE2-exception",
+          "evidence": [ { "member": "LICENCE.md", "line": "| SPDX-License-Identifier: | BSD-3-Clause WITH PCRE2-exception |" } ],
+          "comment": "PCRE2's build file, without a notice of its own: LICENCE.md puts the PCRE2 distribution under the BSD licence with its exemption"
+        }
+      ],
+      "parts": [
+        {
+          "name": "Stack-less Just-In-Time compiler (sljit)",
+          "version": "45f910b78c6605ebf5b53d3ec7cb00f2312fe417",
+          "copyright": "Copyright Zoltan Herczeg (hzmester@freemail.hu). All rights reserved.",
+          "licence": "BSD-2-Clause",
+          "source": "zherczeg/sljit",
+          "member": "LICENSE",
+          "first": "Stack-less Just-In-Time compiler",
+          "last": "ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.",
+          "as": "sljit-BSD-2-Clause.txt",
+          "comment": "PCRE2's JIT compiler, from the second source archive of vcpkg's port (the commit is its version); compiled into pcre2-8.dll and pcre2-16.dll."
+        }
       ]
     },
     "tiff": {
       "reviewedVersion": "4.7.2",
+      "declared": "libtiff AND BSD-4.3TAHOE AND MIT",
+      "concluded": "libtiff AND BSD-4.3TAHOE AND MIT",
+      "libraryLicence": "libtiff",
+      "comment": "libtiff's licence (LICENSE.md) with the parts that carry notices of their own, listed below from libtiff's source archive (the W12 gate-8 review, round 1), all compiled into tiff.dll (its configure summary: LZW, LogLuv, Pixar log-format and CCITT on; the build log links tif_hash_set.c): the LZW code of tif_lzw.c under the University of California's notice (BSD-4.3TAHOE; LICENSE.md holds it), the PixarLog and LogLuv codecs under the libtiff licence's form with Pixar's and Greg Ward Larson's names, the CCITT fax decoder derived with permission from Frank Cringle's viewfax, and the hash set of tif_hash_set.c (MIT). Not compiled (their codecs are off, so their files compile to nothing): JPEG and old JPEG (tif_ojpeg.c, Joris Van Damme and AWare Systems), JBIG, LERC, LZMA (Andrey Kiselev), WebP (Mapbox) and ZSTD (Planet Labs); port/getopt.c goes only into the tools, which do not ship.",
       "notices": [
         "This product includes the LZW compression code of libtiff, which was developed by the University of California, Berkeley."
+      ],
+      "fileLicences": [
+        {
+          "files": [ "cmake/FindCMath.cmake" ],
+          "licence": "BSD-3-Clause",
+          "statement": [ "Distributed under the OSI-approved BSD 3-Clause License." ],
+          "comment": "a CMake module of Kitware's, under CMake's BSD-3-Clause licence as its notice says"
+        },
+        {
+          "files": [ "cmake/**", "libtiff/CMakeLists.txt" ],
+          "licence": "libtiff",
+          "statement": [ "Permission to use, copy, modify, distribute, and sell this software and" ],
+          "comment": "libtiff's build files, under the libtiff licence's form with their authors' names"
+        }
+      ],
+      "parts": [
+        {
+          "name": "LZW compression (tif_lzw.c), from the compress program of the University of California",
+          "copyright": "Copyright (c) 1985, 1986 The Regents of the University of California. All rights reserved.",
+          "licence": "BSD-4.3TAHOE",
+          "member": "LICENSE.md",
+          "first": "# Lempel-Ziv & Welch Compression (tif_lzw.c) license",
+          "last": "WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.",
+          "as": "LZW-BSD-4.3TAHOE.txt",
+          "comment": "Compiled into tiff.dll (LZW_SUPPORT). BSD-4.3TAHOE is the SPDX identifier of this Berkeley notice; its acknowledgement is the credit line under \"Required notices\"."
+        },
+        {
+          "name": "PixarLog compression (tif_pixarlog.c)",
+          "copyright": "Copyright (c) 1996-1997 Sam Leffler; Copyright (c) 1996 Pixar",
+          "licence": "libtiff",
+          "member": "libtiff/tif_pixarlog.c",
+          "first": "Copyright (c) 1996-1997 Sam Leffler",
+          "last": "OF THIS SOFTWARE.",
+          "as": "PixarLog-libtiff.txt",
+          "comment": "The libtiff licence's form with Pixar's name; compiled into tiff.dll (PIXARLOG_SUPPORT, with zlib)."
+        },
+        {
+          "name": "LogLuv high dynamic range encoding (tif_luv.c)",
+          "copyright": "Copyright (c) 1997 Greg Ward Larson; Copyright (c) 1997 Silicon Graphics, Inc.",
+          "licence": "libtiff",
+          "member": "libtiff/tif_luv.c",
+          "first": "Copyright (c) 1997 Greg Ward Larson",
+          "last": "OF THIS SOFTWARE.",
+          "as": "LogLuv-libtiff.txt",
+          "comment": "The libtiff licence's form with Greg Larson's name; compiled into tiff.dll (LOGLUV_SUPPORT)."
+        },
+        {
+          "name": "CCITT Group 3 and 4 fax decoder (tif_fax3.c), derived from Frank Cringle's viewfax",
+          "copyright": "Copyright (c) 1990-1997 Sam Leffler; Copyright (c) 1991-1997 Silicon Graphics, Inc.; Copyright (C) 1990, 1995 Frank D. Cringle",
+          "licence": "libtiff",
+          "member": "libtiff/tif_fax3.c",
+          "first": "Copyright (c) 1990-1997 Sam Leffler",
+          "last": "OF THIS SOFTWARE.",
+          "text": {
+            "member": "libtiff/tif_fax3.c",
+            "first": "Decoder support is derived, with permission, from the code",
+            "last": "Copyright (C) 1990, 1995  Frank D. Cringle.",
+            "about": "Frank Cringle's copyright on the decoder, as the file's description states it"
+          },
+          "as": "CCITT-fax3-libtiff.txt",
+          "comment": "Under the libtiff licence, with Frank Cringle's copyright on the decoder it was derived from with his permission; compiled into tiff.dll (CCITT_SUPPORT)."
+        },
+        {
+          "name": "Hash set (tif_hash_set.c)",
+          "copyright": "Copyright (c) 2008-2009, Even Rouault <even dot rouault at spatialys.com>",
+          "licence": "MIT",
+          "member": "libtiff/tif_hash_set.c",
+          "first": "Copyright (c) 2008-2009, Even Rouault",
+          "last": "DEALINGS IN THE SOFTWARE.",
+          "as": "hash-set-MIT.txt",
+          "comment": "Used by libtiff's directory reading; compiled into tiff.dll."
+        }
       ]
     },
     "double-conversion": {
@@ -133,29 +592,319 @@
       "concluded": "BSD-3-Clause",
       "comment": "The port declares no licence; the installed copyright file is the upstream BSD-3-Clause LICENSE."
     },
+    "brotli": {
+      "reviewedVersion": "1.2.0",
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt" ],
+          "licence": "MIT",
+          "evidence": [ { "member": "LICENSE", "line": "Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors." } ],
+          "comment": "Brotli's build file, without a notice of its own: its LICENSE (MIT) covers the repository"
+        }
+      ]
+    },
+    "bzip2": {
+      "reviewedVersion": "1.0.8",
+      "fileLicences": [
+        {
+          "files": [ "bzlib.h" ],
+          "licence": "bzip2-1.0.6",
+          "statement": [ "This program is released under the terms of the license contained in the file LICENSE." ],
+          "comment": "bzip2's header, under its notice: the licence in its LICENSE file"
+        }
+      ]
+    },
+    "lcms": {
+      "reviewedVersion": "2.19.1",
+      "fileLicences": [
+        {
+          "files": [ "include/lcms2.h" ],
+          "licence": "MIT",
+          "statement": [ "Permission is hereby granted, free of charge, to any person obtaining" ],
+          "comment": "Little CMS's header, under the MIT permission notice it carries"
+        }
+      ]
+    },
+    "md4c": {
+      "reviewedVersion": "0.6.0",
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt" ],
+          "licence": "MIT",
+          "evidence": [ { "member": "LICENSE.md", "line": "# The MIT License (MIT)" } ],
+          "comment": "MD4C's build file, without a notice of its own: its LICENSE.md (MIT) covers the repository"
+        }
+      ]
+    },
+    "sqlite3": {
+      "reviewedVersion": "3.53.4",
+      "fileLicences": [
+        {
+          "files": [ "sqlite3.c", "sqlite3.h", "shell.c" ],
+          "licence": "blessing",
+          "statement": [ "The author disclaims copyright to this source code." ],
+          "comment": "SQLite's files, which their authors dedicate to the public domain with the blessing in their headers"
+        }
+      ]
+    },
+    "zlib": {
+      "reviewedVersion": "1.3.2",
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt" ],
+          "licence": "Zlib",
+          "evidence": [ { "member": "LICENSE", "line": "  This software is provided 'as-is', without any express or implied" } ],
+          "comment": "zlib's build file, without a notice of its own: its LICENSE (the zlib License) covers the distribution"
+        }
+      ]
+    },
     "lensfun": {
       "reviewedVersion": "0.3.4",
-      "concluded": "LGPL-3.0-only",
-      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the other library sources carry no notice), so the library is used under LGPL-3.0-only; the port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built. Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see Data below; ADR 0023). A replaceable DLL (ADR 0003); vcpkg's recipe patches only its CMakeLists.txt (fix_build.patch), listed in LGPL-NOTICE.txt.",
-      "lgpl": true
+      "declared": "LGPL-3.0-only AND LGPL-2.1-or-later",
+      "concluded": "LGPL-3.0-only AND LGPL-2.1-or-later",
+      "libraryLicence": "LGPL-3.0-only",
+      "comment": "Lensfun's README licenses its libraries under the GNU LGPL, version 3 (the public header lensfun.h additionally states LGPL-2.0-or-later; the sources of libs/lensfun carry copyright lines without a licence statement), so the library is used under LGPL-3.0-only. Its libs/regex is a subset of the TRE regular expression library (Copyright (c) 2001-2006 Ville Laurikari), whose files carry LGPL-2.1-or-later notices: Lensfun's build compiles it into lensfun.dll as the static library tre_regex where no regex.h exists, as with MSVC (the build log: 'regex.h - not found'; lens.cpp calls regcomp and regexec), so the licence names it, with its notice below (the W12 gate-8 review, round 1; until then this note said the other library sources carry no notice). The port declares no licence and its copyright file is the README's licence section with the GPL-3.0 and LGPL-3.0 texts. Its programs (GPL-3.0) are not built (BUILD_LENSTOOL=OFF) and its Python module is not built; nor is the GNU getopt of libs/getopt (GPL-2.0-or-later), which its build adds only with BUILD_TESTS (off). Its lens database (CC BY-SA 3.0) is not part of the port: Lucent ships the database as the verified asset assets/lens-database with its own licence text (see Data below; ADR 0023). A replaceable DLL (ADR 0003); vcpkg's recipe patches only its CMakeLists.txt (fix_build.patch), listed in LGPL-NOTICE.txt. That top-level CMakeLists.txt carries no licence notice and Lucent's reading of the archive finds no statement that covers it (the gate-8 review, round 2): the README gives the GPL-3.0 to 'the build system (the contents of the build/ subdirectory plus the ac.py file)', which 0.3.4 no longer holds (its ChangeLog: 'Removed old non-CMake build system'), and its other statements name libs/, apps/, the documentation, tests/, tools/ and data/. The SBOM therefore makes no assertion of the patch's licence (NOASSERTION).",
+      "lgpl": true,
+      "fileLicences": [
+        {
+          "files": [ "CMakeLists.txt" ],
+          "licence": "NOASSERTION",
+          "evidence": [
+            { "member": "README.md", "line": "Also the build system (the contents of the build/ subdirectory plus the" },
+            { "member": "ChangeLog", "line": "* Removed old non-CMake build system" }
+          ],
+          "comment": "Lensfun's top-level CMakeLists.txt carries no licence notice, and its archive states none for it: the README's GPL-3.0 sentence names the build/ subdirectory and ac.py of the build system its ChangeLog records as removed, and its other statements name libs/, apps/, the documentation, tests/, tools/ and data/"
+        }
+      ],
+      "parts": [
+        {
+          "name": "TRE regular expression library (a subset, libs/regex)",
+          "version": "0.8.0",
+          "copyright": "Copyright (c) 2001-2006 Ville Laurikari <vl@iki.fi>",
+          "licence": "LGPL-2.1-or-later",
+          "member": "libs/regex/regcomp.c",
+          "first": "Copyright (c) 2001-2006 Ville Laurikari <vl@iki.fi>",
+          "last": "Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA",
+          "as": "TRE-LGPL-2.1-or-later.txt",
+          "textIn": [
+            {
+              "file": "gettext-libintl\\copyright.txt",
+              "marker": "Version 2.1, February 1999",
+              "holds": "the GNU LGPL, version 2.1, GNU libintl's licence"
+            },
+            {
+              "file": "lensfun\\copyright.txt",
+              "marker": "GNU LESSER GENERAL PUBLIC LICENSE",
+              "holds": "the GNU LGPL, version 3, a later version, which the notice permits"
+            }
+          ],
+          "comment": "Every file of libs/regex carries this notice (here regcomp.c's); its README says the library 'is licensed under same terms as Lensfun library'. Compiled into lensfun.dll (the static library tre_regex; Lensfun's build defines TRE_VERSION 0.8.0). The text of the LGPL-2.1 is not in Lensfun's archive; the LGPL-3.0, a later version the notice permits, is."
+        }
+      ]
     },
     "glib": {
       "reviewedVersion": "2.90.0",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Built from Lucent's overlay port (cmake/ports/glib, shipped as licenses\\glib\\recipe), whose source is modified by three patches (W12 review LIC-1): vcpkg's use-libiconv-on-windows.patch (glib/gconvert.c converts with GNU libiconv instead of the bundled win_iconv; meson.build) and libintl.patch (meson.build), and Lucent's lucent-neutral-locale-dir.patch (meson.build), which keeps the build machine's install prefix out of the DLL. Each is listed with its files and date in LGPL-NOTICE.txt and the corresponding-source archive. A replaceable DLL (ADR 0003, ADR 0023).",
-      "lgpl": true
+      "comment": "GLib is LGPL-2.1-or-later; the port's declared licence adds 'LGPL-2.1-only OR MPL-1.1' for code Lucent does not ship (only glib-2.0-0.dll, which lensfun.dll imports, ships; GObject, GIO, GModule and GThread do not). Built from Lucent's overlay port (cmake/ports/glib, shipped as licenses\\glib\\recipe), whose source is modified by three patches (W12 review LIC-1): vcpkg's use-libiconv-on-windows.patch (glib/gconvert.c converts with GNU libiconv instead of the bundled win_iconv; meson.build) and libintl.patch (meson.build), and Lucent's lucent-neutral-locale-dir.patch (meson.build), which keeps the build machine's install prefix out of the DLL. Each is listed with its files and date in LGPL-NOTICE.txt and the corresponding-source archive. A replaceable DLL (ADR 0003, ADR 0023). glib-2.0-0.dll also holds the dirent emulation of glib/dirent (mingw-runtime's, placed in the public domain), which has no licence to name, and the gnulib and libcharset copies (LGPL-2.1-or-later). Not compiled for this build (the W12 gate-8 review, round 1): glib/gutilsprivate.c (MIT; only on Unix), glib/valgrind.h (bzip2-style; glib/gvalgrind.h includes it only when the compiler is not MSVC), the bundled win_iconv.c (public domain; use-libiconv-on-windows.patch makes gconvert.c use GNU libiconv) and girepository's CMPH (LGPL-2.1-only OR MPL-1.1; not shipped). Its Unicode tables, generated from the Unicode Character Database, carry no notice of their own.",
+      "lgpl": true,
+      "fileLicences": [
+        {
+          "files": [ "meson.build" ],
+          "licence": "LGPL-2.1-or-later",
+          "evidence": [ { "member": "LICENSES/LGPL-2.1-or-later.txt", "line": "GNU LESSER GENERAL PUBLIC LICENSE" } ],
+          "comment": "GLib's top-level meson.build carries no notice of its own and .reuse/dep5 names none for it, so GLib's licence covers it: COPYING links to LICENSES/LGPL-2.1-or-later.txt"
+        }
+      ]
     },
     "gettext-libintl": {
       "reviewedVersion": "0.22.5",
-      "concluded": "LGPL-2.1-or-later",
-      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Built from Lucent's overlay port (cmake/ports/gettext-libintl, shipped as licenses\\gettext-libintl\\recipe), whose source is modified by three patches (W12 review LIC-1): vcpkg's uwp.patch (gettext-runtime/intl/langprefs.c, gettext-runtime/intl/gnulib-lib/localcharset.c) and 0003-Fix-win-unicode-paths.patch (gettext-runtime/intl/loadmsgcat.c opens catalogs by UTF-8 file names), and Lucent's lucent-no-builder-paths.patch (gettext-runtime/intl/dcigettext.c, gettext-runtime/intl/gnulib-lib/relocatable.c), which keeps the build machine's folders out of the DLL (its default catalog folder and the relocation prefixes Lucent never uses). Each is listed with its files and date in LGPL-NOTICE.txt and the corresponding-source archive. A replaceable DLL (ADR 0023).",
-      "lgpl": true
+      "declared": "LGPL-2.1-or-later AND GPL-3.0-or-later WITH Bison-exception-2.2",
+      "concluded": "LGPL-2.1-or-later AND GPL-3.0-or-later WITH Bison-exception-2.2",
+      "libraryLicence": "LGPL-2.1-or-later",
+      "comment": "GNU libintl from gettext-runtime (intl/COPYING.LIB), imported by GLib. Built from Lucent's overlay port (cmake/ports/gettext-libintl, shipped as licenses\\gettext-libintl\\recipe), whose source is modified by three patches (W12 review LIC-1): vcpkg's uwp.patch (gettext-runtime/intl/langprefs.c, gettext-runtime/intl/gnulib-lib/localcharset.c) and 0003-Fix-win-unicode-paths.patch (gettext-runtime/intl/loadmsgcat.c opens catalogs by UTF-8 file names), and Lucent's lucent-no-builder-paths.patch (gettext-runtime/intl/dcigettext.c, gettext-runtime/intl/gnulib-lib/relocatable.c), which keeps the build machine's folders out of the DLL (its default catalog folder and the relocation prefixes Lucent never uses). Each is listed with its files and date in LGPL-NOTICE.txt and the corresponding-source archive. A replaceable DLL (ADR 0023). Its plural-expression parser intl/plural.c was generated by GNU Bison 3.8.2 and holds Bison's parser skeleton, under GPL-3.0-or-later with the Bison exception, which lets the larger work be distributed under its own terms; it is compiled into intl-8.dll (the build log compiles plural.c), so the licence names it, with its notice and the GPL's text below (the W12 gate-8 review, round 1). Besides its patches, the recipe runs vcpkg's bashify.cmake on gettext-runtime/configure before configuring, which rewrites that build script's libtool quoting into bash variable expansion (listed with the patches), and its portfile rewrites the Makefiles the build generates. The build also generates gnulib's alloca.h from gnulib-lib/alloca.in.h, whose notice is GPL-3.0-or-later without an exception (configure finds no alloca.h for MSVC), and gnulib-lib/vasnprintf.c, compiled into intl-8.dll, includes it; for MSVC it gives only '#include <malloc.h>' and '#define alloca _alloca', so no expressive code of it is compiled and the licence names no GPL for it (the gate-8 review, round 2).",
+      "lgpl": true,
+      "fileLicences": [
+        {
+          "files": [ "gettext-runtime/intl/**" ],
+          "licence": "LGPL-2.1-or-later",
+          "statement": [ "GNU Lesser General Public License", "version 2.1 of the License, or (at your option) any later version" ],
+          "comment": "libintl's files, under the LGPL-2.1-or-later notice each carries"
+        }
+      ],
+      "scriptedEdits": [
+        {
+          "script": "bashify.cmake",
+          "changes": [
+            "gettext-runtime/configure"
+          ],
+          "comment": "vcpkg's script, run by portfile.cmake on Windows hosts before configuring: the configure script's libtool quoting becomes bash variable expansion, for build speed."
+        }
+      ],
+      "parts": [
+        {
+          "name": "GNU Bison's parser skeleton (in intl/plural.c)",
+          "version": "3.8.2",
+          "copyright": "Copyright (C) 1984, 1989-1990, 2000-2015, 2018-2021 Free Software Foundation, Inc.",
+          "licence": "GPL-3.0-or-later WITH Bison-exception-2.2",
+          "member": "gettext-runtime/intl/plural.c",
+          "first": "/* Bison implementation for Yacc-like parsers in C",
+          "last": "version 2.2 of Bison.  */",
+          "text": {
+            "member": "COPYING"
+          },
+          "as": "plural-Bison-skeleton.txt",
+          "comment": "plural.c is plural.y as GNU Bison 3.8.2 compiled it; its own code is LGPL-2.1-or-later (the notice that follows in the file), the skeleton is GPL-3.0-or-later with the Bison exception. Compiled into intl-8.dll. The GPL's text is COPYING of gettext's archive."
+        }
+      ]
     },
     "libiconv": {
       "reviewedVersion": "1.19",
       "concluded": "LGPL-2.1-or-later",
-      "comment": "The port declares no licence. The libiconv and libcharset libraries are LGPL-2.1-or-later (COPYING.LIB); the iconv program and the documentation are GPL-3.0 (COPYING) and are not shipped. Imported by GNU libintl and GLib. A replaceable DLL (ADR 0023) built from the unmodified library sources: vcpkg's recipe patches srclib/fcntl.c and srclib/relocatable.c (the iconv program's helpers) and libcharset/include/libcharset.h.in (its export declarations), which iconv-2.dll's own sources (lib/iconv.c, libcharset/lib/localcharset.c) do not change (W12 review LIC-1); the patches are listed with their files and date in LGPL-NOTICE.txt and the corresponding-source archive.",
-      "lgpl": true
+      "comment": "The port declares no licence. The libiconv and libcharset libraries are LGPL-2.1-or-later (COPYING.LIB); the iconv program and the documentation are GPL-3.0 (COPYING) and are not shipped. Imported by GNU libintl and GLib. A replaceable DLL (ADR 0023) built from the unmodified library sources: vcpkg's recipe patches srclib/fcntl.c and srclib/relocatable.c (the iconv program's helpers) and libcharset/include/libcharset.h.in (its export declarations), none of which iconv-2.dll compiles; its own sources, which lib/Makefile.in lists and the build log compiles (lib/iconv.c, lib/compat.c and libcharset/lib/localcharset.c with woe32dll/iconv-exports.c and the version resource windows/libiconv.rc; this note named lib/compat.c only from the W12 gate-8 reading of 2026-10-16 on), are unchanged (W12 review LIC-1); the patches are listed with their files and date in LGPL-NOTICE.txt and the corresponding-source archive. The converter tables it compiles from lib/*.h (cp932.h, cp950.h, big5_2003.h and others) say they come from the mapping tables of unicode.org; they carry libiconv's LGPL notice and state no Unicode terms (the gate-8 review, round 2).",
+      "lgpl": true,
+      "fileLicences": [
+        {
+          "files": [ "srclib/fcntl.c", "srclib/relocatable.c" ],
+          "licence": "LGPL-2.1-or-later",
+          "statement": [ "GNU Lesser General Public License", "version 2.1 of the License, or (at your option) any later version" ],
+          "comment": "gnulib's files of the iconv program's helpers, under the LGPL-2.1-or-later notice each carries"
+        },
+        {
+          "files": [ "libcharset/include/libcharset.h.in" ],
+          "licence": "LGPL-2.0-or-later",
+          "statement": [ "GNU Lesser General Public License", "either version 2 of the License, or (at your option) any later version" ],
+          "comment": "libcharset's header template, under its notice: the GNU LGPL, version 2 or any later version"
+        }
+      ]
+    },
+    "harfbuzz": {
+      "reviewedVersion": "14.5.0",
+      "declared": "MIT-Modern-Variant AND ISC AND MIT AND Unicode-3.0",
+      "concluded": "MIT-Modern-Variant AND ISC AND MIT AND Unicode-3.0",
+      "libraryLicence": "MIT-Modern-Variant",
+      "comment": "HarfBuzz is under the 'Old MIT' licence (MIT-Modern-Variant); its COPYING points to parts under other licences, listed below with their notices from HarfBuzz's source archive (the W12 gate-8 review, round 1), all in harfbuzz.dll (its link line takes hb-ucd.cc, the shapers and hb-unicode.cc): the UCDN Unicode functions of hb-ucd.cc (ISC), the fasthash code of hb-algs.hh (MIT), the Universal Shaping Engine data of src/ms-use from which shaper tables are generated (MIT, Microsoft), and the Unicode data in its generated tables (Unicode-3.0; hb-unicode-emoji-table.hh states Unicode's terms). vcpkg's port declares 'MIT AND MIT-Modern-Variant'. HarfBuzz's other DLLs (subset, GPU, raster, vector) do not ship.",
+      "fileLicences": [
+        {
+          "files": [ "meson.build" ],
+          "licence": "MIT-Modern-Variant",
+          "evidence": [ { "member": "COPYING", "line": "HarfBuzz is licensed under the so-called \"Old MIT\" license.  Details follow." } ],
+          "comment": "HarfBuzz's build file, without a notice of its own: COPYING puts HarfBuzz under the 'Old MIT' licence"
+        }
+      ],
+      "parts": [
+        {
+          "name": "UCDN Unicode character database functions (hb-ucd.cc)",
+          "copyright": "Copyright (C) 2012 Grigori Goronzy <greg@kinoho.net>",
+          "licence": "ISC",
+          "member": "src/hb-ucd.cc",
+          "first": "Copyright (C) 2012 Grigori Goronzy <greg@kinoho.net>",
+          "last": "OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.",
+          "as": "UCDN-ISC.txt",
+          "comment": "HarfBuzz's built-in Unicode functions; compiled into harfbuzz.dll."
+        },
+        {
+          "name": "fasthash (hb-algs.hh)",
+          "copyright": "Copyright (C) 2012 Zilong Tan (eric.zltan@gmail.com)",
+          "licence": "MIT",
+          "member": "src/hb-algs.hh",
+          "first": "Copyright (C) 2012 Zilong Tan (eric.zltan@gmail.com)",
+          "last": "SOFTWARE.",
+          "lastWhole": true,
+          "as": "fasthash-MIT.txt",
+          "comment": "The hash function HarfBuzz's sets and maps use (hb-algs.hh, hb-array.hh); compiled into harfbuzz.dll."
+        },
+        {
+          "name": "Universal Shaping Engine data from Microsoft (src/ms-use)",
+          "copyright": "Copyright (c) Microsoft Corporation.",
+          "licence": "MIT",
+          "member": "src/ms-use/COPYING",
+          "first": "Copyright (c) Microsoft Corporation.",
+          "last": "SOFTWARE",
+          "lastWhole": true,
+          "as": "ms-use-MIT.txt",
+          "comment": "The data files from which hb-ot-shaper-use-table.hh and hb-ot-shaper-vowel-constraints.cc are generated; those tables are compiled into harfbuzz.dll."
+        },
+        {
+          "name": "Unicode data in HarfBuzz's generated tables (emoji-data.txt and the Unicode Character Database)",
+          "copyright": "Copyright (c) 2026 Unicode, Inc.",
+          "licence": "Unicode-3.0",
+          "member": "src/hb-unicode-emoji-table.hh",
+          "first": "# emoji-data.txt",
+          "last": "# For terms of use and license, see https://www.unicode.org/terms_of_use.html",
+          "as": "Unicode-data-Unicode-3.0.txt",
+          "textIn": [
+            {
+              "file": "qtbase\\copyright.txt",
+              "marker": "UNICODE LICENSE V3",
+              "holds": "the Unicode License v3, its section UNICODE LICENSE V3"
+            }
+          ],
+          "comment": "hb-unicode-emoji-table.hh states the terms of the Unicode data it was generated from; HarfBuzz's other generated tables (hb-ucd-table.hh and the shapers' tables) come from Unicode data files too. All are compiled into harfbuzz.dll."
+        }
+      ]
+    },
+    "nlohmann-json": {
+      "reviewedVersion": "3.12.0",
+      "declared": "MIT AND CC0-1.0",
+      "concluded": "MIT AND CC0-1.0",
+      "libraryLicence": "MIT",
+      "comment": "nlohmann-json is MIT (LICENSE.MIT, the port's copyright file). Its README's licence section names code of others, listed below with that statement and their licences' texts from its source archive (the W12 gate-8 review, round 1): Bjoern Hoehrmann's UTF-8 decoder (output/serializer.hpp; its DFA table is in Lucent.exe and lucent-worker.exe) and Florian Loitsch's Grisu2 (conversions/to_chars.hpp; its cached powers are in both programs), both MIT, and Hedley, Evan Nemerson's macros (thirdparty/hedley/hedley.hpp), which the README and .reuse/dep5 give as CC0-1.0 and the copy labels MIT with his copyright line: the licence names both. The parts of Google Abseil (detail/meta/cpp_future.hpp; Apache 2.0 per the README, MIT per the file) are not compiled: they are the #else branch of JSON_HAS_CPP_14, which Lucent's C++20 (/std:c++20) defines.",
+      "parts": [
+        {
+          "name": "UTF-8 decoder (Bjoern Hoehrmann)",
+          "copyright": "Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>",
+          "licence": "MIT",
+          "member": "README.md",
+          "first": "The class contains the UTF-8 Decoder from Bjoern Hoehrmann",
+          "last": "The class contains the UTF-8 Decoder from Bjoern Hoehrmann",
+          "text": {
+            "member": "LICENSES/MIT.txt",
+            "first": "Permission is hereby granted",
+            "last": "OTHER DEALINGS IN THE SOFTWARE."
+          },
+          "as": "UTF-8-decoder-MIT.txt",
+          "comment": "serializer.hpp's decoder (its @copyright line names Bjoern Hoehrmann); compiled into Lucent.exe and lucent-worker.exe, which hold its DFA table."
+        },
+        {
+          "name": "Grisu2 binary-to-decimal conversion (Florian Loitsch)",
+          "copyright": "Copyright (c) 2009 Florian Loitsch",
+          "licence": "MIT",
+          "member": "README.md",
+          "first": "The class contains a slightly modified version of the Grisu2 algorithm from Florian Loitsch",
+          "last": "Florian Loitsch",
+          "text": {
+            "member": "LICENSES/MIT.txt",
+            "first": "Permission is hereby granted",
+            "last": "OTHER DEALINGS IN THE SOFTWARE."
+          },
+          "as": "Grisu2-MIT.txt",
+          "comment": "to_chars.hpp ('distributed under the MIT license, Copyright (c) 2009 Florian Loitsch'); compiled into Lucent.exe and lucent-worker.exe, which hold its cached powers."
+        },
+        {
+          "name": "Hedley (Evan Nemerson)",
+          "version": "15",
+          "copyright": "Copyright (c) 2016-2021 Evan Nemerson <evan@nemerson.com>",
+          "licence": "CC0-1.0",
+          "member": "README.md",
+          "first": "The class contains a copy of [Hedley]",
+          "last": "CC0-1.0",
+          "text": {
+            "member": "tests/abi/include/nlohmann/json_v3_10_5.hpp",
+            "first": "Hedley - https://nemequ.github.io/hedley",
+            "last": "SPDX-License-Identifier: CC0-1.0",
+            "about": "Hedley's own header, with its dedication to the public domain under CC0 1.0"
+          },
+          "textIn": [
+            {
+              "file": "tl-expected\\copyright.txt",
+              "marker": "CC0 1.0 Universal",
+              "holds": "the CC0 1.0 Universal legal code, tl-expected's licence"
+            }
+          ],
+          "as": "Hedley-CC0-1.0.txt",
+          "comment": "Macros (JSON_HEDLEY_*) that nlohmann-json's code expands, so they are in the programs as that code is. Hedley's dedication is quoted from the archive's copy of an earlier nlohmann-json header, which carries Hedley's original header; 3.12.0's own copy names Evan Nemerson's copyright under SPDX-License-Identifier MIT, whose text is nlohmann-json's copyright.txt."
+        }
+      ]
     },
     "libffi": {
       "reviewedVersion": "3.8.0",
@@ -177,9 +926,120 @@
       "comment": "Data format version 1 (Lensfun 0.3), the XML files exactly as the Lensfun project publishes them (https://lensfun.github.io/db/version_1.tar.bz2, generated from lensfun commit 43f9e001ab66c4fcdd4f400463f13b72f94b2288 of 2026-10-08). Lucent does not adapt the database: it ships the files unchanged beside its own, so the share-alike terms apply to the database alone (ADR 0023)."
     }
   },
+  "lucentAssets": {
+    "camera-support": {
+      "name": "Camera support database",
+      "comment": "The cameras Lucent supports and how, exported from Lucent's qualification report (ADR 0016, ADR 0018)."
+    }
+  },
+  "toolchainLibraries": {
+    "msvc-stl": {
+      "name": "Microsoft C++ Standard Library (MSVC STL) of the Visual C++ toolset",
+      "reviewedToolset": "14.44.35207",
+      "declared": "Apache-2.0 WITH LLVM-exception",
+      "concluded": "Apache-2.0 WITH LLVM-exception AND BSL-1.0 AND MIT WITH fmt-exception AND Unicode-DFS-2016",
+      "copyright": "Copyright (c) Microsoft Corporation",
+      "homepage": "https://github.com/microsoft/STL",
+      "comment": "The C++ standard library headers of the MSVC toolset are compiled into Lucent's programs (std::format, the containers and the library's other templates). Their SPDX headers say Apache-2.0 WITH LLVM-exception, whose exception lets code compiled from them be redistributed without the licence's conditions of sections 4(a), 4(b) and 4(d) (giving its text, marking changes, its NOTICE): so licenses\\msvc-stl holds no copyright.txt and no text of the Apache License, only the notices of three parts. std::format's code derived from {fmt} (MIT with its exception for object code) and Ryu's floating-point formatting (BSL-1.0, which exempts object code) need no notice either and are named; std::format's Unicode tables carry Unicode, Inc.'s notice, which must appear in the documentation (the W12 gate-8 review, round 1, found the width table in Lucent.exe and lucent-worker.exe). The thread headers derived from William E. Kempf's Boost.Thread (xthreads.h, xtimec.h, __msvc_threads_core.hpp) hold declarations only: that code is in the runtime's msvcp140.dll, which Microsoft's redistributable installs under its terms.",
+      "parts": [
+        {
+          "name": "Unicode data tables of std::format (__msvc_format_ucd_tables.hpp)",
+          "copyright": "Copyright (c) 1991-2022 Unicode, Inc. All rights reserved.",
+          "licence": "Unicode-DFS-2016",
+          "member": "include/__msvc_format_ucd_tables.hpp",
+          "sha256": "0011433c71c625191e10d074d06bae571eb9cfcff979bd5650bb436fa6cda9fa",
+          "first": "UNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE",
+          "last": "written authorization of the copyright holder.",
+          "probe": "_Width_estimate_intervals_v2",
+          "as": "Unicode-DFS-2016.txt",
+          "comment": "The tables std::format uses to estimate text widths and grapheme clusters, generated from Unicode data files; their notice must appear with the copies or in the documentation."
+        },
+        {
+          "name": "std::format code derived from {fmt} (__msvc_formatter.hpp, format)",
+          "copyright": "Copyright (c) 2012 - present, Victor Zverovich",
+          "licence": "MIT WITH fmt-exception",
+          "member": "include/__msvc_formatter.hpp",
+          "sha256": "fc22eb5e9c24a0e72f0f2a07fd0e5d2c619da57ad2b10cce988a4f229b0053d3",
+          "first": "The contents of this header are derived in part from libfmt under the following license:",
+          "last": "without including the above copyright and permission notices.",
+          "as": "fmt-MIT.txt",
+          "comment": "Its exception lets compiled code carry no notice; it is named all the same."
+        },
+        {
+          "name": "Ryu floating-point formatting (xcharconv_ryu.h)",
+          "copyright": "Copyright 2018 Ulf Adams; Copyright (c) Microsoft Corporation. All rights reserved.",
+          "licence": "BSL-1.0",
+          "member": "include/xcharconv_ryu.h",
+          "sha256": "265b74f46e8815f6e2eb4868cd0e5f4b5a28a52d68411805249c991062980090",
+          "first": "Copyright 2018 Ulf Adams",
+          "last": "DEALINGS IN THE SOFTWARE.",
+          "as": "Ryu-BSL-1.0.txt",
+          "comment": "Used by std::to_chars and std::format for floating-point numbers; the Boost Software License exempts machine-executable object code from its notice condition. It is named all the same."
+        }
+      ]
+    },
+    "cppwinrt": {
+      "kit": "windows-sdk",
+      "name": "C++/WinRT",
+      "reviewedSdk": "10.0.26100.0",
+      "reviewedVersion": "2.0.250303.1",
+      "declared": "MIT",
+      "concluded": "MIT",
+      "copyright": "Copyright (c) Microsoft Corporation",
+      "homepage": "https://github.com/microsoft/cppwinrt",
+      "licenseFile": "cppwinrt/LICENSE.txt",
+      "licenseSha256": "f60485948865406bbc0998b4062b1280887d3083304d69ba1dbd5fcc8c24f59c",
+      "versionFile": "cppwinrt/winrt/base.h",
+      "versionLine": "#define CPPWINRT_VERSION \"2.0.250303.1\"",
+      "probe": "C++/WinRT version:",
+      "inside": [ "qtbase" ],
+      "comment": "Qt's build configures C++/WinRT (qtcore-config.h: QT_FEATURE_cpp_winrt 1): src/corelib/text/qlocale_win.cpp and the Windows platform plugin's qwindowstheme.cpp and qwindowsintegration.cpp include <winrt/...> under QT_CONFIG(cpp_winrt), so templates of winrt/base.h are compiled into Qt6Core.dll and qwindows.dll, which carry its version string, the type information of winrt::hresult_* exceptions and its CoIncrementMTAUsage fallback. Qt's SBOM does not record it (the gate-8 review, round 2)."
+    }
+  },
+  "thirdPartySources": {
+    "inno-setup-6.7.3": {
+      "name": "Inno Setup 6.7.3, published source",
+      "repository": "https://github.com/jrsoftware/issrc",
+      "tag": "is-6_7_3",
+      "commit": "4adf37ed7f3fd2bd11c6836ba056e3de170fbabf",
+      "folder": "installer/third-party/inno-setup-6.7.3",
+      "files": {
+        "Components/UniPs/LICENSE.md": "3d899f86ead380c10eef85710794e2ad2a5adeab",
+        "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecodeInno.c": "a1c50b8badbf1aa3fcf7c0ca2d1475baf75280fb",
+        "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecodeSize.c": "cbb512c460661dc2145c2e707a5434d91cd3a7e9",
+        "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaDecode.h": "8382fa854c34a17adc76f8f092560559afe0b458",
+        "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/LzmaTypes.h": "4a1f7db49e53d5c9f6ac86792179c5d2e13ef051",
+        "Projects/Src/Compression.LZMA1SmallDecompressor/LzmaDecode/compile.bat": "7df112289f2716be4263bbfbe430271ac84f66bd"
+      },
+      "comment": "Files of the source of the Inno Setup compiler that makes Lucent Setup, at its signed release tag (the gate-8 review, round 2): Pascal Script's licence and the source of the LZMA SDK 4.40 decoder in Setup's loader. installer\\third-party\\README.md says how they were taken."
+    },
+    "apache-tika-408c26e1": {
+      "name": "Apache Tika at the commit of Qt's MIME type definitions",
+      "repository": "https://github.com/apache/tika",
+      "commit": "408c26e1e03e018a623e732dff6fb047a2fb8e19",
+      "folder": "installer/third-party/apache-tika-408c26e1",
+      "files": {
+        "NOTICE.txt": "e4713574c826602f94419e2c7c01c6cd0d971288"
+      },
+      "comment": "Apache Tika's NOTICE at the commit Qt's SBOM records for tika-mimetypes.xml (the gate-8 review, round 2): the lines that pertain to the MIME type definitions go to licenses\\qtbase\\Apache-Tika-NOTICE.txt."
+    }
+  },
   "vcRedistributable": {
     "name": "Microsoft Visual C++ Redistributable (x64)",
     "licenseRef": "LicenseRef-Microsoft-VC-Redistributable",
-    "licenseText": "Microsoft Software License Terms for the Microsoft Visual C++ Redistributable. The terms are shown by the redistributable installer (vc_redist.x64.exe) and published by Microsoft. The redistributable is bundled unmodified inside Lucent Setup and installed by Microsoft's own installer only when the computer's runtime is older (blueprint section 9; https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files)."
+    "licenseText": "MICROSOFT SOFTWARE LICENSE TERMS - MICROSOFT VISUAL C++ 2015 - 2022 RUNTIME (EULA ID Cpp_2015-2022_ENU.1033): the terms Microsoft's redistributable installer, vc_redist.x64.exe, shows when it is run on its own (its license.rtf). Lucent Setup carries the redistributable unmodified and runs it, only when the computer's runtime is older, silently (/install /quiet /norestart), so its window and these terms are not displayed; THIRD-PARTY-NOTICES.txt names them. Lucent redistributes it as Distributable Code under the Microsoft Software License Terms of Visual Studio 2022 Build Tools, with which it was installed (https://go.microsoft.com/fwlink/?LinkId=2179911; the list of Distributable Code: https://aka.ms/vs/17/redist.txt), whose conditions the project owner reviews (installer\\license-policy.json, vcRedistributable.termsReview).",
+    "reviewed": {
+      "version": "14.44.35211.0",
+      "sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b",
+      "licenceName": "MICROSOFT SOFTWARE LICENSE TERMS - MICROSOFT VISUAL C++ 2015 - 2022 RUNTIME",
+      "eulaId": "Cpp_2015-2022_ENU.1033",
+      "comment": "Read for the gate-8 review, round 2: the English license.rtf (SHA-256 8099dc3cf9502c335da829e5c755948a12e3e6de490eb492a99deb673d883d8b) of the redistributable's own user interface, taken with 7-Zip from this vc_redist.x64.exe (Authenticode-signed by Microsoft, as packaging checks); its first lines name the terms, its last line the EULA ID. Another redistributable stops packaging until its terms are read again."
+    },
+    "termsReview": {
+      "status": "pending",
+      "terms": "Microsoft Software License Terms of Visual Studio 2022 Build Tools, as the installation records them: https://go.microsoft.com/fwlink/?LinkId=2179911 (state.json of the Visual Studio instance); Distributable Code list: https://aka.ms/vs/17/redist.txt (Licenses\\1033\\Redist.txt of the installation)",
+      "covers": "the redistribution of vc_redist.x64.exe inside Lucent Setup, which runs it silently, and the static runtime startup code of the MSVC toolset (msvcrt.lib's objects, such as mainCRTStartup and the DLL entry point, Microsoft's own code under these terms) linked into Lucent.exe, lucent-worker.exe and every vcpkg DLL",
+      "comment": "The gate-8 review, round 2, found that the conditions of these terms for Distributable Code were not reviewed (the ledger said 'not reviewed'). The project owner reviews them and records the result here (status 'reviewed', the date and what the conditions require, such as showing or naming Microsoft's terms or running the redistributable with /passive); until then packaging warns and release checklist gate 8 is open."
+    }
   }
 }
