@@ -4,46 +4,73 @@
 
 Offline, camera-independent RAW photo development for Windows.
 
-> **Status: pre-alpha, under active development.** Lucent has completed its thirteenth development
-> increment (W13: lens corrections from the bundled Lensfun database; pending commit and merge), the
-> first part of its release hardening (W12 part 1: a camera-correctness gate with an independent
-> colour reference, a hard memory limit across the export workers, a performance baseline, an
-> offline-first Check for updates that no build is configured to use yet, and catalog fixtures of
-> every schema version; pending commit and merge), its tenth development increment (W10, multi-brand
-> camera qualification and the four support states), the ninth (W9: DNG opcode lists, crop and
-> straighten, masks and colour noise reduction; its Lensfun lens corrections came with W13) and the eighth
-> (W8, the Natural v1 automatic settings with the editor's Auto and automatic batches): a Qt Quick
-> `Lucent.exe` that adds RAW files in place or as verified copies into a library folder, keeps them in a saved
-> library (a local SQLite catalog) with picks, content hashes, duplicate, missing-file and
-> removable-media badges and relinking, and browses them with labelled camera previews and support
-> states. Opening a photo edits it: white balance (temperature and tint where the camera's
-> calibration defines them), exposure, contrast, highlights and shadows, a tone curve, saturation
-> and vibrance, crop, straighten, quarter turns and mirror, brush, linear-gradient and radial masks
-> with their own exposure, contrast, highlights, shadows, saturation, temperature and tint, colour
-> noise reduction, and lens corrections (distortion, chromatic aberration and vignetting from the
-> bundled Lensfun database: automatic only when the camera and the lens match a profile exactly,
-> never repeating a correction the file already makes, or from a profile you choose), with a histogram, clipping overlay, before/after, undo/redo over an
-> immutable revision history and copy/paste by category. Thumbnails, previews and JPEG or 16-bit TIFF exports
-> render each photo's recipe. Exports run as durable batches: a selection, every photo or a folder
-> is exported to JPEG or 16-bit TIFF in isolated `lucent-worker.exe` processes under a memory
-> budget, each output verified before it is published without overwriting anything, with pause,
-> resume, cancel, actionable pauses for a full or disconnected destination, recovery after Lucent
-> is closed or stops, and a completion report. **Auto** in the editor, and batches set to Auto or
-> Analyse only, choose each photo's settings with the deterministic Natural v1 optimiser (locks are
-> respected and reported), check the result at full size with a bounded conservative fallback,
-> and save it as an ordinary, undoable revision with its analysis record (it adjusts the global
-> settings and keeps the photographer's crop, masks and noise reduction); related shots can be
-> kept consistent, and uncertain results are marked for review. Natural v1 is deliberately
-> conservative and **not yet calibrated** against photographers' preferences. DNG opcode lists are
-> applied at the stages the specification defines, and each camera's own image area is rendered by
-> default. Every photo shows a camera support state from Lucent's qualification of 40 test files
-> ([support table](docs/qualification/support-table.md)): 16 are Verified (exact model and capture
-> mode; colour checked against a colour chart's published values where the file shows one, otherwise
-> as agreement with the decoder's camera calibration), 14 Compatible, unverified, 7 Limited and 3
-> Unsupported; any other camera that decodes cleanly is Compatible, unverified. It runs from a source build or from an
-> unsigned per-user installer built from source (see [Installing](#installing)). The next section
-> describes the product Lucent is being built to become, from its blueprint, not what it can do
-> today.
+> **Lucent 0.1.0, the first release.** Free and open source (MIT License; the logo is excepted), for
+> 64-bit Windows 10 (1809) or Windows 11, and fully offline. See [Installing](#installing) and the
+> quick tour below. [Current status](#current-status) lists what each development increment added.
+
+## A quick tour
+
+### 1. Add your RAW photos
+
+![The Library: eighteen RAW photos from ten camera makers, each with its camera support badge](docs/images/lucent-library.jpg)
+
+In **Library**, click **Add photos…** or **Add folder…**. Lucent adds the files where they are (or
+as verified copies) to a local library and shows each camera's own preview straight away. The
+badge on each photo is its camera support state: **Verified**, **Compatible, unverified**,
+**Limited** or **Unsupported** (see [Camera support](#camera-support-and-the-bundled-data) below).
+Lucent never changes your RAW files.
+
+### 2. Develop: Auto or by hand
+
+![A Canon EOS R5 photo split into before and after: Auto raised the exposure by 0.77 EV with high confidence](docs/images/lucent-edit-auto.jpg)
+
+Double-click a photo to open it in **Edit**.
+- **Auto:** click it for a conservative starting point. It says what it changed and how confident
+  it is, and saves the result as a revision you can undo.
+- **Adjust:** set white balance, exposure, contrast, highlights and shadows, the tone curve,
+  saturation and vibrance.
+- **Compare:** **Before** and **Split** show the original, and **Clipping** marks lost highlights
+  and shadows.
+- **History:** every change is kept. **Undo** and **Redo** move through it, and **Copy…** and
+  **Paste** carry settings to other photos.
+
+### 3. Local adjustments, crop and lens corrections
+
+![The Masks tool: a linear gradient darkens the sky by 0.8 EV, with its overlay shown, beside the Detail and Lens corrections panels](docs/images/lucent-masks.jpg)
+
+- **Masks:** add brush, linear-gradient and radial masks with their own exposure, contrast,
+  highlights, shadows, saturation and white balance. Here a gradient darkens the sky.
+- **Crop:** straighten, crop, turn and mirror.
+- **Detail:** reduce colour noise.
+- **Lens corrections:** correct distortion, chromatic aberration and vignetting from the bundled
+  Lensfun database when the camera and lens match a profile exactly, or with a profile you choose.
+
+### 4. Export
+
+![The Export dialog: JPEG or 16-bit TIFF, sRGB or Display P3, quality, and a destination folder](docs/images/lucent-export.jpg)
+
+**Export…** saves the photo as a JPEG or a 16-bit TIFF, in sRGB or Display P3, and never overwrites
+an existing file. **Export batch…** in Library exports a selection, every photo or a folder in the
+background. A batch can be paused and resumed, survives Lucent closing, can apply Auto to each
+photo, and ends with a report.
+
+### Camera support and the bundled data
+
+![Help > About: the camera support database (40 camera modes) and the Lensfun lens database (1,571 lens profiles), with what each support state means](docs/images/lucent-about.jpg)
+
+**About** shows the data Lucent uses:
+- **Camera support database:** Lucent's tests of 40 camera models and capture modes. 16 are
+  Verified, 14 Compatible, unverified, 7 Limited and 3 Unsupported. The full list, with the
+  reason for each state, is the [support table](docs/qualification/support-table.md). A camera
+  Lucent has not tested is shown as Compatible, unverified when its files decode cleanly.
+- **Lens database:** Lensfun's profiles for 1,571 lenses on 1,057 cameras.
+
+Lucent uses no AI or cloud models. Auto is Natural v1, a deterministic optimiser that runs on your
+computer. It is deliberately conservative and not yet calibrated against photographers'
+preferences. All processing stays on your PC.
+
+<sub>The sample photos are from [raw.pixls.us](https://raw.pixls.us), dedicated to the public domain
+(CC0).</sub>
 
 ## What Lucent is meant to be
 
@@ -116,16 +143,15 @@ The developer command-line tools `lucent-probe`, `lucent-render`, `lucent-auto` 
 
 ## Installing
 
-There is no published release yet. `tools\package.ps1` builds the installer from source,
-`Lucent-Setup-<version>-x64.exe`, and beside it `Lucent-<version>-corresponding-source.zip`, the
-source of the LGPL libraries it contains ([setup](docs/development/setup.md#packaging-the-installer),
+Download `Lucent-Setup-<version>-x64.exe` from the project's
+[Releases page](https://github.com/FanZhu1998/Lucent/releases). Each release also publishes
+`Lucent-<version>-corresponding-source.zip` beside the installer: the source of the LGPL libraries
+the installer contains. Before you run the installer, compare its SHA-256 with the one on the release
+page (`Get-FileHash .\Lucent-Setup-<version>-x64.exe` in PowerShell). You can also build both from
+source with `tools\package.ps1` ([setup](docs/development/setup.md#packaging-the-installer),
 [ADR 0009](docs/adr/0009-windows-packaging.md), [ADR 0024](docs/adr/0024-release-and-licensing.md)).
-A release publishes both, after the gates of the [release checklist](docs/release/checklist.md).
-
-> **The first release waits for its clean-machine test.** Installers are published only with their
-> corresponding-source archive and only after every gate of the release checklist has passed; the
-> test on a clean, offline Windows (in Windows Sandbox: its first run, on 2026-10-11, failed on
-> defects since fixed) has not passed yet, so do not hand out installers built today.
+A release is published only after every gate of the [release checklist](docs/release/checklist.md)
+has passed.
 
 - **Per user, no administrator rights.** Lucent installs into `%LOCALAPPDATA%\Programs\Lucent`
   with a Start Menu shortcut and, optionally, a Desktop shortcut. Windows asks for permission only
