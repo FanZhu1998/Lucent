@@ -36,9 +36,7 @@ include_guard(GLOBAL)
 
 set(LUCENT_BRANDING_DIR "${CMAKE_SOURCE_DIR}/assets/branding")
 
-# The version information of every shipped program (lucent-program.rc.in). The copyright line stays as the
-# owner decided on 2026-10-15; the logo's terms and the code of others are stated in the notices (ADR 0025,
-# item 27; ADR 0024, decision 41).
+# The version information of every shipped program (lucent-program.rc.in).
 set(LUCENT_RC_COMPANY "Lucent")
 set(LUCENT_RC_COPYRIGHT "Copyright (c) 2026 Fan Zhu. MIT License.")
 
